@@ -1,0 +1,17 @@
+build/
+out/
+bin/
+obj/
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.exp
+.vs/
+.vscode/
+.cache/
+compile_commands.json
+bench/results-*.json
