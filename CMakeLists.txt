@@ -35,3 +35,16 @@ file(GLOB AREOLE_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src
 add_library(areole STATIC ${AREOLE_CORE_SOURCES})
 target_include_directories(areole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 areole_set_warnings(areole)
+
+# --- tests --------------------------------------------------------------------
+# Tests include src/ar_internal.h on purpose. They check invariants the public
+# API deliberately does not expose, such as which end of the arena an allocation
+# came from.
+enable_testing()
+
+add_executable(ar_test tests/ar_test.c)
+target_include_directories(ar_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_test PRIVATE areole)
+areole_set_warnings(ar_test)
+
+add_test(NAME ar_test COMMAND ar_test)
