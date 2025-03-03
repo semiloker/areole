@@ -1,0 +1,34 @@
+name: Bug report
+description: Something renders wrong, crashes, or behaves incorrectly
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include a screenshot if it is a rendering bug.
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest stylesheet and ar_begin/ar_end sequence that shows it.
+      render: c
+    validations: { required: true }
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: "Windows 10 22H2 / Windows XP SP3 / Ubuntu 24.04"
+    validations: { required: true }
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler
+      placeholder: "gcc 14.2.0 (MinGW-w64 UCRT) / MSVC 19.44 / clang 18"
+    validations: { required: true }

@@ -1,0 +1,30 @@
+name: Performance
+description: Something is slower, larger, or allocates more than it should
+labels: ["type:perf"]
+body:
+  - type: textarea
+    id: measurement
+    attributes:
+      label: The measurement
+      description: Paste `ar_bench --json` output, or the ar_perf_overlay numbers.
+      render: json
+    validations: { required: true }
+  - type: input
+    id: scene
+    attributes:
+      label: Scene
+      placeholder: "kitchen_sink / scroll_10k / deep_tree / your own"
+    validations: { required: true }
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: CPU, RAM, resolution. Old and slow is the interesting case here.
+      placeholder: "Pentium III 800 MHz, 256 MB, 1024x768, no 3D driver"
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Which phase (style / layout / raster / present) do you believe is at fault?
+    validations: { required: true }
