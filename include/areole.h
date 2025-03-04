@@ -83,6 +83,32 @@ typedef struct ar_rect
     ar_i32 x, y, w, h;
 } ar_rect;
 
+ar_rect ar_rect_make(ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h);
+ar_rect ar_rect_intersect(ar_rect a, ar_rect b);
+ar_rect ar_rect_union(ar_rect a, ar_rect b);
+int     ar_rect_is_empty(ar_rect r);
+int     ar_rect_contains(ar_rect r, ar_i32 x, ar_i32 y);
+
+/* ------------------------------------------------------------------------
+ * Surface
+ *
+ * A surface is somebody else's memory. On Windows it is the pixels handed
+ * back by CreateDIBSection, so areole rasterizes straight into the buffer GDI
+ * will blit and presenting costs one copy instead of two.
+ *
+ * stride is measured in pixels rather than bytes, because every path that
+ * touches it indexes by pixel and converting at each use is pure noise.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_surface
+{
+    ar_u32 *pixels;
+    ar_i32  w, h;
+    ar_i32  stride;
+} ar_surface;
+
+void ar_surface_clear(ar_surface *s, ar_color c);
+void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
+
 /* ------------------------------------------------------------------------
  * Library identity
  * ------------------------------------------------------------------------ */
