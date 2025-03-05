@@ -6,6 +6,7 @@
  * runnable check here that fails if the logic breaks.
  */
 #include "ar_internal.h"
+#include "ar_css.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -669,6 +670,354 @@ static void test_perf_overlay_draws_and_clips(void)
     CHECK(ar__px(0, 0) == AR_HEX(0x000000), "perf: an overlay placed off screen touches nothing");
 }
 
+/* ------------------------------------------------------------------------
+ * CSS
+ * ------------------------------------------------------------------------ */
+
+static ar_rule  g_rules[64];
+static ar_sheet g_sheet;
+
+static void ar__sheet(const char *css)
+{
+    ar_sheet_init(&g_sheet, g_rules, 64);
+    ar_sheet_parse(&g_sheet, css);
+}
+
+/* Resolves for a box described the way ar_begin will describe one. */
+static ar_style ar__resolve(const char *selector, ar_u8 state)
+{
+    ar_style st;
+    ar_u32   tag = 0, klass = 0, id = 0;
+
+    ar_selector_split(selector, &tag, &klass, &id);
+    ar_sheet_resolve(&g_sheet, tag, klass, id, state, &st);
+    return st;
+}
+
+/* C90 forbids subscripting an array inside a value that is not an lvalue, so
+   the resolved style cannot be indexed straight off the return. Rather than
+   scatter a temporary through every assertion, reading one property gets an
+   accessor of its own. The strict gate caught this; a compiler with
+   extensions on would have waved it through and broken on the first old
+   toolchain that saw it. */
+static ar_i32 ar__css_value(const char *selector, ar_u8 state, ar_prop prop)
+{
+    ar_style st = ar__resolve(selector, state);
+    return st.v[prop];
+}
+
+static void test_css_basic(void)
+{
+    ar__sheet(".card { width: 200px; height: 132px; background: #f8f3e9; }");
+
+    CHECK(g_sheet.errors == 0, "css: a well formed rule parses without error");
+    CHECK(g_sheet.count == 1, "css: one rule is stored");
+
+    {
+        ar_style st = ar__resolve(".card", AR_STATE_NONE);
+        CHECK(st.v[AR_P_WIDTH] == 200 && st.unit[AR_P_WIDTH] == AR_UNIT_PX,
+              "css: a pixel width parses");
+        CHECK(st.v[AR_P_HEIGHT] == 132, "css: a pixel height parses");
+        CHECK((ar_u32)st.v[AR_P_BACKGROUND] == 0xFFF8F3E9u, "css: a six digit hex colour parses");
+    }
+
+    /* A box that matches nothing keeps the defaults, rather than inheriting
+       whatever the last resolved box happened to have. */
+    {
+        ar_style st = ar__resolve(".nothing", AR_STATE_NONE);
+        CHECK(st.unit[AR_P_WIDTH] == AR_UNIT_AUTO, "css: an unmatched box sizes to its content");
+        CHECK((ar_u32)st.v[AR_P_BACKGROUND] == 0u, "css: an unmatched box has no background");
+    }
+}
+
+static void test_css_units(void)
+{
+    ar__sheet(".a { width: 50%; height: auto; }"
+              ".b { width: grow; gap: 8; }"
+              ".c { width: 12.75px; }");
+
+    CHECK(g_sheet.errors == 0, "css: units parse without error");
+
+    {
+        ar_style a = ar__resolve(".a", AR_STATE_NONE);
+        ar_style b = ar__resolve(".b", AR_STATE_NONE);
+        ar_style c = ar__resolve(".c", AR_STATE_NONE);
+
+        CHECK(a.unit[AR_P_WIDTH] == AR_UNIT_PCT && a.v[AR_P_WIDTH] == 50, "css: per cent parses");
+        CHECK(a.unit[AR_P_HEIGHT] == AR_UNIT_AUTO, "css: auto parses");
+        CHECK(b.unit[AR_P_WIDTH] == AR_UNIT_GROW, "css: grow parses");
+
+        /* A bare number is pixels. Requiring the unit everywhere would be
+           pedantry in a stylesheet nobody validates. */
+        CHECK(b.v[AR_P_GAP] == 8 && b.unit[AR_P_GAP] == AR_UNIT_PX,
+              "css: a unitless length is pixels");
+
+        /* The layout is integer end to end, so a fraction is floored at parse
+           time rather than carried and rounded inconsistently later. */
+        CHECK(c.v[AR_P_WIDTH] == 12, "css: a fractional length is floored");
+    }
+}
+
+static void test_css_colors(void)
+{
+    ar__sheet(".s { background: #abc; }"
+              ".l { background: #11223344; }"
+              ".t { background: transparent; }");
+
+    CHECK((ar_u32)ar__css_value(".s", 0, AR_P_BACKGROUND) == 0xFFAABBCCu,
+          "css: three digit hex expands each digit");
+    CHECK((ar_u32)ar__css_value(".l", 0, AR_P_BACKGROUND) == 0x44112233u,
+          "css: eight digit hex carries alpha");
+    CHECK((ar_u32)ar__css_value(".t", 0, AR_P_BACKGROUND) == 0u, "css: transparent is zero alpha");
+}
+
+static void test_css_specificity(void)
+{
+    /* Written deliberately in the wrong order: the id rule comes first, so
+       source order alone would give the wrong answer. */
+    ar__sheet("#one { color: #111111; }"
+              ".btn { color: #222222; }"
+              "div  { color: #333333; }");
+
+    CHECK((ar_u32)ar__css_value("div.btn#one", 0, AR_P_COLOR) == 0xFF111111u,
+          "css: an id beats a class and a tag whatever the source order");
+    CHECK((ar_u32)ar__css_value("div.btn", 0, AR_P_COLOR) == 0xFF222222u,
+          "css: a class beats a tag");
+    CHECK((ar_u32)ar__css_value("div", 0, AR_P_COLOR) == 0xFF333333u,
+          "css: a tag applies when nothing more specific matches");
+}
+
+static void test_css_source_order_breaks_ties(void)
+{
+    ar__sheet(".a { color: #111111; }"
+              ".a { color: #222222; }");
+
+    CHECK((ar_u32)ar__css_value(".a", 0, AR_P_COLOR) == 0xFF222222u,
+          "css: between rules of equal specificity the later one wins");
+}
+
+static void test_css_pseudo_states(void)
+{
+    ar__sheet(".btn { background: #333333; }"
+              ".btn:hover { background: #444444; }"
+              ".btn:active { background: #555555; }");
+
+    CHECK((ar_u32)ar__css_value(".btn", AR_STATE_NONE, AR_P_BACKGROUND) == 0xFF333333u,
+          "css: the base rule applies when the box is idle");
+    CHECK((ar_u32)ar__css_value(".btn", AR_STATE_HOVER, AR_P_BACKGROUND) == 0xFF444444u,
+          "css: hover overrides the base rule");
+    CHECK((ar_u32)ar__css_value(".btn", AR_STATE_ACTIVE, AR_P_BACKGROUND) == 0xFF555555u,
+          "css: active overrides the base rule");
+
+    /* Held down while hovered is both states at once, which is what actually
+       happens with a mouse. The later rule of equal specificity wins. */
+    CHECK((ar_u32)ar__css_value(".btn", (ar_u8)(AR_STATE_HOVER | AR_STATE_ACTIVE),
+                                AR_P_BACKGROUND) == 0xFF555555u,
+          "css: a box that is both hovered and active takes the later rule");
+}
+
+static void test_css_shorthands(void)
+{
+    ar__sheet(".one  { padding: 12px; }"
+              ".two  { padding: 6px 12px; }"
+              ".four { padding: 1px 2px 3px 4px; }"
+              ".m    { margin: 5px 10px 15px; }");
+
+    {
+        ar_style a = ar__resolve(".one", 0);
+        CHECK(a.v[AR_P_PAD_TOP] == 12 && a.v[AR_P_PAD_RIGHT] == 12 && a.v[AR_P_PAD_BOTTOM] == 12 &&
+                  a.v[AR_P_PAD_LEFT] == 12,
+              "css: one padding value covers every side");
+    }
+    {
+        ar_style a = ar__resolve(".two", 0);
+        CHECK(a.v[AR_P_PAD_TOP] == 6 && a.v[AR_P_PAD_BOTTOM] == 6, "css: two values set vertical");
+        CHECK(a.v[AR_P_PAD_RIGHT] == 12 && a.v[AR_P_PAD_LEFT] == 12,
+              "css: two values set horizontal");
+    }
+    {
+        ar_style a = ar__resolve(".four", 0);
+        CHECK(a.v[AR_P_PAD_TOP] == 1 && a.v[AR_P_PAD_RIGHT] == 2 && a.v[AR_P_PAD_BOTTOM] == 3 &&
+                  a.v[AR_P_PAD_LEFT] == 4,
+              "css: four values run clockwise from the top");
+    }
+    {
+        /* Three values leave the left mirroring the right, as CSS does. */
+        ar_style a = ar__resolve(".m", 0);
+        CHECK(a.v[AR_P_MARGIN_TOP] == 5 && a.v[AR_P_MARGIN_RIGHT] == 10 &&
+                  a.v[AR_P_MARGIN_BOTTOM] == 15 && a.v[AR_P_MARGIN_LEFT] == 10,
+              "css: three values mirror the left onto the right");
+    }
+}
+
+static void test_css_border_shorthand(void)
+{
+    ar__sheet(".b { border: 1px solid #e8dfcc; border-radius: 8px; }");
+
+    {
+        ar_style a = ar__resolve(".b", 0);
+        /* The word "solid" carries no information here, but writing it is
+           reflex. Rejecting the declaration over it would be obnoxious. */
+        CHECK(g_sheet.errors == 0, "css: an unstyleable border keyword is tolerated");
+        CHECK(a.v[AR_P_BORDER_WIDTH] == 1, "css: the border width is taken from the shorthand");
+        CHECK((ar_u32)a.v[AR_P_BORDER_COLOR] == 0xFFE8DFCCu,
+              "css: the border colour is taken from the shorthand");
+        CHECK(a.v[AR_P_BORDER_RADIUS] == 8, "css: the radius parses");
+    }
+}
+
+static void test_css_keywords(void)
+{
+    ar__sheet(".f { display: flex; flex-direction: column; "
+              "     justify-content: space-between; align-items: center; overflow: hidden; }");
+
+    {
+        ar_style a = ar__resolve(".f", 0);
+        CHECK(a.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX, "css: display parses");
+        CHECK(a.v[AR_P_DIRECTION] == AR_DIR_COLUMN, "css: flex-direction parses");
+        CHECK(a.v[AR_P_JUSTIFY] == AR_JUSTIFY_BETWEEN, "css: justify-content parses");
+        CHECK(a.v[AR_P_ALIGN] == AR_ALIGN_CENTER, "css: align-items parses");
+        CHECK(a.v[AR_P_OVERFLOW] == AR_OVERFLOW_HIDDEN, "css: overflow parses");
+    }
+
+    /* The same word means different things to different properties, so the
+       keyword table is looked up per property rather than globally. */
+    ar__sheet(".g { justify-content: center; align-items: end; }");
+    CHECK(ar__css_value(".g", 0, AR_P_JUSTIFY) == AR_JUSTIFY_CENTER,
+          "css: center resolves against justify-content");
+    CHECK(ar__css_value(".g", 0, AR_P_ALIGN) == AR_ALIGN_END,
+          "css: end resolves against align-items");
+}
+
+static void test_css_comments_and_whitespace(void)
+{
+    ar__sheet("/* a leading comment */\n"
+              ".a /* between */ {\n"
+              "    width : 10px ; /* trailing */\n"
+              "}\n"
+              "/* unterminated at the end of input");
+
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 10,
+          "css: comments and stray whitespace are ignored");
+}
+
+static void test_css_survives_malformed_input(void)
+{
+    /* The point of this test: a stylesheet is written by hand and will have
+       mistakes in it. One bad rule must cost one rule, not the remainder of
+       the file. The good rule is last on purpose. */
+    ar__sheet(".broken { width: }"
+              "@media screen { }"
+              ".unknown-prop { flibbertigibbet: 3px; }"
+              ".good { width: 42px; }");
+
+    CHECK(g_sheet.errors > 0, "css: malformed input is reported rather than ignored");
+    CHECK(ar__css_value(".good", 0, AR_P_WIDTH) == 42,
+          "css: a rule after a broken one still parses");
+
+    ar__sheet("");
+    CHECK(g_sheet.count == 0 && g_sheet.errors == 0, "css: an empty stylesheet is not an error");
+
+    ar__sheet(0);
+    CHECK(g_sheet.count == 0, "css: a null stylesheet is not a crash");
+
+    ar__sheet(".a { }");
+    CHECK(g_sheet.count == 0 && g_sheet.errors == 0,
+          "css: an empty block is legal and has no effect");
+}
+
+/* The parser must terminate on any input at all.
+ *
+ * This is here because it did not. An unknown property left the cursor
+ * sitting on the semicolon it had scanned up to, the block loop called the
+ * declaration parser again, that parser could not consume a semicolon either,
+ * and the two spun forever. A wrong colour is a bug; a hang on a stylesheet
+ * with a typo in it is a different category of bug, and the only durable
+ * defence is a rule that every path consumes at least one character.
+ *
+ * If one of these ever hangs, the harness never prints a result, which is a
+ * loud enough failure. */
+static void test_css_always_terminates(void)
+{
+    static const char *const NASTY[] = {";",
+                                        ".a { ; }",
+                                        ".a { ;;;;;;; }",
+                                        ".a { : }",
+                                        ".a { unknown: 1px; width: 5px; }",
+                                        ".a { unknown: 1px }",
+                                        ".a { width",
+                                        ".a {",
+                                        ".a",
+                                        "{ }",
+                                        "}",
+                                        "}}}}{{{{",
+                                        "@media screen { .a { width: 1px; } }",
+                                        ".a { width: ; height: 3px; }",
+                                        ".a { width: !!! ; }",
+                                        ".a { background: #zz; }",
+                                        ".a { background: #; }",
+                                        ".a { padding: 1px 2px 3px 4px 5px 6px; }",
+                                        "/*",
+                                        "/* .a { width: 1px; }",
+                                        "....",
+                                        "###",
+                                        ":::",
+                                        ".a:nonsense { width: 1px; }",
+                                        "ÿþ"};
+    ar_u32                   i;
+
+    for (i = 0; i < sizeof NASTY / sizeof NASTY[0]; ++i)
+    {
+        ar__sheet(NASTY[i]);
+    }
+    CHECK(1, "css: the parser terminates on every malformed input in the list");
+
+    /* And the recovery is not merely survival: a good rule after a bad one is
+       still picked up. */
+    ar__sheet(".a { unknown: 1px; } .b { width: 7px; }");
+    CHECK(ar__css_value(".b", 0, AR_P_WIDTH) == 7,
+          "css: a rule following an unknown property still parses");
+
+    ar__sheet(".a { ; width: 9px; }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 9,
+          "css: a stray semicolon does not swallow the declaration after it");
+}
+
+static void test_css_capacity(void)
+{
+    ar_rule  few[2];
+    ar_sheet s;
+
+    ar_sheet_init(&s, few, 2);
+    ar_sheet_parse(&s, ".a{width:1px;} .b{width:2px;} .c{width:3px;}");
+
+    /* Running out of room is reported, not silently truncated, and above all
+       is not a write past the end of the array. */
+    CHECK(s.count == 2, "css: rules stop at capacity");
+    CHECK(s.errors > 0, "css: exceeding capacity is reported");
+}
+
+static void test_selector_split(void)
+{
+    ar_u32 tag, klass, id;
+
+    CHECK(ar_selector_split("div.card#first", &tag, &klass, &id),
+          "selector: a full selector splits");
+    CHECK(tag == ar_hash("div", 3), "selector: the tag is extracted");
+    CHECK(klass == ar_hash("card", 4), "selector: the class is extracted");
+    CHECK(id == ar_hash("first", 5), "selector: the id is extracted");
+
+    CHECK(ar_selector_split(".card", &tag, &klass, &id), "selector: a bare class splits");
+    CHECK(tag == 0 && id == 0, "selector: absent parts come back as zero");
+
+    CHECK(!ar_selector_split("", &tag, &klass, &id), "selector: an empty selector is rejected");
+    CHECK(!ar_selector_split(".", &tag, &klass, &id), "selector: a lone dot is rejected");
+    CHECK(!ar_selector_split(0, &tag, &klass, &id), "selector: a null selector is rejected");
+
+    /* Zero is the wildcard in a rule, so no real identifier may hash to it. */
+    CHECK(ar_hash("", 0) != 0, "selector: no identifier hashes to the wildcard");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -701,6 +1050,21 @@ int main(void)
     test_perf_ring_wraps();
     test_perf_survives_a_clock_wrap();
     test_perf_overlay_draws_and_clips();
+
+    test_css_basic();
+    test_css_units();
+    test_css_colors();
+    test_css_specificity();
+    test_css_source_order_breaks_ties();
+    test_css_pseudo_states();
+    test_css_shorthands();
+    test_css_border_shorthand();
+    test_css_keywords();
+    test_css_comments_and_whitespace();
+    test_css_survives_malformed_input();
+    test_css_always_terminates();
+    test_css_capacity();
+    test_selector_split();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
