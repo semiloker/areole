@@ -48,3 +48,19 @@ target_link_libraries(ar_test PRIVATE areole)
 areole_set_warnings(ar_test)
 
 add_test(NAME ar_test COMMAND ar_test)
+
+# --- platform backend ---------------------------------------------------------
+# Its own target because <windows.h> uses nameless unions and __int64 and will
+# not compile with language extensions disabled. The core keeps the strict
+# setting; only this target relaxes it.
+if(WIN32)
+    add_library(areole_win32 STATIC platform/ar_win32.c)
+    target_link_libraries(areole_win32 PUBLIC areole)
+    target_link_libraries(areole_win32 PUBLIC gdi32 user32 winmm)
+    set_target_properties(areole_win32 PROPERTIES C_EXTENSIONS ON)
+    areole_set_warnings(areole_win32)
+
+    add_executable(example_hello examples/01_hello/main.c)
+    target_link_libraries(example_hello PRIVATE areole_win32)
+    areole_set_warnings(example_hello)
+endif()
