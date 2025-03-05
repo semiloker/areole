@@ -130,6 +130,70 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
                   ar_color c);
 
 /* ------------------------------------------------------------------------
+ * Performance
+ *
+ * areole intends to publish numbers, so measuring is part of the library
+ * rather than something bolted on for a blog post.
+ *
+ * The phases are reported separately on purpose. A single frame time hides
+ * the one thing worth knowing on old hardware: whether the cost is the
+ * rasterizer or the blit. Those have completely different fixes, and on a
+ * machine with no 3D driver the blit is frequently the larger half.
+ *
+ * Averages are not offered. A UI that is smooth except for one stall every
+ * two seconds has an excellent average and is unusable, which is why the
+ * ring keeps the last AR_PERF_RING frames and reports percentiles.
+ * ------------------------------------------------------------------------ */
+#define AR_PERF_RING 256
+
+typedef enum ar_phase
+{
+    AR_PHASE_STYLE = 0,
+    AR_PHASE_LAYOUT,
+    AR_PHASE_RASTER,
+    AR_PHASE_PRESENT,
+    AR_PHASE_COUNT
+} ar_phase;
+
+typedef struct ar_perf_frame
+{
+    ar_u32 phase_us[AR_PHASE_COUNT];
+    ar_u32 total_us;
+    ar_u32 nodes;
+    ar_u32 glyphs;
+    ar_u32 fills;
+    ar_u32 dirty_px;
+    ar_u32 arena_frame_bytes;
+} ar_perf_frame;
+
+typedef struct ar_perf
+{
+    ar_perf_frame cur;
+    ar_perf_frame ring[AR_PERF_RING];
+    ar_u32        count;   /* frames recorded, saturating at AR_PERF_RING */
+    ar_u32        head;    /* next slot to write                          */
+    ar_u32        frames;  /* frames recorded since reset, never wrapped  */
+    ar_u32        started; /* timestamp of the current frame              */
+    ar_u32        mark;    /* timestamp of the last phase boundary        */
+} ar_perf;
+
+void ar_perf_reset(ar_perf *p);
+void ar_perf_begin(ar_perf *p, ar_u32 now_us);
+
+/* Closes the named phase at now_us. Phases need not be reported in order and
+   an unreported phase simply stays zero. */
+void ar_perf_mark(ar_perf *p, ar_phase phase, ar_u32 now_us);
+void ar_perf_end(ar_perf *p, ar_u32 now_us);
+
+/* pct is 0 to 100. AR_PHASE_COUNT selects the total rather than a phase. */
+ar_u32 ar_perf_percentile(const ar_perf *p, ar_phase phase, ar_u32 pct);
+ar_u32 ar_perf_max(const ar_perf *p, ar_phase phase);
+
+/* Draws the live readout. Costs one frame of its own, which is why the values
+   shown are the previous frame: measuring the measurement is not useful. */
+void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, ar_i32 scale);
+
+/* ------------------------------------------------------------------------
  * Library identity
  * ------------------------------------------------------------------------ */
 const char *ar_version(void);

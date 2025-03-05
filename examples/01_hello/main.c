@@ -94,7 +94,7 @@ int main(void)
     ar_i32          selected = 1;
     ar_i32          i;
     char            status[192];
-    ar_u32          t0, t_raster, t_present;
+    ar_perf         perf;
 
     win = ar_win_open("areole - hello", WIN_W, WIN_H);
     if (!win)
@@ -105,8 +105,7 @@ int main(void)
 
     printf("areole %s, clock: %s\n", ar_version(), ar_time_source());
 
-    t_raster = 0;
-    t_present = 0;
+    ar_perf_reset(&perf);
 
     while (ar_win_pump(win))
     {
@@ -125,7 +124,7 @@ int main(void)
             }
         }
 
-        t0 = ar_time_us();
+        ar_perf_begin(&perf, ar_time_us());
 
         ar_surface_clear(s, COL_BG);
 
@@ -188,24 +187,27 @@ int main(void)
             }
         }
 
-        /* status line, using last frame numbers so the measurement does not
-           have to include drawing itself */
+        /* The overlay reports the previous frames, because timing the frame
+           that draws the timings is not a measurement of anything. Style and
+           layout read zero until the next milestone gives them work to do,
+           which is the honest way to show what is not built yet. */
+        ar_perf_overlay(&perf, s, clip, s->w - 300, 16, 1);
+
         {
             ar_rect bar = ar_rect_make(0, s->h - STATUS_H, s->w, STATUS_H);
             ar_fill_rect(s, bar, clip, COL_RAIL);
             ar_fill_rect(s, ar_rect_make(0, bar.y, s->w, 1), clip, COL_BORDER);
 
-            sprintf(status, "raster %lu us   present %lu us   %ldx%ld   clock %s",
-                    (unsigned long)t_raster, (unsigned long)t_present, (long)s->w, (long)s->h,
-                    ar_time_source());
+            sprintf(status, "areole %s   %ldx%ld   clock %s   idle CPU is zero: the pump blocks",
+                    ar_version(), (long)s->w, (long)s->h, ar_time_source());
             draw_label(s, clip, bar, 12, status, 1, COL_MUTED);
         }
 
-        t_raster = ar_time_us() - t0;
+        ar_perf_mark(&perf, AR_PHASE_RASTER, ar_time_us());
 
-        t0 = ar_time_us();
         ar_win_present(win, clip);
-        t_present = ar_time_us() - t0;
+        ar_perf_mark(&perf, AR_PHASE_PRESENT, ar_time_us());
+        ar_perf_end(&perf, ar_time_us());
     }
 
     ar_win_close(win);
