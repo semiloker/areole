@@ -6,12 +6,12 @@
  * back buffer is GDI memory, a software rasterizer writing into it, hover and
  * click arriving from the message queue, and one blit to the screen.
  *
- * There is no layout engine and no font yet, so every rectangle here is
- * positioned by hand. That is the point of the next two milestones.
+ * There is no layout engine yet, so every rectangle here is positioned by
+ * hand. Removing that arithmetic is the entire point of the next milestone.
  *
- * The title bar is the readout. A library that cannot draw a glyph yet still
- * has numbers worth showing, and splitting raster from present is the split
- * that matters: on old hardware the blit is often the slower half.
+ * The status line at the bottom is drawn by the library itself, and splits
+ * raster from present because that is the split that matters: on the hardware
+ * areole targets, the blit is routinely the slower half.
  */
 #include "areole.h"
 #include "areole_win32.h"
@@ -22,12 +22,13 @@
 #define WIN_H 640
 
 #define RAIL_W    220
-#define NAV_H     42
+#define NAV_H     38
 #define NAV_PAD   12
 #define CARD_W    212
 #define CARD_H    132
 #define CARD_GAP  16
 #define CARD_COLS 3
+#define STATUS_H  26
 
 #define COL_BG        AR_HEX(0xFEFBF2)
 #define COL_RAIL      AR_HEX(0xFAF6ED)
@@ -37,17 +38,24 @@
 #define COL_BORDER    AR_HEX(0xE8DFCC)
 #define COL_ACCENT    AR_HEX(0xC2703D)
 #define COL_INK       AR_HEX(0x2B2B2B)
+#define COL_MUTED     AR_HEX(0x8A8175)
+#define COL_OK        AR_HEX(0x4F7A4A)
 
 #define NAV_COUNT  5
 #define CARD_COUNT 6
 
-/* Stands in for text until the font lands: a bar whose width encodes how long
-   the label would have been. */
-static void stub_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h,
-                      ar_color c)
+static const char *NAV[NAV_COUNT] = {"Home", "Products", "Customers", "Orders", "Settings"};
+
+struct flower
 {
-    ar_fill_rect(s, ar_rect_make(x, y, w, h), clip, c);
-}
+    const char *name;
+    const char *price;
+    int         in_stock;
+};
+
+static const struct flower CARDS[CARD_COUNT] = {{"Tulip", "$4.20", 1}, {"Rose", "$6.00", 1},
+                                                {"Peony", "$9.50", 0}, {"Lily", "$5.75", 1},
+                                                {"Iris", "$3.90", 1},  {"Dahlia", "$7.25", 0}};
 
 static void draw_border(ar_surface *s, ar_rect clip, ar_rect r, ar_color c)
 {
@@ -57,16 +65,23 @@ static void draw_border(ar_surface *s, ar_rect clip, ar_rect r, ar_color c)
     ar_fill_rect(s, ar_rect_make(r.x + r.w - 1, r.y, 1, r.h), clip, c);
 }
 
+/* Vertically centres a line of text inside a rectangle. */
+static void draw_label(ar_surface *s, ar_rect clip, ar_rect box, ar_i32 pad, const char *text,
+                       ar_i32 scale, ar_color c)
+{
+    ar_draw_text(s, clip, box.x + pad, box.y + (box.h - ar_text_height(scale)) / 2, text, scale, c);
+}
+
 static ar_rect nav_rect(ar_i32 i)
 {
-    return ar_rect_make(NAV_PAD, 64 + i * (NAV_H + 4), RAIL_W - NAV_PAD * 2, NAV_H);
+    return ar_rect_make(NAV_PAD, 78 + i * (NAV_H + 4), RAIL_W - NAV_PAD * 2, NAV_H);
 }
 
 static ar_rect card_rect(ar_i32 i)
 {
     ar_i32 col = i % CARD_COLS;
     ar_i32 row = i / CARD_COLS;
-    return ar_rect_make(RAIL_W + 28 + col * (CARD_W + CARD_GAP), 104 + row * (CARD_H + CARD_GAP),
+    return ar_rect_make(RAIL_W + 28 + col * (CARD_W + CARD_GAP), 116 + row * (CARD_H + CARD_GAP),
                         CARD_W, CARD_H);
 }
 
@@ -76,9 +91,9 @@ int main(void)
     ar_surface     *s;
     const ar_input *in;
     ar_rect         clip;
-    ar_i32          selected = 0;
+    ar_i32          selected = 1;
     ar_i32          i;
-    char            title[256];
+    char            status[192];
     ar_u32          t0, t_raster, t_present;
 
     win = ar_win_open("areole - hello", WIN_W, WIN_H);
@@ -88,8 +103,10 @@ int main(void)
         return 1;
     }
 
-    printf("areole %s\n", ar_version());
-    printf("clock: %s\n", ar_time_source());
+    printf("areole %s, clock: %s\n", ar_version(), ar_time_source());
+
+    t_raster = 0;
+    t_present = 0;
 
     while (ar_win_pump(win))
     {
@@ -115,7 +132,8 @@ int main(void)
         /* rail */
         ar_fill_rect(s, ar_rect_make(0, 0, RAIL_W, s->h), clip, COL_RAIL);
         ar_fill_rect(s, ar_rect_make(RAIL_W - 1, 0, 1, s->h), clip, COL_BORDER);
-        stub_text(s, clip, NAV_PAD, 26, 110, 14, COL_INK);
+        ar_draw_text(s, clip, NAV_PAD + 4, 28, "areole", 3, COL_INK);
+        ar_draw_text(s, clip, NAV_PAD + 4, 56, "no graphics API", 1, COL_MUTED);
 
         for (i = 0; i < NAV_COUNT; ++i)
         {
@@ -137,12 +155,13 @@ int main(void)
                 ar_fill_rect(s, r, clip, COL_NAV_HOVER);
             }
 
-            stub_text(s, clip, r.x + 14, r.y + NAV_H / 2 - 4, 86 + i * 9, 8, COL_INK);
+            draw_label(s, clip, r, 14, NAV[i], 2, i == selected ? COL_INK : COL_MUTED);
         }
 
         /* page header */
-        stub_text(s, clip, RAIL_W + 28, 34, 168, 20, COL_INK);
-        stub_text(s, clip, RAIL_W + 28, 66, 260, 8, AR_RGBA(0x2B, 0x2B, 0x2B, 0x60));
+        ar_draw_text(s, clip, RAIL_W + 28, 34, NAV[selected], 4, COL_INK);
+        ar_draw_text(s, clip, RAIL_W + 28, 76,
+                     "Six items. Every pixel below was written by the CPU.", 1, COL_MUTED);
 
         /* cards */
         for (i = 0; i < CARD_COUNT; ++i)
@@ -154,16 +173,32 @@ int main(void)
             draw_border(s, clip, r, COL_BORDER);
             ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, 4), clip, COL_ACCENT);
 
-            stub_text(s, clip, r.x + 14, r.y + 26, 96, 10, COL_INK);
-            stub_text(s, clip, r.x + 14, r.y + 48, 58, 8, AR_RGBA(0x2B, 0x2B, 0x2B, 0x70));
+            ar_draw_text(s, clip, r.x + 14, r.y + 24, CARDS[i].name, 2, COL_INK);
+            ar_draw_text(s, clip, r.x + 14, r.y + 50, CARDS[i].price, 2, COL_ACCENT);
+            ar_draw_text(s, clip, r.x + 14, r.y + CARD_H - 26,
+                         CARDS[i].in_stock ? "In stock" : "Out of stock", 1,
+                         CARDS[i].in_stock ? COL_OK : COL_MUTED);
 
-            /* A translucent wash on hover, which is the blend path rather than
-               the opaque one. If the two disagreed this is where it would
-               show, as a card that jumps in brightness under the cursor. */
+            /* A translucent wash on hover, which exercises the blend path
+               rather than the opaque one. If the two disagreed, this is where
+               it would show, as a card that jumps in brightness. */
             if (hot)
             {
                 ar_fill_rect(s, r, clip, AR_RGBA(0xC2, 0x70, 0x3D, 0x18));
             }
+        }
+
+        /* status line, using last frame numbers so the measurement does not
+           have to include drawing itself */
+        {
+            ar_rect bar = ar_rect_make(0, s->h - STATUS_H, s->w, STATUS_H);
+            ar_fill_rect(s, bar, clip, COL_RAIL);
+            ar_fill_rect(s, ar_rect_make(0, bar.y, s->w, 1), clip, COL_BORDER);
+
+            sprintf(status, "raster %lu us   present %lu us   %ldx%ld   clock %s",
+                    (unsigned long)t_raster, (unsigned long)t_present, (long)s->w, (long)s->h,
+                    ar_time_source());
+            draw_label(s, clip, bar, 12, status, 1, COL_MUTED);
         }
 
         t_raster = ar_time_us() - t0;
@@ -171,10 +206,6 @@ int main(void)
         t0 = ar_time_us();
         ar_win_present(win, clip);
         t_present = ar_time_us() - t0;
-
-        sprintf(title, "areole hello  -  raster %u us  -  present %u us  -  %ldx%ld  -  %s",
-                (unsigned)t_raster, (unsigned)t_present, (long)s->w, (long)s->h, ar_time_source());
-        ar_win_set_title(win, title);
     }
 
     ar_win_close(win);

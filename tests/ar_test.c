@@ -427,6 +427,100 @@ static void test_clear(void)
           "clear: the last pixel is written");
 }
 
+/* ------------------------------------------------------------------------
+ * Font
+ * ------------------------------------------------------------------------ */
+
+static void test_text_metrics(void)
+{
+    ar_i32 one, two;
+
+    CHECK(ar_text_width("", 1) == 0, "text: an empty string is zero wide");
+    CHECK(ar_text_width(0, 1) == 0, "text: a null string is zero wide");
+    CHECK(ar_text_height(1) == AR_FONT_H, "text: height at scale one is the face height");
+    CHECK(ar_text_height(2) == AR_FONT_H * 2, "text: height scales with the scale");
+
+    /* Line height must exceed the face, or two stacked lines touch and become
+       unreadable the moment anything wraps. */
+    CHECK(ar_text_line_height(1) > ar_text_height(1),
+          "text: line height leaves room between lines");
+
+    one = ar_text_width("Products", 1);
+    two = ar_text_width("Products", 2);
+    CHECK(one > 0, "text: a real string has width");
+    CHECK(two == one * 2, "text: width scales exactly with the scale");
+
+    /* Proportional spacing is the whole reason the generator measures ink
+       extents. If this ever comes out equal, the advances have been replaced
+       by a fixed cell and every label has gone monospaced. */
+    CHECK(ar_text_width("i", 1) < ar_text_width("W", 1),
+          "text: a narrow glyph advances less than a wide one");
+
+    /* The width of several lines is the width of the widest, which is what a
+       caller sizing a box around the text needs. */
+    CHECK(ar_text_width("W\ni", 1) == ar_text_width("W", 1),
+          "text: multi-line width is the widest line");
+
+    /* An unmapped character is drawn as a question mark rather than dropped,
+       so a mangled string looks mangled instead of looking like a layout bug. */
+    CHECK(ar_text_width("\x01", 1) == ar_text_width("?", 1),
+          "text: an out of range character measures as the fallback glyph");
+}
+
+static void test_text_pixels(void)
+{
+    ar_surface s = ar__test_surface(AR_HEX(0x000000));
+
+    /* The exclamation mark has ink in bits 3 and 4 of its top row, and its
+       leftmost ink column is 2, so drawing at x zero must put those two
+       pixels at x one and x two, flush against the origin. A glyph drawn from
+       its cell instead of its ink would land two columns to the right. */
+    ar_draw_text(&s, ar__whole(&s), 0, 0, "!", 1, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(0, 0) == AR_HEX(0x000000), "text: the glyph is flush against its own ink");
+    CHECK(ar__px(1, 0) == AR_HEX(0xFFFFFF), "text: the first ink pixel is drawn");
+    CHECK(ar__px(2, 0) == AR_HEX(0xFFFFFF), "text: the second ink pixel is drawn");
+    CHECK(ar__px(3, 0) == AR_HEX(0x000000), "text: nothing is drawn past the ink");
+
+    /* Row 5 of the exclamation mark is blank, and blank rows are skipped
+       wholesale. */
+    CHECK(ar__px(1, 5) == AR_HEX(0x000000), "text: a blank glyph row stays blank");
+
+    s = ar__test_surface(AR_HEX(0x000000));
+    ar_draw_text(&s, ar_rect_make(0, 0, 0, 0), 0, 0, "!", 1, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(1, 0) == AR_HEX(0x000000), "text: an empty clip draws nothing");
+
+    s = ar__test_surface(AR_HEX(0x000000));
+    ar_draw_text(&s, ar_rect_make(2, 0, 20, 20), 0, 0, "!", 1, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(1, 0) == AR_HEX(0x000000), "text: a glyph is clipped column by column");
+    CHECK(ar__px(2, 0) == AR_HEX(0xFFFFFF), "text: the part inside the clip still draws");
+
+    /* Drawing far off screen must be harmless, not a write past the buffer
+       the operating system owns. */
+    s = ar__test_surface(AR_HEX(0x000000));
+    ar_draw_text(&s, ar__whole(&s), -400, -400, "areole", 3, AR_HEX(0xFFFFFF));
+    ar_draw_text(&s, ar__whole(&s), 4000, 4000, "areole", 3, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(0, 0) == AR_HEX(0x000000), "text: drawing off screen touches nothing");
+}
+
+static void test_text_scaling(void)
+{
+    ar_surface s = ar__test_surface(AR_HEX(0x000000));
+
+    /* At scale two every ink pixel becomes a two by two block. */
+    ar_draw_text(&s, ar__whole(&s), 0, 0, "!", 2, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(2, 0) == AR_HEX(0xFFFFFF), "text: scaled ink fills its block, top left");
+    CHECK(ar__px(3, 1) == AR_HEX(0xFFFFFF), "text: scaled ink fills its block, bottom right");
+    CHECK(ar__px(1, 0) == AR_HEX(0x000000), "text: scaled ink does not bleed left");
+
+    /* A scale below one is a caller mistake, not a licence to divide by zero
+       or draw nothing. */
+    s = ar__test_surface(AR_HEX(0x000000));
+    ar_draw_text(&s, ar__whole(&s), 0, 0, "!", 0, AR_HEX(0xFFFFFF));
+    CHECK(ar__px(1, 0) == AR_HEX(0xFFFFFF), "text: a scale below one is clamped to one");
+    CHECK(ar_text_width("!", -5) == ar_text_width("!", 1),
+          "text: a negative scale measures as one");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -448,6 +542,10 @@ int main(void)
     test_blend();
     test_blend_invariants_across_all_alphas();
     test_clear();
+
+    test_text_metrics();
+    test_text_pixels();
+    test_text_scaling();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

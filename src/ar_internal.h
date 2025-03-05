@@ -43,6 +43,28 @@ typedef struct ar_arena
     ar_u32 oom;    /* sticky: an allocation was refused  */
 } ar_arena;
 
+/* ------------------------------------------------------------------------
+ * Embedded font
+ *
+ * 8x8 monochrome, ASCII 32 to 126. Row order is top to bottom, and within a
+ * row bit 0 is the LEFTMOST pixel. The data lives in ar_font_data.c and is
+ * generated; see THIRDPARTY.md.
+ * ------------------------------------------------------------------------ */
+#define AR_FONT_W      8
+#define AR_FONT_H      8
+#define AR_FONT_FIRST  32
+#define AR_FONT_LAST   126
+#define AR_FONT_GLYPHS (AR_FONT_LAST - AR_FONT_FIRST + 1)
+
+extern const ar_u8 ar__font_rows[AR_FONT_GLYPHS][AR_FONT_H];
+extern const ar_u8 ar__font_left[AR_FONT_GLYPHS];
+extern const ar_u8 ar__font_advance[AR_FONT_GLYPHS];
+
+/* Source-over of one pixel. Declared here rather than kept static in the
+   rasterizer so the glyph blitter can share the exact same arithmetic; two
+   implementations would drift and text would stop matching its own panel. */
+ar_u32 ar__blend(ar_u32 dst, ar_u32 src, ar_u32 alpha);
+
 void  ar_arena_init(ar_arena *a, void *mem, ar_u32 size);
 void *ar_arena_persist(ar_arena *a, ar_u32 bytes);
 void *ar_arena_frame(ar_arena *a, ar_u32 bytes);
