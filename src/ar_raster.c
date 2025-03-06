@@ -102,7 +102,7 @@ int ar_rect_contains(ar_rect r, ar_i32 x, ar_i32 y)
  *                       two more shifts per pixel pair, to move a colour by one
  *                       part in 255. Not worth it on the hardware this targets.
  * ------------------------------------------------------------------------ */
-static AR_INLINE ar_u32 ar__blend(ar_u32 dst, ar_u32 src, ar_u32 alpha)
+ar_u32 ar__blend(ar_u32 dst, ar_u32 src, ar_u32 alpha)
 {
     ar_u32 a, ia, rb, g;
 

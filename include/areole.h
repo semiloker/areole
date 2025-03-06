@@ -110,6 +110,26 @@ void ar_surface_clear(ar_surface *s, ar_color c);
 void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
 
 /* ------------------------------------------------------------------------
+ * Text
+ *
+ * One embedded 8x8 bitmap face, drawn at an integer scale. Glyphs are spaced
+ * by their own ink width rather than a fixed cell, so text does not read as
+ * monospaced; the widths were measured when the data was generated and cost
+ * nothing here.
+ *
+ * ponytail: integer scaling of one bitmap face. It is crisp, it is free, and
+ * free is the only thing that is genuinely available on the hardware this
+ * targets. Smooth text at arbitrary sizes is the optional TrueType module in
+ * v0.6.
+ * ------------------------------------------------------------------------ */
+ar_i32 ar_text_width(const char *text, ar_i32 scale);
+ar_i32 ar_text_height(ar_i32 scale);
+ar_i32 ar_text_line_height(ar_i32 scale);
+
+void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *text, ar_i32 scale,
+                  ar_color c);
+
+/* ------------------------------------------------------------------------
  * Library identity
  * ------------------------------------------------------------------------ */
 const char *ar_version(void);
