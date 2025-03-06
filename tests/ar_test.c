@@ -521,6 +521,154 @@ static void test_text_scaling(void)
           "text: a negative scale measures as one");
 }
 
+/* ------------------------------------------------------------------------
+ * Performance counters
+ * ------------------------------------------------------------------------ */
+
+static ar_perf g_perf;
+
+/* Records one frame whose four phases take the given microseconds. */
+static void ar__record(ar_perf *p, ar_u32 t, ar_u32 style, ar_u32 layout, ar_u32 raster,
+                       ar_u32 present)
+{
+    ar_perf_begin(p, t);
+    t += style;
+    ar_perf_mark(p, AR_PHASE_STYLE, t);
+    t += layout;
+    ar_perf_mark(p, AR_PHASE_LAYOUT, t);
+    t += raster;
+    ar_perf_mark(p, AR_PHASE_RASTER, t);
+    t += present;
+    ar_perf_mark(p, AR_PHASE_PRESENT, t);
+    ar_perf_end(p, t);
+}
+
+static void test_perf_phase_accounting(void)
+{
+    ar_perf_reset(&g_perf);
+    ar__record(&g_perf, 1000, 3, 11, 40, 90);
+
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_STYLE, 50) == 3, "perf: style time is recorded");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_LAYOUT, 50) == 11, "perf: layout time is recorded");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) == 40, "perf: raster time is recorded");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_PRESENT, 50) == 90,
+          "perf: present time is recorded");
+
+    /* The total is measured across the frame rather than summed from the
+       phases, so it also catches whatever happens between them. */
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_COUNT, 50) == 3 + 11 + 40 + 90,
+          "perf: the total spans the whole frame");
+}
+
+static void test_perf_percentiles(void)
+{
+    ar_u32 i;
+
+    /* One hundred frames whose totals are 0 through 99, fed in an order that
+       is neither sorted nor reversed, so a percentile that quietly returned
+       the newest or oldest sample would show up here. */
+    ar_perf_reset(&g_perf);
+    for (i = 0; i < 100; ++i)
+    {
+        ar_u32 v = (i * 37u) % 100u;
+        ar__record(&g_perf, i * 1000u, 0, 0, v, 0);
+    }
+
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 0) == 0, "perf: p0 is the minimum");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) == 50, "perf: p50 is the median");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 100) == 99, "perf: p100 is the maximum");
+    CHECK(ar_perf_max(&g_perf, AR_PHASE_RASTER) == 99, "perf: max agrees with p100");
+
+    /* Nearest rank, pinned deliberately. With a hundred samples the ninety
+       ninth percentile is the ninety ninth of them, which is index 98 and
+       therefore the value 98. Publishing percentiles is worthless if the
+       definition drifts between releases, so it is asserted rather than
+       described. */
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 99) == 98,
+          "perf: p99 of a hundred samples is the ninety ninth of them");
+
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 0) <=
+                  ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) &&
+              ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) <=
+                  ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 90) &&
+              ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 90) <=
+                  ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 99) &&
+              ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 99) <=
+                  ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 100),
+          "perf: percentiles rise monotonically");
+
+    /* A percentile above 100 is a caller mistake, not a reason to read past
+       the end of the ring. */
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 5000) == 99,
+          "perf: an out of range percentile is clamped");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) ==
+              ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50),
+          "perf: reading a percentile does not disturb the ring");
+}
+
+static void test_perf_empty(void)
+{
+    ar_perf_reset(&g_perf);
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 50) == 0,
+          "perf: percentiles of nothing are zero, not a read of uninitialised memory");
+    CHECK(ar_perf_max(&g_perf, AR_PHASE_COUNT) == 0, "perf: max of nothing is zero");
+}
+
+static void test_perf_ring_wraps(void)
+{
+    ar_u32 i;
+
+    /* Twice the ring plus a bit. Everything before the last AR_PERF_RING
+       frames must be gone, or a stall from a minute ago would keep showing up
+       in p99 forever and nobody would trust the readout. */
+    ar_perf_reset(&g_perf);
+    for (i = 0; i < AR_PERF_RING * 2 + 7; ++i)
+    {
+        ar__record(&g_perf, i * 1000u, 0, 0, i < AR_PERF_RING ? 9999u : 10u, 0);
+    }
+
+    CHECK(g_perf.count == AR_PERF_RING, "perf: the ring saturates at its capacity");
+    CHECK(g_perf.frames == AR_PERF_RING * 2 + 7, "perf: the lifetime frame count keeps counting");
+    CHECK(ar_perf_max(&g_perf, AR_PHASE_RASTER) == 10,
+          "perf: samples older than the ring are gone, not merely hidden");
+}
+
+static void test_perf_survives_a_clock_wrap(void)
+{
+    ar_perf_reset(&g_perf);
+
+    /* A microsecond counter in 32 bits wraps after about 71 minutes. Left
+       unhandled, the one frame that straddles the wrap reports roughly four
+       thousand seconds and drags every percentile with it for the next 256
+       frames. */
+    ar_perf_begin(&g_perf, 0xFFFFFF00u);
+    ar_perf_mark(&g_perf, AR_PHASE_RASTER, 0x00000040u);
+    ar_perf_end(&g_perf, 0x00000080u);
+
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_RASTER, 100) == 0,
+          "perf: a phase that straddles a clock wrap reports zero, not a spike");
+    CHECK(ar_perf_percentile(&g_perf, AR_PHASE_COUNT, 100) == 0,
+          "perf: a frame that straddles a clock wrap reports zero, not a spike");
+}
+
+static void test_perf_overlay_draws_and_clips(void)
+{
+    ar_surface s = ar__test_surface(AR_HEX(0x000000));
+
+    ar_perf_reset(&g_perf);
+    ar__record(&g_perf, 0, 1, 2, 3, 4);
+
+    /* The overlay is a widget like any other: it must respect the clip and
+       must not write outside the surface when placed off the edge. */
+    ar_perf_overlay(&g_perf, &s, ar__whole(&s), 0, 0, 1);
+    CHECK(ar__px(0, 0) != AR_HEX(0x000000), "perf: the overlay draws its panel");
+
+    s = ar__test_surface(AR_HEX(0x000000));
+    ar_perf_overlay(&g_perf, &s, ar__whole(&s), -500, -500, 1);
+    ar_perf_overlay(&g_perf, &s, ar__whole(&s), 9000, 9000, 2);
+    CHECK(ar__px(0, 0) == AR_HEX(0x000000), "perf: an overlay placed off screen touches nothing");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -546,6 +694,13 @@ int main(void)
     test_text_metrics();
     test_text_pixels();
     test_text_scaling();
+
+    test_perf_phase_accounting();
+    test_perf_percentiles();
+    test_perf_empty();
+    test_perf_ring_wraps();
+    test_perf_survives_a_clock_wrap();
+    test_perf_overlay_draws_and_clips();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
