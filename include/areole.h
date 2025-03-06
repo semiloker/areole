@@ -130,6 +130,27 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
                   ar_color c);
 
 /* ------------------------------------------------------------------------
+ * Input
+ *
+ * A snapshot of the pointer for one frame. It lives in the core rather than in
+ * a backend header because there is nothing platform specific about it, and a
+ * second copy of the same five fields would drift.
+ * ------------------------------------------------------------------------ */
+#define AR_MOUSE_LEFT   0x01u
+#define AR_MOUSE_RIGHT  0x02u
+#define AR_MOUSE_MIDDLE 0x04u
+
+typedef struct ar_input
+{
+    ar_i32 mouse_x, mouse_y;
+    ar_u32 mouse_down;     /* held right now            */
+    ar_u32 mouse_pressed;  /* went down since last pump */
+    ar_u32 mouse_released; /* came up since last pump   */
+    ar_i32 wheel;          /* notches, positive is away from the user */
+    int    mouse_inside;   /* the cursor is over the client area */
+} ar_input;
+
+/* ------------------------------------------------------------------------
  * Performance
  *
  * areole intends to publish numbers, so measuring is part of the library
@@ -192,6 +213,76 @@ ar_u32 ar_perf_max(const ar_perf *p, ar_phase phase);
 /* Draws the live readout. Costs one frame of its own, which is why the values
    shown are the previous frame: measuring the measurement is not useful. */
 void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, ar_i32 scale);
+
+/* ------------------------------------------------------------------------
+ * Context
+ *
+ * areole is given one block of memory at startup and never asks for another.
+ * Everything lives in it: the parsed stylesheet, the per box state that has to
+ * survive between frames, and the box tree, which is rebuilt from scratch every
+ * frame and released with a single integer store.
+ *
+ * Size the block with AR_MEM. The per box figure is checked against the real
+ * structure sizes by a compile time assertion, so it cannot drift as the
+ * structures grow.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_ctx ar_ctx;
+
+#define AR_BYTES_PER_BOX 320u
+#define AR_MEM_FIXED     98304u
+#define AR_MEM(boxes)    (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
+
+/* Returns NULL if the block is too small to be useful. */
+ar_ctx *ar_init(void *mem, ar_u32 size);
+
+/* Parses a stylesheet into the context. Call it as many times as you like at
+   startup; each call appends. Never call it per frame: the whole point is that
+   parsing happens once and the frame only resolves. */
+void ar_stylesheet(ar_ctx *c, const char *css);
+
+/* Non-zero if the stylesheet had anything wrong with it. Parsing never aborts,
+   so this is the only way to find out. */
+ar_u32 ar_stylesheet_errors(const ar_ctx *c);
+
+/* Lends the context a microsecond clock so it can time its own phases. The
+   core deliberately has no clock of its own; areole_win32.h supplies
+   ar_time_us for this. Without one, the phase breakdown reads zero and
+   everything else still works. */
+void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
+
+void ar_frame_begin(ar_ctx *c, const ar_input *in);
+
+/* Opens a box. The selector is the same syntax the stylesheet uses:
+   "div", ".card", "#sidebar", or any combination such as "div.card#first". */
+void ar_begin(ar_ctx *c, const char *selector);
+void ar_end(ar_ctx *c);
+
+/* A leaf box containing text. */
+void ar_text(ar_ctx *c, const char *selector, const char *text);
+
+/* Returns non-zero on the frame the button is released, having been pressed
+   on the same box. */
+int ar_button(ar_ctx *c, const char *selector, const char *label);
+
+/* Lays the tree out and paints it into the surface. Returns the region that
+   was drawn, for the caller to present. */
+ar_rect ar_frame_end(ar_ctx *c, ar_surface *s);
+
+/* Closes the frame, after the caller has put the surface on screen. Separate
+   from ar_frame_end because presenting belongs to the backend, and timing the
+   blit is the whole reason the phases are split. */
+void ar_frame_presented(ar_ctx *c);
+
+/* Diagnostics. All three should be zero in a healthy frame. */
+int ar_overflowed(const ar_ctx *c);
+int ar_unbalanced(const ar_ctx *c);
+
+/* Non-zero when the box under the cursor changed during the last frame. Hover
+   is resolved from the previous frame, so a caller whose pump blocks when idle
+   must draw one more frame to show the highlight. */
+int ar_needs_redraw(const ar_ctx *c);
+
+ar_perf *ar_perf_of(ar_ctx *c);
 
 /* ------------------------------------------------------------------------
  * Library identity

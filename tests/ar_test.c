@@ -7,6 +7,7 @@
  */
 #include "ar_internal.h"
 #include "ar_css.h"
+#include "ar_node.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -1018,6 +1019,454 @@ static void test_selector_split(void)
     CHECK(ar_hash("", 0) != 0, "selector: no identifier hashes to the wildcard");
 }
 
+/* ------------------------------------------------------------------------
+ * Layout
+ *
+ * Every expectation here is a rectangle worked out by hand from the
+ * stylesheet. That is deliberate: a layout engine checked against its own
+ * output is checked against nothing.
+ * ------------------------------------------------------------------------ */
+
+#define AR_LAY_MAX 512
+
+static unsigned char g_ui_mem[AR_MEM(256)];
+static ar_u32        g_ui_pixels[AR_LAY_MAX * 64];
+static ar_ctx       *g_ui;
+
+static ar_surface ar__ui_surface(ar_i32 w, ar_i32 h)
+{
+    ar_surface s;
+    s.pixels = g_ui_pixels;
+    s.w = w;
+    s.h = h;
+    s.stride = AR_LAY_MAX;
+    return s;
+}
+
+/* Fresh context, so one test cannot leave state behind for the next. */
+static void ar__ui_reset(const char *css)
+{
+    g_ui = ar_init(g_ui_mem, (ar_u32)sizeof g_ui_mem);
+    if (g_ui)
+    {
+        ar_stylesheet(g_ui, css);
+    }
+}
+
+static void ar__ui_begin(void)
+{
+    ar_input in;
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+}
+
+static ar_rect ar__box(ar_i32 index)
+{
+    if (!g_ui || index < 0 || index >= g_ui->node_count)
+    {
+        return ar_rect_make(-1, -1, -1, -1);
+    }
+    return g_ui->nodes[index].rect;
+}
+
+static int ar__box_is(ar_i32 index, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
+{
+    ar_rect r = ar__box(index);
+    return r.x == x && r.y == y && r.w == w && r.h == h;
+}
+
+static void test_layout_row_with_gap_and_padding(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; gap:10px; padding:5px; }"
+                 ".a { width:50px; height:20px; }");
+    CHECK(g_ui != 0, "layout: a context is created");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "div#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(!ar_unbalanced(g_ui) && !ar_overflowed(g_ui), "layout: the frame is balanced");
+    CHECK(ar__box_is(0, 0, 0, 400, 300), "layout: the root takes the viewport");
+
+    /* Padding pushes the first child in, the gap separates the rest, and none
+       of it accumulates: the third child sits at 5 + 2 * (50 + 10). */
+    CHECK(ar__box_is(1, 5, 5, 50, 20), "layout: the first child clears the padding");
+    CHECK(ar__box_is(2, 65, 5, 50, 20), "layout: the gap separates siblings");
+    CHECK(ar__box_is(3, 125, 5, 50, 20), "layout: gaps do not accumulate");
+}
+
+static void test_layout_column(void)
+{
+    ar_surface s = ar__ui_surface(200, 400);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; gap:8px; }"
+                 ".a { width:40px; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 40, 30), "layout: a column starts at the origin");
+    CHECK(ar__box_is(2, 0, 38, 40, 30), "layout: a column stacks downwards with the gap");
+}
+
+static void test_layout_grow_splits_the_remainder(void)
+{
+    ar_surface s = ar__ui_surface(100, 50);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; }"
+                 ".g { width:grow; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".g");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".g");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".g");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* A hundred pixels across three boxes is 33 and a third each. Dividing and
+       discarding the remainder leaves a one pixel strip at the right hand
+       edge that people notice and nobody can explain, so the remainder is
+       handed out a pixel at a time to the boxes at the front. */
+    CHECK(ar__box_is(1, 0, 0, 34, 10), "layout: the first grower takes the spare pixel");
+    CHECK(ar__box_is(2, 34, 0, 33, 10), "layout: the second grower takes its share");
+    CHECK(ar__box_is(3, 67, 0, 33, 10), "layout: the third grower takes its share");
+
+    {
+        ar_rect last = ar__box(3);
+        CHECK(last.x + last.w == 100, "layout: growers meet the far edge exactly");
+    }
+}
+
+static void test_layout_grow_alongside_fixed(void)
+{
+    ar_surface s = ar__ui_surface(300, 50);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; gap:10px; }"
+                 ".fixed { width:80px; height:10px; }"
+                 ".g { width:grow; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".fixed");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".g");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 300 less the fixed 80 less the 10 gap leaves 210. */
+    CHECK(ar__box_is(1, 0, 0, 80, 10), "layout: a fixed box keeps its width beside a grower");
+    CHECK(ar__box_is(2, 90, 0, 210, 10), "layout: a grower takes what the fixed box left");
+}
+
+static void test_layout_percent(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:flex; padding:20px; }"
+                 ".half { width:50%; height:25%; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".half");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Per cent is of the parent inner box, not its border box. 400 less 40 of
+       padding is 360, half of which is 180; 200 less 40 is 160, a quarter of
+       which is 40. */
+    CHECK(ar__box_is(1, 20, 20, 180, 40), "layout: per cent is of the parent inner box");
+}
+
+static void test_layout_auto_sizes_to_content(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     tw;
+
+    /* align-items defaults to stretch, as in CSS, so the root is told not to
+       stretch here: this test is about intrinsic sizing, not about alignment
+       overriding it. */
+    ar__ui_reset("#root { display:flex; align-items:flex-start; }"
+                 ".box { padding:6px; }"
+                 ".label { font-size:8px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".box");
+    ar_text(g_ui, ".label", "Products");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    tw = ar_text_width("Products", 1);
+
+    /* A box that states no size is exactly its content plus its own padding.
+       This is what lets a stylesheet stay silent about most dimensions. */
+    CHECK(ar__box_is(1, 0, 0, tw + 12, ar_text_height(1) + 12),
+          "layout: a box with no stated size wraps its content and padding");
+    CHECK(ar__box_is(2, 6, 6, tw, ar_text_height(1)),
+          "layout: the text sits inside the padding at its own size");
+}
+
+static void test_layout_justify_content(void)
+{
+    ar_surface s = ar__ui_surface(400, 50);
+
+    ar__ui_reset("#c { display:flex; flex-direction:row; justify-content:center; }"
+                 "#e { display:flex; flex-direction:row; justify-content:flex-end; }"
+                 "#b { display:flex; flex-direction:row; justify-content:space-between; }"
+                 ".a { width:100px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#c");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).x == 150, "layout: justify-content center splits the leftover evenly");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#e");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).x == 300, "layout: justify-content flex-end pushes to the far edge");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#b");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).x == 0, "layout: space-between leaves the first box alone");
+    CHECK(ar__box(2).x == 300, "layout: space-between pushes the last box to the edge");
+}
+
+static void test_layout_align_items(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+
+    ar__ui_reset("#c { display:flex; flex-direction:row; align-items:center; }"
+                 "#e { display:flex; flex-direction:row; align-items:flex-end; }"
+                 "#s { display:flex; flex-direction:row; align-items:stretch; }"
+                 ".a { width:50px; height:20px; }"
+                 ".noheight { width:50px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#c");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).y == 40, "layout: align-items center centres on the cross axis");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#e");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).y == 80, "layout: align-items flex-end sits on the far edge");
+
+    /* Stretch only applies to boxes that have not been given a size of their
+       own, which is what makes it safe as a container default. */
+    ar__ui_begin();
+    ar_begin(g_ui, "#s");
+    ar_begin(g_ui, ".noheight");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).h == 100, "layout: stretch fills the cross axis when no size is stated");
+    CHECK(ar__box(2).h == 20, "layout: stretch leaves a stated size alone");
+}
+
+static void test_layout_min_and_max(void)
+{
+    ar_surface s = ar__ui_surface(1000, 100);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; }"
+                 ".capped { width:grow; max-width:120px; height:10px; }"
+                 ".floored { width:10px; min-width:60px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".capped");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".floored");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 120, "layout: max-width caps a grower");
+    CHECK(ar__box(2).w == 60, "layout: min-width raises a stated size");
+}
+
+static void test_layout_display_none(void)
+{
+    ar_surface s = ar__ui_surface(400, 50);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; gap:10px; }"
+                 ".a { width:50px; height:10px; }"
+                 ".gone { display:none; width:50px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".gone");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* A hidden box takes no room and, just as importantly, leaves no gap
+       behind it. Getting the second part wrong is the classic way a toggled
+       panel leaves a hole where it used to be. */
+    CHECK(ar__box(1).x == 0, "layout: the box before a hidden one is unaffected");
+    CHECK(ar__box(2).w == 0, "layout: a hidden box has no size");
+    CHECK(ar__box(3).x == 60, "layout: a hidden box leaves no gap behind it");
+}
+
+static void test_layout_nesting(void)
+{
+    ar_surface s = ar__ui_surface(500, 300);
+
+    ar__ui_reset(".app { display:flex; flex-direction:row; }"
+                 ".rail { width:120px; padding:10px; display:flex; flex-direction:column; }"
+                 ".page { width:grow; padding:20px; }"
+                 ".item { width:grow; height:24px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "div.app");
+    ar_begin(g_ui, "div.rail");
+    ar_begin(g_ui, "div.item");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.page");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The rail states a width and no height, so it keeps the one and takes the
+       full column from align-items: stretch. */
+    CHECK(ar__box_is(1, 0, 0, 120, 300), "layout: a fixed rail keeps its width and stretches");
+
+    /* Inside the rail the axes swap: it is a column, so the item takes its
+       stated height on the main axis and grows across the rail inner width. */
+    CHECK(ar__box_is(2, 10, 10, 100, 24), "layout: a nested box works inside the parent padding");
+    CHECK(ar__box_is(3, 120, 0, 380, 300), "layout: the page takes the rest of the row");
+}
+
+static void test_layout_survives_abuse(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; }");
+
+    /* An unbalanced tree is a caller bug. It must be reported, and it must not
+       be a crash or a corrupted tree. */
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".a");
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_unbalanced(g_ui), "layout: a missing ar_end is reported");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_unbalanced(g_ui), "layout: a surplus ar_end is reported");
+
+    /* An empty frame draws nothing and reports nothing wrong. */
+    ar__ui_begin();
+    ar_frame_end(g_ui, &s);
+    CHECK(!ar_unbalanced(g_ui), "layout: an empty frame is not an error");
+
+    /* A tree far deeper than the stack must stop rather than run off it. */
+    ar__ui_begin();
+    {
+        ar_i32 i;
+        for (i = 0; i < AR_MAX_DEPTH + 50; ++i)
+        {
+            ar_begin(g_ui, ".a");
+        }
+        for (i = 0; i < AR_MAX_DEPTH + 50; ++i)
+        {
+            ar_end(g_ui);
+        }
+    }
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_unbalanced(g_ui), "layout: exceeding the depth limit is reported, not scribbled");
+}
+
+static void test_layout_is_stable_across_frames(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_rect    first, second;
+
+    ar__ui_reset("#root { display:flex; gap:4px; padding:7px; }"
+                 ".a { width:grow; height:33px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    first = ar__box(1);
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_begin(g_ui, ".a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    second = ar__box(1);
+
+    /* The tree is thrown away and rebuilt every frame. If anything survived
+       that should not have, the same declarations would drift. */
+    CHECK(first.x == second.x && first.y == second.y && first.w == second.w && first.h == second.h,
+          "layout: rebuilding the same tree gives the same rectangles");
+
+    /* And the frame arena is genuinely released, not merely rewound past. */
+    CHECK(ar_arena_frame_used(&g_ui->arena) == ar_arena_frame_peak(&g_ui->arena),
+          "layout: a frame uses exactly the arena it used last time");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -1065,6 +1514,20 @@ int main(void)
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
+
+    test_layout_row_with_gap_and_padding();
+    test_layout_column();
+    test_layout_grow_splits_the_remainder();
+    test_layout_grow_alongside_fixed();
+    test_layout_percent();
+    test_layout_auto_sizes_to_content();
+    test_layout_justify_content();
+    test_layout_align_items();
+    test_layout_min_and_max();
+    test_layout_display_none();
+    test_layout_nesting();
+    test_layout_survives_abuse();
+    test_layout_is_stable_across_frames();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

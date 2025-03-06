@@ -19,23 +19,6 @@ extern "C" {
 
 typedef struct ar_win ar_win;
 
-/* Mouse button bits, as they appear in ar_input. */
-#define AR_MOUSE_LEFT   0x01u
-#define AR_MOUSE_RIGHT  0x02u
-#define AR_MOUSE_MIDDLE 0x04u
-
-/* A snapshot of the input state for one frame. Edges are cleared by the next
-   ar_win_pump, so a caller that draws once per pump sees each click once. */
-typedef struct ar_input
-{
-    ar_i32 mouse_x, mouse_y;
-    ar_u32 mouse_down;     /* held right now              */
-    ar_u32 mouse_pressed;  /* went down since last pump   */
-    ar_u32 mouse_released; /* came up since last pump     */
-    ar_i32 wheel;          /* notches, positive is away from the user */
-    int    mouse_inside;   /* cursor is over the client area */
-} ar_input;
-
 /* Opens a window and its back buffer. Returns NULL on failure.
    ponytail: one window per process. Multiple windows need the context to own
    the list rather than a file static; add it when something needs a second. */
