@@ -53,7 +53,11 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_DIRECTION] = AR_UNIT_KEYWORD;
     s->v[AR_P_JUSTIFY] = AR_JUSTIFY_START;
     s->unit[AR_P_JUSTIFY] = AR_UNIT_KEYWORD;
-    s->v[AR_P_ALIGN] = AR_ALIGN_START;
+    /* Stretch, as CSS does. The whole pitch is that this is real CSS, so a
+       private default that happens to be friendlier would cost more in
+       surprise than it saves in typing. It only affects boxes that state no
+       size of their own, which is what makes it safe as a default. */
+    s->v[AR_P_ALIGN] = AR_ALIGN_STRETCH;
     s->unit[AR_P_ALIGN] = AR_UNIT_KEYWORD;
     s->v[AR_P_OVERFLOW] = AR_OVERFLOW_VISIBLE;
     s->unit[AR_P_OVERFLOW] = AR_UNIT_KEYWORD;

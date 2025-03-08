@@ -2,16 +2,12 @@
  * areole example 01 - hello
  * SPDX-License-Identifier: MIT
  *
- * The smallest thing that proves the stack works end to end: a window whose
- * back buffer is GDI memory, a software rasterizer writing into it, hover and
- * click arriving from the message queue, and one blit to the screen.
+ * The whole library in one screen: a stylesheet parsed once at startup, a box
+ * tree declared fresh every frame, and no coordinates anywhere in this file.
  *
- * There is no layout engine yet, so every rectangle here is positioned by
- * hand. Removing that arithmetic is the entire point of the next milestone.
- *
- * The status line at the bottom is drawn by the library itself, and splits
- * raster from present because that is the split that matters: on the hardware
- * areole targets, the blit is routinely the slower half.
+ * Worth comparing against what it replaced. The first version of this example
+ * positioned every rectangle by hand and had a nav_rect() and a card_rect()
+ * doing arithmetic on constants. All of that is now a few lines of CSS.
  */
 #include "areole.h"
 #include "areole_win32.h"
@@ -21,27 +17,47 @@
 #define WIN_W 1024
 #define WIN_H 640
 
-#define RAIL_W    220
-#define NAV_H     38
-#define NAV_PAD   12
-#define CARD_W    212
-#define CARD_H    132
-#define CARD_GAP  16
-#define CARD_COLS 3
-#define STATUS_H  26
+/* Enough for a few hundred boxes. The block is static, so this process makes
+   exactly one allocation and the operating system did it before main ran. */
+static unsigned char g_memory[AR_MEM(512)];
 
-#define COL_BG        AR_HEX(0xFEFBF2)
-#define COL_RAIL      AR_HEX(0xFAF6ED)
-#define COL_NAV_HOVER AR_HEX(0xF0E9DB)
-#define COL_NAV_SEL   AR_HEX(0xE6DCC8)
-#define COL_CARD      AR_HEX(0xF8F3E9)
-#define COL_BORDER    AR_HEX(0xE8DFCC)
-#define COL_ACCENT    AR_HEX(0xC2703D)
-#define COL_INK       AR_HEX(0x2B2B2B)
-#define COL_MUTED     AR_HEX(0x8A8175)
-#define COL_OK        AR_HEX(0x4F7A4A)
+/* Split into three, because C90 only guarantees 509 characters in a string
+   literal and adjacent literals count as one. ar_stylesheet appends, so
+   splitting a sheet costs nothing but a second call. */
+static const char *SHEET_APP =
+    "#app     { display:flex; flex-direction:row; background:#fefbf2; }"
+    ".rail    { width:220px; display:flex; flex-direction:column; padding:16px;"
+    "           gap:2px; background:#faf6ed; }"
+    ".brand   { font-size:24px; color:#2b2b2b; }"
+    ".tagline { font-size:8px; color:#8a8175; padding-bottom:20px; }";
+
+static const char *SHEET_NAV =
+    ".nav     { padding:9px 12px; font-size:16px; color:#8a8175; }"
+    ".nav:hover  { background:#f0e9db; color:#2b2b2b; }"
+    ".nav:active { background:#e6dcc8; }"
+    ".nav-on  { padding:9px 12px; font-size:16px; color:#2b2b2b; background:#e6dcc8; }"
+    ".page    { width:grow; display:flex; flex-direction:column;"
+    "           padding:28px; gap:4px; }"
+    ".h1      { font-size:32px; color:#2b2b2b; }"
+    ".sub     { font-size:8px; color:#8a8175; padding-bottom:18px; }";
+
+static const char *SHEET_CARD =
+    ".row     { display:flex; flex-direction:row; gap:16px; padding-bottom:16px;"
+    "           align-items:flex-start; }"
+    ".card    { width:grow; display:flex; flex-direction:column;"
+    "           background:#f8f3e9; border:1px solid #e8dfcc; }"
+    ".card:hover { background:#f2ebdd; }"
+    ".accent  { height:4px; background:#c2703d; }";
+
+static const char *SHEET_TEXT =
+    ".body    { display:flex; flex-direction:column; padding:14px; gap:8px; }"
+    ".name    { font-size:16px; color:#2b2b2b; }"
+    ".price   { font-size:16px; color:#c2703d; }"
+    ".in      { font-size:8px; color:#4f7a4a; }"
+    ".out     { font-size:8px; color:#8a8175; }";
 
 #define NAV_COUNT  5
+#define CARD_COLS  3
 #define CARD_COUNT 6
 
 static const char *NAV[NAV_COUNT] = {"Home", "Products", "Customers", "Orders", "Settings"};
@@ -57,44 +73,44 @@ static const struct flower CARDS[CARD_COUNT] = {{"Tulip", "$4.20", 1}, {"Rose", 
                                                 {"Peony", "$9.50", 0}, {"Lily", "$5.75", 1},
                                                 {"Iris", "$3.90", 1},  {"Dahlia", "$7.25", 0}};
 
-static void draw_border(ar_surface *s, ar_rect clip, ar_rect r, ar_color c)
+static void card(ar_ctx *ui, const struct flower *f)
 {
-    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, 1), clip, c);
-    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - 1, r.w, 1), clip, c);
-    ar_fill_rect(s, ar_rect_make(r.x, r.y, 1, r.h), clip, c);
-    ar_fill_rect(s, ar_rect_make(r.x + r.w - 1, r.y, 1, r.h), clip, c);
-}
-
-/* Vertically centres a line of text inside a rectangle. */
-static void draw_label(ar_surface *s, ar_rect clip, ar_rect box, ar_i32 pad, const char *text,
-                       ar_i32 scale, ar_color c)
-{
-    ar_draw_text(s, clip, box.x + pad, box.y + (box.h - ar_text_height(scale)) / 2, text, scale, c);
-}
-
-static ar_rect nav_rect(ar_i32 i)
-{
-    return ar_rect_make(NAV_PAD, 78 + i * (NAV_H + 4), RAIL_W - NAV_PAD * 2, NAV_H);
-}
-
-static ar_rect card_rect(ar_i32 i)
-{
-    ar_i32 col = i % CARD_COLS;
-    ar_i32 row = i / CARD_COLS;
-    return ar_rect_make(RAIL_W + 28 + col * (CARD_W + CARD_GAP), 116 + row * (CARD_H + CARD_GAP),
-                        CARD_W, CARD_H);
+    ar_begin(ui, "div.card");
+    ar_begin(ui, "div.accent");
+    ar_end(ui);
+    ar_begin(ui, "div.body");
+    ar_text(ui, "div.name", f->name);
+    ar_text(ui, "div.price", f->price);
+    ar_text(ui, f->in_stock ? "div.in" : "div.out", f->in_stock ? "In stock" : "Out of stock");
+    ar_end(ui);
+    ar_end(ui);
 }
 
 int main(void)
 {
-    ar_win         *win;
-    ar_surface     *s;
-    const ar_input *in;
-    ar_rect         clip;
-    ar_i32          selected = 1;
-    ar_i32          i;
-    char            status[192];
-    ar_perf         perf;
+    ar_ctx     *ui;
+    ar_win     *win;
+    ar_surface *s;
+    ar_i32      selected = 1;
+    ar_i32      i, row;
+    char        status[160];
+
+    ui = ar_init(g_memory, (ar_u32)sizeof g_memory);
+    if (!ui)
+    {
+        printf("not enough memory for a context\n");
+        return 1;
+    }
+
+    ar_stylesheet(ui, SHEET_APP);
+    ar_stylesheet(ui, SHEET_NAV);
+    ar_stylesheet(ui, SHEET_CARD);
+    ar_stylesheet(ui, SHEET_TEXT);
+    if (ar_stylesheet_errors(ui))
+    {
+        printf("stylesheet has %lu problem(s)\n", (unsigned long)ar_stylesheet_errors(ui));
+        return 1;
+    }
 
     win = ar_win_open("areole - hello", WIN_W, WIN_H);
     if (!win)
@@ -103,111 +119,71 @@ int main(void)
         return 1;
     }
 
-    printf("areole %s, clock: %s\n", ar_version(), ar_time_source());
+    /* The core has no clock of its own. Lending it one is what makes the phase
+       breakdown in the overlay real rather than decorative. */
+    ar_set_clock(ui, ar_time_us);
 
-    ar_perf_reset(&perf);
+    printf("areole %s, clock: %s\n", ar_version(), ar_time_source());
 
     while (ar_win_pump(win))
     {
         s = ar_win_surface(win);
-        in = ar_win_input(win);
-        clip = ar_rect_make(0, 0, s->w, s->h);
 
-        /* Hit testing before drawing, so a click lands on what the user saw
-           rather than on what is about to be drawn. */
+        ar_frame_begin(ui, ar_win_input(win));
+
+        ar_begin(ui, "div#app");
+
+        ar_begin(ui, "div.rail");
+        ar_text(ui, "div.brand", "areole");
+        ar_text(ui, "div.tagline", "no graphics API");
         for (i = 0; i < NAV_COUNT; ++i)
         {
-            if ((in->mouse_pressed & AR_MOUSE_LEFT) &&
-                ar_rect_contains(nav_rect(i), in->mouse_x, in->mouse_y))
+            if (ar_button(ui, i == selected ? "div.nav-on" : "div.nav", NAV[i]))
             {
                 selected = i;
             }
         }
+        ar_end(ui);
 
-        ar_perf_begin(&perf, ar_time_us());
+        ar_begin(ui, "div.page");
+        ar_text(ui, "div.h1", NAV[selected]);
+        ar_text(ui, "div.sub", "Laid out from a stylesheet. Not one coordinate in the C file.");
 
-        ar_surface_clear(s, COL_BG);
-
-        /* rail */
-        ar_fill_rect(s, ar_rect_make(0, 0, RAIL_W, s->h), clip, COL_RAIL);
-        ar_fill_rect(s, ar_rect_make(RAIL_W - 1, 0, 1, s->h), clip, COL_BORDER);
-        ar_draw_text(s, clip, NAV_PAD + 4, 28, "areole", 3, COL_INK);
-        ar_draw_text(s, clip, NAV_PAD + 4, 56, "no graphics API", 1, COL_MUTED);
-
-        for (i = 0; i < NAV_COUNT; ++i)
+        /* ponytail: two explicit rows rather than flex-wrap, which does not
+           exist yet. It is the next real gap in the layout engine. */
+        for (row = 0; row < CARD_COUNT / CARD_COLS; ++row)
         {
-            ar_rect r = nav_rect(i);
-            int     hot = in->mouse_inside && ar_rect_contains(r, in->mouse_x, in->mouse_y);
-            int     held = hot && (in->mouse_down & AR_MOUSE_LEFT);
-
-            if (i == selected)
+            ar_begin(ui, "div.row");
+            for (i = 0; i < CARD_COLS; ++i)
             {
-                ar_fill_rect(s, r, clip, COL_NAV_SEL);
-                ar_fill_rect(s, ar_rect_make(r.x, r.y, 3, r.h), clip, COL_ACCENT);
+                card(ui, &CARDS[row * CARD_COLS + i]);
             }
-            else if (held)
-            {
-                ar_fill_rect(s, r, clip, COL_NAV_SEL);
-            }
-            else if (hot)
-            {
-                ar_fill_rect(s, r, clip, COL_NAV_HOVER);
-            }
-
-            draw_label(s, clip, r, 14, NAV[i], 2, i == selected ? COL_INK : COL_MUTED);
+            ar_end(ui);
         }
+        ar_end(ui);
 
-        /* page header */
-        ar_draw_text(s, clip, RAIL_W + 28, 34, NAV[selected], 4, COL_INK);
-        ar_draw_text(s, clip, RAIL_W + 28, 76,
-                     "Six items. Every pixel below was written by the CPU.", 1, COL_MUTED);
+        ar_end(ui);
 
-        /* cards */
-        for (i = 0; i < CARD_COUNT; ++i)
+        ar_frame_end(ui, s);
+
+        /* Drawn over the tree rather than inside it, because it reports on the
+           frame that has just been laid out. */
+        ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
+
+        sprintf(status, "areole %s   %ld boxes   %ldx%ld   %s", ar_version(),
+                (long)ar_perf_of(ui)->cur.nodes, (long)s->w, (long)s->h, ar_time_source());
+        ar_draw_text(s, ar_rect_make(0, 0, s->w, s->h), 12, s->h - 18, status, 1, AR_HEX(0x8A8175));
+
+        ar_win_present(win, ar_rect_make(0, 0, s->w, s->h));
+        ar_frame_presented(ui);
+
+        /* Hover is resolved from the previous frame and this pump blocks when
+           nothing is happening, so the frame that discovers a new box under
+           the cursor has to ask for one more in order to show it. */
+        if (ar_needs_redraw(ui))
         {
-            ar_rect r = card_rect(i);
-            int     hot = in->mouse_inside && ar_rect_contains(r, in->mouse_x, in->mouse_y);
-
-            ar_fill_rect(s, r, clip, COL_CARD);
-            draw_border(s, clip, r, COL_BORDER);
-            ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, 4), clip, COL_ACCENT);
-
-            ar_draw_text(s, clip, r.x + 14, r.y + 24, CARDS[i].name, 2, COL_INK);
-            ar_draw_text(s, clip, r.x + 14, r.y + 50, CARDS[i].price, 2, COL_ACCENT);
-            ar_draw_text(s, clip, r.x + 14, r.y + CARD_H - 26,
-                         CARDS[i].in_stock ? "In stock" : "Out of stock", 1,
-                         CARDS[i].in_stock ? COL_OK : COL_MUTED);
-
-            /* A translucent wash on hover, which exercises the blend path
-               rather than the opaque one. If the two disagreed, this is where
-               it would show, as a card that jumps in brightness. */
-            if (hot)
-            {
-                ar_fill_rect(s, r, clip, AR_RGBA(0xC2, 0x70, 0x3D, 0x18));
-            }
+            ar_win_wake(win);
         }
-
-        /* The overlay reports the previous frames, because timing the frame
-           that draws the timings is not a measurement of anything. Style and
-           layout read zero until the next milestone gives them work to do,
-           which is the honest way to show what is not built yet. */
-        ar_perf_overlay(&perf, s, clip, s->w - 300, 16, 1);
-
-        {
-            ar_rect bar = ar_rect_make(0, s->h - STATUS_H, s->w, STATUS_H);
-            ar_fill_rect(s, bar, clip, COL_RAIL);
-            ar_fill_rect(s, ar_rect_make(0, bar.y, s->w, 1), clip, COL_BORDER);
-
-            sprintf(status, "areole %s   %ldx%ld   clock %s   idle CPU is zero: the pump blocks",
-                    ar_version(), (long)s->w, (long)s->h, ar_time_source());
-            draw_label(s, clip, bar, 12, status, 1, COL_MUTED);
-        }
-
-        ar_perf_mark(&perf, AR_PHASE_RASTER, ar_time_us());
-
-        ar_win_present(win, clip);
-        ar_perf_mark(&perf, AR_PHASE_PRESENT, ar_time_us());
-        ar_perf_end(&perf, ar_time_us());
     }
 
     ar_win_close(win);
