@@ -87,6 +87,7 @@ static void ar__ink(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, ar_i32 scal
     }
 
     row = s->pixels + (ar_i32)d.y * s->stride + d.x;
+    AR_COUNT(glyph_px, d.w * d.h);
     if (alpha == 0xFFu)
     {
         for (iy = 0; iy < d.h; ++iy)
@@ -140,6 +141,7 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
 
     pen_x = x;
     pen_y = y;
+    AR_COUNT(text_calls, 1);
 
     for (p = (const unsigned char *)text; *p; ++p)
     {
@@ -166,6 +168,7 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
         if (pen_x + advance > bounds.x && pen_x < bounds.x + bounds.w &&
             pen_y + AR_FONT_H * scale > bounds.y && pen_y < bounds.y + bounds.h)
         {
+            AR_COUNT(glyphs, 1);
             for (row = 0; row < AR_FONT_H; ++row)
             {
                 ar_u32 bits = ar__font_rows[g][row];

@@ -64,3 +64,51 @@ if(WIN32)
     target_link_libraries(example_hello PRIVATE areole_win32)
     areole_set_warnings(example_hello)
 endif()
+
+# --- benchmark ----------------------------------------------------------------
+# A second build of the core with counters compiled in. The shipping library
+# carries no counter in any inner loop, and this is how both claims stay true
+# at once: the benchmark measures an instrumented build and publishes the
+# overhead rather than assuming it away.
+add_library(areole_instrumented STATIC ${AREOLE_CORE_SOURCES})
+target_include_directories(areole_instrumented PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_definitions(areole_instrumented PUBLIC AR_INSTRUMENT)
+areole_set_warnings(areole_instrumented)
+
+file(GLOB AREOLE_BENCH_SCENES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/bench/scenes/*.c")
+
+add_executable(ar_bench
+    bench/ar_bench.c
+    bench/bench_util.c
+    bench/bench_time.c
+    ${AREOLE_BENCH_SCENES})
+target_include_directories(ar_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+target_link_libraries(ar_bench PRIVATE areole_instrumented)
+areole_set_warnings(ar_bench)
+if(WIN32)
+    target_link_libraries(ar_bench PRIVATE winmm)
+endif()
+# bench_time.c is the one file here that includes a platform header, for the
+# same reason the library has that rule.
+set_source_files_properties(bench/bench_time.c PROPERTIES COMPILE_FLAGS "")
+set_target_properties(ar_bench PROPERTIES C_EXTENSIONS ON)
+
+add_executable(ar_hwprobe bench/ar_hwprobe.c bench/bench_util.c bench/bench_time.c)
+target_include_directories(ar_hwprobe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+target_link_libraries(ar_hwprobe PRIVATE areole)
+areole_set_warnings(ar_hwprobe)
+if(WIN32)
+    target_link_libraries(ar_hwprobe PRIVATE winmm)
+endif()
+set_target_properties(ar_hwprobe PROPERTIES C_EXTENSIONS ON)
+
+add_executable(ar_bench_selftest bench/bench_selftest.c bench/bench_util.c bench/bench_time.c)
+target_include_directories(ar_bench_selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+target_link_libraries(ar_bench_selftest PRIVATE areole_instrumented)
+areole_set_warnings(ar_bench_selftest)
+if(WIN32)
+    target_link_libraries(ar_bench_selftest PRIVATE winmm)
+endif()
+set_target_properties(ar_bench_selftest PROPERTIES C_EXTENSIONS ON)
+
+add_test(NAME ar_bench_selftest COMMAND ar_bench_selftest)
