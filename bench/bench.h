@@ -114,6 +114,17 @@ int   bench_guard_intact(void *p, size_t bytes);
 void  bench_guarded_free(void *p);
 
 /* ------------------------------------------------------------------------
+ * Reading the tool's own JSON
+ *
+ * A scanner, not a parser, and it says so in bench_json.c. It reads exactly
+ * the shape this tool writes and nothing else.
+ * ------------------------------------------------------------------------ */
+char       *bench_read_file(const char *path, long *len_out);
+const char *bench_json_object_named(const char *text, const char *name);
+int         bench_json_number(const char *obj, const char *key, double *out);
+int         bench_json_string(const char *obj, const char *key, char *buf, size_t n);
+
+/* ------------------------------------------------------------------------
  * Shared scene helpers
  * ------------------------------------------------------------------------ */
 
