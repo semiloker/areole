@@ -77,7 +77,6 @@ typedef struct bench_result
 } bench_result;
 
 static double g_samples[BENCH_MAX_SAMPLES];
-static double g_one[BENCH_MAX_SAMPLES];
 
 static void die(const char *msg)
 {
@@ -86,7 +85,7 @@ static void die(const char *msg)
 }
 
 /* ------------------------------------------------------------------------ */
-static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats, bench_result *out)
+static void run_scene(const bench_scene *sc, int iters, int warmup, bench_result *out)
 {
     bench_env      e;
     unsigned char *ui_mem = 0;
@@ -94,14 +93,12 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats,
     ar_i32         w = sc->want_w ? sc->want_w : DEFAULT_W;
     ar_i32         h = sc->want_h ? sc->want_h : DEFAULT_H;
     ar_u32         persist_before = 0, persist_after = 0;
-    double         rep_p50[MAX_REPEATS];
     double         t0, t1, sum = 0.0;
-    int            i, rep, total;
+    int            i, total;
 
     memset(out, 0, sizeof *out);
     out->scene = sc;
     out->iters = iters;
-    out->repeats = repeats;
 
     /* Sized for this scene rather than for the typical one. clear_uncached
        asks for 4096 by 4096, which is 64 MB. */
@@ -157,27 +154,14 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats,
         ar_memory_stats(e.ui, &persist_before, 0, 0, 0);
     }
 
-    /* Each repeat is a complete timed run, with a pause between them so a
-       scene that has just written gigabytes is not measured while the memory
-       subsystem recovers. */
-    for (rep = 0; rep < repeats; ++rep)
+    for (i = 0; i < iters; ++i)
     {
-        if (rep > 0)
-        {
-            bench_sleep_ms(20);
-        }
-        for (i = 0; i < iters; ++i)
-        {
-            e.frame = (ar_u32)(warmup + rep * iters + i);
-            t0 = bench_now_s();
-            sc->frame(&e);
-            t1 = bench_now_s();
-            g_samples[rep * iters + i] = t1 - t0;
-            sum += g_samples[rep * iters + i];
-        }
-        memcpy(g_one, &g_samples[rep * iters], (size_t)iters * sizeof(double));
-        bench_sort(g_one, iters);
-        rep_p50[rep] = bench_percentile(g_one, iters, 50.0);
+        e.frame = (ar_u32)(warmup + i);
+        t0 = bench_now_s();
+        sc->frame(&e);
+        t1 = bench_now_s();
+        g_samples[i] = t1 - t0;
+        sum += g_samples[i];
     }
 
     if (e.ui)
@@ -197,7 +181,7 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats,
         out->alloc_violation = (persist_before != persist_after);
     }
 
-    total = iters * repeats;
+    total = iters;
 
     {
         ar_counters *c = ar_counters_get();
@@ -220,13 +204,6 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats,
     out->p999 = bench_percentile(g_samples, total, 99.9);
 
     {
-        double mid;
-        bench_sort(rep_p50, repeats);
-        mid = bench_percentile(rep_p50, repeats, 50.0);
-        out->stability_pct = mid > 0.0 ? (rep_p50[repeats - 1] - rep_p50[0]) * 100.0 / mid : 0.0;
-    }
-
-    {
         /* Rectangle pixels and glyph pixels are deliberately not summed. A
            glyph costs per bit tested, not per pixel written -- the baseline
            proved it by drawing four times the pixels at scale 2 for the same
@@ -247,6 +224,195 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, int repeats,
     if (ui_mem)
     {
         free(ui_mem);
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Regression gate
+ *
+ * The threshold is not a global constant, and that is the point.
+ *
+ * A three per cent gate only means something if the machine agrees with
+ * itself to better than three per cent, and on the reference laptop most
+ * scenes do not: boost clocks and thermal state move between runs. Measured
+ * spreads across the scene library range from 0.1% to 44%. A flat gate would
+ * either fail constantly or have to be raised until it caught nothing real.
+ *
+ * So each scene carries its own measured spread into the baseline, and its
+ * gate is twice that, floored at three per cent. A stable scene is held to a
+ * tight bound; an inherently noisy one is held to a loose one and says so,
+ * rather than being quietly excluded or quietly trusted.
+ * ------------------------------------------------------------------------ */
+/* Calibrated against the reference laptop by the only method that works:
+   running the gate against unchanged code until it stopped firing, and asking
+   why each failure happened rather than simply widening the bound.
+
+   Two terms, because the noise has two sources.
+
+   The relative term is twice the scene's own measured spread. That covers
+   variance proportional to the work: cache state, boost clock, thermal.
+
+   The absolute term covers variance that does not scale with the work at all:
+   scheduler slices, interrupts, page faults. Eight microseconds of it swamps a
+   55 microsecond scene and is invisible in a four millisecond one, which is
+   exactly why deep_60 kept failing at eleven per cent while flat_8k passed. A
+   purely proportional threshold cannot express that.
+
+   These constants belong to this machine. A dedicated, quiet CI runner should
+   measure its own and tighten them, and the right long-term answer is a
+   quieter machine rather than a looser bound. */
+#define GATE_FLOOR_PCT    4.0
+#define GATE_ABS_NOISE_US 8.0
+
+static double gate_threshold(double baseline_spread_pct, double baseline_p50_us)
+{
+    double relative = baseline_spread_pct * 2.0;
+    double absolute = baseline_p50_us > 0.0 ? GATE_ABS_NOISE_US * 100.0 / baseline_p50_us : 0.0;
+
+    if (relative < GATE_FLOOR_PCT)
+    {
+        relative = GATE_FLOOR_PCT;
+    }
+    return relative + absolute;
+}
+
+static int compare_against(const char *path, const bench_result *rs, int n)
+{
+    char *text = bench_read_file(path, 0);
+    int   failures = 0;
+    int   missing = 0;
+    int   mismatched = 0;
+    int   i;
+
+    if (!text)
+    {
+        fprintf(stderr, "ar_bench: cannot read baseline %s\n", path);
+        return 2;
+    }
+
+    printf("\n");
+    printf("%-20s %10s %10s %8s %8s  %s\n", "scene", "baseline", "now", "delta", "gate", "verdict");
+    printf("%-20s %10s %10s %8s %8s  %s\n", "--------------------", "----------", "----------",
+           "--------", "--------", "-------");
+
+    for (i = 0; i < n; ++i)
+    {
+        const char *obj = bench_json_object_named(text, rs[i].scene->name);
+        double      base_p50 = 0.0, base_spread = 0.0;
+        double      now_p50 = rs[i].p50 * 1e6;
+        double      delta, thresh;
+
+        if (!obj || !bench_json_number(obj, "p50_us", &base_p50))
+        {
+            printf("%-20s %10s %10.1f %8s %8s  new\n", rs[i].scene->name, "-", now_p50, "-", "-");
+            missing++;
+            continue;
+        }
+        if (!bench_json_number(obj, "stability_pct", &base_spread))
+        {
+            base_spread = 0.0;
+        }
+
+        /* Comparing a run against a baseline taken with different parameters
+           is not a comparison. Fewer iterations means less warm state and more
+           variance, and the difference shows up as a regression that is really
+           a change of method. This was found by doing exactly that: a 60
+           iteration run against a 200 iteration baseline reported three
+           regressions in code that had not changed. */
+        {
+            double base_iters = 0.0, base_repeats = 0.0;
+            bench_json_number(obj, "iters", &base_iters);
+            bench_json_number(obj, "repeats", &base_repeats);
+            if ((int)base_iters != rs[i].iters || (int)base_repeats != rs[i].repeats)
+            {
+                printf("%-20s %10.1f %10.1f %8s %8s  mismatched run: baseline %dx%d, now %dx%d\n",
+                       rs[i].scene->name, base_p50, now_p50, "-", "-", (int)base_iters,
+                       (int)base_repeats, rs[i].iters, rs[i].repeats);
+                mismatched++;
+                continue;
+            }
+        }
+
+        delta = base_p50 > 0.0 ? (now_p50 - base_p50) * 100.0 / base_p50 : 0.0;
+        thresh = gate_threshold(base_spread, base_p50);
+
+        printf("%-20s %10.1f %10.1f %7.1f%% %7.1f%%  %s\n", rs[i].scene->name, base_p50, now_p50,
+               delta, thresh, delta > thresh ? "REGRESSED" : "ok");
+        if (delta > thresh)
+        {
+            failures++;
+        }
+    }
+
+    printf("\n");
+    if (missing)
+    {
+        printf("%d scene(s) absent from the baseline; reported, not gated\n", missing);
+    }
+    if (mismatched)
+    {
+        printf("%d scene(s) run with different parameters than the baseline.\n", mismatched);
+        printf("  Rerun with the same --iters and --repeat, or the comparison is\n");
+        printf("  measuring the method rather than the code.\n");
+        failures++;
+    }
+    if (failures)
+    {
+        printf("%d scene(s) regressed beyond their own measured noise\n", failures);
+    }
+    else
+    {
+        printf("no scene regressed beyond its own measured noise\n");
+    }
+
+    free(text);
+    return failures ? 1 : 0;
+}
+
+/* Whether this machine can support a regression gate at all.
+ *
+ * Acceptance criterion three of 0.1.1 says a benchmark noisier than the
+ * gate cannot enforce the gate. That is a property of the machine, not of
+ * the code, and the only useful thing to do about it is measure it and say
+ * so. A tool that quietly gates on a machine with thirty per cent variance
+ * produces failures nobody can act on, and people learn to ignore it.
+ */
+static void print_machine_verdict(const bench_result *rs, int n)
+{
+    double v[BENCH_MAX_SCENES];
+    double median, worst = 0.0;
+    int    usable = 0;
+    int    i;
+
+    for (i = 0; i < n; ++i)
+    {
+        v[i] = rs[i].stability_pct;
+        if (v[i] > worst)
+        {
+            worst = v[i];
+        }
+        if (v[i] <= GATE_FLOOR_PCT)
+        {
+            usable++;
+        }
+    }
+    bench_sort(v, n);
+    median = bench_percentile(v, n, 50.0);
+
+    printf("\nmachine: median spread %.1f%%, worst %.1f%%, %d of %d scenes within %.0f%%\n", median,
+           worst, usable, n, GATE_FLOOR_PCT);
+
+    if (median > GATE_FLOOR_PCT * 2.0)
+    {
+        printf("This machine cannot support a tight regression gate. The thresholds\n");
+        printf("derived from these spreads will only catch gross changes, which is\n");
+        printf("honest but weak. A quiet, unshared machine with boost disabled is\n");
+        printf("what a real gate needs; nothing in the tool can substitute for it.\n");
+    }
+    else
+    {
+        printf("This machine can support a gate at roughly %.0f%% on most scenes.\n",
+               GATE_FLOOR_PCT * 2.0);
     }
 }
 
@@ -392,10 +558,13 @@ static void usage(void)
     printf("  --scene NAME       run one scene\n");
     printf("  --group NAME       run one group\n");
     printf("  --iters N          timed frames per repeat (default 200)\n");
-    printf("  --repeat N         complete timed runs per scene (default 3)\n");
+    printf("  --repeat N         epochs: complete passes over the scene list\n");
     printf("  --warmup N         untimed frames before timing (default 30)\n");
-    printf("  --json             emit JSON instead of a table\n\n");
-    printf("The spread column is the disagreement between the repeats at p50.\n");
+    printf("  --json             emit JSON instead of a table\n");
+    printf("  --compare FILE     report every scene against a baseline JSON\n");
+    printf("  --gate             exit non-zero if any scene regressed\n\n");
+    printf("The spread column is the disagreement between epochs at p50, which is\n");
+    printf("the variance a second invocation of this tool would actually see.\n");
     printf("Anything above %.0f%% cannot support the regression gate and is\n",
            STABILITY_LIMIT_PCT);
     printf("flagged rather than quietly published.\n\n");
@@ -409,8 +578,10 @@ int main(int argc, char **argv)
     const char         *want_scene = 0;
     const char         *want_group = 0;
     int                 iters = 200, warmup = 30, repeats = 3;
-    int                 as_json = 0, list = 0, all = 0;
-    int                 i, n = 0;
+    int                 as_json = 0, list = 0, all = 0, gate = 0;
+    const char         *compare_path = 0;
+    int                 i, n = 0, ep;
+    static bench_result epochs[BENCH_MAX_SCENES][MAX_REPEATS];
 
     bench_clock_init();
 
@@ -455,6 +626,14 @@ int main(int argc, char **argv)
         {
             warmup = atoi(argv[++i]);
         }
+        else if (strcmp(argv[i], "--compare") == 0 && i + 1 < argc)
+        {
+            compare_path = argv[++i];
+        }
+        else if (strcmp(argv[i], "--gate") == 0)
+        {
+            gate = 1;
+        }
         else
         {
             usage();
@@ -474,9 +653,9 @@ int main(int argc, char **argv)
     {
         repeats = MAX_REPEATS;
     }
-    if (iters * repeats > BENCH_MAX_SAMPLES)
+    if (iters > BENCH_MAX_SAMPLES)
     {
-        iters = BENCH_MAX_SAMPLES / repeats;
+        iters = BENCH_MAX_SAMPLES;
     }
     if (warmup < 0)
     {
@@ -503,38 +682,101 @@ int main(int argc, char **argv)
     {
         printf("areole %s   clock %s   instrumented %s\n", ar_version(), bench_clock_name(),
                ar_counters_enabled() ? "yes" : "NO (rates unavailable)");
-        printf("%d iterations x %d repeats per scene\n\n", iters, repeats);
+        printf("%d iterations per scene, %d epochs over the whole list\n\n", iters, repeats);
         print_header();
     }
 
-    for (i = 0; i < bench_scene_count(); ++i)
+    /* Epochs, not back-to-back repeats.
+     *
+     * The first version repeated each scene several times in a row and called
+     * the spread between those repeats its stability. That number was far too
+     * small: twenty milliseconds apart, with the cache warm and the clock
+     * boosted, a scene agrees with itself far more closely than it agrees with
+     * the same scene run a minute later. A gate built on it fired on code that
+     * had not changed, twice.
+     *
+     * An epoch is a complete pass over every selected scene. Each scene is
+     * therefore measured again only after the whole rest of the list has run,
+     * which approximates two separate invocations, and the spread across
+     * epochs is the variance a gate actually has to tolerate.
+     */
+    for (ep = 0; ep < repeats; ++ep)
     {
-        const bench_scene *sc = bench_scene_at(i);
+        int slot = 0;
 
-        if (want_scene && strcmp(sc->name, want_scene) != 0)
+        if (ep > 0)
         {
-            continue;
-        }
-        if (want_group && strcmp(sc->group, want_group) != 0)
-        {
-            continue;
+            bench_sleep_ms(500);
         }
 
-        /* Settle before each scene. clear_uncached writes 64 MB a frame, and
-           whatever follows it would otherwise measure the memory subsystem
-           recovering. That produced a sixfold outlier in the first full run of
-           this tool, which is how the pause got here. */
-        if (n > 0)
+        for (i = 0; i < bench_scene_count(); ++i)
         {
-            bench_sleep_ms(400);
+            const bench_scene *sc = bench_scene_at(i);
+
+            if (want_scene && strcmp(sc->name, want_scene) != 0)
+            {
+                continue;
+            }
+            if (want_group && strcmp(sc->group, want_group) != 0)
+            {
+                continue;
+            }
+
+            /* Settle between scenes as well. clear_uncached writes 64 MB a
+               frame, and whatever follows it would otherwise measure the
+               memory subsystem recovering: that produced a sixfold outlier in
+               the first full run of this tool. */
+            if (slot > 0 || ep > 0)
+            {
+                bench_sleep_ms(200);
+            }
+
+            run_scene(sc, iters, warmup, &epochs[slot][ep]);
+            slot++;
+        }
+        if (ep == 0)
+        {
+            n = slot;
+        }
+    }
+
+    /* One whole epoch is chosen, not a blend of them.
+     *
+     * Taking p50 from one epoch and p95 from another produced a row where p95
+     * was lower than p50, which is not a distribution. The median epoch by p50
+     * is selected and every figure comes from it, so the row describes one
+     * coherent measurement. The spread across the discarded epochs is what
+     * becomes stability, which is the only thing they are needed for. */
+    for (i = 0; i < n; ++i)
+    {
+        double v[MAX_REPEATS];
+        double mid;
+        int    k, pick = 0;
+
+        for (k = 0; k < repeats; ++k)
+        {
+            v[k] = epochs[i][k].p50;
+        }
+        bench_sort(v, repeats);
+        mid = bench_percentile(v, repeats, 50.0);
+
+        for (k = 0; k < repeats; ++k)
+        {
+            if (epochs[i][k].p50 == mid)
+            {
+                pick = k;
+                break;
+            }
         }
 
-        run_scene(sc, iters, warmup, repeats, &results[n]);
+        results[i] = epochs[i][pick];
+        results[i].repeats = repeats;
+        results[i].stability_pct = mid > 0.0 ? (v[repeats - 1] - v[0]) * 100.0 / mid : 0.0;
+
         if (!as_json)
         {
-            print_row(&results[n]);
+            print_row(&results[i]);
         }
-        n++;
     }
 
     if (n == 0)
@@ -542,9 +784,22 @@ int main(int argc, char **argv)
         fprintf(stderr, "ar_bench: no scene matched\n");
         return 1;
     }
+
+    if (!as_json)
+    {
+        print_machine_verdict(results, n);
+    }
     if (as_json)
     {
         print_json(results, n);
+    }
+    if (compare_path)
+    {
+        int rc = compare_against(compare_path, results, n);
+        if (gate)
+        {
+            return rc;
+        }
     }
     return 0;
 }

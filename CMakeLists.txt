@@ -81,6 +81,7 @@ add_executable(ar_bench
     bench/ar_bench.c
     bench/bench_util.c
     bench/bench_time.c
+    bench/bench_json.c
     ${AREOLE_BENCH_SCENES})
 target_include_directories(ar_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
 target_link_libraries(ar_bench PRIVATE areole_instrumented)
@@ -102,7 +103,8 @@ if(WIN32)
 endif()
 set_target_properties(ar_hwprobe PROPERTIES C_EXTENSIONS ON)
 
-add_executable(ar_bench_selftest bench/bench_selftest.c bench/bench_util.c bench/bench_time.c)
+add_executable(ar_bench_selftest bench/bench_selftest.c bench/bench_util.c bench/bench_time.c
+                                 bench/bench_json.c)
 target_include_directories(ar_bench_selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
 target_link_libraries(ar_bench_selftest PRIVATE areole_instrumented)
 areole_set_warnings(ar_bench_selftest)
