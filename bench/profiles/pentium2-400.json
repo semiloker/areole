@@ -1,0 +1,27 @@
+{
+  "profile": "derived",
+  "name": "Pentium II 400, 64 MB, 440BX, PC100 SDRAM, Windows 98 SE",
+
+  "_warning": "Every number here is DERIVED, not measured. It exists so the requirements calculator has something to work with before real hardware or an 86Box run replaces it. Each assumption is stated below. A derived number presented as a measurement is worse than no number, so the tool prints this warning with every verdict computed from this file.",
+
+  "clock_source": "assumed",
+  "clock_resolution_ns": 1000.0,
+
+  "scalar_dependent_ops_per_s": 1.0e8,
+  "_scalar_dependent_basis": "400 MHz with roughly four cycles per counted operation, which is what the reference machine shows for the same loop once loop overhead is included. A dependent chain gains nothing from issue width on either machine, so this ratio is close to the clock ratio alone: about 11x, not the 45x that hardware-tiers.md originally assumed.",
+
+  "scalar_independent_ops_per_s": 2.0e8,
+  "_scalar_independent_basis": "The Pentium II is three-wide but schedules far less well than a modern part. Twice the dependent rate is a conservative reading, giving a throughput ratio near 19x. Real code sits between the two ratios.",
+
+  "mem_write_gbs_scalar": 0.25,
+  "_mem_write_basis": "PC100 SDRAM on a 440BX has a theoretical peak of 800 MB/s. Period benchmarks of that chipset report roughly 250 MB/s sustained for a single-threaded write stream, which is what areole's fill loop is. This is the single assumption most worth replacing with a measurement, because the rasterizer is bandwidth bound and every fill figure follows from it.",
+
+  "mem_read_gbs_scalar": 0.40,
+  "mem_copy_gbs_memcpy": 0.20,
+
+  "cache_l1_kb": 32,
+  "cache_l2_kb": 512,
+  "_cache_basis": "512 KB of L2 at half core speed, off die on the cartridge. An 800x600 32 bpp framebuffer is 1.83 MB and cannot fit, which is why clear_uncached rather than clear_cached is the relevant fill measurement for this tier.",
+
+  "ram_mb": 64
+}
