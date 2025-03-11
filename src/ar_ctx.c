@@ -180,6 +180,27 @@ ar_perf *ar_perf_of(ar_ctx *c)
     return &c->perf;
 }
 
+void ar_memory_stats(const ar_ctx *c, ar_u32 *persist, ar_u32 *frame_now, ar_u32 *frame_peak,
+                     ar_u32 *available)
+{
+    if (persist)
+    {
+        *persist = ar_arena_persist_used(&c->arena);
+    }
+    if (frame_now)
+    {
+        *frame_now = ar_arena_frame_used(&c->arena);
+    }
+    if (frame_peak)
+    {
+        *frame_peak = ar_arena_frame_peak(&c->arena);
+    }
+    if (available)
+    {
+        *available = ar_arena_available(&c->arena);
+    }
+}
+
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */

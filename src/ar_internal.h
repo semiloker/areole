@@ -9,6 +9,20 @@
 
 #include "areole.h"
 
+/* ------------------------------------------------------------------------
+ * Instrumentation macros
+ *
+ * These expand to nothing without AR_INSTRUMENT, so a shipping build has no
+ * counter in any inner loop. With it, a counter is touched once per drawing
+ * call rather than once per pixel: the pixel totals are computed from the
+ * clipped rectangle, which the routine already has.
+ * ------------------------------------------------------------------------ */
+#ifdef AR_INSTRUMENT
+#define AR_COUNT(field, n) (ar_counters_get()->field += (ar_u32)(n))
+#else
+#define AR_COUNT(field, n) ((void)0)
+#endif
+
 /* Every allocation is aligned to this. Eight covers every type areole stores,
    including double, on every target it runs on. */
 #define AR_ALIGN 8u

@@ -110,6 +110,42 @@ void ar_surface_clear(ar_surface *s, ar_color c);
 void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
 
 /* ------------------------------------------------------------------------
+ * Instrumentation
+ *
+ * Physical quantities the benchmark needs and cannot infer: how many pixels a
+ * frame actually touched, how much of that went through the blend path rather
+ * than the opaque one, how many glyphs were drawn.
+ *
+ * Off by default and compiled out entirely, because the counters live in the
+ * fill routines and this library does not put anything in a hot path that a
+ * shipping application pays for. Built with -DAR_INSTRUMENT the counters are
+ * incremented once per call rather than once per pixel, so even then the cost
+ * is two operations against a fill of several thousand.
+ *
+ * The measured overhead is published in bench/baseline.json rather than
+ * asserted here.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_counters
+{
+    ar_u32 fills;       /* ar_fill_rect calls that drew anything */
+    ar_u32 fill_px;     /* pixels written by opaque fills        */
+    ar_u32 blend_px;    /* pixels written through the blend path */
+    ar_u32 glyphs;      /* glyphs whose bits were tested         */
+    ar_u32 glyph_px;    /* pixels written by glyph ink           */
+    ar_u32 text_calls;  /* ar_draw_text calls                    */
+    ar_u32 clipped_out; /* draws rejected before touching memory */
+} ar_counters;
+
+/* Always present, so a caller need not compile conditionally. Without
+   AR_INSTRUMENT every field stays zero, which is honest: the library did not
+   measure, rather than measured nothing. */
+ar_counters *ar_counters_get(void);
+void         ar_counters_reset(void);
+
+/* Non-zero when this build actually counts. */
+int ar_counters_enabled(void);
+
+/* ------------------------------------------------------------------------
  * Text
  *
  * One embedded 8x8 bitmap face, drawn at an integer scale. Glyphs are spaced
@@ -283,6 +319,20 @@ int ar_unbalanced(const ar_ctx *c);
 int ar_needs_redraw(const ar_ctx *c);
 
 ar_perf *ar_perf_of(ar_ctx *c);
+
+/* Where the arena stands. Every figure is bytes.
+ *
+ * persist    consumed once at init and never released: the stylesheet, the
+ *            per-box state table
+ * frame_now  in use by the current frame's tree
+ * frame_peak the high water mark across the session
+ * available  what is left between the two ends
+ *
+ * The invariant a benchmark checks with this: persist must not move after
+ * init. If it does, something is allocating during a frame, and the whole
+ * p99-equals-p50 property is gone. */
+void ar_memory_stats(const ar_ctx *c, ar_u32 *persist, ar_u32 *frame_now, ar_u32 *frame_peak,
+                     ar_u32 *available);
 
 /* ------------------------------------------------------------------------
  * Library identity

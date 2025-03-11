@@ -138,19 +138,24 @@ void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c)
     d = ar_rect_intersect(d, ar_rect_make(0, 0, s->w, s->h));
     if (ar_rect_is_empty(d))
     {
+        AR_COUNT(clipped_out, 1);
         return;
     }
 
     alpha = AR_ALPHA_OF(c);
     if (alpha == 0)
     {
+        AR_COUNT(clipped_out, 1);
         return;
     }
 
     row = s->pixels + (ar_i32)d.y * s->stride + d.x;
+    AR_COUNT(fills, 1);
 
     if (alpha == 0xFFu)
     {
+        AR_COUNT(fill_px, d.w * d.h);
+
         /* Opaque is the overwhelmingly common case: panels, cards, the window
            background. A straight word store per pixel is what the compiler
            turns into a rep stos, and nothing hand written beats it. */
@@ -165,6 +170,7 @@ void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c)
         return;
     }
 
+    AR_COUNT(blend_px, d.w * d.h);
     for (y = 0; y < d.h; ++y)
     {
         for (x = 0; x < d.w; ++x)

@@ -1,0 +1,25 @@
+{
+  "profile": "measured",
+  "clock_source": "QueryPerformanceCounter",
+  "clock_resolution_ns": 100.0,
+  "scalar_ops_per_s": 1.232e+09,
+  "mem_write_gbs_scalar": 18.790,
+  "mem_read_gbs_scalar": 31.566,
+  "mem_copy_gbs_memcpy": 40.946,
+  "cache_curve": [
+    { "kb": 4, "ns_per_access": 2.09 },
+    { "kb": 8, "ns_per_access": 2.10 },
+    { "kb": 16, "ns_per_access": 2.04 },
+    { "kb": 32, "ns_per_access": 2.44 },
+    { "kb": 64, "ns_per_access": 6.14 },
+    { "kb": 128, "ns_per_access": 6.51 },
+    { "kb": 256, "ns_per_access": 6.92 },
+    { "kb": 512, "ns_per_access": 9.03 },
+    { "kb": 1024, "ns_per_access": 12.84 },
+    { "kb": 2048, "ns_per_access": 26.76 },
+    { "kb": 4096, "ns_per_access": 31.91 },
+    { "kb": 8192, "ns_per_access": 55.84 },
+    { "kb": 16384, "ns_per_access": 152.00 },
+    { "kb": 32768, "ns_per_access": 145.84 }
+  ]
+}
