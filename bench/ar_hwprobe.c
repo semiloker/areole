@@ -52,6 +52,51 @@ static void refuse(const char *what)
  * Seeded from a volatile so the compiler cannot fold the loop, and read back
  * afterwards so it cannot delete it.
  * ------------------------------------------------------------------------ */
+/* The companion to the dependent chain: four independent chains interleaved,
+   so the machine can run them in parallel and the figure reflects issue width
+   rather than latency.
+
+   Both are needed and neither alone is enough. A dependent chain scales
+   between machines roughly with clock, because latency is what bounds it. An
+   independent one scales with clock times issue width. Real code -- layout,
+   style resolution, parsing -- sits between the two, so the pair brackets the
+   scaling factor instead of pretending to a single number. hardware-tiers.md
+   originally assumed 45x from clock times IPC; the dependent measurement says
+   the lower bound is far closer to the clock ratio alone. */
+static double probe_scalar_ilp(void)
+{
+    volatile ar_u32 seed = 1u;
+    ar_u32          a = (ar_u32)seed, b = a + 1u, c = a + 2u, d = a + 3u;
+    double          t0, t1, best = 1e30;
+    long            n = 20000000L;
+    long            i;
+    int             rep;
+
+    for (rep = 0; rep < 3; ++rep)
+    {
+        t0 = bench_now_s();
+        for (i = 0; i < n; ++i)
+        {
+            a ^= a << 13;
+            b ^= b << 13;
+            c ^= c << 13;
+            d ^= d << 13;
+        }
+        t1 = bench_now_s();
+        if (t1 - t0 < best)
+        {
+            best = t1 - t0;
+        }
+    }
+    g_sink = a + b + c + d;
+
+    if (!bench_rate_is_plausible((double)n * 4.0, best))
+    {
+        refuse("the independent chains");
+    }
+    return (double)n * 4.0 / best;
+}
+
 static double probe_scalar(void)
 {
     volatile ar_u32 seed = 1u;
@@ -259,14 +304,16 @@ static void probe_cache(double *ns_per_access, ar_u32 *sizes_kb)
 }
 
 /* ------------------------------------------------------------------------ */
-static void print_text(double scalar, double wr, double rd, double cp, const double *cache_ns,
-                       const ar_u32 *cache_kb)
+static void print_text(double scalar, double ilp, double wr, double rd, double cp,
+                       const double *cache_ns, const ar_u32 *cache_kb)
 {
     int i;
 
     printf("clock            %s, %.0f ns resolution\n", bench_clock_name(),
            bench_clock_resolution_s() * 1e9);
-    printf("scalar chain     %.3g dependent ops/s\n", scalar);
+    printf("scalar latency    %.3g dependent ops/s     bounds serial code\n", scalar);
+    printf("scalar throughput %.3g independent ops/s   bounds parallel code\n", ilp);
+    printf("                  ratio %.2fx, the usable issue width of this machine\n", ilp / scalar);
     printf("memory write     %.2f GB/s   scalar 32 bit store loop, which is what areole does\n",
            wr);
     printf("memory read      %.2f GB/s   scalar 32 bit load loop\n", rd);
@@ -289,8 +336,8 @@ static void print_text(double scalar, double wr, double rd, double cp, const dou
     printf("that does not, and the target hardware can never fit one.\n");
 }
 
-static void print_json(double scalar, double wr, double rd, double cp, const double *cache_ns,
-                       const ar_u32 *cache_kb)
+static void print_json(double scalar, double ilp, double wr, double rd, double cp,
+                       const double *cache_ns, const ar_u32 *cache_kb)
 {
     int i;
 
@@ -298,7 +345,8 @@ static void print_json(double scalar, double wr, double rd, double cp, const dou
     printf("  \"profile\": \"measured\",\n");
     printf("  \"clock_source\": \"%s\",\n", bench_clock_name());
     printf("  \"clock_resolution_ns\": %.1f,\n", bench_clock_resolution_s() * 1e9);
-    printf("  \"scalar_ops_per_s\": %.4g,\n", scalar);
+    printf("  \"scalar_dependent_ops_per_s\": %.4g,\n", scalar);
+    printf("  \"scalar_independent_ops_per_s\": %.4g,\n", ilp);
     printf("  \"mem_write_gbs_scalar\": %.3f,\n", wr);
     printf("  \"mem_read_gbs_scalar\": %.3f,\n", rd);
     printf("  \"mem_copy_gbs_memcpy\": %.3f,\n", cp);
@@ -314,7 +362,7 @@ static void print_json(double scalar, double wr, double rd, double cp, const dou
 
 int main(int argc, char **argv)
 {
-    double scalar, wr, rd, cp;
+    double scalar, ilp, wr, rd, cp;
     double cache_ns[CACHE_STEPS];
     ar_u32 cache_kb[CACHE_STEPS];
     int    as_json = 0;
@@ -343,16 +391,17 @@ int main(int argc, char **argv)
     }
 
     scalar = probe_scalar();
+    ilp = probe_scalar_ilp();
     probe_bandwidth(&wr, &rd, &cp);
     probe_cache(cache_ns, cache_kb);
 
     if (as_json)
     {
-        print_json(scalar, wr, rd, cp, cache_ns, cache_kb);
+        print_json(scalar, ilp, wr, rd, cp, cache_ns, cache_kb);
     }
     else
     {
-        print_text(scalar, wr, rd, cp, cache_ns, cache_kb);
+        print_text(scalar, ilp, wr, rd, cp, cache_ns, cache_kb);
     }
     return 0;
 }
