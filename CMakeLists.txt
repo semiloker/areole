@@ -114,3 +114,13 @@ endif()
 set_target_properties(ar_bench_selftest PROPERTIES C_EXTENSIONS ON)
 
 add_test(NAME ar_bench_selftest COMMAND ar_bench_selftest)
+
+add_executable(ar_require bench/ar_require.c bench/bench_util.c bench/bench_time.c
+                          bench/bench_json.c)
+target_include_directories(ar_require PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+target_link_libraries(ar_require PRIVATE areole)
+areole_set_warnings(ar_require)
+if(WIN32)
+    target_link_libraries(ar_require PRIVATE winmm)
+endif()
+set_target_properties(ar_require PROPERTIES C_EXTENSIONS ON)

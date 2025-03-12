@@ -336,13 +336,14 @@ static void print_text(double scalar, double ilp, double wr, double rd, double c
     printf("that does not, and the target hardware can never fit one.\n");
 }
 
-static void print_json(double scalar, double ilp, double wr, double rd, double cp,
+static void print_json(const char *name, double scalar, double ilp, double wr, double rd, double cp,
                        const double *cache_ns, const ar_u32 *cache_kb)
 {
     int i;
 
     printf("{\n");
     printf("  \"profile\": \"measured\",\n");
+    printf("  \"name\": \"%s\",\n", name);
     printf("  \"clock_source\": \"%s\",\n", bench_clock_name());
     printf("  \"clock_resolution_ns\": %.1f,\n", bench_clock_resolution_s() * 1e9);
     printf("  \"scalar_dependent_ops_per_s\": %.4g,\n", scalar);
@@ -362,11 +363,12 @@ static void print_json(double scalar, double ilp, double wr, double rd, double c
 
 int main(int argc, char **argv)
 {
-    double scalar, ilp, wr, rd, cp;
-    double cache_ns[CACHE_STEPS];
-    ar_u32 cache_kb[CACHE_STEPS];
-    int    as_json = 0;
-    int    i;
+    double      scalar, ilp, wr, rd, cp;
+    double      cache_ns[CACHE_STEPS];
+    ar_u32      cache_kb[CACHE_STEPS];
+    const char *name = "(unnamed machine)";
+    int         as_json = 0;
+    int         i;
 
     for (i = 1; i < argc; ++i)
     {
@@ -374,9 +376,13 @@ int main(int argc, char **argv)
         {
             as_json = 1;
         }
+        else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
+        {
+            name = argv[++i];
+        }
         else
         {
-            printf("ar_hwprobe [--json]\n");
+            printf("ar_hwprobe [--json] [--name STRING]\n");
             printf("  measures the machine: dependent scalar throughput, memory\n");
             printf("  bandwidth, and the cache latency curve\n");
             return 1;
@@ -397,7 +403,7 @@ int main(int argc, char **argv)
 
     if (as_json)
     {
-        print_json(scalar, ilp, wr, rd, cp, cache_ns, cache_kb);
+        print_json(name, scalar, ilp, wr, rd, cp, cache_ns, cache_kb);
     }
     else
     {
