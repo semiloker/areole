@@ -50,6 +50,10 @@ jobs:
                     -Wshadow -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes \
                     -Wwrite-strings -Wold-style-definition \
                     -Iinclude -c "$f" -o "/tmp/objs/$cc-$(basename "$f").o"
+              # And again with the counters compiled in. Both builds ship, so
+              # both have to hold the standard.
+              "$cc" -std=c89 -pedantic-errors -Wall -Wextra -Werror -DAR_INSTRUMENT \
+                    -Iinclude -c "$f" -o "/tmp/objs/$cc-inst-$(basename "$f").o"
             done
           done
 
