@@ -41,3 +41,17 @@ and because a benchmark that downloads its rival at build time is a benchmark th
 Clay publishes microsecond layout times for 8,192 elements, which is the number `bench/compare/`
 puts areole against. It is C99 and uses compound literals throughout, which is exactly why areole
 could not be built on it and why the comparison is interesting.
+
+## microui 2.02
+
+- Files: `third_party/bench/microui.h`, `third_party/bench/microui.c`
+- Upstream: https://github.com/rxi/microui
+- Licence: MIT, Copyright (c) 2024 rxi
+- Used by: `bench/compare/cmp_microui.c`
+
+Vendored unmodified. Benchmark only: it is not linked into the library, and no
+shipping build of areole contains any of it.
+
+Compiled with relaxed flags. microui is not C89 -- `long long`, an unsuffixed
+unsigned constant, a const-discarding qsort comparator -- so its translation
+unit is built as gnu99 while the library keeps its own rules.

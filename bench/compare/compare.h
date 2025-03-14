@@ -64,6 +64,7 @@ typedef struct cmp_engine
 
 const cmp_engine *cmp_engine_gdi(void);
 const cmp_engine *cmp_engine_clay(void);
+const cmp_engine *cmp_engine_microui(void);
 
 /* areole's layout phase alone, for the head to head against Clay. Clay has
    no style engine, so comparing whole frames would compare different work. */
