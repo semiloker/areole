@@ -133,6 +133,7 @@ if(WIN32)
     add_executable(ar_compare
         bench/compare/ar_compare.c
         bench/compare/cmp_gdi.c
+        bench/compare/cmp_clay.c
         bench/bench_util.c
         bench/bench_time.c
         bench/bench_json.c)
@@ -140,4 +141,13 @@ if(WIN32)
     target_link_libraries(ar_compare PRIVATE areole_instrumented gdi32 user32 msimg32 winmm)
     areole_set_warnings(ar_compare)
     set_target_properties(ar_compare PROPERTIES C_EXTENSIONS ON)
+    # Clay is C99 and uses compound literals throughout, which is exactly why
+    # areole could not be built on it. Its translation unit gets its own
+    # standard; the library keeps C89.
+    # Clay cannot compile under -pedantic at all: it uses unnamed structs and
+    # unions and empty initializer braces throughout. That is not a criticism of
+    # Clay, it is the concrete reason areole could not be built on it, and it is
+    # worth seeing in the build file rather than only in a design document.
+    set_source_files_properties(bench/compare/cmp_clay.c PROPERTIES
+        COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
 endif()

@@ -43,6 +43,14 @@ typedef struct cmp_case
     const char *caveat; /* non-null when the comparison is imperfect */
     void (*areole)(cmp_ctx *c);
     void (*rival)(cmp_ctx *c);
+
+    /* Optional third figure, for cases where whole-frame totals compare
+       different amounts of work. Clay has no style engine, so areole's total
+       includes a phase Clay simply does not have; the layout phase alone is
+       the honest head to head, and it is reported beside the totals rather
+       than instead of them. Left null by cases that do not need it. */
+    const char *extra_label;
+    double (*extra_us)(void);
 } cmp_case;
 
 typedef struct cmp_engine
@@ -55,5 +63,10 @@ typedef struct cmp_engine
 } cmp_engine;
 
 const cmp_engine *cmp_engine_gdi(void);
+const cmp_engine *cmp_engine_clay(void);
+
+/* areole's layout phase alone, for the head to head against Clay. Clay has
+   no style engine, so comparing whole frames would compare different work. */
+double cmp_areole_layout_us(void);
 
 #endif /* COMPARE_H */

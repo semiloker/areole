@@ -26,6 +26,7 @@ typedef struct cmp_result
     const cmp_case *c;
     double          areole_p50, rival_p50;
     double          areole_spread, rival_spread;
+    double          extra_us; /* zero when the case has none, or cannot answer */
 } cmp_result;
 
 static double g_a[BENCH_MAX_SAMPLES];
@@ -97,11 +98,33 @@ static void run_case(const cmp_case *cs, cmp_ctx *ctx, int iters, int warmup, in
         out->areole_spread = am > 0.0 ? (av[epochs - 1] - av[0]) * 100.0 / am : 0.0;
         out->rival_spread = rm > 0.0 ? (rv[epochs - 1] - rv[0]) * 100.0 / rm : 0.0;
     }
+
+    /* The extra figure comes from areole's own ring, which holds the last
+       AR_PERF_RING frames. Read it only when this case ran at least that many,
+       otherwise the ring still holds frames from the case before and the number
+       would be a blend of two different scenes. Reporting nothing beats
+       reporting a number that quietly means something else. */
+    if (cs->extra_us && warmup + iters * epochs >= (int)AR_PERF_RING)
+    {
+        out->extra_us = cs->extra_us();
+    }
 }
 
 static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int as_json)
 {
-    int i;
+    const char *label = "";
+    int         i, extra;
+
+    /* The extra column appears only when a case supplies one, so engines that
+       compare like with like keep the narrow table. */
+    for (i = 0, extra = 0; i < n; ++i)
+    {
+        if (rs[i].extra_us > 0.0)
+        {
+            extra = 1;
+            label = rs[i].c->extra_label;
+        }
+    }
 
     if (as_json)
     {
@@ -119,6 +142,13 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
                    rs[i].areole_p50 > 0.0 ? rs[i].rival_p50 / rs[i].areole_p50 : 0.0);
             printf("        \"areole_spread_pct\": %.1f,\n", rs[i].areole_spread);
             printf("        \"rival_spread_pct\": %.1f,\n", rs[i].rival_spread);
+            if (rs[i].extra_us > 0.0)
+            {
+                printf("        \"extra_label\": \"%s\",\n", rs[i].c->extra_label);
+                printf("        \"extra_us\": %.2f,\n", rs[i].extra_us);
+                printf("        \"extra_ratio\": %.3f,\n",
+                       rs[i].rival_p50 * 1e6 / rs[i].extra_us);
+            }
             printf("        \"fair\": %s\n", rs[i].c->caveat ? "false" : "true");
             printf("      }%s\n", i + 1 < n ? "," : "");
         }
@@ -129,18 +159,44 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
 
     printf("\n%s versus areole\n", eng->name);
     printf("%s\n\n", eng->version);
-    printf("%-16s %12s %12s %9s  %s\n", "case", "areole", eng->name, "ratio", "");
-    printf("%-16s %12s %12s %9s\n", "----------------", "------------", "------------",
+    printf("%-16s %12s %12s %9s", "case", "areole", eng->name, "ratio");
+    if (extra)
+    {
+        printf(" %12s %9s", label, "ratio");
+    }
+    printf("\n%-16s %12s %12s %9s", "----------------", "------------", "------------",
            "---------");
+    if (extra)
+    {
+        printf(" %12s %9s", "------------", "---------");
+    }
+    printf("\n");
 
     for (i = 0; i < n; ++i)
     {
         double ratio = rs[i].areole_p50 > 0.0 ? rs[i].rival_p50 / rs[i].areole_p50 : 0.0;
-        printf("%-16s %10.1fus %10.1fus %8.2fx%s\n", rs[i].c->name, rs[i].areole_p50 * 1e6,
-               rs[i].rival_p50 * 1e6, ratio, rs[i].c->caveat ? "  (see note)" : "");
+        printf("%-16s %10.1fus %10.1fus %8.2fx", rs[i].c->name, rs[i].areole_p50 * 1e6,
+               rs[i].rival_p50 * 1e6, ratio);
+        if (extra)
+        {
+            if (rs[i].extra_us > 0.0)
+            {
+                printf(" %10.1fus %8.2fx", rs[i].extra_us,
+                       rs[i].rival_p50 * 1e6 / rs[i].extra_us);
+            }
+            else
+            {
+                printf(" %12s %9s", "-", "-");
+            }
+        }
+        printf("%s\n", rs[i].c->caveat ? "  (see note)" : "");
     }
 
     printf("\nA ratio above 1.00 means areole is faster.\n");
+    if (extra)
+    {
+        printf("The '%s' column is the like-for-like one; see the note below.\n", label);
+    }
 
     for (i = 0; i < n; ++i)
     {
@@ -187,6 +243,7 @@ int main(int argc, char **argv)
 #if defined(_WIN32)
     engines[engine_count++] = cmp_engine_gdi();
 #endif
+    engines[engine_count++] = cmp_engine_clay();
 
     for (i = 1; i < argc; ++i)
     {
@@ -267,9 +324,14 @@ int main(int argc, char **argv)
         cmp_ctx           ctx;
         int               count = 0, k;
 
-        if (want && strcmp(eng->name, "Win32 GDI") == 0 && strcmp(want, "gdi") != 0)
+        if (want)
         {
-            continue;
+            int match = (strcmp(eng->name, "Win32 GDI") == 0 && strcmp(want, "gdi") == 0) ||
+                        (strcmp(eng->name, "Clay") == 0 && strcmp(want, "clay") == 0);
+            if (!match)
+            {
+                continue;
+            }
         }
 
         memset(&ctx, 0, sizeof ctx);
