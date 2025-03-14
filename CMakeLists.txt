@@ -134,10 +134,13 @@ if(WIN32)
         bench/compare/ar_compare.c
         bench/compare/cmp_gdi.c
         bench/compare/cmp_clay.c
+        bench/compare/cmp_microui.c
+        third_party/bench/microui.c
         bench/bench_util.c
         bench/bench_time.c
         bench/bench_json.c)
-    target_include_directories(ar_compare PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+    target_include_directories(ar_compare PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench"
+                                                  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bench")
     target_link_libraries(ar_compare PRIVATE areole_instrumented gdi32 user32 msimg32 winmm)
     areole_set_warnings(ar_compare)
     set_target_properties(ar_compare PROPERTIES C_EXTENSIONS ON)
@@ -148,6 +151,13 @@ if(WIN32)
     # unions and empty initializer braces throughout. That is not a criticism of
     # Clay, it is the concrete reason areole could not be built on it, and it is
     # worth seeing in the build file rather than only in a design document.
+    # microui is not C89 either: long long, an unsuffixed unsigned constant, a
+    # const-discarding qsort comparator. Two out of two of the libraries areole
+    # is measured against would have to be relaxed to build under its own rules,
+    # which is the argument for the rules stated as a build fact.
+    set_source_files_properties(third_party/bench/microui.c PROPERTIES
+        COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-cast-qual -Wno-shadow -Wno-long-long -Wno-error")
+
     set_source_files_properties(bench/compare/cmp_clay.c PROPERTIES
         COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
 endif()

@@ -195,7 +195,8 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
     printf("\nA ratio above 1.00 means areole is faster.\n");
     if (extra)
     {
-        printf("The '%s' column is the like-for-like one; see the note below.\n", label);
+        printf("The '%s' column excludes style resolution,\n"
+               "which the rival does not do at all.\n", label);
     }
 
     for (i = 0; i < n; ++i)
@@ -217,7 +218,7 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
 static void usage(void)
 {
     printf("ar_compare - areole against the alternatives\n\n");
-    printf("  --engine NAME      gdi (more as they are vendored)\n");
+    printf("  --engine NAME      gdi, clay, microui\n");
     printf("  --all              every available engine\n");
     printf("  --iters N          frames per engine per epoch (default 200)\n");
     printf("  --repeat N         epochs (default 3)\n");
@@ -231,7 +232,7 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     static cmp_result results[CMP_MAX_CASES];
-    const cmp_engine *engines[4];
+    const cmp_engine *engines[8];
     int               engine_count = 0;
     const char       *want = 0;
     int               iters = 200, warmup = 30, epochs = 3;
@@ -244,6 +245,7 @@ int main(int argc, char **argv)
     engines[engine_count++] = cmp_engine_gdi();
 #endif
     engines[engine_count++] = cmp_engine_clay();
+    engines[engine_count++] = cmp_engine_microui();
 
     for (i = 1; i < argc; ++i)
     {
@@ -327,7 +329,8 @@ int main(int argc, char **argv)
         if (want)
         {
             int match = (strcmp(eng->name, "Win32 GDI") == 0 && strcmp(want, "gdi") == 0) ||
-                        (strcmp(eng->name, "Clay") == 0 && strcmp(want, "clay") == 0);
+                        (strcmp(eng->name, "Clay") == 0 && strcmp(want, "clay") == 0) ||
+                        (strcmp(eng->name, "microui") == 0 && strcmp(want, "microui") == 0);
             if (!match)
             {
                 continue;
