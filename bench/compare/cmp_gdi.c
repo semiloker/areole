@@ -335,18 +335,18 @@ static void g_hair(cmp_ctx *c)
 
 /* ------------------------------------------------------------------------ */
 static const cmp_case CASES[] = {
-    {"clear", "one opaque fill of the whole surface", 0, a_clear, g_clear},
-    {"fill_500", "500 opaque 64x64 rectangles", 0, a_fill, g_fill},
+    {"clear", "one opaque fill of the whole surface", 0, a_clear, g_clear, 0, 0},
+    {"fill_500", "500 opaque 64x64 rectangles", 0, a_fill, g_fill, 0, 0},
     {"blend_500", "500 translucent 64x64 rectangles",
      "GDI has no solid-colour alpha fill, so AlphaBlend reads a source surface areole does not "
      "need. GDI is doing strictly more work here.",
-     a_blend, g_blend},
+     a_blend, g_blend, 0, 0},
     {"text_24_lines", "24 lines of latin text",
      "Not a fair fight and not meant to be. GDI renders a hinted, kerned, antialiased outline "
      "face; areole blits an 8x8 bitmap. This measures the ceiling, and becomes a real comparison "
      "when 0.2.0 gives areole outlines.",
-     a_text, g_text},
-    {"hairlines", "150 one-pixel-high fills", 0, a_hair, g_hair}};
+     a_text, g_text, 0, 0},
+    {"hairlines", "150 one-pixel-high fills", 0, a_hair, g_hair, 0, 0}};
 
 static const cmp_case *gdi_cases(int *count)
 {
