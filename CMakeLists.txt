@@ -124,3 +124,20 @@ if(WIN32)
     target_link_libraries(ar_require PRIVATE winmm)
 endif()
 set_target_properties(ar_require PROPERTIES C_EXTENSIONS ON)
+
+# --- comparison harness -------------------------------------------------------
+# Windows only for now: GDI is the one rival that needs no vendoring, and it is
+# the comparison a prospective user cares about most. The others arrive as they
+# are vendored under third_party/bench/.
+if(WIN32)
+    add_executable(ar_compare
+        bench/compare/ar_compare.c
+        bench/compare/cmp_gdi.c
+        bench/bench_util.c
+        bench/bench_time.c
+        bench/bench_json.c)
+    target_include_directories(ar_compare PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+    target_link_libraries(ar_compare PRIVATE areole_instrumented gdi32 user32 msimg32 winmm)
+    areole_set_warnings(ar_compare)
+    set_target_properties(ar_compare PROPERTIES C_EXTENSIONS ON)
+endif()
