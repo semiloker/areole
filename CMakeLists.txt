@@ -126,38 +126,40 @@ endif()
 set_target_properties(ar_require PROPERTIES C_EXTENSIONS ON)
 
 # --- comparison harness -------------------------------------------------------
-# Windows only for now: GDI is the one rival that needs no vendoring, and it is
-# the comparison a prospective user cares about most. The others arrive as they
-# are vendored under third_party/bench/.
-if(WIN32)
-    add_executable(ar_compare
-        bench/compare/ar_compare.c
-        bench/compare/cmp_gdi.c
-        bench/compare/cmp_clay.c
-        bench/compare/cmp_microui.c
-        third_party/bench/microui.c
-        bench/bench_util.c
-        bench/bench_time.c
-        bench/bench_json.c)
-    target_include_directories(ar_compare PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench"
-                                                  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bench")
-    target_link_libraries(ar_compare PRIVATE areole_instrumented gdi32 user32 msimg32 winmm)
-    areole_set_warnings(ar_compare)
-    set_target_properties(ar_compare PROPERTIES C_EXTENSIONS ON)
-    # Clay is C99 and uses compound literals throughout, which is exactly why
-    # areole could not be built on it. Its translation unit gets its own
-    # standard; the library keeps C89.
-    # Clay cannot compile under -pedantic at all: it uses unnamed structs and
-    # unions and empty initializer braces throughout. That is not a criticism of
-    # Clay, it is the concrete reason areole could not be built on it, and it is
-    # worth seeing in the build file rather than only in a design document.
-    # microui is not C89 either: long long, an unsuffixed unsigned constant, a
-    # const-discarding qsort comparator. Two out of two of the libraries areole
-    # is measured against would have to be relaxed to build under its own rules,
-    # which is the argument for the rules stated as a build fact.
-    set_source_files_properties(third_party/bench/microui.c PROPERTIES
-        COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-cast-qual -Wno-shadow -Wno-long-long -Wno-error")
+# Clay and microui are pure layout and build anywhere, so CI compiles them and
+# they cannot rot. GDI needs Windows and is added only there; ar_compare.c
+# guards the engine registration with _WIN32 to match.
+add_executable(ar_compare
+    bench/compare/ar_compare.c
+    bench/compare/cmp_clay.c
+    bench/compare/cmp_microui.c
+    third_party/bench/microui.c
+    bench/bench_util.c
+    bench/bench_time.c
+    bench/bench_json.c)
+target_include_directories(ar_compare PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench"
+                                              "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bench")
+target_link_libraries(ar_compare PRIVATE areole_instrumented)
+areole_set_warnings(ar_compare)
+set_target_properties(ar_compare PROPERTIES C_EXTENSIONS ON)
 
-    set_source_files_properties(bench/compare/cmp_clay.c PROPERTIES
-        COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
+if(WIN32)
+    target_sources(ar_compare PRIVATE bench/compare/cmp_gdi.c)
+    target_link_libraries(ar_compare PRIVATE gdi32 user32 msimg32 winmm)
 endif()
+
+# Neither rival is C89, and the specifics are worth keeping in the build file
+# rather than only in a design document.
+#
+#   Clay     unnamed structs and unions, empty initializer braces, extra
+#            semicolons at file scope -- it cannot compile under -pedantic at
+#            all, which is the concrete reason areole was not built on it.
+#   microui  long long, an unsuffixed unsigned constant, a const-discarding
+#            qsort comparator.
+#
+# Two out of two of the libraries areole is measured against would fail its own
+# build rules. Their translation units get relaxed flags; the library keeps C89.
+set_source_files_properties(bench/compare/cmp_clay.c PROPERTIES
+    COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
+set_source_files_properties(third_party/bench/microui.c PROPERTIES
+    COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-cast-qual -Wno-shadow -Wno-long-long -Wno-error")
