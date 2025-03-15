@@ -149,6 +149,10 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
                 printf("        \"extra_ratio\": %.3f,\n",
                        rs[i].rival_p50 * 1e6 / rs[i].extra_us);
             }
+            if (rs[i].c->caveat)
+            {
+                printf("        \"caveat\": \"%s\",\n", rs[i].c->caveat);
+            }
             printf("        \"fair\": %s\n", rs[i].c->caveat ? "false" : "true");
             printf("      }%s\n", i + 1 < n ? "," : "");
         }
@@ -234,6 +238,7 @@ int main(int argc, char **argv)
     static cmp_result results[CMP_MAX_CASES];
     const cmp_engine *engines[8];
     int               engine_count = 0;
+    int               printed = 0;
     const char       *want = 0;
     int               iters = 200, warmup = 30, epochs = 3;
     int               as_json = 0, all = 0;
@@ -357,11 +362,12 @@ int main(int argc, char **argv)
             run_case(&cases[k], &ctx, iters, warmup, epochs, &results[k]);
         }
 
-        print_engine(eng, results, count, as_json);
-        if (as_json && e + 1 < engine_count)
+        if (as_json && printed > 0)
         {
-            printf(",");
+            printf(",\n");
         }
+        print_engine(eng, results, count, as_json);
+        ++printed;
         if (as_json)
         {
             printf("\n");

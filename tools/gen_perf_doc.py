@@ -15,6 +15,7 @@ import glob
 import json
 import os
 import sys
+import textwrap
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "docs", "PERFORMANCE.md")
@@ -30,6 +31,28 @@ def find_reference_profile():
     if not hits:
         return None
     return load(hits[0])
+
+
+def find_comparison():
+    path = os.path.join(ROOT, "bench", "comparison.json")
+    return load(path) if os.path.exists(path) else None
+
+
+def read_strength(c):
+    """How much of a ratio survives the noise it was measured in.
+
+    The effect is how far the ratio is from parity; the noise is how much the
+    two engines each moved between epochs. A ratio smaller than the noise that
+    produced it is not a finding, and saying so in the table is cheaper than
+    having someone quote it back later.
+    """
+    effect = abs(c["ratio"] - 1.0) * 100.0
+    noise = c["areole_spread_pct"] + c["rival_spread_pct"]
+    if effect > 2.0 * noise:
+        return "solid"
+    if effect > noise:
+        return "marginal"
+    return "noise"
 
 
 def us(v):
@@ -190,11 +213,75 @@ def main():
     w("makes p99 equal p50.")
     w("")
 
+    comparison = find_comparison()
+    if comparison:
+        w("## Against the alternatives")
+        w("")
+        w("Measured by `ar_compare`, %d frames per engine per epoch, %d epochs, alternating one"
+          % (comparison["iters"], comparison["epochs"]))
+        w("frame each so neither engine sits on a warmer machine. Reproduce with:")
+        w("")
+        w("```sh")
+        w("./build/ar_compare --all --iters %d --repeat %d"
+          % (comparison["iters"], comparison["epochs"]))
+        w("```")
+        w("")
+        w("A ratio above 1.00 means areole is faster. Cases that cannot be made fair carry a")
+        w("note, and the note is the point: an unfair comparison presented without one is worth")
+        w("less than no comparison at all.")
+        w("")
+        w("`spread` is how far each engine's per-epoch median moved, areole first. `read` says")
+        w("whether the ratio survives that noise: **solid** when the effect is more than twice")
+        w("the combined spread, **marginal** when it merely exceeds it, **noise** when it does")
+        w("not. A `noise` row is a tie, whatever its ratio column says, and rows are published")
+        w("that way rather than dropped.")
+        w("")
+        for eng in comparison["engines"]:
+            w("### %s" % eng["engine"])
+            w("")
+            has_extra = any("extra_us" in c for c in eng["cases"])
+            if has_extra:
+                w("| case | areole | %s | ratio | areole layout | ratio | spread | read |"
+                  % eng["engine"])
+                w("| --- | --: | --: | --: | --: | --: | --: | --- |")
+            else:
+                w("| case | areole | %s | ratio | spread | read |" % eng["engine"])
+                w("| --- | --: | --: | --: | --: | --- |")
+            for c in eng["cases"]:
+                mark = " *" if c.get("caveat") else ""
+                row = "| `%s`%s | %s us | %s us | **%.2fx** |" % (
+                    c["name"], mark, us(c["areole_us"]), us(c["rival_us"]), c["ratio"])
+                if has_extra:
+                    if "extra_us" in c:
+                        row += " %s us | **%.2fx** |" % (us(c["extra_us"]), c["extra_ratio"])
+                    else:
+                        row += " - | - |"
+                row += " %.0f/%.0f%% | %s |" % (c["areole_spread_pct"],
+                                                c["rival_spread_pct"],
+                                                read_strength(c))
+                w(row)
+            w("")
+            # The caveat text is carried in the JSON rather than retyped here, so a
+            # number and the reason it is not what it looks like cannot drift apart.
+            seen = []
+            for c in eng["cases"]:
+                cav = c.get("caveat")
+                if cav and cav not in seen:
+                    seen.append(cav)
+                    names = [x["name"] for x in eng["cases"] if x.get("caveat") == cav]
+                    lead = "\\* `%s`: " % "`, `".join(names)
+                    for line in textwrap.wrap(lead + cav, 95,
+                                              subsequent_indent="  "):
+                        w(line)
+                    w("")
+            if not seen:
+                w("")
+
     w("## What is not here yet")
     w("")
     w("- Numbers from real Pentium II hardware, or from 86Box. Every figure for that tier")
     w("  in `docs/roadmap/hardware-tiers.md` is derived and labelled as such.")
-    w("- A comparison against Clay, Nuklear, microui, LVGL, GDI and Direct2D.")
+    w("- A comparison against Nuklear, LVGL and Direct2D. GDI, Clay and microui are done.")
     w("- Cold start and binary size as gated numbers rather than one-off measurements.")
 
     text = "\n".join(out) + "\n"
