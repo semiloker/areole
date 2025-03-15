@@ -163,9 +163,70 @@ builds a style cache and why the rule table has to stop being a fixed 256.
 persistent half of the arena rather than by assertion. This is the property that
 makes p99 equal p50.
 
+## Against the alternatives
+
+Measured by `ar_compare`, 200 frames per engine per epoch, 3 epochs, alternating one
+frame each so neither engine sits on a warmer machine. Reproduce with:
+
+```sh
+./build/ar_compare --all --iters 200 --repeat 3
+```
+
+A ratio above 1.00 means areole is faster. Cases that cannot be made fair carry a
+note, and the note is the point: an unfair comparison presented without one is worth
+less than no comparison at all.
+
+`spread` is how far each engine's per-epoch median moved, areole first. `read` says
+whether the ratio survives that noise: **solid** when the effect is more than twice
+the combined spread, **marginal** when it merely exceeds it, **noise** when it does
+not. A `noise` row is a tie, whatever its ratio column says, and rows are published
+that way rather than dropped.
+
+### Win32 GDI
+
+| case | areole | Win32 GDI | ratio | spread | read |
+| --- | --: | --: | --: | --: | --- |
+| `clear` | 80.3 us | 84.3 us | **1.05x** | 2/2% | marginal |
+| `fill_500` | 381.5 us | 1331.8 us | **3.49x** | 21/10% | solid |
+| `blend_500` * | 2257.5 us | 13415.3 us | **5.94x** | 9/6% | solid |
+| `text_24_lines` * | 791.3 us | 806.9 us | **1.02x** | 1/2% | noise |
+| `hairlines` | 29.0 us | 337.7 us | **11.64x** | 14/2% | solid |
+
+\* `blend_500`: GDI has no solid-colour alpha fill, so AlphaBlend reads a source surface areole
+  does not need. GDI is doing strictly more work here.
+
+\* `text_24_lines`: Not a fair fight and not meant to be. GDI renders a hinted, kerned,
+  antialiased outline face; areole blits an 8x8 bitmap. This measures the ceiling, and becomes
+  a real comparison when 0.2.0 gives areole outlines.
+
+### Clay
+
+| case | areole | Clay | ratio | areole layout | ratio | spread | read |
+| --- | --: | --: | --: | --: | --: | --: | --- |
+| `layout_1k` * | 108.6 us | 256.2 us | **2.36x** | 25.0 us | **10.25x** | 15/16% | solid |
+| `layout_8k` * | 1302.1 us | 2662.7 us | **2.04x** | 243.0 us | **10.96x** | 55/36% | marginal |
+
+\* `layout_1k`, `layout_8k`: areole resolves a stylesheet for every box; Clay takes its
+  configuration inline, already resolved. areole is therefore doing strictly more work. The
+  layout-only column in PERFORMANCE.md is the fair head to head; this column is what a
+  stylesheet costs.
+
+### microui
+
+| case | areole | microui | ratio | areole layout | ratio | spread | read |
+| --- | --: | --: | --: | --: | --: | --: | --- |
+| `layout_1k` * | 147.1 us | 16.5 us | **0.11x** | 21.0 us | **0.79x** | 38/33% | marginal |
+| `layout_8k` * | 1256.3 us | 120.7 us | **0.10x** | 211.0 us | **0.57x** | 1/3% | solid |
+
+\* `layout_1k`, `layout_8k`: microui does not build a tree and does not resolve style:
+  mu_layout_next advances a row cursor and returns a rectangle. areole runs two passes per axis
+  so grow and shrink can be solved, over a retained tree, after matching a stylesheet. This
+  measures the price of that abstraction, not a like-for-like race, and a ratio below 1.00 is
+  expected.
+
 ## What is not here yet
 
 - Numbers from real Pentium II hardware, or from 86Box. Every figure for that tier
   in `docs/roadmap/hardware-tiers.md` is derived and labelled as such.
-- A comparison against Clay, Nuklear, microui, LVGL, GDI and Direct2D.
+- A comparison against Nuklear, LVGL and Direct2D. GDI, Clay and microui are done.
 - Cold start and binary size as gated numbers rather than one-off measurements.
