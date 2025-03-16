@@ -27,6 +27,31 @@ jobs:
       - name: Run
         run: ./build/ar_bench_selftest
 
+  # The comparison harness must build and run. Clay and microui are pure layout
+  # and need no window, so they run here; GDI needs Windows and is compiled in
+  # only there.
+  #
+  # No timing assertion. A shared runner cannot support one, and the point of
+  # this job is that a vendored rival cannot silently stop compiling -- which is
+  # a real risk, since both rivals are built with relaxed flags.
+  compare:
+    name: comparison harness builds and runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ar_compare
+      - name: Run the portable engines
+        run: |
+          ./build/ar_compare --engine clay --iters 20 --repeat 1 --warmup 5
+          ./build/ar_compare --engine microui --iters 20 --repeat 1 --warmup 5
+      - name: The JSON must parse
+        run: |
+          ./build/ar_compare --all --iters 20 --repeat 1 --warmup 5 --json > /tmp/cmp.json
+          python -c "import json,sys; json.load(open('/tmp/cmp.json'))"
+
   # The generated document must match the committed baseline. This is what
   # stops a published number from drifting away from a measured one.
   document:
