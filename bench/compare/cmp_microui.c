@@ -225,9 +225,9 @@ static const char *const CAVEAT =
     "abstraction, not a like-for-like race, and a ratio below 1.00 is expected.";
 
 static const cmp_case CASES[] = {
-    {"layout_1k", "1000 cells in rows of sixteen, no painting", CAVEAT, a_1k, m_1k, "ar layout",
+    {"flat_1k", "1000 cells in rows of sixteen, no painting", CAVEAT, a_1k, m_1k, "ar layout",
      areole_layout_us},
-    {"layout_8k", "8000 cells in rows of sixteen, no painting", CAVEAT, a_8k, m_8k, "ar layout",
+    {"flat_8k", "8000 cells in rows of sixteen, no painting", CAVEAT, a_8k, m_8k, "ar layout",
      areole_layout_us}};
 
 static const cmp_case *microui_cases(int *count)
