@@ -219,10 +219,11 @@ static double areole_layout_us(void)
 }
 
 static const char *const CAVEAT =
-    "microui does not build a tree and does not resolve style: mu_layout_next advances a row "
-    "cursor and returns a rectangle. areole runs two passes per axis so grow and shrink can be "
-    "solved, over a retained tree, after matching a stylesheet. This measures the price of that "
-    "abstraction, not a like-for-like race, and a ratio below 1.00 is expected.";
+    "microui builds no tree, resolves no style and tracks no damage: mu_layout_next advances a "
+    "row cursor and returns a rectangle. areole runs two passes per axis over a retained tree, "
+    "after matching a stylesheet, and records what changed. Nothing is painted here, so that "
+    "record is pure cost; in an interface that paints it removes the raster pass. A ratio below "
+    "1.00 is the price of the abstraction, not a defect.";
 
 static const cmp_case CASES[] = {
     {"flat_1k", "1000 cells in rows of sixteen, no painting", CAVEAT, a_1k, m_1k, "ar layout",

@@ -223,9 +223,11 @@ static void clay_teardown(cmp_ctx *c)
 }
 
 static const char *const CAVEAT =
-    "areole resolves a stylesheet for every box; Clay takes its configuration inline, already "
-    "resolved. areole is therefore doing strictly more work. The layout-only column in "
-    "PERFORMANCE.md is the fair head to head; this column is what a stylesheet costs.";
+    "areole resolves a stylesheet for every box and keeps damage bookkeeping per box; Clay takes "
+    "its configuration inline, already resolved, and tracks nothing. areole is therefore doing "
+    "strictly more work. Note that nothing is painted here, so the damage bookkeeping is pure "
+    "cost in this case and can never repay itself -- in an interface that does paint it is worth "
+    "up to 28x, see the scene tables. The layout column is the fair head to head.";
 
 static const cmp_case CASES[] = {
     {"flat_1k", "1000 boxes, one row per sixteen, no painting", CAVEAT, a_1k, c_1k,

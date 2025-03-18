@@ -60,22 +60,34 @@ areole measures itself. The phases are reported separately because a single
 frame time hides the one thing worth knowing on old hardware: whether the cost
 is the rasterizer or the blit. Those have entirely different fixes.
 
-The shipped `dashboard` example -- rail, nav, six cards, 49 boxes, 182 glyphs --
-at 1024x768 on a Ryzen 7 8840HS:
+areole repaints only what changed, so an interface has two costs and both
+matter. The shipped `dashboard` example -- rail, nav, six cards, 49 boxes, 182
+glyphs -- at 1024x768 on a Ryzen 7 8840HS:
 
 | | |
 | --- | --: |
-| style | 9 us |
-| layout | 2 us |
-| raster | 330 us |
-| **frame p50** | **344 us** |
-| frame p99 | 725 us |
-| heap allocations after init | **0** |
+| Steady frame, cursor drifting | **11.6 us** |
+| p99 | 16.0 us |
+| Full repaint, everything invalidated | 233 us |
+| Heap allocations after init | **0** |
 
-Per unit, which is what scales to a slower machine: **0.37 ns/pixel**,
-**1.9 us/glyph**, **7.0 us/node**. The glyph figure is the bad one and is known
-to be roughly fifteen times slower than it should be -- see the tie against GDI
-below.
+The first number is what the machine actually pays, because most frames change
+nothing and paint nothing. The second is the ceiling, measured with
+`ar_bench --full-repaint`, and it is the one the Pentium II budget is checked
+against: a machine that cannot afford its worst frame does not have a working
+interface, it has one that stutters.
+
+Per unit, which is what scales to a slower machine:
+
+| | |
+| --- | --: |
+| Opaque fill | **0.22 ns/pixel** |
+| Full-surface write, uncached | 0.20 ns/pixel |
+| Glyph | **634 ns** |
+| Box, style and layout | **138 ns** |
+
+The glyph figure is the bad one, and is known to be roughly fifteen times
+slower than it should be -- see the tie against GDI below.
 
 Averages are not reported. A UI that is smooth apart from one stall every two
 seconds has an excellent average and is unusable.
@@ -83,6 +95,25 @@ seconds has an excellent average and is unusable.
 Every scene, every percentile and the full derivation:
 **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)**, which is generated from measured
 JSON and checked by CI so a published number cannot drift from a measured one.
+
+### What damage tracking bought
+
+Every scene in the library, 0.1.1 against 0.1.2, same machine:
+
+| scene | before | after | |
+| --- | --: | --: | --: |
+| `dashboard` | 344 us | 12 us | **28.2x** |
+| `deep_60` | 67 us | 11 us | **6.0x** |
+| `flat_100` | 74 us | 13 us | **5.6x** |
+| `scroll_10k` | 707 us | 173 us | **4.1x** |
+| `flat_1k` | 327 us | 157 us | **2.1x** |
+| `table_1k_rows` | 2883 us | 1543 us | **1.9x** |
+
+Twenty-six of twenty-eight scenes improved. `many_short_labels` is 1.10x
+*slower* and stays that way: 240 labels means hashing 240 strings, and text has
+to be hashed by content rather than by pointer because formatting a label into
+a reused buffer every frame is the ordinary way to write an immediate mode
+interface, and that leaves the pointer identical while the pixels differ.
 
 ## Against the alternatives
 
@@ -140,6 +171,7 @@ Nothing above is taken on trust. Every number is reproducible in three commands.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 
 ./build/ar_bench --all --iters 150 --repeat 3      # 28 scenes, this machine
+./build/ar_bench --all --iters 150 --repeat 3 --full-repaint   # the worst frame
 ./build/ar_compare --all --iters 200 --repeat 3    # against GDI, Clay, microui
 ./build/ar_hwprobe                                 # what the machine can do
 ```

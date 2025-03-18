@@ -36,6 +36,10 @@ static void begin_frame(bench_env *e)
     in.mouse_x = -1;
     in.mouse_y = -1;
     ar_frame_begin(e->ui, &in);
+    if (e->full_repaint)
+    {
+        ar_invalidate_all(e->ui);
+    }
 }
 
 /* A wide, shallow tree: one row per sixteen leaves. Depth is constant, so box
