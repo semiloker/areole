@@ -228,9 +228,9 @@ static const char *const CAVEAT =
     "PERFORMANCE.md is the fair head to head; this column is what a stylesheet costs.";
 
 static const cmp_case CASES[] = {
-    {"layout_1k", "1000 boxes, one row per sixteen, no painting", CAVEAT, a_1k, c_1k,
+    {"flat_1k", "1000 boxes, one row per sixteen, no painting", CAVEAT, a_1k, c_1k,
      "ar layout", cmp_areole_layout_us},
-    {"layout_8k", "8000 boxes: the size Clay publishes", CAVEAT, a_8k, c_8k, "ar layout",
+    {"flat_8k", "8000 boxes: the size Clay publishes", CAVEAT, a_8k, c_8k, "ar layout",
      cmp_areole_layout_us}};
 
 static const cmp_case *clay_cases(int *count)
