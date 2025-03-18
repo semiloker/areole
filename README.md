@@ -60,22 +60,108 @@ areole measures itself. The phases are reported separately because a single
 frame time hides the one thing worth knowing on old hardware: whether the cost
 is the rasterizer or the blit. Those have entirely different fixes.
 
-From the example above, 50 boxes at 1024×640 on a modern desktop:
+The shipped `dashboard` example -- rail, nav, six cards, 49 boxes, 182 glyphs --
+at 1024x768 on a Ryzen 7 8840HS:
 
-| phase | p50 | p99 |
-| --- | --: | --: |
-| style | 16 µs | 30 µs |
-| layout | 5 µs | 14 µs |
-| raster | 433 µs | 816 µs |
-| present | 609 µs | 2161 µs |
-| **frame** | **1071 µs** | **2744 µs** |
+| | |
+| --- | --: |
+| style | 9 us |
+| layout | 2 us |
+| raster | 330 us |
+| **frame p50** | **344 us** |
+| frame p99 | 725 us |
+| heap allocations after init | **0** |
 
-Note which half dominates. With rectangles only, the GDI blit was more than
-twice the rasterizer; with a few hundred glyphs it is the other way round.
-That is the entire reason the two are never added together.
+Per unit, which is what scales to a slower machine: **0.37 ns/pixel**,
+**1.9 us/glyph**, **7.0 us/node**. The glyph figure is the bad one and is known
+to be roughly fifteen times slower than it should be -- see the tie against GDI
+below.
 
 Averages are not reported. A UI that is smooth apart from one stall every two
 seconds has an excellent average and is unusable.
+
+Every scene, every percentile and the full derivation:
+**[docs/PERFORMANCE.md](docs/PERFORMANCE.md)**, which is generated from measured
+JSON and checked by CI so a published number cannot drift from a measured one.
+
+## Against the alternatives
+
+Same machine, same process, same output buffer, alternating one frame each so
+neither engine sits on a warmer chip. A ratio above 1.00 means areole is faster.
+
+| case | rival | areole | rival | ratio | areole layout | ratio | read |
+| --- | --- | --: | --: | --: | --: | --: | --- |
+| `clear_uncached` | Win32 GDI | 80 us | 83 us | **1.04x** | - | - | **tie** |
+| `fill_opaque` | Win32 GDI | 343 us | 1288 us | **3.76x** | - | - | solid |
+| `fill_blend` | Win32 GDI | 2056 us | 12592 us | **6.12x** | - | - | solid |
+| `latin_paragraph` | Win32 GDI | 787 us | 823 us | **1.04x** | - | - | **tie** |
+| `hairlines` | Win32 GDI | 31 us | 336 us | **10.90x** | - | - | solid |
+| `flat_1k` | Clay | 109 us | 259 us | **2.37x** | 23 us | **11.25x** | solid |
+| `flat_8k` | Clay | 967 us | 2170 us | **2.24x** | 194 us | **11.19x** | solid |
+| `flat_1k` | microui | 95 us | 10 us | **0.11x** | 21 us | **0.48x** | solid |
+| `flat_8k` | microui | 855 us | 80 us | **0.09x** | 184 us | **0.43x** | solid |
+
+`read` is whether the ratio survives the noise it was measured in: **solid**
+when the effect is more than twice the combined per-epoch spread, **tie** when
+it is not. A tie is published as a tie whatever the ratio column says.
+
+**What this actually says, in three lines.**
+
+*Filling and blending: areole wins comfortably.* 3.8x GDI on opaque rectangles,
+6.1x on translucent ones, 10.9x on hairlines where per-call overhead dominates.
+`fill_blend` is flattered -- GDI's `AlphaBlend` must read a source surface areole
+does not need -- and `clear_uncached` is a tie because at 3 MB per pass both
+engines are simply waiting on memory, which is the correct answer.
+
+*Layout: areole beats the direct competitor and pays for what it buys.* Its
+layout phase is **11x faster than Clay's entire frame** at both sizes. Against
+microui it is 0.43x, and that is the expected price: microui advances a row
+cursor, areole runs two passes per axis over a retained tree so grow and shrink
+can be solved. Real flexbox for 2x a cursor is cheap.
+
+*Text: a tie with GDI, and that is the finding.* GDI renders hinted, kerned,
+antialiased outlines through the system font stack in the time areole blits 8x8
+bitmaps. A bitmap blitter tying with an outline rasterizer is not a close call.
+Replacing the glyph path is the single largest win available.
+
+The caveats are not footnotes -- Clay takes its configuration inline while areole
+resolves a stylesheet per box, so areole is doing strictly more work in the
+whole-frame column; microui neither builds a tree nor resolves style at all.
+Each one is stored next to its case in `bench/compare/` so it cannot drift away
+from the number it qualifies.
+
+Not yet measured: Nuklear, LVGL, Direct2D.
+
+## Measure it yourself
+
+Nothing above is taken on trust. Every number is reproducible in three commands.
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+
+./build/ar_bench --all --iters 150 --repeat 3      # 28 scenes, this machine
+./build/ar_compare --all --iters 200 --repeat 3    # against GDI, Clay, microui
+./build/ar_hwprobe                                 # what the machine can do
+```
+
+Then the two questions that matter:
+
+```sh
+# Will it hold 60 fps on the machine I care about?
+./build/ar_require --scene dashboard --fps 60 --res 640x480 --bpp 32     --results bench/baseline.json     --reference bench/profiles/reference-ryzen-8840hs.json     --target bench/profiles/pentium2-400.json
+
+# Did my change make anything slower?
+./build/ar_bench --all --iters 150 --repeat 3 --compare bench/baseline.json --gate
+```
+
+`ar_bench_selftest` runs 32 checks on the measurement tool itself, because a
+benchmark that lies is worse than no benchmark. It knows the traps: a dead store
+the optimiser deleted once reported infinite copy bandwidth, and a constant
+stride once made a cache curve go the wrong way. Both now fail loudly.
+
+The tool also reports its own trustworthiness. It measures this machine's
+variance between epochs and refuses to gate on a difference smaller than the
+noise, rather than claiming a threshold it cannot support.
 
 ## Design
 
@@ -106,12 +192,14 @@ toolkit breaks that circle.
 
 **Pre-alpha.** Built in the open, one issue at a time.
 
-- **v0.1** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
-- **v0.2** *It's CSS* — parser, selector matching, flexbox solver ✅
-- **v0.3** *It's a UI* — text input, scrolling, dropdowns, rounded corners
-- **v0.4** *It's fast* — hash-grid dirty rects, glyph atlas, benchmark gate
-- **v0.5** *It's portable* — X11, Cocoa
-- **v0.6** *It's pretty* — optional TrueType, OS-hinted text
+- **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
+- **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
+- **0.1.2** *It redraws less* — damage tracking, scroll by region move
+- **0.2.0** *It has real text* — TrueType, an outline rasterizer, a glyph cache
+- **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
+- **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
+
+Minor releases add architecture, patch releases add CSS and HTML coverage.
 
 ## Building
 
@@ -120,6 +208,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/ar_test          # 210 checks
 ./build/example_hello
+
+# on a machine with no display, the benchmarks still run
+./build/ar_bench --all --iters 150 --repeat 3
 ```
 
 ## Requirements
@@ -128,6 +219,8 @@ Windows 2000 or newer. A C89 compiler. That is the entire list.
 
 ## Documentation
 
+- [Performance](docs/PERFORMANCE.md) — every scene, every percentile, the
+  comparison tables, and what each number assumed. Generated, never typed
 - [The CSS subset](docs/CSS_REFERENCE.md) — every property and selector, and
   what is deliberately missing
 - [Contributing](CONTRIBUTING.md) — the two invariants, the C89 rules, and why
