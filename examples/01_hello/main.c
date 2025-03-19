@@ -91,6 +91,7 @@ int main(void)
     ar_ctx     *ui;
     ar_win     *win;
     ar_surface *s;
+    ar_rect     dirty, overlay, status_area;
     ar_i32      selected = 1;
     ar_i32      i, row;
     char        status[160];
@@ -164,17 +165,26 @@ int main(void)
 
         ar_end(ui);
 
-        ar_frame_end(ui, s);
+        dirty = ar_frame_end(ui, s);
 
         /* Drawn over the tree rather than inside it, because it reports on the
-           frame that has just been laid out. */
+           frame that has just been laid out.
+           
+           The library cannot see this drawing, so the region it covers has to
+           be added to the dirty rectangle by hand -- the overlay changes every
+           frame, and presenting only what areole reported would leave it
+           frozen. This is exactly the case ar_invalidate exists for. */
+        overlay = ar_rect_make(s->w - 296, 16, 296, 200);
+        status_area = ar_rect_make(0, s->h - 24, s->w, 24);
+        dirty = ar_rect_union(dirty, ar_rect_union(overlay, status_area));
+
         ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
 
         sprintf(status, "areole %s   %ld boxes   %ldx%ld   %s", ar_version(),
                 (long)ar_perf_of(ui)->cur.nodes, (long)s->w, (long)s->h, ar_time_source());
         ar_draw_text(s, ar_rect_make(0, 0, s->w, s->h), 12, s->h - 18, status, 1, AR_HEX(0x8A8175));
 
-        ar_win_present(win, ar_rect_make(0, 0, s->w, s->h));
+        ar_win_present(win, dirty);
         ar_frame_presented(ui);
 
         /* Hover is resolved from the previous frame and this pump blocks when

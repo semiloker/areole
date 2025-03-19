@@ -51,6 +51,11 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
             s->key = key;
             s->rect = ar_rect_make(0, 0, 0, 0);
             s->scroll = 0;
+            /* A claimed slot must not inherit the previous occupant's verdict:
+               a stale seen or digest would let a brand new box be judged
+               unchanged and never painted. */
+            s->digest = 0;
+            s->seen = 0;
             return s;
         }
         /* A box that has not been declared for two frames is gone. Reusing
@@ -68,6 +73,8 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
         stale->key = key;
         stale->rect = ar_rect_make(0, 0, 0, 0);
         stale->scroll = 0;
+        stale->digest = 0;
+        stale->seen = 0;
         return stale;
     }
     return 0; /* the table is genuinely full; the box loses its hover, not its pixels */
@@ -218,6 +225,8 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->overflowed = 0;
     c->unbalanced = 0;
     c->frame++;
+
+    ar_damage_reset(&c->damage);
 
     c->mouse_x = in ? in->mouse_x : -1;
     c->mouse_y = in ? in->mouse_y : -1;
@@ -510,7 +519,9 @@ static void ar__update_hot(ar_ctx *c)
 ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 {
     ar_rect viewport;
+    ar_rect damage;
     ar_i32  i;
+    ar_i32  survivors = 0; /* boxes present this frame that were present last */
 
     if (c->depth != 0)
     {
@@ -532,24 +543,105 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     ar_layout_solve(c->nodes, c->node_count, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
+    /* A resize repaints everything: every box moved, and the surface behind
+       them is new memory. */
+    if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h)
+    {
+        ar_damage_add_all(&c->damage);
+        c->last_viewport = viewport;
+    }
+
     /* Where every box ended up, remembered for next frame to hit test
        against. This is the whole cost of the one frame delay: one store per
-       box. */
+       box.
+
+       The same walk decides what to repaint. A box is damaged when it moved,
+       when it resized, when its resolved style came out different, or when it
+       was not in the tree last frame -- and when it moved, both the rectangle
+       it left and the one it arrived at are damaged, because the old one has
+       to be painted over. */
     for (i = 0; i < c->node_count; ++i)
     {
-        ar_slot *slot = ar_ctx_slot(c, c->nodes[i].key);
+        ar_node *n = &c->nodes[i];
+        ar_slot *slot = ar_ctx_slot(c, n->key);
+        ar_u32   digest = ar_paint_digest(n);
+
+        if (!slot)
+        {
+            /* No slot means no memory of this box, so no way to know it did
+               not change. Repaint it. */
+            ar_damage_add(&c->damage, n->rect);
+            continue;
+        }
+
+        if (slot->seen == c->frame - 1)
+        {
+            ++survivors;
+        }
+
+        if (slot->seen != c->frame - 1 || slot->digest != digest)
+        {
+            ar_damage_add(&c->damage, n->rect);
+        }
+        else if (slot->rect.x != n->rect.x || slot->rect.y != n->rect.y ||
+                 slot->rect.w != n->rect.w || slot->rect.h != n->rect.h)
+        {
+            ar_damage_add(&c->damage, slot->rect);
+            ar_damage_add(&c->damage, n->rect);
+        }
+
+        slot->rect = n->rect;
+        slot->digest = digest;
+        slot->seen = c->frame;
+        slot->last_frame = c->frame;
+    }
+
+    /* A box that was on screen last frame and is gone now leaves a hole, and
+       the slot table has to be walked to find it because the tree is exactly
+       what no longer contains it.
+
+       That walk is over the whole table, not the tree, so it is the one piece
+       of damage tracking whose cost does not shrink with the interface. It is
+       therefore skipped in the case that matters: when every box present last
+       frame was seen again this frame, nothing was removed, and the count says
+       so without looking. An interface whose shape is stable -- which is most
+       interfaces, most frames -- never pays for this. */
+    if (survivors != c->seen_last)
+    {
+        for (i = 0; i < c->slot_cap; ++i)
+        {
+            ar_slot *slot = &c->slots[i];
+            if (slot->last_frame != 0 && slot->seen == c->frame - 1)
+            {
+                ar_damage_add(&c->damage, slot->rect);
+            }
+        }
+    }
+    c->seen_last = survivors;
+
+    damage = ar_damage_resolve(&c->damage, viewport);
+
+    if (s && damage.w > 0 && damage.h > 0)
+    {
+        ar__paint(c, s, damage);
+    }
+    ar__update_hot(c);
+
+    /* Hover resolves from the previous frame, so the frame that notices a new
+       box under the cursor cannot also style it. Damaging both boxes now means
+       the next frame -- the one that can style them -- repaints them. */
+    if (c->hot_changed)
+    {
+        ar_slot *slot = ar_ctx_slot(c, c->hot);
         if (slot)
         {
-            slot->rect = c->nodes[i].rect;
-            slot->last_frame = c->frame;
+            ar_damage_add(&c->damage, slot->rect);
         }
     }
 
-    if (s)
-    {
-        ar__paint(c, s, viewport);
-    }
-    ar__update_hot(c);
+    /* The perf record already carries dirty_px; a counter would duplicate it. */
+    c->perf.cur.dirty_px = (ar_u32)(damage.w * damage.h);
+    c->last_damage = damage;
 
     ar_perf_mark(&c->perf, AR_PHASE_RASTER, ar__now(c));
 
@@ -561,7 +653,22 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     /* The frame is left open on purpose: ar_frame_presented closes it, once
        the caller has actually put the pixels on screen. */
-    return viewport;
+    return damage;
+}
+
+void ar_invalidate(ar_ctx *c, ar_rect r)
+{
+    ar_damage_add(&c->damage, r);
+}
+
+void ar_invalidate_all(ar_ctx *c)
+{
+    ar_damage_add_all(&c->damage);
+}
+
+int ar_frame_is_dirty(const ar_ctx *c)
+{
+    return c->damage.any;
 }
 
 void ar_frame_presented(ar_ctx *c)

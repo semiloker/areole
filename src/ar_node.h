@@ -62,7 +62,28 @@ typedef struct ar_slot
     ar_rect rect; /* where this box was last frame */
     ar_i32  scroll;
     ar_u32  last_frame; /* for eviction; 0 means the slot is free */
+    ar_u32  digest;     /* of the resolved style; 0 means never recorded */
+    ar_u32  seen;       /* frame this box last appeared in the tree */
 } ar_slot;
+
+/* ------------------------------------------------------------------------
+ * Damage
+ *
+ * One merged rectangle per frame. See ar_damage.c for why that is the whole
+ * of stage one and what its known failure mode is.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_damage
+{
+    ar_rect r;
+    int     any; /* something was invalidated */
+    int     all; /* repaint everything: first frame, resize, or asked to */
+} ar_damage;
+
+void    ar_damage_reset(ar_damage *d);
+void    ar_damage_add(ar_damage *d, ar_rect r);
+void    ar_damage_add_all(ar_damage *d);
+ar_rect ar_damage_resolve(const ar_damage *d, ar_rect viewport);
+ar_u32  ar_paint_digest(const ar_node *n);
 
 struct ar_ctx
 {
@@ -90,6 +111,11 @@ struct ar_ctx
     ar_u32 mouse_pressed;
     ar_u32 mouse_released;
     int    mouse_inside;
+
+    ar_damage damage;
+    ar_rect   last_viewport; /* a resize repaints everything */
+    ar_rect   last_damage;   /* what ar_frame_end returned, for the backend */
+    ar_i32    seen_last;     /* boxes in the tree last frame, to spot removals */
 
     ar_u32 hot;     /* key of the box under the cursor         */
     ar_u32 active;  /* key of the box the press started on     */

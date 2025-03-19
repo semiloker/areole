@@ -1467,6 +1467,252 @@ static void test_layout_is_stable_across_frames(void)
           "layout: a frame uses exactly the arena it used last time");
 }
 
+
+/* ------------------------------------------------------------------------
+ * Damage tracking
+ *
+ * The one that matters is the last: what damage tracking draws must be what a
+ * full repaint would have drawn, pixel for pixel. Everything else here is a
+ * property that makes the saving real; that one is the property that makes it
+ * correct, and a stale strip of pixels is invisible until it is embarrassing.
+ * ------------------------------------------------------------------------ */
+#define AR_DMG_W 256
+#define AR_DMG_H 128
+
+static ar_u32 g_dmg_a[AR_DMG_W * AR_DMG_H];
+static ar_u32 g_dmg_b[AR_DMG_W * AR_DMG_H];
+
+static ar_surface ar__dmg_surface(ar_u32 *px)
+{
+    ar_surface s;
+    s.pixels = px;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+    return s;
+}
+
+static const char *const DMG_CSS = "#root { display:flex; flex-direction:column; gap:4px;"
+                                   "        padding:6px; background:#101014; }"
+                                   ".a { width:grow; height:20px; background:#3a4a5a; }"
+                                   ".b { width:grow; height:20px; background:#8a2a2a; }";
+
+/* One frame of a two box interface. Which class the second box uses is the
+   only thing the caller varies, so a difference in output can only come from
+   that. */
+static ar_rect ar__dmg_frame(ar_surface *s, int second_is_b, ar_i32 mouse_x, ar_i32 mouse_y)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = mouse_x;
+    in.mouse_y = mouse_y;
+    in.mouse_inside = (mouse_x >= 0);
+    ar_frame_begin(g_ui, &in);
+
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, second_is_b ? "div.b" : "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    return ar_frame_end(g_ui, s);
+}
+
+static void test_damage_first_frame_paints_everything(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    ar__ui_reset(DMG_CSS);
+    d = ar__dmg_frame(&s, 0, -1, -1);
+
+    /* Nothing is known about the surface on the first frame, so nothing may be
+       assumed unchanged. */
+    CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H,
+          "damage: the first frame repaints the whole surface");
+}
+
+static void test_damage_an_unchanged_frame_paints_nothing(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    ar__ui_reset(DMG_CSS);
+    ar__dmg_frame(&s, 0, -1, -1);
+    d = ar__dmg_frame(&s, 0, -1, -1);
+
+    CHECK(d.w == 0 || d.h == 0, "damage: redeclaring the same tree damages nothing");
+}
+
+static void test_damage_a_style_change_repaints_that_box(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    ar__ui_reset(DMG_CSS);
+    ar__dmg_frame(&s, 0, -1, -1);
+    ar__dmg_frame(&s, 0, -1, -1);
+    d = ar__dmg_frame(&s, 1, -1, -1);
+
+    /* Same geometry, different background. Geometry alone cannot see this,
+       which is the entire reason a style digest is stored per box. */
+    CHECK(d.w > 0 && d.h > 0, "damage: a box that only changed colour is still repainted");
+    CHECK(d.h < AR_DMG_H, "damage: and only that box, not the whole surface");
+}
+
+static void test_damage_invalidate_is_honoured(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    ar__ui_reset(DMG_CSS);
+    ar__dmg_frame(&s, 0, -1, -1);
+    ar__dmg_frame(&s, 0, -1, -1);
+
+    /* An application invalidating its own data, which the library cannot see. */
+    ar_frame_begin(g_ui, 0);
+    ar_invalidate(g_ui, ar_rect_make(10, 10, 30, 30));
+    CHECK(ar_frame_is_dirty(g_ui), "damage: ar_invalidate marks the frame dirty at once");
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    d = ar_frame_end(g_ui, &s);
+
+    CHECK(d.w > 0 && d.h > 0, "damage: ar_invalidate forces a repaint the library cannot see");
+    CHECK(d.x <= 10 && d.y <= 10 && d.x + d.w >= 40 && d.y + d.h >= 40,
+          "damage: and the region returned covers what was invalidated");
+}
+
+static void test_damage_invalidate_all_repaints_everything(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    ar__ui_reset(DMG_CSS);
+    ar__dmg_frame(&s, 0, -1, -1);
+
+    ar_frame_begin(g_ui, 0);
+    ar_invalidate_all(g_ui);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    d = ar_frame_end(g_ui, &s);
+
+    CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H, "damage: ar_invalidate_all repaints the surface");
+}
+
+static void test_damage_a_resize_repaints_everything(void)
+{
+    ar_surface small = ar__dmg_surface(g_dmg_a);
+    ar_surface big = ar__dmg_surface(g_dmg_a);
+    ar_rect    d;
+
+    small.w = 120;
+    small.h = 60;
+
+    ar__ui_reset(DMG_CSS);
+    ar__dmg_frame(&small, 0, -1, -1);
+    ar__dmg_frame(&small, 0, -1, -1);
+    d = ar__dmg_frame(&big, 0, -1, -1);
+
+    /* Every box moved and the memory behind them is new. */
+    CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H, "damage: a resize repaints the whole surface");
+}
+
+/* The acceptance criterion for the whole release.
+ *
+ * Two contexts run the same frames in lockstep: one tracks damage, the other is
+ * forced to repaint everything. The surfaces are compared after EVERY frame,
+ * not once at the end, because a stale pixel that a later frame happens to
+ * overwrite is still a stale pixel that was on screen -- that is what flicker
+ * is, and comparing only the final image would call it correct.
+ */
+static unsigned char g_dmg_mem[AR_MEM(256)];
+
+static void ar__dmg_declare(ar_ctx *c, int second_is_b)
+{
+    ar_begin(c, "#root");
+    ar_begin(c, "div.a");
+    ar_end(c);
+    ar_begin(c, second_is_b ? "div.b" : "div.a");
+    ar_end(c);
+    ar_end(c);
+}
+
+static void test_damage_output_is_identical_to_a_full_repaint(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame, drew_less = 0;
+    int        bad_frame = -1, bad_px = -1;
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "damage: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, DMG_CSS);
+
+    for (frame = 0; frame < 12 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+        ar_rect  d;
+        int      variant = (frame % 3 == 2);
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = (frame % 4) * 40;
+        in.mouse_y = 20;
+        in.mouse_inside = 1;
+
+        ar_frame_begin(g_ui, &in);
+        ar__dmg_declare(g_ui, variant);
+        d = ar_frame_end(g_ui, &tracked);
+        if (d.w < AR_DMG_W || d.h < AR_DMG_H)
+        {
+            drew_less = 1;
+        }
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__dmg_declare(ref, variant);
+        ar_frame_end(ref, &full);
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(drew_less, "damage: at least one frame of the run repainted less than the surface");
+    CHECK(bad_frame < 0, "damage: tracked output is pixel identical to a full repaint, every frame");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -1528,6 +1774,14 @@ int main(void)
     test_layout_nesting();
     test_layout_survives_abuse();
     test_layout_is_stable_across_frames();
+
+    test_damage_first_frame_paints_everything();
+    test_damage_an_unchanged_frame_paints_nothing();
+    test_damage_a_style_change_repaints_that_box();
+    test_damage_invalidate_is_honoured();
+    test_damage_invalidate_all_repaints_everything();
+    test_damage_a_resize_repaints_everything();
+    test_damage_output_is_identical_to_a_full_repaint();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

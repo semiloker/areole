@@ -301,8 +301,38 @@ void ar_text(ar_ctx *c, const char *selector, const char *text);
 int ar_button(ar_ctx *c, const char *selector, const char *label);
 
 /* Lays the tree out and paints it into the surface. Returns the region that
-   was drawn, for the caller to present. */
+   was drawn, for the caller to present.
+
+   That region is usually much smaller than the surface. areole repaints only
+   what changed, so a frame in which nothing changed returns an empty rectangle
+   and touches no pixels at all. Present exactly what is returned: presenting
+   the whole window instead is correct but throws away most of the saving,
+   because on the machines this library targets the blit costs as much as the
+   rasterizer. */
 ar_rect ar_frame_end(ar_ctx *c, ar_surface *s);
+
+/* ------------------------------------------------------------------------
+ * Damage
+ *
+ * The library invalidates by itself when hover, focus or active state
+ * changes, when a box moves or resizes, when a box appears or disappears, and
+ * when a box's resolved style comes out different. That covers everything
+ * areole can see.
+ *
+ * It cannot see the application's own data. A label whose text changed, a
+ * value redrawn from a sensor, a list that gained a row: call ar_invalidate
+ * with the affected rectangle, or ar_invalidate_all when it is easier and the
+ * frame budget allows.
+ *
+ * Over-invalidating costs performance. Under-invalidating leaves stale pixels
+ * on screen, so when in doubt, invalidate more.
+ * ------------------------------------------------------------------------ */
+void ar_invalidate(ar_ctx *c, ar_rect r);
+void ar_invalidate_all(ar_ctx *c);
+
+/* Whether the frame in progress will paint anything. Valid between
+   ar_frame_begin and ar_frame_end. */
+int ar_frame_is_dirty(const ar_ctx *c);
 
 /* Closes the frame, after the caller has put the surface on screen. Separate
    from ar_frame_end because presenting belongs to the backend, and timing the
