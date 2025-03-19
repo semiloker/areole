@@ -28,6 +28,12 @@ typedef struct bench_env
     ar_surface surface;
     ar_ctx    *ui;
     ar_u32     frame; /* index within the current run, for scenes that vary */
+
+    /* Set by --full-repaint. areole normally paints only what changed, so a
+       steady frame and a worst frame differ by more than an order of
+       magnitude. Both are worth measuring: the steady frame is what the
+       machine pays, the worst frame is what the budget must cover. */
+    int full_repaint;
 } bench_env;
 
 typedef struct bench_scene

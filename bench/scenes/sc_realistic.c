@@ -58,6 +58,10 @@ static void begin(bench_env *e, ar_i32 mx, ar_i32 my)
     in.mouse_y = my;
     in.mouse_inside = (mx >= 0);
     ar_frame_begin(e->ui, &in);
+    if (e->full_repaint)
+    {
+        ar_invalidate_all(e->ui);
+    }
 }
 
 /* ------------------------------------------------------------------------

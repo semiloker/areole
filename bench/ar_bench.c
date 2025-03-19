@@ -76,6 +76,7 @@ typedef struct bench_result
     int    overflowed;
 } bench_result;
 
+static int    g_full_repaint = 0;
 static double g_samples[BENCH_MAX_SAMPLES];
 
 static void die(const char *msg)
@@ -130,6 +131,7 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, bench_result
         }
         ar_set_clock(e.ui, bench_time_us);
     }
+    e.full_repaint = g_full_repaint;
 
     if (sc->init)
     {
@@ -558,6 +560,8 @@ static void usage(void)
     printf("  --scene NAME       run one scene\n");
     printf("  --group NAME       run one group\n");
     printf("  --iters N          timed frames per repeat (default 200)\n");
+    printf("  --full-repaint     invalidate every frame: the worst frame,\n");
+    printf("                     not the steady one\n");
     printf("  --repeat N         epochs: complete passes over the scene list\n");
     printf("  --warmup N         untimed frames before timing (default 30)\n");
     printf("  --json             emit JSON instead of a table\n");
@@ -613,6 +617,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--group") == 0 && i + 1 < argc)
         {
             want_group = argv[++i];
+        }
+        else if (strcmp(argv[i], "--full-repaint") == 0)
+        {
+            g_full_repaint = 1;
         }
         else if (strcmp(argv[i], "--iters") == 0 && i + 1 < argc)
         {

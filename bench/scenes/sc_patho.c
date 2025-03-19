@@ -134,6 +134,10 @@ static void frame_arena_churn(bench_env *e)
     in.mouse_x = -1;
     in.mouse_y = -1;
     ar_frame_begin(e->ui, &in);
+    if (e->full_repaint)
+    {
+        ar_invalidate_all(e->ui);
+    }
     ar_begin(e->ui, "div#root");
     for (i = 0; i < n; ++i)
     {
