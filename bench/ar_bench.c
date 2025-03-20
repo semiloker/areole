@@ -63,6 +63,13 @@ typedef struct bench_result
     /* Per frame, from ar_counters. */
     double fills, fill_px, blend_px, glyphs, glyph_px, clipped_out;
 
+    /* Damage, which decides whether the merged rectangle is enough or whether
+       the hash grid has to be built. dirty_ratio is the mean fraction of the
+       surface repainted; degenerate is the fraction of frames where merging
+       distant changes produced something close to a full window, which is the
+       exact failure the hash grid exists to fix. */
+    double dirty_ratio, degenerate;
+
     /* Normalised rates, emitted only when the denominator is large enough for
        the answer to mean something. */
     double ns_per_px, ns_per_glyph, ns_per_node;
@@ -156,14 +163,36 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, bench_result
         ar_memory_stats(e.ui, &persist_before, 0, 0, 0);
     }
 
-    for (i = 0; i < iters; ++i)
     {
-        e.frame = (ar_u32)(warmup + i);
-        t0 = bench_now_s();
-        sc->frame(&e);
-        t1 = bench_now_s();
-        g_samples[i] = t1 - t0;
-        sum += g_samples[i];
+        double surface_area = (double)e.surface.w * (double)e.surface.h;
+        double dirty_sum = 0.0;
+        int    degenerate_frames = 0;
+
+        for (i = 0; i < iters; ++i)
+        {
+            e.frame = (ar_u32)(warmup + i);
+            t0 = bench_now_s();
+            sc->frame(&e);
+            t1 = bench_now_s();
+            g_samples[i] = t1 - t0;
+            sum += g_samples[i];
+
+            if (e.ui && surface_area > 0.0)
+            {
+                double d = (double)ar_perf_of(e.ui)->cur.dirty_px;
+                dirty_sum += d;
+                if (d >= surface_area * 0.9)
+                {
+                    ++degenerate_frames;
+                }
+            }
+        }
+
+        if (iters > 0 && surface_area > 0.0)
+        {
+            out->dirty_ratio = dirty_sum / ((double)iters * surface_area);
+            out->degenerate = (double)degenerate_frames / (double)iters;
+        }
     }
 
     if (e.ui)
@@ -532,6 +561,8 @@ static void print_json(const bench_result *rs, int n)
         printf("      \"blend_px\": %.0f,\n", r->blend_px);
         printf("      \"glyphs\": %.1f,\n", r->glyphs);
         printf("      \"glyph_px\": %.0f,\n", r->glyph_px);
+        printf("      \"dirty_ratio\": %.5f,\n", r->dirty_ratio);
+        printf("      \"degenerate\": %.3f,\n", r->degenerate);
         printf("      \"clipped_out\": %.1f,\n", r->clipped_out);
         printf("      \"nodes\": %lu,\n", (unsigned long)r->nodes);
         printf("      \"ns_per_px\": %.4f,\n", r->ns_per_px);

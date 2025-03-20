@@ -1,70 +1,168 @@
 /*
- * areole - damage tracking, stage one: one merged rectangle per frame.
+ * areole - damage tracking.
  * SPDX-License-Identifier: MIT
  *
- * Why this is the whole of the release and not a step towards it:
+ * Why this exists:
  *
  * A Pentium II with PC100 memory sustains around 250 MB/s of write bandwidth.
  * An 800x600 surface at 32 bits per pixel is 1.83 MB, so writing it once costs
  * 7.7 ms out of a 16.7 ms frame, and a real interface has two to three times
  * overdraw. Full-window redraw on that machine is not slow, it is
- * arithmetically impossible. Everything above this release in the roadmap is a
- * cost added on top of that traffic.
+ * arithmetically impossible.
  *
- * Stage one takes the overwhelmingly common case -- a hover highlight, a caret
- * blink, a button press -- from 1.83 MB of traffic to about 32 KB, and it does
- * so with a union and an intersect. The paint pass already threads a clip
- * rectangle from the root down through every box, so damage tracking is not a
- * new mechanism: it is a narrower root.
+ * Why it holds several rectangles rather than one:
  *
- * Its failure mode is known and is why the design document keeps a stage two.
- * Two changes in opposite corners produce a bounding rectangle covering the
- * whole window and the frame costs full price. That case is measured and
- * published rather than hidden -- see the `opposite_corners` scene -- and the
- * hash grid that fixes it is only worth building once the merged rectangle has
- * been shown to be insufficient on real interfaces rather than contrived ones.
+ * A single merged rectangle was the plan, and on every realistic scene it is
+ * enough -- the whole scene library repaints under 15% of the surface and not
+ * one frame of it degenerates. But the degenerate case is not exotic. Two boxes
+ * in opposite corners, one changing, is a status bar and a clock; the merged
+ * rectangle is then the entire window, and the measurement is unambiguous:
+ *
+ *   pixels that changed              768
+ *   pixels a merged rect presents    480,000     625x too many
+ *   cost on the reference machine    0.11 ms
+ *   cost on a Pentium II             7.68 ms     46% of the frame budget
+ *
+ * The roadmap answered this with a command list and a hash grid, which is two
+ * new subsystems. Measuring it first showed that is not what the case needs.
+ * The rasterizer already paints only the boxes it was asked for, so an oversized
+ * damage rectangle costs almost nothing to draw -- the 7.68 ms is entirely the
+ * blit. Keeping a handful of rectangles instead of one fixes that in fifty
+ * lines, with no new architecture and nothing for a later release to unpick.
+ *
+ * Eight is not a tuned number. It is where merging starts costing less than
+ * tracking, for a list small enough to scan linearly. If an interface is ever
+ * found that wants more, the measurement above is the one that justifies it.
  */
 #include "ar_node.h"
 
-void ar_damage_reset(ar_damage *d)
-{
-    d->r = ar_rect_make(0, 0, 0, 0);
-    d->any = 0;
-    d->all = 0;
-}
-
-void ar_damage_add(ar_damage *d, ar_rect r)
+static ar_i32 ar__area(ar_rect r)
 {
     if (r.w <= 0 || r.h <= 0)
     {
-        return;
+        return 0;
     }
-    if (!d->any)
+    return r.w * r.h;
+}
+
+/* How many pixels are presented needlessly by merging these two. */
+static ar_i32 ar__merge_waste(ar_rect a, ar_rect b)
+{
+    return ar__area(ar_rect_union(a, b)) - ar__area(a) - ar__area(b);
+}
+
+/* Past a certain point, tracking regions stops being worth the arithmetic:
+   once the damage covers half the surface, presenting all of it is cheaper
+   than deciding which parts to skip, and every later add becomes free. This is
+   what keeps a tree that rebuilds itself entirely from paying per box for a
+   decision that is already made. */
+static void ar__collapse_if_pointless(ar_damage *d)
+{
+    if (d->viewport_area > 0 && d->area * 2 >= d->viewport_area)
     {
-        d->r = r;
-        d->any = 1;
-        return;
+        d->all = 1;
+        d->count = 0;
     }
-    d->r = ar_rect_union(d->r, r);
+}
+
+void ar_damage_reset(ar_damage *d)
+{
+    d->count = 0;
+    d->all = 0;
+    d->area = 0;
+}
+
+void ar_damage_set_viewport(ar_damage *d, ar_rect viewport)
+{
+    d->viewport_area = ar__area(viewport);
 }
 
 void ar_damage_add_all(ar_damage *d)
 {
     d->all = 1;
-    d->any = 1;
 }
 
-ar_rect ar_damage_resolve(const ar_damage *d, ar_rect viewport)
+void ar_damage_add(ar_damage *d, ar_rect r)
 {
+    ar_i32 i, best = -1, best_waste = 0;
+
+    if (d->all || r.w <= 0 || r.h <= 0)
+    {
+        return;
+    }
+
+    /* Already covered: the common case, since a parent and its children are
+       usually damaged by the same change. */
+    for (i = 0; i < d->count; ++i)
+    {
+        ar_rect e = d->r[i];
+        if (r.x >= e.x && r.y >= e.y && r.x + r.w <= e.x + e.w && r.y + r.h <= e.y + e.h)
+        {
+            return;
+        }
+    }
+
+    /* Merging into a rectangle this one already overlaps or touches presents no
+       extra pixels, so take that before spending a slot. */
+    for (i = 0; i < d->count; ++i)
+    {
+        ar_i32 waste = ar__merge_waste(d->r[i], r);
+        if (waste <= 0)
+        {
+            d->area += ar__area(r) + waste;
+            d->r[i] = ar_rect_union(d->r[i], r);
+            ar__collapse_if_pointless(d);
+            return;
+        }
+        if (best < 0 || waste < best_waste)
+        {
+            best = i;
+            best_waste = waste;
+        }
+    }
+
+    if (d->count < AR_DAMAGE_RECTS)
+    {
+        d->r[d->count++] = r;
+        d->area += ar__area(r);
+        ar__collapse_if_pointless(d);
+        return;
+    }
+
+    /* Full, so something must be merged, and the cheapest available merge is
+       the one already found above. An exhaustive search over every pair would
+       pack the list slightly better and costs O(n^2) per damaged box; on
+       arena_churn, which rebuilds four thousand boxes every frame, that was
+       measured at 56% slower with a 7.8% spread. Not worth it for a list of
+       eight. */
+    if (best >= 0)
+    {
+        d->area += ar__merge_waste(d->r[best], r) + ar__area(r);
+        d->r[best] = ar_rect_union(d->r[best], r);
+        ar__collapse_if_pointless(d);
+    }
+}
+
+ar_rect ar_damage_bounds(const ar_damage *d, ar_rect viewport)
+{
+    ar_rect b;
+    ar_i32  i;
+
     if (d->all)
     {
         return viewport;
     }
-    if (!d->any)
+    if (d->count == 0)
     {
         return ar_rect_make(0, 0, 0, 0);
     }
-    return ar_rect_intersect(d->r, viewport);
+
+    b = d->r[0];
+    for (i = 1; i < d->count; ++i)
+    {
+        b = ar_rect_union(b, d->r[i]);
+    }
+    return ar_rect_intersect(b, viewport);
 }
 
 /*

@@ -330,6 +330,21 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s);
 void ar_invalidate(ar_ctx *c, ar_rect r);
 void ar_invalidate_all(ar_ctx *c);
 
+/* The damaged region, as up to AR_DAMAGE_RECTS separate rectangles.
+   ar_frame_end returns their bounding box, which is all a simple backend
+   needs. Presenting them individually is what stops two changes in opposite
+   corners costing a whole-window blit -- on a Pentium II that is 7.7 ms
+   against 0.01 ms, so it is worth the loop.
+
+       for (i = 0; i < ar_damage_count(ui); ++i)
+           present(ar_damage_rect(ui, i));
+
+   Valid between ar_frame_end and the next ar_frame_begin. */
+#define AR_DAMAGE_RECTS 8
+
+ar_i32  ar_damage_count(const ar_ctx *c);
+ar_rect ar_damage_rect(const ar_ctx *c, ar_i32 i);
+
 /* Whether the frame in progress will paint anything. Valid between
    ar_frame_begin and ar_frame_end. */
 int ar_frame_is_dirty(const ar_ctx *c);

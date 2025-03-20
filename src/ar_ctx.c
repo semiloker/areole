@@ -548,8 +548,9 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h)
     {
         ar_damage_add_all(&c->damage);
-        c->last_viewport = viewport;
     }
+    c->last_viewport = viewport;
+    ar_damage_set_viewport(&c->damage, viewport);
 
     /* Where every box ended up, remembered for next frame to hit test
        against. This is the whole cost of the one frame delay: one store per
@@ -619,7 +620,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     }
     c->seen_last = survivors;
 
-    damage = ar_damage_resolve(&c->damage, viewport);
+    damage = ar_damage_bounds(&c->damage, viewport);
 
     if (s && damage.w > 0 && damage.h > 0)
     {
@@ -639,8 +640,21 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         }
     }
 
-    /* The perf record already carries dirty_px; a counter would duplicate it. */
-    c->perf.cur.dirty_px = (ar_u32)(damage.w * damage.h);
+    /* What is actually presented, which is the sum of the regions rather than
+       their bounding box. Reporting the bounding box would hide the entire
+       reason there is more than one of them. */
+    {
+        ar_i32 k, presented = 0;
+        for (k = 0; k < ar_damage_count(c); ++k)
+        {
+            ar_rect dr = ar_damage_rect(c, k);
+            if (dr.w > 0 && dr.h > 0)
+            {
+                presented += dr.w * dr.h;
+            }
+        }
+        c->perf.cur.dirty_px = (ar_u32)presented;
+    }
     c->last_damage = damage;
 
     ar_perf_mark(&c->perf, AR_PHASE_RASTER, ar__now(c));
@@ -668,7 +682,25 @@ void ar_invalidate_all(ar_ctx *c)
 
 int ar_frame_is_dirty(const ar_ctx *c)
 {
-    return c->damage.any;
+    return c->damage.all || c->damage.count > 0;
+}
+
+ar_i32 ar_damage_count(const ar_ctx *c)
+{
+    return c->damage.all ? 1 : c->damage.count;
+}
+
+ar_rect ar_damage_rect(const ar_ctx *c, ar_i32 i)
+{
+    if (c->damage.all)
+    {
+        return i == 0 ? c->last_viewport : ar_rect_make(0, 0, 0, 0);
+    }
+    if (i < 0 || i >= c->damage.count)
+    {
+        return ar_rect_make(0, 0, 0, 0);
+    }
+    return ar_rect_intersect(c->damage.r[i], c->last_viewport);
 }
 
 void ar_frame_presented(ar_ctx *c)

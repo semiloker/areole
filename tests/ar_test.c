@@ -1625,6 +1625,137 @@ static void test_damage_a_resize_repaints_everything(void)
     CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H, "damage: a resize repaints the whole surface");
 }
 
+
+/* Two changes far apart must stay two regions. Merging them into a bounding
+   box is correct and costs 625x too much: measured at 800x600, presenting the
+   merge is 480,000 pixels to update 768. */
+static const char *const SPLIT_CSS =
+    "#root { display:flex; flex-direction:column; justify-content:space-between; }"
+    ".bar  { display:flex; flex-direction:row; justify-content:space-between; }"
+    ".dot  { width:24px; height:16px; background:#3a4a5a; }"
+    ".lit  { width:24px; height:16px; background:#e8c39e; }"
+    ".gap  { width:24px; height:16px; }";
+
+/* The tree only. The caller opens and closes the frame, so a test can
+   invalidate inside the same frame the tree is declared in. */
+static void ar__split_tree(int lit)
+{
+    ar_begin(g_ui, "#root");
+
+    ar_begin(g_ui, "div.bar");
+    ar_begin(g_ui, lit ? "div.lit" : "div.dot");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.gap");
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.bar");
+    ar_begin(g_ui, "div.gap");
+    ar_end(g_ui);
+    ar_begin(g_ui, lit ? "div.dot" : "div.lit");
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+}
+
+static void ar__split_frame(ar_surface *s, int lit)
+{
+    ar_frame_begin(g_ui, 0);
+    ar__split_tree(lit);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_damage_distant_changes_stay_separate(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_i32     i, presented = 0;
+
+    ar__ui_reset(SPLIT_CSS);
+    ar__split_frame(&s, 0);
+    ar__split_frame(&s, 0);
+
+    /* Only the two corner boxes swap colour. Nothing between them changes. */
+    ar__split_frame(&s, 1);
+
+    CHECK(ar_damage_count(g_ui) == 2, "damage: two changes in opposite corners stay two regions");
+
+    for (i = 0; i < ar_damage_count(g_ui); ++i)
+    {
+        ar_rect r = ar_damage_rect(g_ui, i);
+        presented += r.w * r.h;
+    }
+
+    /* Two 24x16 boxes is 768 pixels. A merged bounding box would span the whole
+       surface, which is what this test exists to prevent. */
+    CHECK(presented <= 768, "damage: and present only those boxes, not the span between them");
+    CHECK(presented * 8 < AR_DMG_W * AR_DMG_H, "damage: far less than a merged bounding box");
+}
+
+static void test_damage_regions_never_exceed_the_cap(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_i32     i;
+    int        over = 0;
+
+    ar__ui_reset(SPLIT_CSS);
+    ar__split_frame(&s, 0);
+    ar__split_frame(&s, 0);
+
+    /* Far more scattered invalidations than there are slots, inside the frame
+       that declares the tree, and deliberately confined to a corner so the
+       list is exercised rather than the collapse rule below. The list must
+       merge rather than overflow, and every region must stay on the surface. */
+    ar_frame_begin(g_ui, 0);
+    for (i = 0; i < 64; ++i)
+    {
+        ar_invalidate(g_ui, ar_rect_make((i * 37) % 100, (i * 53) % 50, 8, 8));
+    }
+    ar__split_tree(0);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_damage_count(g_ui) <= AR_DAMAGE_RECTS,
+          "damage: the region list merges rather than overflowing its cap");
+    CHECK(ar_damage_count(g_ui) > 1, "damage: and does not collapse straight to one");
+
+    for (i = 0; i < ar_damage_count(g_ui); ++i)
+    {
+        ar_rect r = ar_damage_rect(g_ui, i);
+        if (r.x < 0 || r.y < 0 || r.x + r.w > AR_DMG_W || r.y + r.h > AR_DMG_H)
+        {
+            over = 1;
+        }
+    }
+    CHECK(!over, "damage: and every region it returns is inside the surface");
+}
+
+static void test_damage_collapses_when_tracking_stops_paying(void)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_i32     i;
+
+    ar__ui_reset(SPLIT_CSS);
+    ar__split_frame(&s, 0);
+    ar__split_frame(&s, 0);
+
+    /* Scattered over most of the surface. Once damage passes half the window,
+       deciding what to skip costs more than presenting all of it, so the
+       region list gives up on purpose rather than thrashing. */
+    ar_frame_begin(g_ui, 0);
+    for (i = 0; i < 64; ++i)
+    {
+        ar_invalidate(g_ui, ar_rect_make((i * 37) % AR_DMG_W, (i * 53) % AR_DMG_H, 24, 24));
+    }
+    ar__split_tree(0);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_damage_count(g_ui) == 1, "damage: collapses to one region once it covers half");
+    {
+        ar_rect r = ar_damage_rect(g_ui, 0);
+        CHECK(r.w == AR_DMG_W && r.h == AR_DMG_H, "damage: and that region is the whole surface");
+    }
+}
+
 /* The acceptance criterion for the whole release.
  *
  * Two contexts run the same frames in lockstep: one tracks damage, the other is
@@ -1781,6 +1912,9 @@ int main(void)
     test_damage_invalidate_is_honoured();
     test_damage_invalidate_all_repaints_everything();
     test_damage_a_resize_repaints_everything();
+    test_damage_distant_changes_stay_separate();
+    test_damage_regions_never_exceed_the_cap();
+    test_damage_collapses_when_tracking_stops_paying();
     test_damage_output_is_identical_to_a_full_repaint();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
