@@ -63,6 +63,11 @@ typedef struct bench_result
     /* Per frame, from ar_counters. */
     double fills, fill_px, blend_px, glyphs, glyph_px, clipped_out;
 
+    /* Resolved-style cache. A hit rate short of 1.0 means the interface has
+       more distinct selector-and-state combinations than the table holds, and
+       is paying a full rule scan per box for the surplus. */
+    double cache_hit_rate;
+
     /* Damage, which decides whether the merged rectangle is enough or whether
        the hash grid has to be built. dirty_ratio is the mean fraction of the
        surface repainted; degenerate is the fraction of frames where merging
@@ -210,6 +215,15 @@ static void run_scene(const bench_scene *sc, int iters, int warmup, bench_result
            the arena must not move once init is over. If it does, something
            allocated during a frame and p99 will stop equalling p50. */
         out->alloc_violation = (persist_before != persist_after);
+
+        {
+            ar_u32 hits = 0, misses = 0;
+            ar_style_cache_stats(e.ui, &hits, &misses);
+            if (hits + misses > 0)
+            {
+                out->cache_hit_rate = (double)hits / (double)(hits + misses);
+            }
+        }
     }
 
     total = iters;
@@ -561,6 +575,7 @@ static void print_json(const bench_result *rs, int n)
         printf("      \"blend_px\": %.0f,\n", r->blend_px);
         printf("      \"glyphs\": %.1f,\n", r->glyphs);
         printf("      \"glyph_px\": %.0f,\n", r->glyph_px);
+        printf("      \"cache_hit_rate\": %.4f,\n", r->cache_hit_rate);
         printf("      \"dirty_ratio\": %.5f,\n", r->dirty_ratio);
         printf("      \"degenerate\": %.3f,\n", r->degenerate);
         printf("      \"clipped_out\": %.1f,\n", r->clipped_out);

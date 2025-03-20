@@ -280,6 +280,17 @@ void ar_stylesheet(ar_ctx *c, const char *css);
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
 
+/* Resolved-style cache hits and misses since init. Two boxes with the same
+   tag, class, id and state cannot resolve differently, so the cache is keyed
+   on exactly that and holds one entry per distinct combination rather than one
+   per box -- a thousand cards sharing a class occupy one entry.
+
+   A hit rate that is not close to one means an interface with more distinct
+   selector-and-state combinations than the table holds, and the frame is
+   paying a full rule scan per box for the surplus. Either pass NULL, or read
+   it and know. */
+void ar_style_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses);
+
 /* Lends the context a microsecond clock so it can time its own phases. The
    core deliberately has no clock of its own; areole_win32.h supplies
    ar_time_us for this. Without one, the phase breakdown reads zero and
