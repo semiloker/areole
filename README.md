@@ -115,6 +115,17 @@ to be hashed by content rather than by pointer because formatting a label into
 a reused buffer every frame is the ordinary way to write an immediate mode
 interface, and that leaves the pointer identical while the pixels differ.
 
+The damaged region is a list of up to eight rectangles rather than one merged
+box, and that is not a refinement. Two boxes in opposite corners with one
+changing -- a status bar and a clock -- merge into a whole-window rectangle:
+480,000 pixels presented to update 768. On a Pentium II that is 7.68 ms against
+0.01 ms, 46% of the frame budget. Keeping the rectangles separate costs fifty
+lines and presents exactly the 768.
+
+The price is `arena_churn`, a scene that rebuilds four thousand boxes every
+frame, which is 25% slower. That is a shape no real interface has, traded
+against one every interface has.
+
 ## Against the alternatives
 
 Same machine, same process, same output buffer, alternating one frame each so
