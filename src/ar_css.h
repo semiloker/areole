@@ -133,11 +133,41 @@ typedef struct ar_rule
     ar_style style;
 } ar_rule;
 
+/* ------------------------------------------------------------------------
+ * The resolved style cache
+ *
+ * Style resolution is 50 to 89 per cent of every tree-driven frame, measured,
+ * and it grows linearly with rule count because every box is matched against
+ * every rule. The scene that shows it plainest is identical_siblings: a
+ * thousand boxes carrying one class, which resolve to the same answer a
+ * thousand times and spend four fifths of the frame doing so.
+ *
+ * The key is the tuple ar_sheet_resolve already takes. Two boxes with the same
+ * tag, class, id and state cannot resolve differently, because nothing in the
+ * resolver depends on anything else -- no inheritance, no positional selectors,
+ * no custom properties. When 0.4.0 adds the cascade that stops being true, and
+ * the key has to grow with it or the cache becomes a correctness bug.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_cache_entry
+{
+    ar_u32   tag, klass, id;
+    ar_u8    state;
+    ar_u8    used;
+    ar_style style;
+} ar_cache_entry;
+
 typedef struct ar_sheet
 {
     ar_rule *rules;
     ar_u16   count;
     ar_u16   capacity;
+
+    /* Dropped wholesale whenever a stylesheet is added, which is the only
+       thing that can invalidate it. Adding a stylesheet is a startup
+       operation, so this never happens in a frame. */
+    ar_cache_entry *cache;
+    ar_u16          cache_cap;
+    ar_u32          cache_hits, cache_misses;
 
     /* Parsing never aborts. One malformed declaration should not silently
        discard the ninety that follow it, so errors are counted and reported
@@ -152,11 +182,14 @@ void ar_style_defaults(ar_style *s);
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
+void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);
+void ar_sheet_cache_clear(ar_sheet *sheet);
 void ar_sheet_parse(ar_sheet *sheet, const char *css);
 
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
-void ar_sheet_resolve(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
+/* Not const: resolving populates the cache. */
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
                       ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may

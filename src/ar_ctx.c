@@ -14,8 +14,20 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 
 #define AR_MAX_RULES 256
 
-typedef char ar__mem_fixed_holds
-    [(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) + 1024 <= AR_MEM_FIXED) ? 1 : -1];
+/* Distinct selector-and-state tuples in an interface, not boxes: a thousand
+   cards sharing one class occupy one entry. The shipped example uses eleven.
+   Sixty-four leaves room for an interface an order of magnitude richer, and
+   the cache reports its own hit rate so a wrong guess is visible rather than
+   merely slow. Must stay a power of two: the probe masks with it. */
+#define AR_STYLE_CACHE 64
+
+typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 1 : -1];
+
+typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) +
+                                          AR_STYLE_CACHE * sizeof(ar_cache_entry) + 1024 <=
+                                      AR_MEM_FIXED)
+                                     ? 1
+                                     : -1];
 
 /* ------------------------------------------------------------------------
  * Keys
@@ -122,6 +134,16 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     }
     ar_sheet_init(&c->sheet, rules, AR_MAX_RULES);
 
+    {
+        ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
+            &c->arena, AR_STYLE_CACHE * (ar_u32)sizeof(ar_cache_entry));
+        if (!cache)
+        {
+            return 0;
+        }
+        ar_sheet_set_cache(&c->sheet, cache, AR_STYLE_CACHE);
+    }
+
     boxes = (size - AR_MEM_FIXED) / AR_BYTES_PER_BOX;
     if (boxes < 32u)
     {
@@ -165,6 +187,18 @@ void ar_stylesheet(ar_ctx *c, const char *css)
 ar_u32 ar_stylesheet_errors(const ar_ctx *c)
 {
     return c->sheet.errors;
+}
+
+void ar_style_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses)
+{
+    if (hits)
+    {
+        *hits = c->sheet.cache_hits;
+    }
+    if (misses)
+    {
+        *misses = c->sheet.cache_misses;
+    }
 }
 
 int ar_overflowed(const ar_ctx *c)

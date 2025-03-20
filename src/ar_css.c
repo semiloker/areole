@@ -776,6 +776,27 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->capacity = capacity;
     sheet->errors = 0;
     sheet->first_error_offset = 0;
+    sheet->cache = 0;
+    sheet->cache_cap = 0;
+    sheet->cache_hits = 0;
+    sheet->cache_misses = 0;
+}
+
+void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity)
+{
+    sheet->cache = storage;
+    sheet->cache_cap = capacity;
+    ar_sheet_cache_clear(sheet);
+}
+
+void ar_sheet_cache_clear(ar_sheet *sheet)
+{
+    ar_u16 i;
+
+    for (i = 0; i < sheet->cache_cap; ++i)
+    {
+        sheet->cache[i].used = 0;
+    }
 }
 
 /* Ascending specificity, ties broken by source order, so resolution can apply
@@ -808,6 +829,11 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
     {
         return;
     }
+
+    /* New rules can change any answer already cached, and there is no cheap
+       way to know which. Dropping all of it is correct and costs nothing,
+       because adding a stylesheet is a startup operation. */
+    ar_sheet_cache_clear(sheet);
 
     z.base = css;
     z.p = css;
@@ -891,18 +917,27 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
     ar__sort_rules(sheet);
 }
 
-void ar_sheet_resolve(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
-                      ar_style *out)
+/* The tuple is four small integers, so a multiplicative mix over them is both
+   cheaper and better distributed than hashing their bytes. */
+static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state)
+{
+    ar_u32 h = 2166136261u;
+    h = (h ^ tag) * 16777619u;
+    h = (h ^ klass) * 16777619u;
+    h = (h ^ id) * 16777619u;
+    h = (h ^ (ar_u32)state) * 16777619u;
+    return h;
+}
+
+static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id,
+                                 ar_u8 state, ar_style *out)
 {
     ar_i32 i;
 
     ar_style_defaults(out);
 
-    /* ponytail: a linear pass over every rule per box. At a few hundred rules
-       and a few hundred boxes that is well under the noise floor, and it is
-       measured by the layout phase in the overlay. The upgrade path when it
-       stops being free is a cache keyed on tag, class, id and state, which is
-       exactly the tuple this function takes. */
+    /* A linear pass over every rule. The cache above is what keeps this off
+       the per-box path; it still runs once per distinct selector and state. */
     for (i = 0; i < (ar_i32)sheet->count; ++i)
     {
         const ar_rule *r = &sheet->rules[i];
@@ -927,4 +962,53 @@ void ar_sheet_resolve(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id
         }
         ar_style_merge(out, &r->style, r->set);
     }
+}
+
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
+                      ar_style *out)
+{
+    ar_u32 slot, probe;
+
+    if (!sheet->cache_cap)
+    {
+        ar__resolve_uncached(sheet, tag, klass, id, state, out);
+        return;
+    }
+
+    slot = ar__cache_hash(tag, klass, id, state) & (ar_u32)(sheet->cache_cap - 1u);
+
+    /* Open addressing with a short probe. The full tuple is compared, never
+       the hash alone: a collision that returned the wrong style would be a
+       silent rendering bug rather than a slow frame. */
+    for (probe = 0; probe < 8u; ++probe)
+    {
+        ar_cache_entry *e = &sheet->cache[slot];
+
+        if (!e->used)
+        {
+            ar__resolve_uncached(sheet, tag, klass, id, state, out);
+            e->tag = tag;
+            e->klass = klass;
+            e->id = id;
+            e->state = state;
+            e->style = *out;
+            e->used = 1;
+            ++sheet->cache_misses;
+            return;
+        }
+        if (e->tag == tag && e->klass == klass && e->id == id && e->state == state)
+        {
+            *out = e->style;
+            ++sheet->cache_hits;
+            return;
+        }
+        slot = (slot + 1u) & (ar_u32)(sheet->cache_cap - 1u);
+    }
+
+    /* Eight distinct tuples landed on the same slot. Resolving without storing
+       is slower than evicting something, and simpler than deciding what; an
+       interface with that many colliding selectors has not been seen, and if
+       one appears the counters say so. */
+    ar__resolve_uncached(sheet, tag, klass, id, state, out);
+    ++sheet->cache_misses;
 }

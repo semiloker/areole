@@ -1844,6 +1844,165 @@ static void test_damage_output_is_identical_to_a_full_repaint(void)
     }
 }
 
+
+/* ------------------------------------------------------------------------
+ * The resolved style cache
+ *
+ * A cache that returns a wrong style is a silent rendering bug, so these check
+ * agreement with the uncached resolver rather than checking that it is fast.
+ * ------------------------------------------------------------------------ */
+static int ar__styles_agree(const ar_style *a, const ar_style *b)
+{
+    int i;
+
+    for (i = 0; i < AR_P_COUNT; ++i)
+    {
+        if (a->v[i] != b->v[i] || a->unit[i] != b->unit[i])
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void test_style_cache_agrees_with_the_resolver(void)
+{
+    static ar_rule        rules[64];
+    static ar_cache_entry cache[16];
+    ar_sheet              cached, plain;
+    ar_style              a, b;
+    ar_u32                tag, klass, id;
+    int                   mismatch = 0;
+    int                   i, state;
+
+    static const char *const CSS = "div { background:#101014; padding:4px; }"
+                                   ".card { background:#20242c; width:120px; height:40px; }"
+                                   ".card:hover { background:#2b313b; }"
+                                   ".card:active { background:#3a4250; }"
+                                   "#hero { width:300px; border:2px solid #e8c39e; }"
+                                   "#hero:hover { border-color:#ffffff; }";
+
+    ar_sheet_init(&cached, rules, 64);
+    ar_sheet_set_cache(&cached, cache, 16);
+    ar_sheet_parse(&cached, CSS);
+
+    /* The same rules, with no cache attached, is the answer being checked. */
+    {
+        static ar_rule rules2[64];
+        ar_sheet_init(&plain, rules2, 64);
+        ar_sheet_parse(&plain, CSS);
+    }
+
+    /* Every selector against every state, twice, so both the storing pass and
+       the hitting pass are compared. */
+    for (i = 0; i < 2; ++i)
+    {
+        const char *const SELECTORS[] = {"div", "div.card", "div#hero", "div.card#hero", "span",
+                                         ".card"};
+        int               k;
+
+        for (k = 0; k < (int)(sizeof SELECTORS / sizeof SELECTORS[0]); ++k)
+        {
+            if (!ar_selector_split(SELECTORS[k], &tag, &klass, &id))
+            {
+                continue;
+            }
+            for (state = 0; state < 8; ++state)
+            {
+                ar_sheet_resolve(&cached, tag, klass, id, (ar_u8)state, &a);
+                ar_sheet_resolve(&plain, tag, klass, id, (ar_u8)state, &b);
+                if (!ar__styles_agree(&a, &b))
+                {
+                    mismatch = 1;
+                }
+            }
+        }
+    }
+
+    CHECK(!mismatch, "style cache: every selector and state resolves as the uncached resolver does");
+    CHECK(cached.cache_hits > 0, "style cache: and the second pass actually hit it");
+}
+
+static void test_style_cache_is_dropped_when_a_sheet_is_added(void)
+{
+    static ar_rule        rules[64];
+    static ar_cache_entry cache[16];
+    ar_sheet              sheet;
+    ar_style              before, after;
+    ar_u32                tag, klass, id;
+
+    ar_sheet_init(&sheet, rules, 64);
+    ar_sheet_set_cache(&sheet, cache, 16);
+    ar_sheet_parse(&sheet, ".box { width:10px; }");
+
+    ar_selector_split("div.box", &tag, &klass, &id);
+    ar_sheet_resolve(&sheet, tag, klass, id, 0, &before);
+
+    /* A later sheet that overrides it. If the cached answer survived, the new
+       rule would never be seen. */
+    ar_sheet_parse(&sheet, ".box { width:99px; }");
+    ar_sheet_resolve(&sheet, tag, klass, id, 0, &after);
+
+    CHECK(before.v[AR_P_WIDTH] == 10, "style cache: the first sheet resolves");
+    CHECK(after.v[AR_P_WIDTH] == 99, "style cache: adding a sheet drops what it cached");
+}
+
+static void test_style_cache_keeps_states_apart(void)
+{
+    static ar_rule        rules[64];
+    static ar_cache_entry cache[16];
+    ar_sheet              sheet;
+    ar_style              rest, hover;
+    ar_u32                tag, klass, id;
+
+    ar_sheet_init(&sheet, rules, 64);
+    ar_sheet_set_cache(&sheet, cache, 16);
+    ar_sheet_parse(&sheet, ".b { background:#111111; }"
+                           ".b:hover { background:#222222; }");
+
+    ar_selector_split("div.b", &tag, &klass, &id);
+    ar_sheet_resolve(&sheet, tag, klass, id, 0, &rest);
+    ar_sheet_resolve(&sheet, tag, klass, id, AR_STATE_HOVER, &hover);
+
+    /* The state is part of the key. Dropping it would make every box look
+       hovered as soon as one of them was. */
+    CHECK(rest.v[AR_P_BACKGROUND] != hover.v[AR_P_BACKGROUND],
+          "style cache: hover and rest are separate entries");
+}
+
+static void test_style_cache_survives_more_tuples_than_it_holds(void)
+{
+    static ar_rule        rules[64];
+    static ar_cache_entry cache[8];
+    static ar_rule        rules2[64];
+    ar_sheet              small, plain;
+    int                   i, mismatch = 0;
+
+    static const char *const CSS = ".a { width:1px; } .b { width:2px; } .c { width:3px; }";
+
+    ar_sheet_init(&small, rules, 64);
+    ar_sheet_set_cache(&small, cache, 8);
+    ar_sheet_parse(&small, CSS);
+    ar_sheet_init(&plain, rules2, 64);
+    ar_sheet_parse(&plain, CSS);
+
+    /* Far more distinct tuples than entries, so the probe window fills and the
+       resolver has to fall through. Falling through must still be correct. */
+    for (i = 0; i < 200; ++i)
+    {
+        ar_style a, b;
+        ar_u32   tag = (ar_u32)(i * 2654435761u);
+        ar_sheet_resolve(&small, tag, 0, 0, 0, &a);
+        ar_sheet_resolve(&plain, tag, 0, 0, 0, &b);
+        if (!ar__styles_agree(&a, &b))
+        {
+            mismatch = 1;
+        }
+    }
+
+    CHECK(!mismatch, "style cache: a full table falls through to the resolver, still correctly");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -1891,6 +2050,11 @@ int main(void)
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
+
+    test_style_cache_agrees_with_the_resolver();
+    test_style_cache_is_dropped_when_a_sheet_is_added();
+    test_style_cache_keeps_states_apart();
+    test_style_cache_survives_more_tuples_than_it_holds();
 
     test_layout_row_with_gap_and_padding();
     test_layout_column();
