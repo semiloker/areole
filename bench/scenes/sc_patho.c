@@ -158,10 +158,85 @@ static const bench_scene SC_ARENA = {"arena_churn",
                                      init_churn,
                                      frame_arena_churn};
 
+
+/* ------------------------------------------------------------------------
+ * Opposite corners, through the tree
+ *
+ * The scene above draws two pixels directly and never touches the box tree, so
+ * it says nothing about damage tracking. It was written before damage tracking
+ * existed, as a prediction of where merged bounds would degenerate.
+ *
+ * This is that prediction made testable. Two boxes sit in opposite corners of a
+ * window and one of them changes colour every frame. Individually they are 24
+ * by 16 pixels; merged, their bounding rectangle is the entire window, so a
+ * single merged region repaints 800 by 600 to update 768 pixels.
+ *
+ * That is exactly the case the hash grid exists to fix, and whether it is worth
+ * building depends on how close real interfaces come to this. Measuring the
+ * worst case is how that question gets an answer instead of an opinion.
+ * ------------------------------------------------------------------------ */
+static const char *const CORNER_SHEET =
+    "#root { display:flex; flex-direction:column; justify-content:space-between; }"
+    ".bar  { display:flex; flex-direction:row; justify-content:space-between; }"
+    ".dot  { width:24px; height:16px; background:#3a4a5a; }"
+    ".lit  { width:24px; height:16px; background:#e8c39e; }"
+    ".gap  { width:24px; height:16px; }";
+
+static void init_corners_tree(bench_env *e)
+{
+    ar_stylesheet(e->ui, CORNER_SHEET);
+}
+
+static void frame_corners_tree(bench_env *e)
+{
+    ar_input in;
+    int      lit = (int)(e->frame & 1u);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(e->ui, &in);
+    if (e->full_repaint)
+    {
+        ar_invalidate_all(e->ui);
+    }
+
+    ar_begin(e->ui, "div#root");
+
+    ar_begin(e->ui, "div.bar");
+    ar_begin(e->ui, lit ? "div.lit" : "div.dot");
+    ar_end(e->ui);
+    ar_begin(e->ui, "div.gap");
+    ar_end(e->ui);
+    ar_end(e->ui);
+
+    ar_begin(e->ui, "div.bar");
+    ar_begin(e->ui, "div.gap");
+    ar_end(e->ui);
+    ar_begin(e->ui, lit ? "div.dot" : "div.lit");
+    ar_end(e->ui);
+    ar_end(e->ui);
+
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_CORNERS_TREE = {
+    "corners_tree",
+    "pathological",
+    "two boxes in opposite corners, one changing: merged damage degenerates to the whole window",
+    800,
+    600,
+    1,
+    init_corners_tree,
+    frame_corners_tree};
+
 void bench_register_patho(void)
 {
     bench_register(&SC_OVERDRAW);
     bench_register(&SC_TINY);
     bench_register(&SC_CORNERS);
+    bench_register(&SC_CORNERS_TREE);
     bench_register(&SC_ARENA);
 }

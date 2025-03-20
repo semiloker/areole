@@ -74,15 +74,18 @@ typedef struct ar_slot
  * ------------------------------------------------------------------------ */
 typedef struct ar_damage
 {
-    ar_rect r;
-    int     any; /* something was invalidated */
-    int     all; /* repaint everything: first frame, resize, or asked to */
+    ar_rect r[AR_DAMAGE_RECTS];
+    ar_i32  count;
+    ar_i32  area;          /* pixels currently covered, for the collapse rule */
+    ar_i32  viewport_area; /* what "half the surface" means this frame */
+    int     all;           /* repaint everything: first frame, resize, or asked */
 } ar_damage;
 
 void    ar_damage_reset(ar_damage *d);
+void    ar_damage_set_viewport(ar_damage *d, ar_rect viewport);
 void    ar_damage_add(ar_damage *d, ar_rect r);
 void    ar_damage_add_all(ar_damage *d);
-ar_rect ar_damage_resolve(const ar_damage *d, ar_rect viewport);
+ar_rect ar_damage_bounds(const ar_damage *d, ar_rect viewport);
 ar_u32  ar_paint_digest(const ar_node *n);
 
 struct ar_ctx

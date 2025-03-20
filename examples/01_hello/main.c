@@ -91,7 +91,8 @@ int main(void)
     ar_ctx     *ui;
     ar_win     *win;
     ar_surface *s;
-    ar_rect     dirty, overlay, status_area;
+    ar_rect     overlay, status_area;
+    ar_i32      region;
     ar_i32      selected = 1;
     ar_i32      i, row;
     char        status[160];
@@ -165,7 +166,7 @@ int main(void)
 
         ar_end(ui);
 
-        dirty = ar_frame_end(ui, s);
+        ar_frame_end(ui, s);
 
         /* Drawn over the tree rather than inside it, because it reports on the
            frame that has just been laid out.
@@ -176,7 +177,6 @@ int main(void)
            frozen. This is exactly the case ar_invalidate exists for. */
         overlay = ar_rect_make(s->w - 296, 16, 296, 200);
         status_area = ar_rect_make(0, s->h - 24, s->w, 24);
-        dirty = ar_rect_union(dirty, ar_rect_union(overlay, status_area));
 
         ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
 
@@ -184,7 +184,16 @@ int main(void)
                 (long)ar_perf_of(ui)->cur.nodes, (long)s->w, (long)s->h, ar_time_source());
         ar_draw_text(s, ar_rect_make(0, 0, s->w, s->h), 12, s->h - 18, status, 1, AR_HEX(0x8A8175));
 
-        ar_win_present(win, dirty);
+        /* Each region separately rather than their bounding box. A hovered
+           nav item and a status line at the far corner would otherwise merge
+           into a whole-window blit, which on a Pentium II is 7.7 ms against
+           0.01 ms -- the entire reason the region is a list. */
+        for (region = 0; region < ar_damage_count(ui); ++region)
+        {
+            ar_win_present(win, ar_damage_rect(ui, region));
+        }
+        ar_win_present(win, overlay);
+        ar_win_present(win, status_area);
         ar_frame_presented(ui);
 
         /* Hover is resolved from the previous frame and this pump blocks when
