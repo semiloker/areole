@@ -66,8 +66,8 @@ glyphs -- at 1024x768 on a Ryzen 7 8840HS:
 
 | | |
 | --- | --: |
-| Steady frame, cursor drifting | **11.6 us** |
-| p99 | 16.0 us |
+| Steady frame, cursor drifting | **8.6 us** |
+| p99 | 20.5 us |
 | Full repaint, everything invalidated | 233 us |
 | Heap allocations after init | **0** |
 
@@ -95,6 +95,28 @@ seconds has an excellent average and is unusable.
 Every scene, every percentile and the full derivation:
 **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)**, which is generated from measured
 JSON and checked by CI so a published number cannot drift from a measured one.
+
+### What the style cache bought
+
+Style resolution was 50 to 89% of every tree-driven frame, and grew linearly
+with the size of the stylesheet because every box was matched against every
+rule. It is now keyed on the tuple that decides the answer -- tag, class, id and
+state -- so a thousand cards sharing a class resolve once.
+
+| rules in the sheet | before | after |
+| --- | --: | --: |
+| 13 | 108 us | **51 us** |
+| 103 | 239 us | **78 us** |
+| 253 | 416 us | **80 us** |
+
+The ratios matter less than the shape: near-flat where it used to be linear.
+That is what makes a real user-agent stylesheet affordable, and it is why the
+cache was built before the cascade rather than alongside it.
+
+Sixty-four entries hold one style per distinct selector-and-state combination,
+not one per box. Every scene reports a hit rate of 1.000 except the dashboard at
+0.996, and that rate is published per scene rather than assumed -- a table too
+small does not fail, it quietly goes back to scanning every rule for every box.
 
 ### What damage tracking bought
 
