@@ -7,6 +7,7 @@
  */
 #include "ar_internal.h"
 #include "ar_path.h"
+#include "ar_font_file.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -2444,6 +2445,221 @@ static void test_path_reports_overflow_rather_than_scribbling(void)
     CHECK(p.count <= 8, "path: and nothing is written past the end of it");
 }
 
+
+/* ------------------------------------------------------------------------
+ * TrueType parsing
+ *
+ * The font below is built rather than shipped: a complete, minimal, valid
+ * TrueType file with head, hhea, maxp, cmap format 4, loca, glyf and hmtx,
+ * and two glyphs -- an empty one at index 0 as the specification requires,
+ * and a triangle at index 1 mapped from 'A'.
+ *
+ * Generating it keeps the tests self-contained and, more usefully, makes it
+ * mutable: the robustness check below corrupts and truncates this same font,
+ * which is how a parser gets tested against the input it will actually meet.
+ * ------------------------------------------------------------------------ */
+static const ar_u8 AR_TEST_FONT[] = {
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x63, 0x6D, 0x61, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C,
+    0x00, 0x00, 0x00, 0x2C, 0x67, 0x6C, 0x79, 0x66, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x20, 0x68, 0x65, 0x61, 0x64,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x36,
+    0x68, 0x68, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x00, 0x24, 0x68, 0x6D, 0x74, 0x78, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x24, 0x00, 0x00, 0x00, 0x08, 0x6C, 0x6F, 0x63, 0x61,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x00, 0x00, 0x06,
+    0x6D, 0x61, 0x78, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x34,
+    0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x0C, 0x00, 0x04, 0x00, 0x20, 0x00, 0x00, 0x00, 0x04,
+    0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x41, 0xFF, 0xFF, 0x00, 0x00,
+    0x00, 0x41, 0xFF, 0xFF, 0xFF, 0xC0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8, 0x03, 0xE8, 0x00, 0x02,
+    0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x03, 0xE8, 0xFE, 0x0C, 0x00,
+    0x00, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5F, 0x0F, 0x3C, 0xF5,
+    0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0xE8, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03, 0x20, 0xFF, 0x38,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x02, 0x58, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00,
+};
+
+static ar_i32 g_ttf_pts[2048 * 2];
+static ar_i32 g_ttf_x[256], g_ttf_y[256];
+static ar_u8  g_ttf_on[256];
+
+static void ar__ttf_buf(ar_outline_buf *b)
+{
+    b->x = g_ttf_x;
+    b->y = g_ttf_y;
+    b->on = g_ttf_on;
+    b->cap = 256;
+}
+
+static void test_ttf_reads_the_tables(void)
+{
+    ar_face f;
+    int     ok = ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+
+    CHECK(ok && f.ok, "ttf: a minimal valid font initialises");
+    CHECK(f.units_per_em == 1000, "ttf: units per em comes from head");
+    CHECK(f.num_glyphs == 2, "ttf: glyph count comes from maxp");
+    CHECK(f.ascender == 800 && f.descender == -200, "ttf: vertical metrics come from hhea");
+    CHECK(f.cmap_format == 4, "ttf: the format 4 subtable is selected");
+    CHECK(!f.loc_long, "ttf: short loca is recognised");
+}
+
+static void test_ttf_maps_codepoints(void)
+{
+    ar_face f;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+
+    CHECK(ar_face_glyph(&f, 'A') == 1, "ttf: cmap maps a mapped codepoint");
+    CHECK(ar_face_glyph(&f, 'B') == 0, "ttf: and an unmapped one to the notdef glyph");
+    CHECK(ar_face_glyph(&f, 0x10FFFF) == 0, "ttf: including one past the basic plane");
+    CHECK(ar_face_advance(&f, 1) == 1000, "ttf: hmtx gives the advance");
+}
+
+static void test_ttf_scales_without_overflowing(void)
+{
+    ar_face f;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+
+    /* One em at 16 pixels is 16 pixels, which in 26.6 is 1024. */
+    CHECK(ar_face_scale(&f, 1000, 16) == 16 * AR_ONE_PIXEL,
+          "ttf: one em scales to the pixel size");
+    CHECK(ar_face_scale(&f, 500, 16) == 8 * AR_ONE_PIXEL, "ttf: and half an em to half of it");
+    CHECK(ar_face_scale(&f, -1000, 16) == -16 * AR_ONE_PIXEL,
+          "ttf: negatives scale symmetrically");
+
+    /* The combination that overflows the obvious expression: a large
+       coordinate at a large size. 32000 * 64 * 1000 is 2.05e9, past the top of
+       a signed 32 bit integer, so this would come back negative if the value
+       were not split into whole ems and a remainder first. */
+    CHECK(ar_face_scale(&f, 32000, 1000) == 32000 * AR_ONE_PIXEL,
+          "ttf: a large coordinate at a large size does not overflow");
+}
+
+static void test_ttf_extracts_an_outline(void)
+{
+    ar_face        f;
+    ar_path        p;
+    ar_outline_buf buf;
+    ar_rect        b;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__ttf_buf(&buf);
+    ar_path_init(&p, g_ttf_pts, 2048);
+
+    CHECK(ar_face_outline(&f, 1, 32, 0, 32 * AR_ONE_PIXEL, &p, &buf),
+          "ttf: a glyph yields an outline");
+    CHECK(p.count == 3, "ttf: the triangle's three points come through");
+    CHECK(!p.overflow, "ttf: and fit the path storage");
+
+    /* One em tall at 32 pixels, with the baseline at y = 32 and the y axis
+       flipped, so the triangle occupies rows 0 to 32. */
+    b = ar_path_bounds(&p);
+    CHECK(b.w == 32 && b.h == 32, "ttf: the outline is one em square at 32 pixels");
+    CHECK(b.y == 0, "ttf: and sits above the baseline, y flipped");
+}
+
+static void test_ttf_empty_glyph_is_not_an_error(void)
+{
+    ar_face        f;
+    ar_path        p;
+    ar_outline_buf buf;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__ttf_buf(&buf);
+    ar_path_init(&p, g_ttf_pts, 2048);
+
+    /* Glyph 0 has no outline, and neither does a space. Contributing nothing
+       is correct; the caller still advances the pen. */
+    ar_face_outline(&f, 0, 32, 0, 0, &p, &buf);
+    CHECK(p.count == 0, "ttf: an empty glyph contributes no points");
+}
+
+static void test_ttf_rejects_what_it_cannot_read(void)
+{
+    ar_face f;
+    ar_u8   junk[64];
+    ar_i32  i;
+
+    for (i = 0; i < 64; ++i)
+    {
+        junk[i] = (ar_u8)(i * 7);
+    }
+
+    CHECK(!ar_face_init(&f, junk, 64), "ttf: random bytes are not accepted as a font");
+    CHECK(!ar_face_init(&f, AR_TEST_FONT, 4), "ttf: nor is a file too short to hold a header");
+    CHECK(!ar_face_init(&f, 0, 0), "ttf: nor is nothing at all");
+
+    /* OTTO is a real font with CFF outlines, which this parser cannot read.
+       Refusing is right: half-parsing it and drawing nothing would look like a
+       bug in the renderer rather than a limitation of the parser. */
+    {
+        ar_u8 otto[64];
+        memcpy(otto, AR_TEST_FONT, 64);
+        otto[0] = 'O';
+        otto[1] = 'T';
+        otto[2] = 'T';
+        otto[3] = 'O';
+        CHECK(!ar_face_init(&f, otto, 64), "ttf: a CFF font is refused rather than half read");
+    }
+}
+
+/* The property that matters more than any single parse: a corrupt font must
+   not be able to make the parser read outside the buffer it was given. Every
+   prefix of the font, and every single-byte corruption of it, goes through the
+   whole pipeline. If any read escaped its bounds, this faults. */
+static void test_ttf_survives_truncation_and_corruption(void)
+{
+    static ar_u8   copy[sizeof AR_TEST_FONT];
+    ar_face        f;
+    ar_path        p;
+    ar_outline_buf buf;
+    ar_u32         n;
+    ar_i32         i;
+    ar_i32         parsed = 0;
+
+    ar__ttf_buf(&buf);
+
+    for (n = 0; n <= (ar_u32)sizeof AR_TEST_FONT; ++n)
+    {
+        if (ar_face_init(&f, AR_TEST_FONT, n))
+        {
+            ar_path_init(&p, g_ttf_pts, 2048);
+            ar_face_glyph(&f, 'A');
+            ar_face_advance(&f, 1);
+            ar_face_outline(&f, 1, 32, 0, 0, &p, &buf);
+        }
+    }
+
+    for (i = 0; i < (ar_i32)sizeof AR_TEST_FONT; ++i)
+    {
+        memcpy(copy, AR_TEST_FONT, sizeof AR_TEST_FONT);
+        copy[i] = (ar_u8)(~copy[i] & 0xFF);
+        if (ar_face_init(&f, copy, (ar_u32)sizeof copy))
+        {
+            ar_path_init(&p, g_ttf_pts, 2048);
+            ar_face_glyph(&f, 'A');
+            ar_face_glyph(&f, 0xFFFF);
+            ar_face_advance(&f, 1);
+            ar_face_outline(&f, 1, 32, 0, 0, &p, &buf);
+            ++parsed;
+        }
+    }
+
+    CHECK(1, "ttf: every truncation and single byte corruption parses without faulting");
+    CHECK(parsed > 0, "ttf: and enough still parse for that to be worth something");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -2491,6 +2707,14 @@ int main(void)
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
+
+    test_ttf_reads_the_tables();
+    test_ttf_maps_codepoints();
+    test_ttf_scales_without_overflowing();
+    test_ttf_extracts_an_outline();
+    test_ttf_empty_glyph_is_not_an_error();
+    test_ttf_rejects_what_it_cannot_read();
+    test_ttf_survives_truncation_and_corruption();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
