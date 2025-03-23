@@ -342,9 +342,11 @@ static const cmp_case CASES[] = {
      "need. GDI is doing strictly more work here.",
      a_blend, g_blend, 0, 0},
     {"latin_paragraph", "24 lines of latin text",
-     "Not a fair fight and not meant to be. GDI renders a hinted, kerned, antialiased outline "
-     "face; areole blits an 8x8 bitmap. This measures the ceiling, and becomes a real comparison "
-     "when 0.2.0 gives areole outlines.",
+     "Not a fair fight and not meant to be: GDI renders a hinted, kerned, antialiased outline "
+     "face through the system font stack, areole blits an 8x8 bitmap. Worth reading anyway: this "
+     "case was a 1.04x tie until the blitter was rewritten to work in spans, and a bitmap blitter "
+     "tying with an outline rasterizer is how we learned it was fifteen times slower than it "
+     "should be. It becomes a fair comparison when 0.2.0 gives areole outlines.",
      a_text, g_text, 0, 0},
     {"hairlines", "150 one-pixel-high fills", 0, a_hair, g_hair, 0, 0}};
 
