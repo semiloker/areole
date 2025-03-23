@@ -83,11 +83,13 @@ Per unit, which is what scales to a slower machine:
 | --- | --: |
 | Opaque fill | **0.22 ns/pixel** |
 | Full-surface write, uncached | 0.20 ns/pixel |
-| Glyph | **634 ns** |
+| Glyph | **47 ns** |
 | Box, style and layout | **138 ns** |
 
-The glyph figure is the bad one, and is known to be roughly fifteen times
-slower than it should be -- see the tie against GDI below.
+The glyph figure used to be the bad one. The blitter tied with GDI on text
+while beating it three to ten times on everything else, which is how we learned
+it was about fifteen times slower than it should be; rewriting it to work in
+spans rather than per bit made it 10.7x faster and turned that tie into 9.3x.
 
 Averages are not reported. A UI that is smooth apart from one stall every two
 seconds has an excellent average and is unusable.
@@ -183,10 +185,14 @@ microui it is 0.43x, and that is the expected price: microui advances a row
 cursor, areole runs two passes per axis over a retained tree so grow and shrink
 can be solved. Real flexbox for 2x a cursor is cheap.
 
-*Text: a tie with GDI, and that is the finding.* GDI renders hinted, kerned,
-antialiased outlines through the system font stack in the time areole blits 8x8
-bitmaps. A bitmap blitter tying with an outline rasterizer is not a close call.
-Replacing the glyph path is the single largest win available.
+*Text: 9.31x, and it used to be a tie.* That tie was the most useful number the
+comparison produced. A bitmap blitter has no business being level with hinted,
+kerned, antialiased outlines rendered through the system font stack, and it was
+not: the blitter was doing two rectangle intersections and a call to write one
+pixel, once per set bit. In spans it is 10.7x faster, at 46 ns per glyph --
+inside the 30 to 50 ns the measurement release predicted a span blitter would
+reach. Still not a fair comparison, because GDI is producing far better output;
+it becomes one when 0.2.0 brings outlines.
 
 The caveats are not footnotes -- Clay takes its configuration inline while areole
 resolves a stylesheet per box, so areole is doing strictly more work in the
