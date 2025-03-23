@@ -6,6 +6,7 @@
  * runnable check here that fails if the logic breaks.
  */
 #include "ar_internal.h"
+#include "ar_path.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -2094,6 +2095,355 @@ static void test_glyph_spans_respect_a_tight_clip(void)
     CHECK(!outside, "font: a span cut by a clip writes nothing outside it");
 }
 
+
+/* ------------------------------------------------------------------------
+ * The coverage rasterizer
+ *
+ * Most of these check area rather than pixels. Summing the coverage of a shape
+ * and comparing it to the shape's true area is the property that separates an
+ * analytic rasterizer from a sampling one: a supersampler gets it approximately
+ * right and its error depends on where the shape happens to sit relative to the
+ * sample grid, while exact area accumulation is off only by the rounding in the
+ * fixed point. So the tolerances here are tight on purpose, and loosening one
+ * to make a change pass would be throwing away the reason for the design.
+ * ------------------------------------------------------------------------ */
+#define AR_RAST_W 64
+#define AR_RAST_H 64
+
+static ar_i32 g_path_pts[4096 * 2];
+static ar_u8  g_cov[AR_RAST_W * AR_RAST_H];
+static ar_i32 g_acc[(AR_RAST_W + 2) * AR_RAST_H];
+
+#define PX(v) ((ar_i32)((v) * AR_ONE_PIXEL))
+
+static ar_i32 ar__cov_total(void)
+{
+    ar_i32 sum = 0, i;
+    for (i = 0; i < AR_RAST_W * AR_RAST_H; ++i)
+    {
+        sum += g_cov[i];
+    }
+    return sum;
+}
+
+/* Area in pixels, times 256, so it can be compared against the coverage sum
+   without leaving integers. */
+static ar_i32 ar__cov_area_x256(void)
+{
+    return ar__cov_total() * 256 / 255;
+}
+
+static void ar__rast(ar_path *p, ar_i32 rule)
+{
+    ar_path_rasterize(p, g_cov, AR_RAST_W, AR_RAST_H, AR_RAST_W, 0, 0, rule, g_acc);
+}
+
+static void test_path_aligned_rect_is_solid(void)
+{
+    ar_path p;
+    ar_i32  x, y, wrong = 0;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(10), PX(8));
+    ar_path_line_to(&p, PX(30), PX(8));
+    ar_path_line_to(&p, PX(30), PX(24));
+    ar_path_line_to(&p, PX(10), PX(24));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    for (y = 0; y < AR_RAST_H; ++y)
+    {
+        for (x = 0; x < AR_RAST_W; ++x)
+        {
+            int inside = (x >= 10 && x < 30 && y >= 8 && y < 24);
+            ar_u8 c = g_cov[y * AR_RAST_W + x];
+            if (inside ? (c != 255) : (c != 0))
+            {
+                wrong = 1;
+            }
+        }
+    }
+
+    CHECK(!p.overflow, "path: a four point rectangle fits its storage");
+    CHECK(!wrong, "path: a pixel aligned rectangle is exactly solid, with nothing outside it");
+}
+
+static void test_path_half_pixel_edge_is_half_covered(void)
+{
+    ar_path p;
+    ar_u8   half, quarter;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    /* Right edge at x = 20.5, so column 20 is half covered. */
+    ar_path_move_to(&p, PX(10), PX(8));
+    ar_path_line_to(&p, PX(10) + AR_ONE_PIXEL / 2 + PX(10), PX(8));
+    ar_path_line_to(&p, PX(10) + AR_ONE_PIXEL / 2 + PX(10), PX(24));
+    ar_path_line_to(&p, PX(10), PX(24));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    half = g_cov[12 * AR_RAST_W + 20];
+
+    /* And a quarter, one subpixel step further, to show it is a ramp rather
+       than a threshold that happens to be right at one half. */
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(10), PX(8));
+    ar_path_line_to(&p, PX(20) + AR_ONE_PIXEL / 4, PX(8));
+    ar_path_line_to(&p, PX(20) + AR_ONE_PIXEL / 4, PX(24));
+    ar_path_line_to(&p, PX(10), PX(24));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+    quarter = g_cov[12 * AR_RAST_W + 20];
+
+    CHECK(half >= 125 && half <= 130, "path: an edge halfway through a pixel covers it half");
+    CHECK(quarter >= 61 && quarter <= 68, "path: and a quarter of the way through, a quarter");
+}
+
+static void test_path_triangle_conserves_area(void)
+{
+    ar_path p;
+    ar_i32  got, want;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    /* Base 40, height 30, so the true area is 600 pixels. Deliberately not on
+       pixel boundaries, because a rasterizer can be right on the grid and
+       wrong everywhere else. */
+    ar_path_move_to(&p, PX(5) + 13, PX(50) - 7);
+    ar_path_line_to(&p, PX(45) + 13, PX(50) - 7);
+    ar_path_line_to(&p, PX(25) + 13, PX(20) - 7);
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    got = ar__cov_area_x256();
+    want = 600 * 256;
+
+    /* Measured error is 0.04%. The tolerance is 0.5% because that is still an
+       order of magnitude tighter than anything a sampling rasterizer reaches,
+       and loosening it to make a change pass would be discarding the property
+       the design exists for. */
+    CHECK(got > want - want / 200 && got < want + want / 200,
+          "path: a triangle's coverage sums to its area, within 0.5%");
+}
+
+static void test_path_winding_direction_does_not_matter(void)
+{
+    ar_path p;
+    ar_i32  clockwise, anticlockwise;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(10), PX(10));
+    ar_path_line_to(&p, PX(30), PX(10));
+    ar_path_line_to(&p, PX(30), PX(30));
+    ar_path_line_to(&p, PX(10), PX(30));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+    clockwise = ar__cov_total();
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(10), PX(10));
+    ar_path_line_to(&p, PX(10), PX(30));
+    ar_path_line_to(&p, PX(30), PX(30));
+    ar_path_line_to(&p, PX(30), PX(10));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+    anticlockwise = ar__cov_total();
+
+    CHECK(clockwise == anticlockwise && clockwise > 0,
+          "path: a contour fills the same either way round");
+}
+
+static void test_path_fill_rules_differ_on_a_hole(void)
+{
+    ar_path p;
+    ar_u8   nonzero_centre, evenodd_centre;
+    ar_i32  i;
+
+    /* An outer square and an inner square wound the same way. Nonzero fills
+       both; even-odd punches the inner one out. This is exactly how a glyph
+       like 'o' works, and getting it wrong is how counters fill in. */
+    for (i = 0; i < 2; ++i)
+    {
+        ar_path_init(&p, g_path_pts, 4096);
+        ar_path_move_to(&p, PX(8), PX(8));
+        ar_path_line_to(&p, PX(40), PX(8));
+        ar_path_line_to(&p, PX(40), PX(40));
+        ar_path_line_to(&p, PX(8), PX(40));
+        ar_path_close(&p);
+        ar_path_move_to(&p, PX(16), PX(16));
+        ar_path_line_to(&p, PX(32), PX(16));
+        ar_path_line_to(&p, PX(32), PX(32));
+        ar_path_line_to(&p, PX(16), PX(32));
+        ar_path_close(&p);
+        ar__rast(&p, i == 0 ? AR_FILL_NONZERO : AR_FILL_EVENODD);
+        if (i == 0)
+        {
+            nonzero_centre = g_cov[24 * AR_RAST_W + 24];
+        }
+        else
+        {
+            evenodd_centre = g_cov[24 * AR_RAST_W + 24];
+        }
+    }
+
+    CHECK(nonzero_centre == 255, "path: nonzero fills a same-wound inner contour");
+    CHECK(evenodd_centre == 0, "path: even-odd punches it out");
+}
+
+static void test_path_opposite_winding_makes_a_hole(void)
+{
+    ar_path p;
+
+    /* The way TrueType actually does it: the counter is wound the other way,
+       and nonzero cancels it. */
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(8), PX(8));
+    ar_path_line_to(&p, PX(40), PX(8));
+    ar_path_line_to(&p, PX(40), PX(40));
+    ar_path_line_to(&p, PX(8), PX(40));
+    ar_path_close(&p);
+    ar_path_move_to(&p, PX(16), PX(16));
+    ar_path_line_to(&p, PX(16), PX(32));
+    ar_path_line_to(&p, PX(32), PX(32));
+    ar_path_line_to(&p, PX(32), PX(16));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    CHECK(g_cov[24 * AR_RAST_W + 24] == 0, "path: an oppositely wound contour is a hole");
+    CHECK(g_cov[12 * AR_RAST_W + 24] == 255, "path: and the ring around it stays filled");
+}
+
+static void test_path_curves_flatten_to_the_right_area(void)
+{
+    ar_path p;
+    ar_i32  got, want;
+    ar_i32  cx = PX(32), cy = PX(32), r = PX(20);
+    /* The control point offset that makes a quadratic bezier approximate a
+       quarter circle: 4/3 * (sqrt(2) - 1) is the cubic constant; for four
+       quadratics the corner control is simply the corner of the square. */
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, cx + r, cy);
+    ar_path_quad_to(&p, cx + r, cy + r, cx, cy + r);
+    ar_path_quad_to(&p, cx - r, cy + r, cx - r, cy);
+    ar_path_quad_to(&p, cx - r, cy - r, cx, cy - r);
+    ar_path_quad_to(&p, cx + r, cy - r, cx + r, cy);
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    got = ar__cov_area_x256();
+
+    /* Four quadratics through the corners of the square do not make a circle,
+       they make a slightly fatter shape, so the expected area is derived
+       rather than assumed. Parametrising one arc from (r,0) to (0,r) with its
+       control at (r,r) gives x(t) = r(1 - t^2) and y(t) = r(2t - t^2), and
+       Green's theorem then gives
+
+           x y' - y x' = 2r^2 (1 - t + t^2)
+           A_quarter   = 1/2 integral_0^1 = 5 r^2 / 6
+           A_total     = 4 A_quarter      = 10 r^2 / 3
+
+       which is 1333.3 pixels at r = 20: five sixths of the bounding square,
+       against pi/4 for a true circle. What is being tested is that flattening
+       conserves whatever area the curve encloses, so the number has to be the
+       curve's own area and not a circle's. */
+    want = 10 * 20 * 20 * 256 / 3;
+
+    CHECK(!p.overflow, "path: four flattened quadratics fit the point storage");
+    /* Measured error is 0.16%, and most of that is the quarter-pixel flattening
+       tolerance rather than the rasterizer. */
+    CHECK(got > want - want / 100 && got < want + want / 100,
+          "path: a curved contour's coverage sums to the area it encloses, within 1%");
+}
+
+/* The bug that flooring fixed, kept as a test because it is invisible in any
+   single shape: the same triangle drawn either way up must have the same area.
+   Truncation towards zero made one 0.52% small and the other 0.52% large. */
+static void test_path_area_does_not_depend_on_orientation(void)
+{
+    ar_path p;
+    ar_i32  up, down, diff;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(5), PX(50));
+    ar_path_line_to(&p, PX(45), PX(50));
+    ar_path_line_to(&p, PX(25), PX(20));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+    up = ar__cov_total();
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(5), PX(20));
+    ar_path_line_to(&p, PX(45), PX(20));
+    ar_path_line_to(&p, PX(25), PX(50));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+    down = ar__cov_total();
+
+    diff = up > down ? up - down : down - up;
+    CHECK(diff * 200 < up, "path: a triangle covers the same area either way up");
+}
+
+static void test_path_clips_to_the_bitmap(void)
+{
+    ar_path p;
+    ar_i32  x, y, holes = 0;
+
+    /* Far larger than the bitmap and starting well outside it in both
+       directions. Geometry to the left still has to contribute its winding or
+       the rows it crosses come out empty. */
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(-500), PX(-500));
+    ar_path_line_to(&p, PX(500), PX(-500));
+    ar_path_line_to(&p, PX(500), PX(500));
+    ar_path_line_to(&p, PX(-500), PX(500));
+    ar_path_close(&p);
+    ar__rast(&p, AR_FILL_NONZERO);
+
+    for (y = 0; y < AR_RAST_H; ++y)
+    {
+        for (x = 0; x < AR_RAST_W; ++x)
+        {
+            if (g_cov[y * AR_RAST_W + x] != 255)
+            {
+                holes = 1;
+            }
+        }
+    }
+    CHECK(!holes, "path: a shape larger than the bitmap fills all of it");
+}
+
+static void test_path_bounds_round_outward(void)
+{
+    ar_path p;
+    ar_rect b;
+
+    ar_path_init(&p, g_path_pts, 4096);
+    ar_path_move_to(&p, PX(3) + 1, PX(5) + 63);
+    ar_path_line_to(&p, PX(9) - 1, PX(11) + 1);
+    ar_path_close(&p);
+    b = ar_path_bounds(&p);
+
+    CHECK(b.x == 3 && b.y == 5, "path: bounds floor the minimum to a whole pixel");
+    CHECK(b.x + b.w == 9 && b.y + b.h == 12, "path: and ceil the maximum");
+}
+
+static void test_path_reports_overflow_rather_than_scribbling(void)
+{
+    ar_path p;
+    ar_i32  small[8 * 2];
+    ar_i32  i;
+
+    ar_path_init(&p, small, 8);
+    ar_path_move_to(&p, 0, 0);
+    for (i = 0; i < 200; ++i)
+    {
+        ar_path_line_to(&p, PX(i), PX(i));
+    }
+
+    CHECK(p.overflow, "path: running out of point storage is reported");
+    CHECK(p.count <= 8, "path: and nothing is written past the end of it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -2141,6 +2491,18 @@ int main(void)
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
+
+    test_path_aligned_rect_is_solid();
+    test_path_half_pixel_edge_is_half_covered();
+    test_path_triangle_conserves_area();
+    test_path_winding_direction_does_not_matter();
+    test_path_fill_rules_differ_on_a_hole();
+    test_path_opposite_winding_makes_a_hole();
+    test_path_curves_flatten_to_the_right_area();
+    test_path_area_does_not_depend_on_orientation();
+    test_path_clips_to_the_bitmap();
+    test_path_bounds_round_outward();
+    test_path_reports_overflow_rather_than_scribbling();
 
     test_glyph_blitter_renders_the_same_pixels();
     test_glyph_spans_respect_a_tight_clip();
