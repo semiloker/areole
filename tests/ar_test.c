@@ -2003,6 +2003,97 @@ static void test_style_cache_survives_more_tuples_than_it_holds(void)
     CHECK(!mismatch, "style cache: a full table falls through to the resolver, still correctly");
 }
 
+
+/* ------------------------------------------------------------------------
+ * The glyph blitter, pinned by checksum
+ *
+ * The blitter was rewritten to work in spans rather than per bit, which made
+ * it 10.7x faster. A rewrite that changes what appears on screen is not an
+ * optimisation, so this pins the output of every path through it: scale 1,
+ * scale 2, clipped off the left, clipped off the right, alpha blended, cut by
+ * a tight clip rectangle, and a newline.
+ *
+ * The value below was taken from the implementation that preceded the rewrite
+ * and verified to be unchanged by it. If a future change moves it, that change
+ * altered rendering, and the question is whether it meant to.
+ * ------------------------------------------------------------------------ */
+#define AR_GLYPH_W 200
+#define AR_GLYPH_H 120
+
+static ar_u32 g_glyph_px[AR_GLYPH_W * AR_GLYPH_H];
+
+static void test_glyph_blitter_renders_the_same_pixels(void)
+{
+    static const char *const LINE = "Quick brown fox 0123456789 !@#$%^&*() {}[]<>|/~`";
+    ar_surface               s;
+    ar_rect                  clip;
+    ar_u32                   h = 2166136261u;
+    int                      i;
+
+    s.pixels = g_glyph_px;
+    s.w = AR_GLYPH_W;
+    s.h = AR_GLYPH_H;
+    s.stride = AR_GLYPH_W;
+
+    for (i = 0; i < AR_GLYPH_W * AR_GLYPH_H; ++i)
+    {
+        g_glyph_px[i] = 0xFF101014u;
+    }
+    clip = ar_rect_make(0, 0, AR_GLYPH_W, AR_GLYPH_H);
+
+    ar_draw_text(&s, clip, 4, 4, LINE, 1, AR_HEX(0xE8DFCC));            /* the fast path */
+    ar_draw_text(&s, clip, 4, 20, LINE, 2, AR_HEX(0x8A8FA0));           /* scaled        */
+    ar_draw_text(&s, clip, -40, 40, LINE, 1, AR_HEX(0xFFFFFF));         /* off the left  */
+    ar_draw_text(&s, clip, 150, 56, LINE, 1, AR_HEX(0xFFFFFF));         /* off the right */
+    ar_draw_text(&s, clip, 4, 72, LINE, 1, AR_RGBA(0xE8, 0xC3, 0x9E, 0x80)); /* blended  */
+    ar_draw_text(&s, ar_rect_make(20, 80, 60, 20), 4, 88, LINE, 1, AR_HEX(0xFFFFFF));
+    ar_draw_text(&s, clip, 4, 104, "tail\nsecond", 1, AR_HEX(0xFFFFFF));
+
+    for (i = 0; i < AR_GLYPH_W * AR_GLYPH_H; ++i)
+    {
+        h ^= g_glyph_px[i];
+        h *= 16777619u;
+    }
+
+    CHECK(h == 0x972896A2u, "font: every blitter path renders the pixels it always has");
+    if (h != 0x972896A2u)
+    {
+        printf("      checksum is %08lX, expected 972896A2\n", (unsigned long)h);
+    }
+}
+
+static void test_glyph_spans_respect_a_tight_clip(void)
+{
+    ar_surface s;
+    int        i, outside = 0;
+
+    s.pixels = g_glyph_px;
+    s.w = AR_GLYPH_W;
+    s.h = AR_GLYPH_H;
+    s.stride = AR_GLYPH_W;
+
+    for (i = 0; i < AR_GLYPH_W * AR_GLYPH_H; ++i)
+    {
+        g_glyph_px[i] = 0xFF101014u;
+    }
+
+    /* A run of set bits is now written as one span, so a clip that cuts
+       through the middle of a run is the case that would go wrong. */
+    ar_draw_text(&s, ar_rect_make(50, 10, 9, 5), 40, 8, "MMMMMMMM", 1, AR_HEX(0xFFFFFF));
+
+    for (i = 0; i < AR_GLYPH_W * AR_GLYPH_H; ++i)
+    {
+        ar_i32 x = i % AR_GLYPH_W, y = i / AR_GLYPH_W;
+        int    inside = (x >= 50 && x < 59 && y >= 10 && y < 15);
+        if (!inside && g_glyph_px[i] != 0xFF101014u)
+        {
+            outside = 1;
+        }
+    }
+
+    CHECK(!outside, "font: a span cut by a clip writes nothing outside it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -2050,6 +2141,9 @@ int main(void)
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
+
+    test_glyph_blitter_renders_the_same_pixels();
+    test_glyph_spans_respect_a_tight_clip();
 
     test_style_cache_agrees_with_the_resolver();
     test_style_cache_is_dropped_when_a_sheet_is_added();
