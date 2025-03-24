@@ -9,6 +9,7 @@
 
 #include "ar_internal.h"
 #include "ar_css.h"
+#include "ar_text.h"
 
 #define AR_MAX_DEPTH 64
 
@@ -37,7 +38,12 @@ typedef struct ar_node
 
     ar_style    style;
     const char *text;
-    ar_i32      scale; /* text scale derived from font-size */
+    ar_i32      scale; /* bitmap font scale derived from font-size */
+
+    /* Measured while the tree is built, because that is where the loaded face
+       is reachable and the layout solver is deliberately pure. Also measures
+       once per node rather than once per layout pass. */
+    ar_i32 text_w;
 
     ar_i32  fit[2]; /* intrinsic size, from pass one */
     ar_rect rect;   /* final, absolute */
@@ -114,6 +120,13 @@ struct ar_ctx
     ar_u32 mouse_pressed;
     ar_u32 mouse_released;
     int    mouse_inside;
+
+    /* Text. Absent until ar_font_load, and the bitmap face is used until then,
+       so a build that never calls it pays nothing for any of this. */
+    ar_face          face;
+    ar_glyph_cache   glyphs;
+    ar_glyph_scratch glyph_scratch;
+    int              have_face;
 
     ar_damage damage;
     ar_rect   last_viewport; /* a resize repaints everything */

@@ -2934,6 +2934,153 @@ static void test_text_survives_a_face_that_failed_to_load(void)
     CHECK(ar_text_measure("hello", &f, 16, &gc, &sc) == 0, "text: and measures as nothing");
 }
 
+
+/* ------------------------------------------------------------------------
+ * Fonts at the context level
+ * ------------------------------------------------------------------------ */
+static unsigned char g_font_mem[AR_MEM(64) + 160 * 1024];
+
+static ar_ctx *ar__font_ctx(int load)
+{
+    ar_ctx *c = ar_init(g_font_mem, (ar_u32)sizeof g_font_mem);
+
+    if (c)
+    {
+        ar_stylesheet(c, "#root { display:flex; padding:2px; }"
+                         ".t { font-size:16px; color:#FFFFFF; }");
+        if (load)
+        {
+            /* Before the first frame, as the header says: a frame reserves the
+               whole box budget from the other end of the arena. */
+            ar_font_load(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 32);
+        }
+    }
+    return c;
+}
+
+static void ar__font_frame(ar_ctx *c, ar_surface *s)
+{
+    ar_frame_begin(c, 0);
+    ar_invalidate_all(c);
+    ar_begin(c, "div#root");
+    ar_text(c, "div.t", "AAA");
+    ar_end(c);
+    ar_frame_end(c, s);
+    ar_frame_presented(c);
+}
+
+static void test_font_load_and_fallback(void)
+{
+    ar_ctx *c = ar__font_ctx(0);
+
+    CHECK(c != 0 && !ar_font_loaded(c), "font: a fresh context has no face");
+
+    /* Garbage must fail without disturbing anything: the bitmap font is the
+       fallback, and a missing font should degrade an interface, not stop it. */
+    CHECK(!ar_font_load(c, "not a font at all", 17, 32 * 1024, 32),
+          "font: loading garbage fails");
+    CHECK(!ar_font_loaded(c), "font: and leaves the context without a face");
+
+    CHECK(ar_font_load(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 32),
+          "font: a valid face loads");
+    CHECK(ar_font_loaded(c), "font: and the context reports it");
+}
+
+static void test_font_changes_what_is_measured(void)
+{
+    ar_ctx    *c;
+    ar_surface s;
+    ar_i32     bitmap_w, outline_w;
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+
+    c = ar__font_ctx(0);
+    ar__font_frame(c, &s);
+    bitmap_w = c->nodes[1].text_w;
+
+    c = ar__font_ctx(1);
+    ar__font_frame(c, &s);
+    outline_w = c->nodes[1].text_w;
+
+    /* The test face's 'A' is one em wide, so three of them at 16 px is 48
+       pixels. The bitmap face is proportional and narrower. What matters is
+       that layout measured with the face that will draw it. */
+    CHECK(bitmap_w > 0 && outline_w > 0, "font: both faces measure the same string");
+    CHECK(outline_w == 48, "font: an outline face measures with its own metrics");
+    CHECK(outline_w != bitmap_w, "font: which are not the bitmap face's");
+}
+
+static void test_font_antialias_toggle(void)
+{
+    ar_ctx    *c;
+    ar_surface s;
+    ar_i32     i;
+    int        soft = 0, hard_only = 1;
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+
+    c = ar__font_ctx(1);
+    CHECK(c != 0 && ar_font_loaded(c), "font: the face loaded for the antialiasing test");
+
+    memset(g_dmg_a, 0, sizeof g_dmg_a);
+    ar__font_frame(c, &s);
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        ar_u32 v = g_dmg_a[i] & 0xFFu;
+        if (v != 0 && v != 0xFFu)
+        {
+            soft = 1;
+        }
+    }
+    CHECK(soft, "font: antialiased text has partly covered pixels");
+
+    ar_font_antialias(c, 0);
+    memset(g_dmg_a, 0, sizeof g_dmg_a);
+    ar__font_frame(c, &s);
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        ar_u32 v = g_dmg_a[i] & 0xFFu;
+        if (v != 0 && v != 0xFFu)
+        {
+            hard_only = 0;
+        }
+    }
+    CHECK(hard_only, "font: with antialiasing off every pixel is fully inked or untouched");
+}
+
+static void test_font_antialias_toggle_invalidates(void)
+{
+    ar_ctx    *c;
+    ar_surface s;
+    ar_u32     before, after;
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+
+    c = ar__font_ctx(1);
+    ar__font_frame(c, &s);
+    ar__font_frame(c, &s);
+    ar_font_cache_stats(c, 0, &before, 0);
+
+    /* The flag is part of the cache key, so the old bitmaps could never be
+       found again. Dropping them reclaims the space rather than stranding it,
+       and the next frame has to repaint. */
+    ar_font_antialias(c, 0);
+    CHECK(ar_frame_is_dirty(c), "font: changing antialiasing invalidates the window");
+
+    ar__font_frame(c, &s);
+    ar_font_cache_stats(c, 0, &after, 0);
+    CHECK(after > before, "font: and the glyphs are rasterized again under the new setting");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3000,6 +3147,11 @@ int main(void)
     test_text_draw_matches_measure();
     test_text_draws_pixels_and_respects_the_clip();
     test_text_survives_a_face_that_failed_to_load();
+
+    test_font_load_and_fallback();
+    test_font_changes_what_is_measured();
+    test_font_antialias_toggle();
+    test_font_antialias_toggle_invalidates();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();

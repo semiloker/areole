@@ -189,6 +189,114 @@ ar_u32 ar_stylesheet_errors(const ar_ctx *c)
     return c->sheet.errors;
 }
 
+/* ------------------------------------------------------------------------
+ * Fonts
+ * ------------------------------------------------------------------------ */
+
+#define AR_GLYPH_SLOTS  512
+#define AR_GLYPH_PTS    2048
+#define AR_GLYPH_POINTS 512
+
+int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px)
+{
+    ar_glyph_slot *slots;
+    ar_u8         *atlas;
+    ar_i32        *pts;
+    ar_i32        *ox;
+    ar_i32        *oy;
+    ar_u8         *on;
+    ar_i32        *acc;
+    ar_u32         acc_ints;
+
+    if (max_px < 8)
+    {
+        max_px = 8;
+    }
+    /* The accumulator is the largest single allocation here and it grows with
+       the square of the size, so it is the caller's number rather than a
+       generous constant: 48 px costs 9 KB, 128 px costs 66 KB. */
+    acc_ints = (ar_u32)(max_px + 2) * (ar_u32)max_px;
+
+    c->have_face = 0;
+    if (!ar_face_init(&c->face, data, size))
+    {
+        return 0;
+    }
+    if (atlas_bytes < 4096u)
+    {
+        atlas_bytes = 4096u;
+    }
+
+    /* Every allocation is persistent and happens exactly once, here. A context
+       that never loads a font never pays for any of it, which is why this is
+       not part of ar_init. */
+    slots = (ar_glyph_slot *)ar_arena_persist(&c->arena,
+                                              AR_GLYPH_SLOTS * (ar_u32)sizeof(ar_glyph_slot));
+    atlas = (ar_u8 *)ar_arena_persist(&c->arena, atlas_bytes);
+    pts = (ar_i32 *)ar_arena_persist(&c->arena, AR_GLYPH_PTS * 2u * (ar_u32)sizeof(ar_i32));
+    ox = (ar_i32 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS * (ar_u32)sizeof(ar_i32));
+    oy = (ar_i32 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS * (ar_u32)sizeof(ar_i32));
+    on = (ar_u8 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS);
+    acc = (ar_i32 *)ar_arena_persist(&c->arena, acc_ints * (ar_u32)sizeof(ar_i32));
+
+    if (!slots || !atlas || !pts || !ox || !oy || !on || !acc)
+    {
+        /* The arena is short. Saying so is better than rendering with a face
+           whose cache has nowhere to live; the caller sized the block, so the
+           caller can fix it. */
+        return 0;
+    }
+
+    c->glyph_scratch.path_pts = pts;
+    c->glyph_scratch.path_cap = AR_GLYPH_PTS;
+    c->glyph_scratch.outline.x = ox;
+    c->glyph_scratch.outline.y = oy;
+    c->glyph_scratch.outline.on = on;
+    c->glyph_scratch.outline.cap = AR_GLYPH_POINTS;
+    c->glyph_scratch.acc = acc;
+    c->glyph_scratch.acc_cap = (ar_i32)acc_ints;
+
+    ar_glyph_cache_init(&c->glyphs, slots, AR_GLYPH_SLOTS, atlas, (ar_i32)atlas_bytes);
+
+    c->have_face = 1;
+    return 1;
+}
+
+int ar_font_loaded(const ar_ctx *c)
+{
+    return c->have_face;
+}
+
+void ar_font_antialias(ar_ctx *c, int on)
+{
+    if (c->glyphs.antialias == (on ? 1 : 0))
+    {
+        return;
+    }
+    c->glyphs.antialias = on ? 1 : 0;
+    /* Every cached bitmap was rasterized under the old setting, and the flag
+       is part of the key, so they would simply never be found again. Dropping
+       them reclaims the space instead of stranding it. */
+    ar_glyph_cache_clear(&c->glyphs);
+    ar_invalidate_all(c);
+}
+
+void ar_font_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses, ar_u32 *resets)
+{
+    if (hits)
+    {
+        *hits = c->glyphs.hits;
+    }
+    if (misses)
+    {
+        *misses = c->glyphs.misses;
+    }
+    if (resets)
+    {
+        *resets = c->glyphs.resets;
+    }
+}
+
 void ar_style_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses)
 {
     if (hits)
@@ -240,6 +348,23 @@ void ar_memory_stats(const ar_ctx *c, ar_u32 *persist, ar_u32 *frame_now, ar_u32
     {
         *available = ar_arena_available(&c->arena);
     }
+}
+
+/* One place decides how wide a run of text is, so painting and layout cannot
+   disagree about it. Which face answers depends on whether one was loaded. */
+static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
+{
+    if (!n->text)
+    {
+        return 0;
+    }
+    if (c->have_face)
+    {
+        ar_i32 w = ar_text_measure(n->text, &c->face, n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+                                   &c->glyph_scratch);
+        return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+    }
+    return ar_text_width(n->text, n->scale);
 }
 
 /* ------------------------------------------------------------------------
@@ -381,6 +506,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     {
         n->scale = 1;
     }
+    n->text_w = ar__measure(c, n);
 
     if (parent >= 0)
     {
@@ -510,9 +636,25 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
         {
             /* Text starts inside the padding box. Anything more elaborate is
                alignment, which belongs to the box, not to the glyphs. */
-            ar_draw_text(s, ar_rect_intersect(clip, n->rect), n->rect.x + n->style.v[AR_P_PAD_LEFT],
-                         n->rect.y + n->style.v[AR_P_PAD_TOP], n->text, n->scale,
-                         (ar_color)n->style.v[AR_P_COLOR]);
+            ar_rect  tclip = ar_rect_intersect(clip, n->rect);
+            ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT];
+            ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+            ar_color tc = (ar_color)n->style.v[AR_P_COLOR];
+
+            if (c->have_face)
+            {
+                /* A font puts the baseline below the top of the line box; the
+                   bitmap face has no baseline and draws from the top, so the
+                   two paths take different y values for the same text. */
+                ar_i32 ppem = n->style.v[AR_P_FONT_SIZE];
+                ar_text_draw(s, tclip, tx, ty + ar_face_scale(&c->face, c->face.ascender, ppem) /
+                                                AR_ONE_PIXEL,
+                             n->text, &c->face, ppem, tc, &c->glyphs, &c->glyph_scratch);
+            }
+            else
+            {
+                ar_draw_text(s, tclip, tx, ty, n->text, n->scale, tc);
+            }
         }
     }
 }
