@@ -8,6 +8,7 @@
 #include "ar_internal.h"
 #include "ar_path.h"
 #include "ar_font_file.h"
+#include "ar_text.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -2660,6 +2661,279 @@ static void test_ttf_survives_truncation_and_corruption(void)
     CHECK(parsed > 0, "ttf: and enough still parse for that to be worth something");
 }
 
+
+/* ------------------------------------------------------------------------
+ * UTF-8
+ *
+ * The rejections matter more than the acceptances. Overlong forms, surrogates
+ * and values above U+10FFFF are all ways of getting a decoder to produce a
+ * codepoint the rest of the program believed had already been validated, and
+ * every one of them has been a real vulnerability in a real renderer.
+ * ------------------------------------------------------------------------ */
+static ar_u32 ar__one(const char *s)
+{
+    const char *p = s;
+    return ar_utf8_next(&p);
+}
+
+static ar_i32 ar__consumed(const char *s)
+{
+    const char *p = s;
+    ar_utf8_next(&p);
+    return (ar_i32)(p - s);
+}
+
+static void test_utf8_decodes_valid_sequences(void)
+{
+    CHECK(ar__one("A") == 'A', "utf8: ascii");
+    CHECK(ar__one("\xC3\xA9") == 0xE9, "utf8: two bytes, e acute");
+    CHECK(ar__one("\xD0\x9F") == 0x41F, "utf8: two bytes, cyrillic");
+    CHECK(ar__one("\xE2\x80\x94") == 0x2014, "utf8: three bytes, em dash");
+    CHECK(ar__one("\xF0\x9F\x8C\xB8") == 0x1F338, "utf8: four bytes, above the basic plane");
+    CHECK(ar__one("") == 0, "utf8: the end of the string is zero");
+
+    CHECK(ar__consumed("A") == 1, "utf8: ascii advances one byte");
+    CHECK(ar__consumed("\xE2\x80\x94") == 3, "utf8: a three byte sequence advances three");
+    CHECK(ar__consumed("\xF0\x9F\x8C\xB8") == 4, "utf8: and a four byte one, four");
+}
+
+static void test_utf8_rejects_what_it_should(void)
+{
+    /* C0 80 is an overlong NUL: two bytes encoding U+0000. Accepting it lets a
+       string get past a check for an embedded zero and then produce one. */
+    CHECK(ar__one("\xC0\x80") == 0xFFFD, "utf8: an overlong NUL is refused");
+    CHECK(ar__one("\xE0\x80\xAF") == 0xFFFD, "utf8: an overlong solidus is refused");
+    CHECK(ar__one("\xED\xA0\x80") == 0xFFFD, "utf8: a surrogate half is not a character");
+    CHECK(ar__one("\xF4\x90\x80\x80") == 0xFFFD, "utf8: nothing exists above U+10FFFF");
+    CHECK(ar__one("\xFF") == 0xFFFD, "utf8: FF cannot start a character");
+    CHECK(ar__one("\x80") == 0xFFFD, "utf8: nor can a continuation byte");
+    CHECK(ar__one("\xE2\x80") == 0xFFFD, "utf8: a truncated sequence is refused");
+
+    /* One byte forward on every rejection, so a stray byte costs one
+       replacement rather than swallowing the character after it. */
+    CHECK(ar__consumed("\xFF") == 1, "utf8: a bad lead byte advances exactly one");
+    CHECK(ar__consumed("\x80") == 1, "utf8: so does a stray continuation");
+    CHECK(ar__consumed("\xE2\x80") == 1, "utf8: and so does a truncated sequence");
+}
+
+static void test_utf8_walks_a_mixed_string_exactly(void)
+{
+    /* "Hi" + cyrillic pe + em dash + a bad byte + "!" */
+    const char *s = "Hi\xD0\x9F\xE2\x80\x94\xFF!";
+    ar_u32      got[8];
+    ar_i32      n = 0;
+
+    for (;;)
+    {
+        ar_u32 cp = ar_utf8_next(&s);
+        if (cp == 0 || n >= 8)
+        {
+            break;
+        }
+        got[n++] = cp;
+    }
+
+    CHECK(n == 6, "utf8: a mixed string yields one codepoint per character");
+    CHECK(n == 6 && got[0] == 'H' && got[1] == 'i' && got[2] == 0x41F && got[3] == 0x2014 &&
+              got[4] == 0xFFFD && got[5] == '!',
+          "utf8: and a bad byte replaces itself without disturbing its neighbours");
+}
+
+/* ------------------------------------------------------------------------
+ * The glyph cache
+ * ------------------------------------------------------------------------ */
+static ar_glyph_slot g_gc_slots[64];
+static ar_u8         g_gc_pixels[64 * 1024];
+static ar_i32        g_gc_pts[2048 * 2];
+static ar_i32        g_gc_x[256], g_gc_y[256];
+static ar_u8         g_gc_on[256];
+static ar_i32        g_gc_acc[(96 + 2) * 96];
+
+static void ar__gc_setup(ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 cap)
+{
+    sc->path_pts = g_gc_pts;
+    sc->path_cap = 2048;
+    sc->outline.x = g_gc_x;
+    sc->outline.y = g_gc_y;
+    sc->outline.on = g_gc_on;
+    sc->outline.cap = 256;
+    sc->acc = g_gc_acc;
+    sc->acc_cap = (96 + 2) * 96;
+    ar_glyph_cache_init(gc, g_gc_slots, 64, g_gc_pixels, cap);
+}
+
+static void test_glyph_cache_rasterizes_once(void)
+{
+    ar_face              f;
+    ar_glyph_cache       gc;
+    ar_glyph_scratch     sc;
+    const ar_glyph_slot *a, *b;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    a = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    CHECK(a != 0 && a->w == 32 && a->h == 32, "glyph cache: the triangle rasterizes at 32 px");
+    CHECK(gc.misses == 1 && gc.hits == 0, "glyph cache: the first ask is a miss");
+
+    b = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    CHECK(b == a, "glyph cache: the second ask returns the same entry");
+    CHECK(gc.hits == 1, "glyph cache: and is counted as a hit");
+
+    /* A different size is a different bitmap, not the same one scaled. */
+    b = ar_glyph_get(&gc, &f, 1, 16, &sc);
+    CHECK(b != 0 && b != a && b->h == 16, "glyph cache: size is part of the key");
+}
+
+static void test_glyph_cache_carries_metrics(void)
+{
+    ar_face              f;
+    ar_glyph_cache       gc;
+    ar_glyph_scratch     sc;
+    const ar_glyph_slot *g;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    /* Glyph 0 is empty. It still has an advance, and caching that stops it
+       being re-derived for every space in a paragraph. */
+    g = ar_glyph_get(&gc, &f, 0, 32, &sc);
+    CHECK(g != 0 && g->w == 0 && g->h == 0, "glyph cache: an empty glyph caches as empty");
+    CHECK(g != 0 && g->advance == 600 * 32 * AR_ONE_PIXEL / 1000,
+          "glyph cache: and still carries its advance");
+
+    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    CHECK(g != 0 && g->advance == 32 * AR_ONE_PIXEL, "glyph cache: a one em advance at 32 px");
+}
+
+static void test_glyph_cache_resets_rather_than_overflowing(void)
+{
+    ar_face              f;
+    ar_glyph_cache       gc;
+    ar_glyph_scratch     sc;
+    const ar_glyph_slot *g;
+    ar_i32               size;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    /* Room for about two glyphs at 32 px, so filling it takes three sizes. */
+    ar__gc_setup(&gc, &sc, 32 * 32 * 2 + 16);
+
+    for (size = 20; size <= 32; ++size)
+    {
+        g = ar_glyph_get(&gc, &f, 1, size, &sc);
+        CHECK(g != 0 && gc.used <= gc.cap, "glyph cache: never uses more than its budget");
+    }
+    CHECK(gc.resets > 0, "glyph cache: a full cache resets rather than overflowing");
+
+    /* And still works afterwards, which is the point of resetting. */
+    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    CHECK(g != 0 && g->w == 32, "glyph cache: and keeps working after a reset");
+}
+
+static void test_glyph_cache_refuses_a_glyph_larger_than_its_budget(void)
+{
+    ar_face              f;
+    ar_glyph_cache       gc;
+    ar_glyph_scratch     sc;
+    const ar_glyph_slot *g;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, 64); /* smaller than any real glyph */
+
+    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    CHECK(g == 0, "glyph cache: a glyph larger than the whole budget is refused, not wrapped");
+    CHECK(gc.used <= gc.cap, "glyph cache: and nothing was written past the slab");
+}
+
+/* ------------------------------------------------------------------------
+ * Drawing
+ * ------------------------------------------------------------------------ */
+static void test_text_draw_matches_measure(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_surface       s;
+    ar_i32           drawn, measured;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+    memset(g_dmg_a, 0, sizeof g_dmg_a);
+
+    measured = ar_text_measure("AAA", &f, 16, &gc, &sc);
+    drawn = ar_text_draw(&s, ar_rect_make(0, 0, AR_DMG_W, AR_DMG_H), 4, 40, "AAA", &f, 16,
+                         AR_HEX(0xFFFFFF), &gc, &sc);
+
+    CHECK(measured == drawn, "text: drawing advances the pen exactly as measuring said it would");
+    CHECK(measured == 3 * 16 * AR_ONE_PIXEL, "text: three one-em glyphs at 16 px is 48 pixels");
+}
+
+static void test_text_draws_pixels_and_respects_the_clip(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_surface       s;
+    ar_i32           i, inked = 0, outside = 0;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+    memset(g_dmg_a, 0, sizeof g_dmg_a);
+
+    /* A clip that cuts the text in half vertically. */
+    ar_text_draw(&s, ar_rect_make(0, 0, AR_DMG_W, 30), 4, 40, "AAA", &f, 24, AR_HEX(0xFFFFFF), &gc,
+                 &sc);
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        if (g_dmg_a[i] != 0)
+        {
+            ++inked;
+            if (i / AR_DMG_W >= 30)
+            {
+                outside = 1;
+            }
+        }
+    }
+
+    CHECK(inked > 0, "text: something was actually drawn");
+    CHECK(!outside, "text: and nothing outside the clip rectangle");
+}
+
+static void test_text_survives_a_face_that_failed_to_load(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_surface       s;
+
+    memset(&f, 0, sizeof f);
+    ar_face_init(&f, "not a font", 10);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+
+    /* A caller that ignored the return value of ar_face_init must not be able
+       to fault, because that caller exists. */
+    CHECK(ar_text_draw(&s, ar_rect_make(0, 0, AR_DMG_W, AR_DMG_H), 0, 0, "hello", &f, 16,
+                       AR_HEX(0xFFFFFF), &gc, &sc) == 0,
+          "text: a face that failed to load draws nothing and does not fault");
+    CHECK(ar_text_measure("hello", &f, 16, &gc, &sc) == 0, "text: and measures as nothing");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -2715,6 +2989,17 @@ int main(void)
     test_ttf_empty_glyph_is_not_an_error();
     test_ttf_rejects_what_it_cannot_read();
     test_ttf_survives_truncation_and_corruption();
+
+    test_utf8_decodes_valid_sequences();
+    test_utf8_rejects_what_it_should();
+    test_utf8_walks_a_mixed_string_exactly();
+    test_glyph_cache_rasterizes_once();
+    test_glyph_cache_carries_metrics();
+    test_glyph_cache_resets_rather_than_overflowing();
+    test_glyph_cache_refuses_a_glyph_larger_than_its_budget();
+    test_text_draw_matches_measure();
+    test_text_draws_pixels_and_respects_the_clip();
+    test_text_survives_a_face_that_failed_to_load();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
