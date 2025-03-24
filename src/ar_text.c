@@ -92,6 +92,7 @@ void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots
     gc->pixels = pixels;
     gc->cap = cap;
     gc->used = 0;
+    gc->antialias = 1;
     gc->hits = 0;
     gc->misses = 0;
     gc->resets = 0;
@@ -109,17 +110,19 @@ void ar_glyph_cache_clear(ar_glyph_cache *gc)
     gc->used = 0;
 }
 
-/* Glyph index in the low bits, pixel size above it, and one added so that
-   glyph 0 at size 0 cannot look like a free slot. */
-static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem)
+/* Glyph index in the low twenty bits, pixel size above it, the antialiasing
+   flag above that, and the top bit always set so that glyph 0 at size 0 cannot
+   look like a free slot. */
+static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias)
 {
-    return ((ar_u32)ppem << 20) | ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
+    return ((ar_u32)(antialias ? 1 : 0) << 30) | (((ar_u32)ppem & 0x3FFu) << 20) |
+           ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
 }
 
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
                                   ar_glyph_scratch *sc)
 {
-    ar_u32 key = ar__glyph_key(glyph, ppem);
+    ar_u32 key = ar__glyph_key(glyph, ppem, gc->antialias);
     ar_u32 mask = (ar_u32)gc->slots - 1u;
     ar_u32 at = key & mask;
     ar_i32 probe;
@@ -206,6 +209,20 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
                 memset(gc->pixels + gc->used, 0, (size_t)need);
                 ar_path_rasterize(&path, gc->pixels + gc->used, w, h, w, bounds.x * AR_ONE_PIXEL,
                                   bounds.y * AR_ONE_PIXEL, AR_FILL_NONZERO, sc->acc);
+
+                if (!gc->antialias)
+                {
+                    /* Thresholded once, here, rather than tested per pixel at
+                       every blit: the whole point of a cache is that work done
+                       on a miss is not done again. It also means the blit hits
+                       the opaque store path instead of the blend. */
+                    ar_u8 *q = gc->pixels + gc->used;
+                    ar_i32 k;
+                    for (k = 0; k < need; ++k)
+                    {
+                        q[k] = q[k] >= 128u ? 255u : 0u;
+                    }
+                }
                 gc->used += need;
             }
             return s;

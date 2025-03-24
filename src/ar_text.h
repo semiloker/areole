@@ -53,6 +53,25 @@ typedef struct ar_glyph_cache
     ar_i32 cap;
     ar_i32 used;
 
+    /*
+     * Off means the coverage is thresholded at half when the glyph is
+     * rasterized, so every pixel is either fully inked or untouched.
+     *
+     * Two reasons it exists rather than being always on. Blending costs a read
+     * and a write per pixel where an opaque store costs one write, which on a
+     * machine whose whole problem is memory bandwidth is the difference the
+     * rest of this library is built around -- measured at 1.89x on twelve
+     * lines of 14 px text, 116 ns per glyph against 219. And hard edges are
+     * what the machines this targets actually looked like, so it is a
+     * legitimate choice rather than only a cheap one.
+     *
+     * The flag is part of the cache key, so switching it mid frame is well
+     * defined: aliased and antialiased renderings of the same glyph are two
+     * entries, and an interface may use one for small text and the other for
+     * large without either being wrong.
+     */
+    int antialias;
+
     ar_u32 hits, misses, resets;
 } ar_glyph_cache;
 

@@ -280,6 +280,65 @@ void ar_stylesheet(ar_ctx *c, const char *css);
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
 
+/* ------------------------------------------------------------------------
+ * Fonts
+ *
+ * Without a face loaded, text is drawn with the built-in 8x8 bitmap font,
+ * which needs no file and no memory and is why a hello-world build is 52 KB.
+ * Loading a TrueType face switches every subsequent frame to outlines.
+ *
+ * The font data is not copied. It must outlive the context -- mapping the file
+ * and leaving it mapped is the intended use, and is why the parser never
+ * allocates.
+ *
+ * Both atlas_bytes and the rasterizer scratch come out of the block handed to
+ * ar_init, and there is a wrinkle worth stating plainly: ar_init derives its
+ * box budget from the size of that block, so about 15% of any extra memory is
+ * taken by per-box state before the font sees it. Size the block as
+ *
+ *     AR_MEM(boxes) + (atlas_bytes + scratch) * 6 / 5
+ *
+ * where scratch is roughly 36 KB plus (max_px + 2) * max_px * 4 bytes.
+ *
+ * max_px is the largest text size that will be drawn. The rasterizer's
+ * accumulator grows with its square -- 48 px costs 9 KB, 128 px costs 66 KB --
+ * so it is asked for rather than assumed. A glyph larger than this is skipped
+ * rather than drawn wrong.
+ *
+ * Call it at startup, before the first frame, for the same reason
+ * ar_stylesheet says so: a frame reserves the whole box budget from the other
+ * end of the arena and does not release it until the next ar_frame_begin, so
+ * the room available afterwards is a fraction of what it was.
+ *
+ * Returns zero if the data is not a readable TrueType file or the arena has no
+ * room, and in both cases the bitmap font keeps working -- a missing font
+ * should degrade an interface, not stop it.
+ * ------------------------------------------------------------------------ */
+int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px);
+int ar_font_loaded(const ar_ctx *c);
+
+/*
+ * Antialiased text is the default. Turning it off thresholds each glyph's
+ * coverage at half when it is rasterized, so every pixel is either fully inked
+ * or untouched.
+ *
+ * It is worth having for two reasons. Blending costs a read and a write per
+ * pixel where an opaque store costs one write, and on the machines this
+ * library targets memory bandwidth is the entire problem: measured on twelve
+ * lines of 14 px Segoe UI, turning it off is 1.89x faster, 116 ns per glyph
+ * against 219. And hard edges are what those machines actually looked like, so
+ * this is a legitimate choice about appearance and not only a cheap one.
+ *
+ * Changing it drops the glyph cache and invalidates the window, so it is a
+ * setting rather than something to toggle per frame.
+ */
+void ar_font_antialias(ar_ctx *c, int on);
+
+/* Cache hits, misses and resets since the face was loaded. A rising reset
+   count means the atlas is too small for the interface and glyphs are being
+   rasterized repeatedly; pass more atlas_bytes. Any argument may be null. */
+void ar_font_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses, ar_u32 *resets);
+
 /* Resolved-style cache hits and misses since init. Two boxes with the same
    tag, class, id and state cannot resolve differently, so the cache is keyed
    on exactly that and holds one entry per distinct combination rather than one

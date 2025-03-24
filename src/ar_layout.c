@@ -183,7 +183,7 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
 
         if (n->text)
         {
-            ar_i32 tw = ar_text_width(n->text, n->scale);
+            ar_i32 tw = n->text_w;
             ar_i32 th = ar__text_block_height(n->text, n->scale);
             ar_i32 tm = axis ? th : tw;
             ar_i32 tc = axis ? tw : th;
