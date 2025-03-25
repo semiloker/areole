@@ -150,6 +150,33 @@ The price is `arena_churn`, a scene that rebuilds four thousand boxes every
 frame, which is 25% slower. That is a shape no real interface has, traded
 against one every interface has.
 
+## Text
+
+Without a font file, areole draws with a built-in 8x8 bitmap face. That is why
+a hello-world build is 52 KB and needs nothing on disk.
+
+Given a TrueType file it draws outlines instead: its own parser, its own
+scanline rasterizer with exact analytic antialiasing, and a glyph cache. No
+FreeType, no stb_truetype, no floating point anywhere in it.
+
+```c
+ar_font_load(ui, ttf_bytes, ttf_size, 256 * 1024, 48);
+ar_font_antialias(ui, 0);   /* hard edges, 1.89x faster */
+```
+
+Antialiasing is on by default. Turning it off thresholds each glyph when it is
+rasterized, so every pixel is either fully inked or untouched:
+
+| | ns/glyph |
+| --- | --: |
+| Antialiased | 219 |
+| Aliased | **116** |
+
+Twelve lines of 14 px Segoe UI. A blend is a read and a write where an opaque
+store is just a write, and on a machine whose entire problem is memory
+bandwidth that is the whole difference. It is also what those machines actually
+looked like, so it is a choice about appearance and not only about speed.
+
 ## Against the alternatives
 
 Same machine, same process, same output buffer, alternating one frame each so
