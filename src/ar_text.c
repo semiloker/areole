@@ -84,6 +84,46 @@ ar_u32 ar_utf8_next(const char **p)
 /* ------------------------------------------------------------------------
  * The glyph cache
  * ------------------------------------------------------------------------ */
+/*
+ * v + darken * v * (255 - v) / 255 / 255, clamped.
+ *
+ * That is a parabola through 0 and 255 whose bulge is largest at half
+ * coverage, which is exactly where an off-grid stem sits. It is not a gamma
+ * curve, it is the cheapest thing with the same two fixed points and the same
+ * shape between them, and it needs one multiply per entry of a 256 entry table
+ * built once.
+ */
+static void ar__build_darken(ar_glyph_cache *gc)
+{
+    ar_i32 v;
+
+    for (v = 0; v < 256; ++v)
+    {
+        ar_i32 lift = gc->darken * v * (255 - v) / 255 / 255;
+        ar_i32 out = v + lift;
+        gc->darken_lut[v] = (ar_u8)(out > 255 ? 255 : out);
+    }
+}
+
+void ar_glyph_cache_set_darken(ar_glyph_cache *gc, ar_i32 amount)
+{
+    if (amount < 0)
+    {
+        amount = 0;
+    }
+    if (amount > 255)
+    {
+        amount = 255;
+    }
+    if (gc->darken == amount)
+    {
+        return;
+    }
+    gc->darken = amount;
+    ar__build_darken(gc);
+    ar_glyph_cache_clear(gc);
+}
+
 void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots, ar_u8 *pixels,
                          ar_i32 cap)
 {
@@ -93,6 +133,9 @@ void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots
     gc->cap = cap;
     gc->used = 0;
     gc->antialias = 1;
+    gc->grid_fit = 1;
+    gc->darken = 0;
+    ar__build_darken(gc);
     gc->hits = 0;
     gc->misses = 0;
     gc->resets = 0;
@@ -178,6 +221,22 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
     }
     else
     {
+        /* Grid fitting is applied here rather than in the parser because it is
+           a rendering decision, not a fact about the file, and because the
+           result lands in the cache and is paid for once. */
+        if (gc->grid_fit)
+        {
+            ar_i32 num = 1, den = 1;
+            ar_face_grid_fit(f, ppem, &num, &den);
+            if (num != den && den > 0)
+            {
+                ar_i32 i;
+                for (i = 0; i < path.count; ++i)
+                {
+                    path.pt[i * 2 + 1] = path.pt[i * 2 + 1] * num / den;
+                }
+            }
+        }
         bounds = ar_path_bounds(&path);
     }
 
@@ -227,6 +286,27 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
                 memset(gc->pixels + gc->used, 0, (size_t)need);
                 ar_path_rasterize(&path, gc->pixels + gc->used, w, h, w, bounds.x * AR_ONE_PIXEL,
                                   bounds.y * AR_ONE_PIXEL, AR_FILL_NONZERO, sc->acc);
+
+                if (gc->darken > 0)
+                {
+                    /* Stem darkening. An unhinted stem one pixel wide that
+                       straddles two columns leaves both at half coverage and
+                       the letter looks grey rather than black. Lifting the
+                       midtones puts the weight back without touching a stem
+                       that already lands on the grid, because 0 and 255 are
+                       fixed points of the curve.
+
+                       The table is built once per cache, not per glyph, and
+                       the curve is a piecewise linear approximation of a gamma
+                       because a gamma needs pow() and this library has no
+                       floating point. */
+                    ar_u8 *q = gc->pixels + gc->used;
+                    ar_i32 k;
+                    for (k = 0; k < need; ++k)
+                    {
+                        q[k] = gc->darken_lut[q[k]];
+                    }
+                }
 
                 if (!gc->antialias)
                 {

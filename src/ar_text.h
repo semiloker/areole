@@ -72,6 +72,16 @@ typedef struct ar_glyph_cache
      */
     int antialias;
 
+    /* Snap the x-height to the pixel grid. See ar_face_grid_fit. On by
+       default: it costs one multiply per point, once, on a cache miss. */
+    int grid_fit;
+
+    /* 0 to 255. Lifts midtone coverage so an off-grid stem does not read grey.
+       Zero by default, because it is a taste decision and the honest starting
+       point is the outline as the designer drew it. */
+    ar_i32 darken;
+    ar_u8  darken_lut[256];
+
     ar_u32 hits, misses, resets;
 } ar_glyph_cache;
 
@@ -92,6 +102,7 @@ void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots
 /* Drops everything. Called for a new face, since the key does not identify
    one -- a cache is per face by construction. */
 void ar_glyph_cache_clear(ar_glyph_cache *gc);
+void ar_glyph_cache_set_darken(ar_glyph_cache *gc, ar_i32 amount);
 
 /* The cached coverage bitmap for one glyph, rasterizing it if this is the
    first time it has been asked for. Returns null only if the glyph could not

@@ -2819,6 +2819,63 @@ static void test_glyph_cache_spreads_sizes_across_slots(void)
     CHECK(gc.resets == 0, "glyph cache: without evicting anything");
 }
 
+static void test_grid_fit_snaps_the_x_height(void)
+{
+    ar_face f;
+    ar_i32  num = 0, den = 0;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+
+    /* The generated face states no x-height, so there is nothing to snap to
+       and the fit must be the identity rather than a guess. */
+    ar_face_grid_fit(&f, 16, &num, &den);
+    CHECK(num == den && den != 0, "grid fit: a face with no stated x-height is left alone");
+
+    f.x_height = 500; /* half an em */
+    ar_face_grid_fit(&f, 13, &num, &den);
+    /* 500/1000 of 13 px is 6.5, which snaps to 7: a 7.7% correction. */
+    CHECK(num * 100 / den > 100 && num * 100 / den < 115,
+          "grid fit: a half-pixel x-height is corrected upward, by a few per cent");
+
+    /* At 4 px the x-height is 2 px and any rounding is a huge fraction of it,
+       so fitting distorts rather than sharpens and is declined. */
+    f.x_height = 333;
+    ar_face_grid_fit(&f, 5, &num, &den);
+    CHECK(num * 8 <= den * 9 && num * 9 >= den * 8,
+          "grid fit: declines a correction larger than an eighth");
+}
+
+static void test_darkening_keeps_its_endpoints(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           i;
+    int              monotonic = 1, lifted = 0;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+    ar_glyph_cache_set_darken(&gc, 80);
+
+    CHECK(gc.darken_lut[0] == 0, "darken: nothing is not lifted to something");
+    CHECK(gc.darken_lut[255] == 255, "darken: and full coverage cannot exceed full");
+
+    for (i = 1; i < 256; ++i)
+    {
+        if (gc.darken_lut[i] < gc.darken_lut[i - 1])
+        {
+            monotonic = 0;
+        }
+        if (gc.darken_lut[i] > i)
+        {
+            lifted = 1;
+        }
+    }
+    CHECK(monotonic, "darken: the curve never goes backwards");
+    CHECK(lifted, "darken: and does lift the midtones");
+    CHECK(gc.darken_lut[128] > 128 + 10, "darken: most of all at half coverage");
+}
+
 static void test_glyph_cache_carries_metrics(void)
 {
     ar_face              f;
@@ -3176,6 +3233,8 @@ int main(void)
     test_utf8_walks_a_mixed_string_exactly();
     test_glyph_cache_rasterizes_once();
     test_glyph_cache_spreads_sizes_across_slots();
+    test_grid_fit_snaps_the_x_height();
+    test_darkening_keeps_its_endpoints();
     test_glyph_cache_carries_metrics();
     test_glyph_cache_resets_rather_than_overflowing();
     test_glyph_cache_refuses_a_glyph_larger_than_its_budget();

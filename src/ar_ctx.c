@@ -281,6 +281,23 @@ void ar_font_antialias(ar_ctx *c, int on)
     ar_invalidate_all(c);
 }
 
+void ar_font_grid_fit(ar_ctx *c, int on)
+{
+    if (c->glyphs.grid_fit == (on ? 1 : 0))
+    {
+        return;
+    }
+    c->glyphs.grid_fit = on ? 1 : 0;
+    ar_glyph_cache_clear(&c->glyphs);
+    ar_invalidate_all(c);
+}
+
+void ar_font_darken(ar_ctx *c, ar_i32 amount)
+{
+    ar_glyph_cache_set_darken(&c->glyphs, amount);
+    ar_invalidate_all(c);
+}
+
 void ar_font_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses, ar_u32 *resets)
 {
     if (hits)

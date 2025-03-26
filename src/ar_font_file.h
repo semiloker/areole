@@ -23,7 +23,7 @@ typedef struct ar_face
     ar_u32       size;
 
     /* Offsets into data. Zero means the table is absent. */
-    ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx;
+    ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2;
     ar_u32 glyf_len, loca_len;
 
     ar_i32 units_per_em;
@@ -31,6 +31,8 @@ typedef struct ar_face
     ar_i32 num_glyphs;
     ar_i32 num_hmetrics;
     ar_i32 ascender, descender, line_gap; /* font units */
+    ar_i32 x_height;                      /* font units; 0 if the font does not say */
+    ar_i32 cap_height;
 
     ar_u32 cmap_sub; /* offset of the chosen subtable */
     ar_i32 cmap_format;
@@ -73,5 +75,25 @@ typedef struct ar_outline_buf
  */
 int ar_face_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i32 oy, ar_path *p,
                     const ar_outline_buf *buf);
+
+/*
+ * Vertical grid fitting.
+ *
+ * Unhinted text at interface sizes looks soft for one specific reason: the
+ * x-height rarely lands on a pixel boundary, so the flat top of every lower
+ * case letter is spread across two rows at half coverage. The baseline is
+ * already integral because the pen is; the x-height is not.
+ *
+ * This returns a numerator and denominator to scale y by so that it is. At 13
+ * px in Segoe UI the x-height is 6.6 px and this makes it 7, moving every
+ * outline by six per cent vertically -- invisible as a shape, decisive as a
+ * bitmap.
+ *
+ * It is not a bytecode interpreter and does not pretend to be. A real hinting
+ * engine also aligns stem widths horizontally, which needs to know which
+ * contours are stems; that is the expensive part and it is deferred. This is
+ * the cheap ninety per cent.
+ */
+void ar_face_grid_fit(const ar_face *f, ar_i32 ppem, ar_i32 *num, ar_i32 *den);
 
 #endif /* AR_FONT_FILE_H */
