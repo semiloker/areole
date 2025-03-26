@@ -119,12 +119,30 @@ static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias)
            ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
 }
 
+/*
+ * The key must be mixed before it is masked, not merely truncated.
+ *
+ * Masking the key directly takes its low bits, which are the glyph index --
+ * so every size of one glyph lands in the same slot. Sixteen sizes exactly
+ * filled the sixteen-probe window, every lookup fell through to the end of it
+ * and overwrote a live entry, and the cache stopped caching. It was invisible
+ * until a benchmark drew the same text at sixteen sizes: 351,140 misses across
+ * 400 frames of a scene that should have missed a few hundred times in total.
+ *
+ * One multiply spreads every field of the key across the whole word.
+ */
+static ar_u32 ar__glyph_slot_of(ar_u32 key, ar_u32 mask)
+{
+    ar_u32 h = key * 2654435761u;
+    return (h >> 16) & mask;
+}
+
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
                                   ar_glyph_scratch *sc)
 {
     ar_u32 key = ar__glyph_key(glyph, ppem, gc->antialias);
     ar_u32 mask = (ar_u32)gc->slots - 1u;
-    ar_u32 at = key & mask;
+    ar_u32 at = ar__glyph_slot_of(key, mask);
     ar_i32 probe;
     ar_path path;
     ar_rect bounds;
@@ -186,7 +204,7 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
                LRU is the upgrade if that ever appears. */
             ar_glyph_cache_clear(gc);
             ++gc->resets;
-            at = key & mask;
+            at = ar__glyph_slot_of(key, mask);
             while (gc->slot[at].key != 0)
             {
                 at = (at + 1u) & mask;

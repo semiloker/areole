@@ -67,6 +67,11 @@ void bench_register_style(void);
 void bench_register_realistic(void);
 void bench_register_patho(void);
 
+/* Registers nothing unless bench_font_load succeeded: these scenes need a real
+   font file, which is the one external input the benchmark has. */
+void bench_register_outline(void);
+int  bench_font_load(const char *path);
+
 /* ------------------------------------------------------------------------
  * Clock
  *

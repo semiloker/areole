@@ -89,6 +89,7 @@ typedef struct bench_result
 } bench_result;
 
 static int    g_full_repaint = 0;
+static const char *g_font_path = 0;
 static double g_samples[BENCH_MAX_SAMPLES];
 
 static void die(const char *msg)
@@ -543,6 +544,10 @@ static void print_json(const bench_result *rs, int n)
     printf("  \"tool\": \"ar_bench\",\n");
     printf("  \"areole_version\": \"%s\",\n", ar_version());
     printf("  \"clock\": \"%s\",\n", bench_clock_name());
+    if (g_font_path)
+    {
+        printf("  \"font\": \"%s\",\n", g_font_path);
+    }
     printf("  \"clock_resolution_ns\": %.1f,\n", bench_clock_resolution_s() * 1e9);
     printf("  \"instrumented\": %s,\n", ar_counters_enabled() ? "true" : "false");
     printf("  \"scenes\": [\n");
@@ -607,6 +612,7 @@ static void usage(void)
     printf("  --group NAME       run one group\n");
     printf("  --iters N          timed frames per repeat (default 200)\n");
     printf("  --full-repaint     invalidate every frame: the worst frame,\n");
+    printf("  --font PATH        add the outline text scenes, using this face\n");
     printf("                     not the steady one\n");
     printf("  --repeat N         epochs: complete passes over the scene list\n");
     printf("  --warmup N         untimed frames before timing (default 30)\n");
@@ -664,6 +670,14 @@ int main(int argc, char **argv)
         {
             want_group = argv[++i];
         }
+        else if (strcmp(argv[i], "--font") == 0 && i + 1 < argc)
+        {
+            g_font_path = argv[i + 1];
+            if (!bench_font_load(argv[++i]))
+            {
+                die("cannot read that font file");
+            }
+        }
         else if (strcmp(argv[i], "--full-repaint") == 0)
         {
             g_full_repaint = 1;
@@ -694,6 +708,10 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+
+    /* After parsing, because these scenes only exist if --font named a file
+       the runner could read. */
+    bench_register_outline();
 
     if (iters < 1)
     {

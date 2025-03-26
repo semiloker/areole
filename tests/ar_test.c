@@ -2785,6 +2785,40 @@ static void test_glyph_cache_rasterizes_once(void)
     CHECK(b != 0 && b != a && b->h == 16, "glyph cache: size is part of the key");
 }
 
+/* One glyph at many sizes must occupy many slots, and the slot a key lands in
+   must depend on all of the key.
+   
+   Masking the key directly takes its low bits, which are the glyph index, so
+   every size of one glyph collided on one slot. Sixteen sizes exactly filled
+   the sixteen-probe window and the cache silently stopped caching: a benchmark
+   drawing the same text at sixteen sizes missed 351,140 times in 400 frames,
+   where it should have missed a few hundred times in total. */
+static void test_glyph_cache_spreads_sizes_across_slots(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           size;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    for (size = 4; size <= 24; ++size)
+    {
+        ar_glyph_get(&gc, &f, 1, size, &sc);
+    }
+    CHECK(gc.misses == 21 && gc.hits == 0, "glyph cache: 21 sizes of one glyph are 21 entries");
+
+    /* Every one of them must still be there. */
+    for (size = 4; size <= 24; ++size)
+    {
+        ar_glyph_get(&gc, &f, 1, size, &sc);
+    }
+    CHECK(gc.misses == 21 && gc.hits == 21,
+          "glyph cache: and asking again finds all of them, not one");
+    CHECK(gc.resets == 0, "glyph cache: without evicting anything");
+}
+
 static void test_glyph_cache_carries_metrics(void)
 {
     ar_face              f;
@@ -3141,6 +3175,7 @@ int main(void)
     test_utf8_rejects_what_it_should();
     test_utf8_walks_a_mixed_string_exactly();
     test_glyph_cache_rasterizes_once();
+    test_glyph_cache_spreads_sizes_across_slots();
     test_glyph_cache_carries_metrics();
     test_glyph_cache_resets_rather_than_overflowing();
     test_glyph_cache_refuses_a_glyph_larger_than_its_budget();

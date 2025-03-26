@@ -83,7 +83,11 @@ add_executable(ar_bench
     bench/bench_time.c
     bench/bench_json.c
     ${AREOLE_BENCH_SCENES})
-target_include_directories(ar_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+# src/ is on the path because the outline scenes measure ar_text, which is not
+# public API yet -- ar_font_load is the public face of it and does not let a
+# benchmark control the cache.
+target_include_directories(ar_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/bench"
+                                            "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_bench PRIVATE areole_instrumented)
 areole_set_warnings(ar_bench)
 if(WIN32)
