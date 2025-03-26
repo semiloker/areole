@@ -13,6 +13,22 @@ Everything else is negotiable. These are not.
 
 If a feature cannot be built inside those two rules, the feature is wrong, not the rules.
 
+## The files
+
+| | |
+| --- | --- |
+| `src/ar_arena.c` | Two-ended arena. Persistent grows up, ephemeral grows down, a frame reset is one integer store |
+| `src/ar_raster.c` | Rectangle fills and the source-over blend |
+| `src/ar_font.c` | The built-in 8x8 bitmap face and its span blitter |
+| `src/ar_path.c` | Paths and the scanline coverage rasterizer. Integer only, exact analytic antialiasing |
+| `src/ar_font_file.c` | TrueType parsing. Never copies, never allocates, bounds-checks every read |
+| `src/ar_text.c` | UTF-8, the glyph cache, outline text drawing |
+| `src/ar_css.c` | Tokenizer, parser, selector matching, the resolved style cache |
+| `src/ar_layout.c` | The flexbox solver. Pure: no allocation, no clock, no drawing |
+| `src/ar_damage.c` | The damage region and the paint digest |
+| `src/ar_ctx.c` | The tree, the frame, and everything public that is not one of the above |
+| `platform/ar_win32.c` | The only file that may include a platform header |
+
 ## The C89 rules you will trip over
 
 areole targets Windows 2000 and up, and compiles on every MSVC ever shipped. That means C89, and

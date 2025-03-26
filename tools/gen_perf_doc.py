@@ -33,6 +33,11 @@ def find_reference_profile():
     return load(hits[0])
 
 
+def find_outline():
+    path = os.path.join(ROOT, "bench", "outline.json")
+    return load(path) if os.path.exists(path) else None
+
+
 def find_comparison():
     path = os.path.join(ROOT, "bench", "comparison.json")
     return load(path) if os.path.exists(path) else None
@@ -213,6 +218,70 @@ def main():
     w("makes p99 equal p50.")
     w("")
 
+    outline = find_outline()
+    if outline:
+        by = {}
+        for sc in outline["scenes"]:
+            by[sc["name"]] = sc
+
+        w("## Outline text")
+        w("")
+        w("Measured with `%s`. These scenes need a real font file, so they exist"
+          % os.path.basename(outline.get("font", "a TrueType face")))
+        w("only when `ar_bench --font` names one, and the face is named here because \"text")
+        w("costs 220 ns a glyph\" without saying whose text at what size is an anecdote")
+        w("rather than a measurement.")
+        w("")
+        w("```sh")
+        w("./build/ar_bench --group outline --font /path/to/face.ttf --iters 600 --repeat 3")
+        w("```")
+        w("")
+        w("| scene | p50 | ns/glyph | spread | what it says |")
+        w("| --- | --: | --: | --: | --- |")
+        for name, says in (
+            ("outline_aa", "antialiased, glyphs cached: the ordinary case"),
+            ("outline_aliased", "the same with antialiasing off"),
+            ("outline_sizes", "16 sizes at once, up to 40 px, so the glyphs are larger"),
+            ("outline_cold", "cache dropped every frame: rasterizing, not blitting"),
+        ):
+            sc = by.get(name)
+            if not sc:
+                continue
+            w("| `%s` | %s us | %.0f | %.0f%% | %s |"
+              % (name, us(sc["p50_us"]), sc["ns_per_glyph"], sc["stability_pct"], says))
+        w("")
+
+        aa = by.get("outline_aa")
+        al = by.get("outline_aliased")
+        cold = by.get("outline_cold")
+        worst = max(sc["stability_pct"] for sc in outline["scenes"])
+
+        if worst > 15.0:
+            w("**This run was too noisy to quote ratios from.** The worst spread above is")
+            w("%.0f%%, so treat the two figures below as indicative and re-run on a quiet"
+              % worst)
+            w("machine before citing them.")
+            w("")
+
+        w("Read the ratios rather than the absolute times. Across three runs of this set the")
+        w("per-glyph figures moved by 1.7x with nothing changed but machine load, while the")
+        w("two ratios below stayed within 0.05 of each other: a ratio cancels whatever was")
+        w("varying.")
+        w("")
+
+        if aa and al and al["ns_per_glyph"] > 0:
+            w("**Antialiasing off is %.2fx faster.** A blend reads and writes where an opaque"
+              % (aa["ns_per_glyph"] / al["ns_per_glyph"]))
+            w("store only writes, and on a machine whose whole problem is memory bandwidth that")
+            w("is the entire difference. `ar_font_antialias` exposes it as a setting.")
+            w("")
+        if aa and cold and aa["ns_per_glyph"] > 0:
+            w("**Rasterizing costs %.1fx blitting a cached glyph.** That is why the cache is not"
+              % (cold["ns_per_glyph"] / aa["ns_per_glyph"]))
+            w("an optimisation but the thing that makes outlines usable at all -- measured,")
+            w("rather than asserted in a design document.")
+            w("")
+
     comparison = find_comparison()
     if comparison:
         w("## Against the alternatives")
@@ -288,6 +357,7 @@ def main():
     w("- Numbers from real Pentium II hardware, or from 86Box. Every figure for that tier")
     w("  in `docs/roadmap/hardware-tiers.md` is derived and labelled as such.")
     w("- A comparison against Nuklear, LVGL and Direct2D. GDI, Clay and microui are done.")
+    w("- Outline text on the Pentium II tier. The figures above are reference-machine only.")
     w("- Cold start and binary size as gated numbers rather than one-off measurements.")
 
     text = "\n".join(out) + "\n"

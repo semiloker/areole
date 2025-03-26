@@ -152,30 +152,39 @@ against one every interface has.
 
 ## Text
 
-Without a font file, areole draws with a built-in 8x8 bitmap face. That is why
-a hello-world build is 52 KB and needs nothing on disk.
+Without a font file, areole draws with a built-in 8x8 bitmap face. That is why a
+hello-world build is 52 KB and needs nothing on disk.
 
-Given a TrueType file it draws outlines instead: its own parser, its own
+Given a TrueType file it draws outlines instead, through its own parser, its own
 scanline rasterizer with exact analytic antialiasing, and a glyph cache. No
-FreeType, no stb_truetype, no floating point anywhere in it.
+FreeType, no stb_truetype, and no floating point anywhere in any of it.
 
 ```c
 ar_font_load(ui, ttf_bytes, ttf_size, 256 * 1024, 48);
-ar_font_antialias(ui, 0);   /* hard edges, 1.89x faster */
+ar_font_antialias(ui, 0);   /* hard edges, 2.06x faster */
 ```
-
-Antialiasing is on by default. Turning it off thresholds each glyph when it is
-rasterized, so every pixel is either fully inked or untouched:
 
 | | ns/glyph |
 | --- | --: |
-| Antialiased | 219 |
-| Aliased | **116** |
+| Antialiased, cached | 380 |
+| Aliased, cached | **184** |
+| Rasterized from the outline | 2184 |
 
-Twelve lines of 14 px Segoe UI. A blend is a read and a write where an opaque
-store is just a write, and on a machine whose entire problem is memory
-bandwidth that is the whole difference. It is also what those machines actually
-looked like, so it is a choice about appearance and not only about speed.
+Two ratios matter more than the absolute figures, which move with machine load
+while the ratios do not.
+
+**Antialiasing off is 2.06x faster.** A blend reads and writes where an opaque
+store only writes, and on a machine whose whole problem is memory bandwidth that
+is the entire difference. It is also what those machines looked like, so it is a
+choice about appearance and not only about speed.
+
+**Rasterizing costs 5.8x blitting a cached glyph.** That is why the cache is not
+an optimisation but the thing that makes outlines usable at all.
+
+UTF-8 in, including everything above the basic plane. Overlong forms, surrogate
+halves and values past U+10FFFF each become U+FFFD and advance one byte, because
+each of them is a way to make a decoder emit a codepoint the rest of a program
+believed had already been checked.
 
 ## Against the alternatives
 
@@ -293,7 +302,7 @@ toolkit breaks that circle.
 - **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
 - **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
-- **0.2.0** *It has real text* — TrueType, an outline rasterizer, a glyph cache
+- **0.2.0** *It has real text* — TrueType, an outline rasterizer, a glyph cache 🚧
 - **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
