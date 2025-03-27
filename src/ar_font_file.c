@@ -655,6 +655,42 @@ int ar_face_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i
     return ar__outline(f, glyph, ppem, ox, oy, p, buf, 0);
 }
 
+void ar_face_grid_fit(const ar_face *f, ar_i32 ppem, ar_i32 *num, ar_i32 *den)
+{
+    ar_i32 xh, fitted;
+
+    *num = 1;
+    *den = 1;
+    if (!f->ok || f->x_height <= 0 || ppem <= 0)
+    {
+        return;
+    }
+
+    /* The x-height in 26.6 pixels, and what it would be rounded to the grid. */
+    xh = ar_face_scale(f, f->x_height, ppem);
+    if (xh <= 0)
+    {
+        return;
+    }
+    fitted = ((xh + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL) * AR_ONE_PIXEL;
+    if (fitted <= 0)
+    {
+        return;
+    }
+
+    /* Refuse a correction larger than an eighth. Below about 8 px the rounding
+       is a large fraction of the height and fitting it distorts the face
+       instead of sharpening it, which is exactly when a reader most needs the
+       shapes to be recognisable. */
+    if (fitted * 8 > xh * 9 || fitted * 9 < xh * 8)
+    {
+        return;
+    }
+
+    *num = fitted;
+    *den = xh;
+}
+
 /* ------------------------------------------------------------------------
  * Initialisation
  * ------------------------------------------------------------------------ */
@@ -679,6 +715,7 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
         return 0;
     }
 
+    f->os2 = ar__find_table(f, "OS/2", 0);
     f->head = ar__find_table(f, "head", 0);
     f->hhea = ar__find_table(f, "hhea", 0);
     f->maxp = ar__find_table(f, "maxp", 0);
@@ -702,6 +739,15 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
         f->descender = ar__i16at(f, f->hhea + 6);
         f->line_gap = ar__i16at(f, f->hhea + 8);
         f->num_hmetrics = (ar_i32)ar__u16at(f, f->hhea + 34);
+    }
+
+    /* sxHeight and sCapHeight only exist in OS/2 version 2 and later, and
+       plenty of shipping fonts still write version 1. Zero means "not stated"
+       and the caller falls back to measuring a glyph. */
+    if (f->os2 && ar__u16at(f, f->os2) >= 2)
+    {
+        f->x_height = ar__i16at(f, f->os2 + 86);
+        f->cap_height = ar__i16at(f, f->os2 + 88);
     }
 
     if (f->units_per_em <= 0 || f->num_glyphs <= 0)

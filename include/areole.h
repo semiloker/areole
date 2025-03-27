@@ -334,6 +334,36 @@ int ar_font_loaded(const ar_ctx *c);
  */
 void ar_font_antialias(ar_ctx *c, int on);
 
+/*
+ * Vertical grid fitting, on by default.
+ *
+ * Unhinted text at interface sizes looks soft for one specific reason: the
+ * x-height rarely lands on a pixel boundary, so the flat top of every lower
+ * case letter spreads across two rows at half coverage. This scales each glyph
+ * vertically -- by a few per cent, invisible as a shape -- so that it does.
+ *
+ * It is not a bytecode interpreter. Aligning stem widths horizontally as well
+ * needs to know which contours are stems, which is the expensive part and is
+ * not done. This is the cheap majority of the benefit, and it declines to act
+ * at all when the correction would exceed an eighth, which is where fitting
+ * starts distorting a face rather than sharpening it.
+ */
+void ar_font_grid_fit(ar_ctx *c, int on);
+
+/*
+ * Stem darkening, 0 to 255, off by default.
+ *
+ * A stem one pixel wide that straddles two columns leaves both at half
+ * coverage, and the letter reads grey rather than black. This lifts midtone
+ * coverage to put the weight back, leaving 0 and 255 untouched so a stem that
+ * already lands on the grid is unaffected.
+ *
+ * Off by default because it is a taste decision, and the honest starting point
+ * is the outline as its designer drew it. 40 to 80 is a reasonable range for
+ * small text on a low-resolution screen.
+ */
+void ar_font_darken(ar_ctx *c, ar_i32 amount);
+
 /* Cache hits, misses and resets since the face was loaded. A rising reset
    count means the atlas is too small for the interface and glyphs are being
    rasterized repeatedly; pass more atlas_bytes. Any argument may be null. */
