@@ -298,6 +298,19 @@ void ar_font_darken(ar_ctx *c, ar_i32 amount)
     ar_invalidate_all(c);
 }
 
+void ar_font_subpixel(ar_ctx *c, int on)
+{
+    ar_i32 want = on ? AR_SUBPX_STEPS : 1;
+
+    if (c->glyphs.subpx == want)
+    {
+        return;
+    }
+    c->glyphs.subpx = want;
+    ar_glyph_cache_clear(&c->glyphs);
+    ar_invalidate_all(c);
+}
+
 void ar_font_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses, ar_u32 *resets)
 {
     if (hits)

@@ -2772,16 +2772,16 @@ static void test_glyph_cache_rasterizes_once(void)
     ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
     ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
 
-    a = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    a = ar_glyph_get(&gc, &f, 1, 32, 0, &sc);
     CHECK(a != 0 && a->w == 32 && a->h == 32, "glyph cache: the triangle rasterizes at 32 px");
     CHECK(gc.misses == 1 && gc.hits == 0, "glyph cache: the first ask is a miss");
 
-    b = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    b = ar_glyph_get(&gc, &f, 1, 32, 0, &sc);
     CHECK(b == a, "glyph cache: the second ask returns the same entry");
     CHECK(gc.hits == 1, "glyph cache: and is counted as a hit");
 
     /* A different size is a different bitmap, not the same one scaled. */
-    b = ar_glyph_get(&gc, &f, 1, 16, &sc);
+    b = ar_glyph_get(&gc, &f, 1, 16, 0, &sc);
     CHECK(b != 0 && b != a && b->h == 16, "glyph cache: size is part of the key");
 }
 
@@ -2805,14 +2805,14 @@ static void test_glyph_cache_spreads_sizes_across_slots(void)
 
     for (size = 4; size <= 24; ++size)
     {
-        ar_glyph_get(&gc, &f, 1, size, &sc);
+        ar_glyph_get(&gc, &f, 1, size, 0, &sc);
     }
     CHECK(gc.misses == 21 && gc.hits == 0, "glyph cache: 21 sizes of one glyph are 21 entries");
 
     /* Every one of them must still be there. */
     for (size = 4; size <= 24; ++size)
     {
-        ar_glyph_get(&gc, &f, 1, size, &sc);
+        ar_glyph_get(&gc, &f, 1, size, 0, &sc);
     }
     CHECK(gc.misses == 21 && gc.hits == 21,
           "glyph cache: and asking again finds all of them, not one");
@@ -2876,6 +2876,30 @@ static void test_darkening_keeps_its_endpoints(void)
     CHECK(gc.darken_lut[128] > 128 + 10, "darken: most of all at half coverage");
 }
 
+static void test_subpixel_positions_are_separate_entries(void)
+{
+    ar_face              f;
+    ar_glyph_cache       gc;
+    ar_glyph_scratch     sc;
+    const ar_glyph_slot *a, *b;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    a = ar_glyph_get(&gc, &f, 1, 16, 0, &sc);
+    b = ar_glyph_get(&gc, &f, 1, 16, 2, &sc);
+    CHECK(a && b && a != b, "subpixel: a half pixel offset is its own cache entry");
+    CHECK(gc.misses == 2, "subpixel: and is rasterized rather than reused");
+
+    /* Turning it off must collapse them again, or an application that cannot
+       afford four times the atlas would still be paying for it. */
+    gc.subpx = 1;
+    ar_glyph_cache_clear(&gc);
+    a = ar_glyph_get(&gc, &f, 1, 16, 0, &sc);
+    b = ar_glyph_get(&gc, &f, 1, 16, 2, &sc);
+    CHECK(a == b, "subpixel: switched off, every offset is the same entry");
+}
+
 static void test_glyph_cache_carries_metrics(void)
 {
     ar_face              f;
@@ -2888,12 +2912,12 @@ static void test_glyph_cache_carries_metrics(void)
 
     /* Glyph 0 is empty. It still has an advance, and caching that stops it
        being re-derived for every space in a paragraph. */
-    g = ar_glyph_get(&gc, &f, 0, 32, &sc);
+    g = ar_glyph_get(&gc, &f, 0, 32, 0, &sc);
     CHECK(g != 0 && g->w == 0 && g->h == 0, "glyph cache: an empty glyph caches as empty");
     CHECK(g != 0 && g->advance == 600 * 32 * AR_ONE_PIXEL / 1000,
           "glyph cache: and still carries its advance");
 
-    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    g = ar_glyph_get(&gc, &f, 1, 32, 0, &sc);
     CHECK(g != 0 && g->advance == 32 * AR_ONE_PIXEL, "glyph cache: a one em advance at 32 px");
 }
 
@@ -2911,13 +2935,13 @@ static void test_glyph_cache_resets_rather_than_overflowing(void)
 
     for (size = 20; size <= 32; ++size)
     {
-        g = ar_glyph_get(&gc, &f, 1, size, &sc);
+        g = ar_glyph_get(&gc, &f, 1, size, 0, &sc);
         CHECK(g != 0 && gc.used <= gc.cap, "glyph cache: never uses more than its budget");
     }
     CHECK(gc.resets > 0, "glyph cache: a full cache resets rather than overflowing");
 
     /* And still works afterwards, which is the point of resetting. */
-    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    g = ar_glyph_get(&gc, &f, 1, 32, 0, &sc);
     CHECK(g != 0 && g->w == 32, "glyph cache: and keeps working after a reset");
 }
 
@@ -2931,7 +2955,7 @@ static void test_glyph_cache_refuses_a_glyph_larger_than_its_budget(void)
     ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
     ar__gc_setup(&gc, &sc, 64); /* smaller than any real glyph */
 
-    g = ar_glyph_get(&gc, &f, 1, 32, &sc);
+    g = ar_glyph_get(&gc, &f, 1, 32, 0, &sc);
     CHECK(g == 0, "glyph cache: a glyph larger than the whole budget is refused, not wrapped");
     CHECK(gc.used <= gc.cap, "glyph cache: and nothing was written past the slab");
 }
@@ -3233,6 +3257,7 @@ int main(void)
     test_utf8_walks_a_mixed_string_exactly();
     test_glyph_cache_rasterizes_once();
     test_glyph_cache_spreads_sizes_across_slots();
+    test_subpixel_positions_are_separate_entries();
     test_grid_fit_snaps_the_x_height();
     test_darkening_keeps_its_endpoints();
     test_glyph_cache_carries_metrics();
