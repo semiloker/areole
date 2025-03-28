@@ -631,6 +631,11 @@ static int ar__outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, a
     {
         return 0;
     }
+    if (f->cff)
+    {
+        return ar_cff_outline(f, glyph, ppem, ox, oy, p);
+    }
+
     g = ar__glyph_offset(f, glyph, &glen);
     if (!g || glen < 10)
     {
@@ -707,10 +712,11 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     f->size = size;
 
     version = ar__u32at(f, 0);
-    /* 0x00010000 is TrueType, 'true' is the Apple spelling of the same thing.
-       'OTTO' is CFF outlines, which this cannot read yet, and 'ttcf' is a
-       collection. Both are rejected rather than half-parsed. */
-    if (version != 0x00010000u && version != ar__tag("true"))
+    /* 0x00010000 is TrueType, 'true' is the Apple spelling of the same thing,
+       'OTTO' is PostScript outlines in a CFF table. 'ttcf' is a collection and
+       is still refused: picking one face out of it needs an index the caller
+       has no way to pass yet. */
+    if (version != 0x00010000u && version != ar__tag("true") && version != ar__tag("OTTO"))
     {
         return 0;
     }
@@ -724,7 +730,7 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     f->loca = ar__find_table(f, "loca", &f->loca_len);
     f->glyf = ar__find_table(f, "glyf", &f->glyf_len);
 
-    if (!f->head || !f->maxp || !f->loca || !f->glyf)
+    if (!f->head || !f->maxp)
     {
         return 0;
     }
@@ -753,6 +759,17 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     if (f->units_per_em <= 0 || f->num_glyphs <= 0)
     {
         return 0;
+    }
+
+    /* One kind of outline or the other. A font with neither is not one this
+       can draw, whatever else it contains. */
+    if (!f->glyf || !f->loca)
+    {
+        ar_u32 cff = ar__find_table(f, "CFF ", 0);
+        if (!cff || !ar_cff_init(f, cff))
+        {
+            return 0;
+        }
     }
 
     ar__pick_cmap(f);

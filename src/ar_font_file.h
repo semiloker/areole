@@ -17,6 +17,17 @@
 
 #include "ar_path.h"
 
+/* A CFF INDEX: count, offset size, offsets, data. The container for names,
+   dictionaries, charstrings and subroutines alike. */
+typedef struct ar_cff_index
+{
+    ar_u32 count;
+    ar_u32 off_size;
+    ar_u32 offsets;
+    ar_u32 data;
+    ar_u32 end;
+} ar_cff_index;
+
 typedef struct ar_face
 {
     const ar_u8 *data;
@@ -24,6 +35,11 @@ typedef struct ar_face
 
     /* Offsets into data. Zero means the table is absent. */
     ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2;
+
+    /* PostScript outlines. Zero when the font carries quadratics in glyf
+       instead, which is the other half of the world. */
+    ar_u32       cff;
+    ar_cff_index cff_charstrings, cff_subrs, cff_gsubrs;
     ar_u32 glyf_len, loca_len;
 
     ar_i32 units_per_em;
@@ -95,5 +111,10 @@ int ar_face_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i
  * the cheap ninety per cent.
  */
 void ar_face_grid_fit(const ar_face *f, ar_i32 ppem, ar_i32 *num, ar_i32 *den);
+
+/* CFF. ar_face_outline dispatches to these when the font has no glyf table,
+   so a caller never needs to know which kind of outline it asked for. */
+int ar_cff_init(ar_face *f, ar_u32 cff);
+int ar_cff_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i32 oy, ar_path *p);
 
 #endif /* AR_FONT_FILE_H */
