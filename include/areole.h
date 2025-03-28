@@ -364,6 +364,20 @@ void ar_font_grid_fit(ar_ctx *c, int on);
  */
 void ar_font_darken(ar_ctx *c, ar_i32 amount);
 
+/*
+ * Horizontal subpixel positioning, on by default.
+ *
+ * Off, every glyph starts on a whole pixel and the fractional part of the pen
+ * is discarded, so the gaps between letters come out uneven and a word looks
+ * as though someone nudged each letter by hand. On, each glyph is rasterized
+ * at four quarter-pixel offsets and the right one is chosen.
+ *
+ * The cost is four times the cache entries and nothing per frame. Turn it off
+ * where the atlas budget is tighter than the typography matters -- which on a
+ * 64 MB machine it may well be.
+ */
+void ar_font_subpixel(ar_ctx *c, int on);
+
 /* Cache hits, misses and resets since the face was loaded. A rising reset
    count means the atlas is too small for the interface and glyphs are being
    rasterized repeatedly; pass more atlas_bytes. Any argument may be null. */

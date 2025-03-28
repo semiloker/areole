@@ -134,6 +134,7 @@ void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots
     gc->used = 0;
     gc->antialias = 1;
     gc->grid_fit = 1;
+    gc->subpx = AR_SUBPX_STEPS;
     gc->darken = 0;
     ar__build_darken(gc);
     gc->hits = 0;
@@ -156,10 +157,10 @@ void ar_glyph_cache_clear(ar_glyph_cache *gc)
 /* Glyph index in the low twenty bits, pixel size above it, the antialiasing
    flag above that, and the top bit always set so that glyph 0 at size 0 cannot
    look like a free slot. */
-static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias)
+static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias, ar_i32 subpx)
 {
-    return ((ar_u32)(antialias ? 1 : 0) << 30) | (((ar_u32)ppem & 0x3FFu) << 20) |
-           ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
+    return ((ar_u32)(subpx & 3) << 28) | ((ar_u32)(antialias ? 1 : 0) << 30) |
+           (((ar_u32)ppem & 0xFFu) << 20) | ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
 }
 
 /*
@@ -181,14 +182,21 @@ static ar_u32 ar__glyph_slot_of(ar_u32 key, ar_u32 mask)
 }
 
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
-                                  ar_glyph_scratch *sc)
+                                  ar_i32 subpx, ar_glyph_scratch *sc)
 {
-    ar_u32 key = ar__glyph_key(glyph, ppem, gc->antialias);
-    ar_u32 mask = (ar_u32)gc->slots - 1u;
-    ar_u32 at = ar__glyph_slot_of(key, mask);
-    ar_i32 probe;
+    ar_u32  key;
+    ar_u32  mask = (ar_u32)gc->slots - 1u;
+    ar_u32  at;
+    ar_i32  probe;
     ar_path path;
     ar_rect bounds;
+
+    if (gc->subpx <= 1 || subpx < 0 || subpx >= AR_SUBPX_STEPS)
+    {
+        subpx = 0;
+    }
+    key = ar__glyph_key(glyph, ppem, gc->antialias, subpx);
+    at = ar__glyph_slot_of(key, mask);
 
     if (!gc->slots || !f->ok)
     {
@@ -224,6 +232,18 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
         /* Grid fitting is applied here rather than in the parser because it is
            a rendering decision, not a fact about the file, and because the
            result lands in the cache and is paid for once. */
+        if (subpx > 0)
+        {
+            /* Shifted before the bounds are taken, so the bitmap covers where
+               the ink actually lands rather than where a whole-pixel version
+               of it would have. */
+            ar_i32 dx = subpx * AR_ONE_PIXEL / AR_SUBPX_STEPS;
+            ar_i32 i;
+            for (i = 0; i < path.count; ++i)
+            {
+                path.pt[i * 2] += dx;
+            }
+        }
         if (gc->grid_fit)
         {
             ar_i32 num = 1, den = 1;
@@ -400,7 +420,9 @@ ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char 
         {
             break;
         }
-        g = ar_glyph_get(gc, f, ar_face_glyph(f, cp), ppem, sc);
+        /* Which quarter of a pixel the pen is standing in. */
+        g = ar_glyph_get(gc, f, ar_face_glyph(f, cp), ppem,
+                         (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, sc);
         if (!g)
         {
             continue;
@@ -440,7 +462,10 @@ ar_i32 ar_text_measure(const char *utf8, const ar_face *f, ar_i32 ppem, ar_glyph
         {
             break;
         }
-        g = ar_glyph_get(gc, f, ar_face_glyph(f, cp), ppem, sc);
+        /* Measuring must ask for the same entry drawing will, or a string
+           could measure with one set of bitmaps and draw with another. */
+        g = ar_glyph_get(gc, f, ar_face_glyph(f, cp), ppem,
+                         (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, sc);
         if (g)
         {
             pen += g->advance;

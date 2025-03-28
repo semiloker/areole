@@ -34,6 +34,8 @@ ar_u32 ar_utf8_next(const char **p);
 /* ------------------------------------------------------------------------
  * The glyph cache
  * ------------------------------------------------------------------------ */
+#define AR_SUBPX_STEPS 4
+
 typedef struct ar_glyph_slot
 {
     ar_u32 key;   /* glyph index and pixel size, packed; 0 means free */
@@ -82,6 +84,20 @@ typedef struct ar_glyph_cache
     ar_i32 darken;
     ar_u8  darken_lut[256];
 
+    /*
+     * Horizontal subpixel positions per pixel: 1 or AR_SUBPX_STEPS.
+     *
+     * With one, every glyph starts on a whole pixel and the fractional part of
+     * the pen is thrown away, so the gaps between letters come out uneven --
+     * a word looks like it was set by someone nudging each letter. With four,
+     * the glyph is rasterized at each quarter offset and the right one is
+     * chosen, which costs four times the cache entries and nothing per frame.
+     *
+     * Four is the usual answer. Eight is not visibly better and doubles the
+     * atlas again.
+     */
+    ar_i32 subpx;
+
     ar_u32 hits, misses, resets;
 } ar_glyph_cache;
 
@@ -109,7 +125,7 @@ void ar_glyph_cache_set_darken(ar_glyph_cache *gc, ar_i32 amount);
    be rasterized at all; a blank glyph such as a space returns a slot whose
    w and h are zero, which still carries the advance. */
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
-                                  ar_glyph_scratch *sc);
+                                  ar_i32 subpx, ar_glyph_scratch *sc);
 
 /* ------------------------------------------------------------------------
  * Drawing
