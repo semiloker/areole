@@ -9,6 +9,7 @@
 #include "ar_path.h"
 #include "ar_font_file.h"
 #include "ar_text.h"
+#include "ar_break.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -3196,6 +3197,232 @@ static void test_font_antialias_toggle_invalidates(void)
     CHECK(after > before, "font: and the glyphs are rasterized again under the new setting");
 }
 
+
+/* ------------------------------------------------------------------------
+ * Line breaking
+ *
+ * The interesting cases are all the ones where "break at spaces" is wrong.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__breaks(const char *s, ar_i32 *at, ar_i32 max)
+{
+    ar_i32 n = 0, pos = 0, kind;
+    ar_i32 len = (ar_i32)strlen(s);
+
+    for (;;)
+    {
+        ar_i32 next = ar_break_next(s, pos, &kind);
+        if (next >= len || next <= pos || n >= max)
+        {
+            break;
+        }
+        at[n++] = next;
+        pos = next;
+    }
+    return n;
+}
+
+static int ar__breaks_at(const char *s, ar_i32 want)
+{
+    ar_i32 at[32];
+    ar_i32 n = ar__breaks(s, at, 32);
+    ar_i32 i;
+
+    for (i = 0; i < n; ++i)
+    {
+        if (at[i] == want)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void test_break_after_spaces_not_before(void)
+{
+    CHECK(ar__breaks_at("hello world", 6), "break: after a space, not before it");
+    CHECK(!ar__breaks_at("hello world", 5), "break: so a trailing space stays on its own line");
+    CHECK(ar__breaks_at("a  b", 3), "break: a run of spaces is one opportunity, after all of it");
+}
+
+static void test_break_respects_punctuation(void)
+{
+    /* A closing bracket may not start a line, and an opening one may not end
+       one. Both are what makes hand-rolled space splitting look wrong. */
+    CHECK(!ar__breaks_at("(a) b", 1), "break: not after an opening bracket");
+    CHECK(!ar__breaks_at("a) b", 1), "break: not before a closing bracket");
+    CHECK(!ar__breaks_at("end. Next", 4), "break: not before a full stop");
+    CHECK(ar__breaks_at("end. Next", 5), "break: but after the space that follows it");
+}
+
+static void test_break_keeps_numbers_together(void)
+{
+    CHECK(!ar__breaks_at("1,000.50", 2), "break: not inside a thousands separator");
+    CHECK(!ar__breaks_at("1,000.50", 6), "break: nor inside a decimal");
+    CHECK(!ar__breaks_at("3/4", 2), "break: nor inside a fraction");
+}
+
+static void test_break_hyphens_and_dashes(void)
+{
+    CHECK(ar__breaks_at("one-two", 4), "break: after a hyphen in a compound word");
+    /* An em dash may be broken either side; an en dash only after. */
+    CHECK(ar__breaks_at("a\xE2\x80\x94""b", 1), "break: before an em dash");
+    CHECK(ar__breaks_at("a\xE2\x80\x94""b", 4), "break: and after it");
+}
+
+static void test_break_honours_joiners(void)
+{
+    /* A non-breaking space is the whole point of a non-breaking space. */
+    CHECK(!ar__breaks_at("a\xC2\xA0" "b", 1), "break: never at a no-break space");
+    CHECK(!ar__breaks_at("a\xC2\xA0" "b", 3), "break: nor after one");
+    CHECK(ar__breaks_at("a\xE2\x80\x8B" "b", 4), "break: but always at a zero width space");
+    CHECK(!ar__breaks_at("a\xE2\x81\xA0" "b", 4), "break: and never at a word joiner");
+}
+
+static void test_break_mandatory(void)
+{
+    ar_i32 kind = AR_BREAK_NONE;
+    ar_i32 at = ar_break_next("hard\nbreak", 0, &kind);
+
+    CHECK(at == 5 && kind == AR_BREAK_MANDATORY, "break: a newline must break, and after itself");
+
+    /* CRLF is one break, not two, or every Windows text file gains a blank
+       line between every pair of lines. */
+    kind = AR_BREAK_NONE;
+    at = ar_break_next("a\r\nb", 0, &kind);
+    CHECK(at == 3 && kind == AR_BREAK_MANDATORY, "break: CRLF is one break");
+}
+
+static void test_break_between_ideographs(void)
+{
+    /* Japanese has no spaces, so a line breaks between characters. Failing to
+       do this makes CJK text one unbreakable line. */
+    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 3),
+          "break: between ideographs");
+    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 6),
+          "break: at each of them");
+}
+
+static void test_break_always_terminates(void)
+{
+    /* Every input, including malformed UTF-8 and empty strings, must reach the
+       end. A line breaker that loops is a hang in the middle of a paint. */
+    static const char *const NASTY[] = {"",        " ",      "\n",     "\xFF",
+                                        "\xC2",    "\x80\x80", "a\xFF" "b", "\r",
+                                        "\r\r\n",  "((((",   "))))",   "\xE2\x80"};
+    ar_i32 i;
+    int    ok = 1;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_i32 pos = 0, guard = 0, kind;
+        ar_i32 len = (ar_i32)strlen(NASTY[i]);
+        for (;;)
+        {
+            ar_i32 next = ar_break_next(NASTY[i], pos, &kind);
+            if (next >= len || next <= pos)
+            {
+                break;
+            }
+            pos = next;
+            if (++guard > 64)
+            {
+                ok = 0;
+                break;
+            }
+        }
+    }
+    CHECK(ok, "break: every input terminates, including malformed UTF-8");
+}
+
+/* ------------------------------------------------------------------------
+ * Wrapping
+ * ------------------------------------------------------------------------ */
+static void test_wrap_fits_the_width(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           starts[32];
+    ar_i32           lines, i;
+    int              over = 0;
+    /* The test face's every glyph is one em wide, so at 10 px each character
+       is exactly 10 px and the arithmetic is checkable by hand. */
+    const char      *T = "AAA AAA AAA AAA";
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    lines = ar_text_wrap(T, &f, 10, 75, &gc, &sc, starts, 32);
+    CHECK(lines > 1, "wrap: text longer than the width becomes more than one line");
+    CHECK(starts[0] == 0, "wrap: the first line starts at the beginning");
+
+    for (i = 0; i < lines; ++i)
+    {
+        ar_i32 end = (i + 1 < lines) ? starts[i + 1] : (ar_i32)strlen(T);
+        ar_i32 j, chars = 0;
+        for (j = starts[i]; j < end; ++j)
+        {
+            if (T[j] != ' ')
+            {
+                ++chars;
+            }
+        }
+        if (chars * 10 > 75)
+        {
+            over = 1;
+        }
+    }
+    CHECK(!over, "wrap: and no line's visible text exceeds the width");
+}
+
+static void test_wrap_does_not_break_a_single_long_word(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           starts[32];
+    ar_i32           lines;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    /* Overflowing is a visible failure the caller can clip. Splitting a word
+       at an arbitrary point is a silent one that reads as a rendering bug. */
+    lines = ar_text_wrap("AAAAAAAAAA", &f, 10, 20, &gc, &sc, starts, 32);
+    CHECK(lines == 1, "wrap: a word wider than the line is left to overflow, not split");
+}
+
+static void test_wrap_honours_a_mandatory_break(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           starts[32];
+    ar_i32           lines;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    lines = ar_text_wrap("A\nA", &f, 10, 1000, &gc, &sc, starts, 32);
+    CHECK(lines == 2, "wrap: a newline breaks even when the line would fit");
+    CHECK(lines == 2 && starts[1] == 2, "wrap: and the next line starts after it");
+}
+
+static void test_wrap_respects_its_line_limit(void)
+{
+    ar_face          f;
+    ar_glyph_cache   gc;
+    ar_glyph_scratch sc;
+    ar_i32           starts[4];
+    ar_i32           lines;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
+
+    lines = ar_text_wrap("A A A A A A A A A A A A", &f, 10, 15, &gc, &sc, starts, 4);
+    CHECK(lines <= 4, "wrap: never writes more line starts than it was given room for");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3271,6 +3498,19 @@ int main(void)
     test_font_changes_what_is_measured();
     test_font_antialias_toggle();
     test_font_antialias_toggle_invalidates();
+
+    test_break_after_spaces_not_before();
+    test_break_respects_punctuation();
+    test_break_keeps_numbers_together();
+    test_break_hyphens_and_dashes();
+    test_break_honours_joiners();
+    test_break_mandatory();
+    test_break_between_ideographs();
+    test_break_always_terminates();
+    test_wrap_fits_the_width();
+    test_wrap_does_not_break_a_single_long_word();
+    test_wrap_honours_a_mandatory_break();
+    test_wrap_respects_its_line_limit();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
