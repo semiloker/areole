@@ -318,6 +318,25 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
 int ar_font_loaded(const ar_ctx *c);
 
 /*
+ * Adds a fallback face. No single face covers Unicode: one chosen for Latin
+ * will not have CJK, and asking it for a Japanese character gives glyph 0 --
+ * the notdef box, the tofu everyone recognises and nobody wants.
+ *
+ * Each character is drawn by the first face in the chain that has it, so the
+ * primary face wins wherever it can and a document keeps looking like one
+ * typeface rather than a ransom note. Up to three fallbacks after the primary.
+ *
+ * Costs no memory beyond the ar_face itself: the chain shares one glyph cache,
+ * which carries the face index in its key.
+ */
+int ar_font_add(ar_ctx *c, const void *data, ar_u32 size);
+
+/* How many faces are in the chain, and the family name of one of them, which
+   is what a log needs to say which face a character actually came from. */
+ar_i32 ar_font_count(const ar_ctx *c);
+ar_i32 ar_font_family(const ar_ctx *c, ar_i32 index, char *out, ar_i32 cap);
+
+/*
  * Antialiased text is the default. Turning it off thresholds each glyph's
  * coverage at half when it is rasterized, so every pixel is either fully inked
  * or untouched.

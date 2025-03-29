@@ -218,7 +218,8 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     acc_ints = (ar_u32)(max_px + 2) * (ar_u32)max_px;
 
     c->have_face = 0;
-    if (!ar_face_init(&c->face, data, size))
+    c->chain.count = 0;
+    if (!ar_face_init(&c->face[0], data, size))
     {
         return 0;
     }
@@ -258,8 +259,50 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
 
     ar_glyph_cache_init(&c->glyphs, slots, AR_GLYPH_SLOTS, atlas, (ar_i32)atlas_bytes);
 
+    c->chain.face[0] = &c->face[0];
+    c->chain.count = 1;
     c->have_face = 1;
     return 1;
+}
+
+int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
+{
+    ar_i32 n = c->chain.count;
+
+    if (!c->have_face || n <= 0 || n >= AR_MAX_FACES)
+    {
+        return 0;
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    c->chain.face[n] = &c->face[n];
+    c->chain.count = n + 1;
+
+    /* The chain is part of every cache key by way of the face index, so
+       nothing already cached becomes wrong. But a codepoint that fell back to
+       the notdef box may now resolve, so the window has to be repainted. */
+    ar_invalidate_all(c);
+    return 1;
+}
+
+ar_i32 ar_font_count(const ar_ctx *c)
+{
+    return c->chain.count;
+}
+
+ar_i32 ar_font_family(const ar_ctx *c, ar_i32 index, char *out, ar_i32 cap)
+{
+    if (index < 0 || index >= c->chain.count)
+    {
+        if (cap > 0)
+        {
+            out[0] = 0;
+        }
+        return 0;
+    }
+    return ar_face_family(c->chain.face[index], out, cap);
 }
 
 int ar_font_loaded(const ar_ctx *c)
@@ -390,8 +433,8 @@ static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
     }
     if (c->have_face)
     {
-        ar_i32 w = ar_text_measure(n->text, &c->face, n->style.v[AR_P_FONT_SIZE], &c->glyphs,
-                                   &c->glyph_scratch);
+        ar_i32 w = ar_text_measure_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE],
+                                         &c->glyphs, &c->glyph_scratch);
         return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
     }
     return ar_text_width(n->text, n->scale);
@@ -677,9 +720,9 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
                    bitmap face has no baseline and draws from the top, so the
                    two paths take different y values for the same text. */
                 ar_i32 ppem = n->style.v[AR_P_FONT_SIZE];
-                ar_text_draw(s, tclip, tx, ty + ar_face_scale(&c->face, c->face.ascender, ppem) /
-                                                AR_ONE_PIXEL,
-                             n->text, &c->face, ppem, tc, &c->glyphs, &c->glyph_scratch);
+                ar_i32 base = ar_face_scale(&c->face[0], c->face[0].ascender, ppem) / AR_ONE_PIXEL;
+                ar_text_draw_chain(s, tclip, tx, ty + base, n->text, &c->chain, ppem, tc,
+                                   &c->glyphs, &c->glyph_scratch);
             }
             else
             {

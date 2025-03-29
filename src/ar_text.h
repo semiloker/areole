@@ -126,6 +126,9 @@ void ar_glyph_cache_set_darken(ar_glyph_cache *gc, ar_i32 amount);
    w and h are zero, which still carries the advance. */
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
                                   ar_i32 subpx, ar_glyph_scratch *sc);
+const ar_glyph_slot *ar_glyph_get_face(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph,
+                                       ar_i32 ppem, ar_i32 subpx, ar_i32 face,
+                                       ar_glyph_scratch *sc);
 
 /* ------------------------------------------------------------------------
  * Drawing
@@ -136,6 +139,39 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
 ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
                     const ar_face *f, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
                     ar_glyph_scratch *sc);
+
+/* ------------------------------------------------------------------------
+ * Fallback
+ *
+ * No face covers Unicode. A primary face chosen for Latin will not have CJK,
+ * and the result of asking it for a Japanese codepoint is glyph 0 -- the
+ * notdef box, the tofu everyone recognises and nobody wants.
+ *
+ * A chain fixes that: ask each face in turn and use the first that has the
+ * character. The chain is ordered, so the first face wins wherever it can,
+ * which is what keeps a document looking like one typeface rather than a
+ * ransom note.
+ * ------------------------------------------------------------------------ */
+#define AR_MAX_FACES 4
+
+typedef struct ar_font_chain
+{
+    const ar_face *face[AR_MAX_FACES];
+    ar_i32         count;
+} ar_font_chain;
+
+/* Which face has this codepoint, and its glyph in that face. Falls back to
+   glyph 0 of the first face when nothing does, so the caller still gets a
+   notdef box rather than nothing at all. */
+ar_i32 ar_font_chain_glyph(const ar_font_chain *ch, ar_u32 cp, ar_i32 *face_index);
+
+ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
+                             ar_glyph_cache *gc, ar_glyph_scratch *sc);
+
+/* Draws through the chain, choosing a face per character. */
+ar_i32 ar_text_draw_chain(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
+                          const ar_font_chain *ch, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
+                          ar_glyph_scratch *sc);
 
 /*
  * Breaks text into lines no wider than max_w pixels, writing the byte offset

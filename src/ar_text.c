@@ -82,6 +82,35 @@ ar_u32 ar_utf8_next(const char **p)
     return cp;
 }
 
+ar_i32 ar_font_chain_glyph(const ar_font_chain *ch, ar_u32 cp, ar_i32 *face_index)
+{
+    ar_i32 i;
+
+    *face_index = 0;
+    if (!ch || ch->count <= 0)
+    {
+        return 0;
+    }
+    for (i = 0; i < ch->count; ++i)
+    {
+        ar_i32 g;
+        if (!ch->face[i] || !ch->face[i]->ok)
+        {
+            continue;
+        }
+        g = ar_face_glyph(ch->face[i], cp);
+        if (g != 0)
+        {
+            *face_index = i;
+            return g;
+        }
+    }
+    /* Nothing had it. The notdef box of the first face is the honest answer:
+       it says a character is missing, where drawing nothing would say the text
+       was. */
+    return 0;
+}
+
 /* ------------------------------------------------------------------------
  * The glyph cache
  * ------------------------------------------------------------------------ */
@@ -158,10 +187,25 @@ void ar_glyph_cache_clear(ar_glyph_cache *gc)
 /* Glyph index in the low twenty bits, pixel size above it, the antialiasing
    flag above that, and the top bit always set so that glyph 0 at size 0 cannot
    look like a free slot. */
-static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias, ar_i32 subpx)
+/*
+ * The key, packed into one word:
+ *
+ *   bits  0-17  glyph index      262,144, more than any font ships
+ *   bits 18-24  pixel size       up to 127
+ *   bits 25-26  subpixel offset
+ *   bit     27  antialiasing
+ *   bits 28-29  face in the fallback chain
+ *   bit     31  always set, so a live entry can never look like a free slot
+ *
+ * Every field must be in the key, and the key must be mixed before it is
+ * masked. Leaving the size out of the low bits once made every size of a glyph
+ * collide in one slot and the cache silently stopped caching.
+ */
+static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias, ar_i32 subpx, ar_i32 face)
 {
-    return ((ar_u32)(subpx & 3) << 28) | ((ar_u32)(antialias ? 1 : 0) << 30) |
-           (((ar_u32)ppem & 0xFFu) << 20) | ((ar_u32)glyph & 0xFFFFFu) | 0x80000000u;
+    return ((ar_u32)(face & 3) << 28) | ((ar_u32)(antialias ? 1 : 0) << 27) |
+           ((ar_u32)(subpx & 3) << 25) | (((ar_u32)ppem & 0x7Fu) << 18) |
+           ((ar_u32)glyph & 0x3FFFFu) | 0x80000000u;
 }
 
 /*
@@ -182,8 +226,9 @@ static ar_u32 ar__glyph_slot_of(ar_u32 key, ar_u32 mask)
     return (h >> 16) & mask;
 }
 
-const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
-                                  ar_i32 subpx, ar_glyph_scratch *sc)
+const ar_glyph_slot *ar_glyph_get_face(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph,
+                                       ar_i32 ppem, ar_i32 subpx, ar_i32 face,
+                                       ar_glyph_scratch *sc)
 {
     ar_u32  key;
     ar_u32  mask = (ar_u32)gc->slots - 1u;
@@ -196,7 +241,7 @@ const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 g
     {
         subpx = 0;
     }
-    key = ar__glyph_key(glyph, ppem, gc->antialias, subpx);
+    key = ar__glyph_key(glyph, ppem, gc->antialias, subpx, face);
     at = ar__glyph_slot_of(key, mask);
 
     if (!gc->slots || !f->ok)
@@ -562,4 +607,85 @@ ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_
         }
     }
     return lines;
+}
+
+const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
+                                  ar_i32 subpx, ar_glyph_scratch *sc)
+{
+    return ar_glyph_get_face(gc, f, glyph, ppem, subpx, 0, sc);
+}
+
+ar_i32 ar_text_draw_chain(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
+                          const ar_font_chain *ch, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
+                          ar_glyph_scratch *sc)
+{
+    ar_i32  pen = x * AR_ONE_PIXEL;
+    ar_u32  alpha;
+    ar_rect bounds;
+
+    if (!utf8 || !ch || ch->count <= 0 || !s || !s->pixels)
+    {
+        return 0;
+    }
+    alpha = AR_ALPHA_OF(c);
+    bounds = ar_rect_intersect(clip, ar_rect_make(0, 0, s->w, s->h));
+
+    AR_COUNT(text_calls, 1);
+
+    for (;;)
+    {
+        ar_u32               cp = ar_utf8_next(&utf8);
+        const ar_glyph_slot *g;
+        ar_i32               which = 0, glyph;
+
+        if (cp == 0)
+        {
+            break;
+        }
+        glyph = ar_font_chain_glyph(ch, cp, &which);
+        g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+        if (!g)
+        {
+            continue;
+        }
+        if (g->w > 0 && g->h > 0 && alpha != 0 && !ar_rect_is_empty(bounds))
+        {
+            AR_COUNT(glyphs, 1);
+            ar__blit_coverage(s, bounds, g, gc->pixels + g->off, (pen / AR_ONE_PIXEL) + g->left,
+                              y + g->top, c, alpha);
+        }
+        pen += g->advance;
+    }
+    return pen - x * AR_ONE_PIXEL;
+}
+
+ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
+                             ar_glyph_cache *gc, ar_glyph_scratch *sc)
+{
+    ar_i32 pen = 0;
+
+    if (!utf8 || !ch || ch->count <= 0)
+    {
+        return 0;
+    }
+    for (;;)
+    {
+        ar_u32               cp = ar_utf8_next(&utf8);
+        const ar_glyph_slot *g;
+        ar_i32               which = 0, glyph;
+
+        if (cp == 0)
+        {
+            break;
+        }
+        glyph = ar_font_chain_glyph(ch, cp, &which);
+        g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+        if (g)
+        {
+            pen += g->advance;
+        }
+    }
+    return pen;
 }
