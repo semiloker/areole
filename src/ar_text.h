@@ -137,6 +137,23 @@ ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char 
                     const ar_face *f, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
                     ar_glyph_scratch *sc);
 
+/*
+ * Breaks text into lines no wider than max_w pixels, writing the byte offset
+ * of each line's start into `starts` and returning how many there are. The
+ * first entry is always 0.
+ *
+ * Break opportunities come from ar_break_next, so this is UAX #14 and not "at
+ * spaces": it will not orphan a closing bracket, will not split 1,000.50, and
+ * does break between ideographs.
+ *
+ * A word longer than max_w is not broken. Overflowing is a visible failure the
+ * caller can see and clip; splitting a word at an arbitrary point is a silent
+ * one that looks like a rendering bug. Emergency breaking belongs with
+ * overflow-wrap, which is a CSS property and not this function's decision.
+ */
+ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
+                    ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines);
+
 /* The same walk without drawing. Costs a cache lookup per glyph, not a
    rasterization, once the glyphs are warm. */
 ar_i32 ar_text_measure(const char *utf8, const ar_face *f, ar_i32 ppem, ar_glyph_cache *gc,

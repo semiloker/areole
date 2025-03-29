@@ -4,6 +4,7 @@
  */
 #include "ar_text.h"
 
+#include "ar_break.h"
 #include "ar_internal.h"
 
 #include <string.h>
@@ -472,4 +473,93 @@ ar_i32 ar_text_measure(const char *utf8, const ar_face *f, ar_i32 ppem, ar_glyph
         }
     }
     return pen;
+}
+
+/* Measures one byte range, which wrapping needs and ar_text_measure cannot do
+   because it stops at the terminator. */
+static ar_i32 ar__measure_range(const char *text, ar_i32 from, ar_i32 to, const ar_face *f,
+                                ar_i32 ppem, ar_glyph_cache *gc, ar_glyph_scratch *sc)
+{
+    const char *p = text + from;
+    ar_i32      pen = 0;
+
+    while (p < text + to)
+    {
+        ar_u32               cp = ar_utf8_next(&p);
+        const ar_glyph_slot *g;
+
+        if (cp == 0)
+        {
+            break;
+        }
+        g = ar_glyph_get(gc, f, ar_face_glyph(f, cp), ppem,
+                         (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, sc);
+        if (g)
+        {
+            pen += g->advance;
+        }
+    }
+    return pen;
+}
+
+ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
+                    ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines)
+{
+    ar_i32 line_start = 0, at = 0, lines = 0;
+    ar_i32 len = 0;
+    ar_i32 limit = max_w * AR_ONE_PIXEL;
+
+    if (!utf8 || !f || !f->ok || !starts || max_lines <= 0)
+    {
+        return 0;
+    }
+    while (utf8[len])
+    {
+        ++len;
+    }
+    starts[lines++] = 0;
+    if (len == 0)
+    {
+        return lines;
+    }
+
+    for (;;)
+    {
+        ar_i32 kind;
+        ar_i32 next = ar_break_next(utf8, at, &kind);
+
+        if (next <= at)
+        {
+            break;
+        }
+
+        /* Measured from the start of the line rather than accumulated, because
+           a glyph's advance can depend on where in the pixel it starts. */
+        if (ar__measure_range(utf8, line_start, next, f, ppem, gc, sc) > limit && at > line_start)
+        {
+            if (lines >= max_lines)
+            {
+                return lines;
+            }
+            starts[lines++] = at;
+            line_start = at;
+            continue; /* re-test this same opportunity against the new line */
+        }
+
+        at = next;
+        if (kind == AR_BREAK_MANDATORY && at < len)
+        {
+            if (lines >= max_lines)
+            {
+                return lines;
+            }
+            starts[lines++] = at;
+            line_start = at;
+        }
+        if (at >= len)
+        {
+            break;
+        }
+    }
+    return lines;
 }
