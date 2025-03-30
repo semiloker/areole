@@ -68,6 +68,7 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
                unchanged and never painted. */
             s->digest = 0;
             s->seen = 0;
+            s->text_key = 0;
             return s;
         }
         /* A box that has not been declared for two frames is gone. Reusing
@@ -87,6 +88,7 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
         stale->scroll = 0;
         stale->digest = 0;
         stale->seen = 0;
+        stale->text_key = 0;
         return stale;
     }
     return 0; /* the table is genuinely full; the box loses its hover, not its pixels */
@@ -423,21 +425,59 @@ void ar_memory_stats(const ar_ctx *c, ar_u32 *persist, ar_u32 *frame_now, ar_u32
     }
 }
 
+/* What the width was measured from: the string's bytes and the size. Anything
+   else that could change it -- the face, the fallback chain, grid fitting --
+   drops the whole glyph cache and invalidates, so it cannot change underneath
+   this without the next frame remeasuring anyway. */
+static ar_u32 ar__text_key(const char *t, ar_i32 ppem)
+{
+    ar_u32 h = 2166136261u;
+
+    while (*t)
+    {
+        h ^= (ar_u32)(unsigned char)*t++;
+        h *= 16777619u;
+    }
+    h ^= (ar_u32)ppem;
+    h *= 16777619u;
+    return h ? h : 1u;
+}
+
 /* One place decides how wide a run of text is, so painting and layout cannot
    disagree about it. Which face answers depends on whether one was loaded. */
 static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
 {
+    ar_slot *slot;
+    ar_u32   key;
+    ar_i32   w;
+
     if (!n->text)
     {
         return 0;
     }
-    if (c->have_face)
+    if (!c->have_face)
     {
-        ar_i32 w = ar_text_measure_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE],
-                                         &c->glyphs, &c->glyph_scratch);
-        return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+        /* The bitmap face measures by table lookup, which is already cheaper
+           than hashing the string would be. */
+        return ar_text_width(n->text, n->scale);
     }
-    return ar_text_width(n->text, n->scale);
+
+    key = ar__text_key(n->text, n->style.v[AR_P_FONT_SIZE]);
+    slot = ar_ctx_slot(c, n->key);
+    if (slot && slot->text_key == key)
+    {
+        return slot->text_px;
+    }
+
+    w = ar_text_measure_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+                              &c->glyph_scratch);
+    w = (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+    if (slot)
+    {
+        slot->text_key = key;
+        slot->text_px = w;
+    }
+    return w;
 }
 
 /* ------------------------------------------------------------------------

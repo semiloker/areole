@@ -3207,6 +3207,39 @@ static void test_font_changes_what_is_measured(void)
     CHECK(outline_w != bitmap_w, "font: which are not the bitmap face's");
 }
 
+/* Text is measured once per node per frame, and with an outline face that is a
+   glyph cache lookup per character. On a realistic dashboard it was 7.4 million
+   lookups across the run where 718 were needed, and the frame was 2.78x slower
+   for it. The width is now remembered against a hash of the string and the
+   size. */
+static void test_measured_width_is_remembered(void)
+{
+    ar_ctx    *c;
+    ar_surface s;
+    ar_u32     h1, h2, h3;
+
+    s.pixels = g_dmg_a;
+    s.w = AR_DMG_W;
+    s.h = AR_DMG_H;
+    s.stride = AR_DMG_W;
+
+    c = ar__font_ctx(1);
+    CHECK(c != 0 && ar_font_loaded(c), "measure memo: the face loaded");
+
+    ar__font_frame(c, &s);
+    ar_font_cache_stats(c, &h1, 0, 0);
+    ar__font_frame(c, &s);
+    ar_font_cache_stats(c, &h2, 0, 0);
+    ar__font_frame(c, &s);
+    ar_font_cache_stats(c, &h3, 0, 0);
+
+    /* Drawing still looks glyphs up; measuring must not. So the second and
+       third frames cost the same as each other, and less than a frame that
+       measured from scratch would. */
+    CHECK(h2 - h1 == h3 - h2, "measure memo: a steady frame costs a steady number of lookups");
+    CHECK(h3 - h2 <= 8, "measure memo: and only the ones drawing needs");
+}
+
 static void test_font_antialias_toggle(void)
 {
     ar_ctx    *c;
@@ -3577,6 +3610,7 @@ int main(void)
 
     test_font_load_and_fallback();
     test_font_changes_what_is_measured();
+    test_measured_width_is_remembered();
     test_font_antialias_toggle();
     test_font_antialias_toggle_invalidates();
 
