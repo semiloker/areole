@@ -30,9 +30,9 @@ says nothing directly about any other; `ar_require` is what converts between the
 
 | | |
 | --- | --- |
-| median spread between epochs | **9.4%** |
-| worst | 58.2% |
-| scenes within 4% | 6 of 29 |
+| median spread between epochs | **10.5%** |
+| worst | 65.7% |
+| scenes within 4% | 8 of 29 |
 
 An epoch is a complete pass over every scene, so a scene is measured again only
 after the whole rest of the list has run. That approximates a second invocation
@@ -48,12 +48,12 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `clear_cached` | 48.8 µs | 57.6 µs | 107.4 µs | 8.4% | 0.102 | - | - |
-| `clear_uncached` | 3027.0 µs | 3661.2 µs | 4015.9 µs | 7.6% | 0.180 | - | - |
-| `fill_opaque` | 405.3 µs | 1075.5 µs | 1772.2 µs | 39.9% | 0.198 | - | - |
-| `fill_blend` | 2380.0 µs | 3759.6 µs | 4649.1 µs | 15.0% | 1.162 | - | - |
-| `offscreen_90pc` | 36.8 µs | 46.7 µs | 77.0 µs | 45.1% | 0.290 | - | - |
-| `hairlines` | 23.6 µs | 24.1 µs | 37.3 µs | 4.7% | 0.120 | - | - |
+| `clear_cached` | 48.4 µs | 69.9 µs | 100.1 µs | 0.2% | 0.101 | - | - |
+| `clear_uncached` | 2833.5 µs | 3733.9 µs | 4525.4 µs | 5.1% | 0.169 | - | - |
+| `fill_opaque` | 462.1 µs | 969.4 µs | 1624.5 µs | 41.5% | 0.226 | - | - |
+| `fill_blend` | 2416.6 µs | 3675.4 µs | 4792.6 µs | 17.1% | 1.180 | - | - |
+| `offscreen_90pc` | 37.7 µs | 41.8 µs | 64.9 µs | 35.8% | 0.297 | - | - |
+| `hairlines` | 22.9 µs | 23.1 µs | 29.8 µs | 4.4% | 0.117 | - | - |
 
 - `clear_cached` — opaque span fill into a surface small enough to stay in cache
 - `clear_uncached` — the same fill against main memory rather than cache; the honest fill rate
@@ -66,11 +66,11 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `latin_paragraph` | 77.4 µs | 142.8 µs | 328.8 µs | 46.9% | - | 47.4 | - |
-| `latin_paragraph_2x` | 248.3 µs | 386.8 µs | 503.5 µs | 0.6% | - | 152.1 | - |
-| `many_short_labels` | 93.4 µs | 177.6 µs | 243.7 µs | 11.9% | - | 51.9 | - |
-| `text_clipped` | 44.8 µs | 69.1 µs | 107.7 µs | 0.5% | - | 219.6 | - |
-| `text_measure` | 199.5 µs | 291.2 µs | 403.5 µs | 5.2% | - | - | - |
+| `latin_paragraph` | 101.7 µs | 118.0 µs | 145.9 µs | 31.4% | - | 62.3 | - |
+| `latin_paragraph_2x` | 277.5 µs | 513.5 µs | 637.6 µs | 45.4% | - | 170.0 | - |
+| `many_short_labels` | 130.5 µs | 161.3 µs | 420.6 µs | 31.1% | - | 72.5 | - |
+| `text_clipped` | 44.8 µs | 82.9 µs | 143.4 µs | 43.8% | - | 219.6 | - |
+| `text_measure` | 199.3 µs | 347.2 µs | 459.6 µs | 23.9% | - | - | - |
 
 - `latin_paragraph` — glyph blitting at scale 1: the per-bit-test cost
 - `latin_paragraph_2x` — the same text at scale 2: four times the pixels
@@ -82,11 +82,11 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `flat_100` | 16.3 µs | 17.7 µs | 27.6 µs | 38.6% | - | - | 150.9 |
-| `flat_1k` | 130.9 µs | 219.6 µs | 301.3 µs | 57.5% | 2.809 | - | 123.0 |
-| `flat_8k` | 1193.0 µs | 1886.1 µs | 2081.4 µs | 9.0% | 1.277 | - | 140.3 |
-| `deep_60` | 9.4 µs | 10.1 µs | 11.0 µs | 42.5% | - | - | 151.6 |
-| `mixed_tree` | 139.0 µs | 238.0 µs | 426.8 µs | 5.0% | - | - | 93.9 |
+| `flat_100` | 10.4 µs | 10.5 µs | 12.5 µs | 64.4% | - | - | 96.3 |
+| `flat_1k` | 118.6 µs | 218.1 µs | 351.9 µs | 4.8% | 2.546 | - | 111.5 |
+| `flat_8k` | 1153.9 µs | 1907.7 µs | 2204.9 µs | 9.3% | 1.235 | - | 135.7 |
+| `deep_60` | 5.9 µs | 11.1 µs | 11.5 µs | 64.4% | - | - | 95.2 |
+| `mixed_tree` | 187.3 µs | 273.9 µs | 329.6 µs | 28.5% | - | - | 126.5 |
 
 - `flat_100` — 100 boxes, shallow: the fixed cost of a frame
 - `flat_1k` — 1000 boxes, shallow
@@ -98,11 +98,11 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `rules_10` | 50.7 µs | 71.3 µs | 84.1 µs | 19.9% | - | - | 95.1 |
-| `rules_100` | 50.9 µs | 86.8 µs | 124.4 µs | 0.8% | - | - | 95.5 |
-| `rules_250` | 51.0 µs | 63.5 µs | 78.6 µs | 1.2% | - | - | 95.7 |
-| `state_churn` | 58.3 µs | 95.0 µs | 146.0 µs | 6.3% | - | - | 109.4 |
-| `identical_siblings` | 96.2 µs | 148.5 µs | 166.5 µs | 2.1% | - | - | 96.1 |
+| `rules_10` | 51.1 µs | 69.4 µs | 84.4 µs | 0.8% | - | - | 95.9 |
+| `rules_100` | 51.1 µs | 65.9 µs | 138.4 µs | 3.1% | - | - | 95.9 |
+| `rules_250` | 50.8 µs | 81.3 µs | 180.2 µs | 1.0% | - | - | 95.3 |
+| `state_churn` | 58.1 µs | 133.2 µs | 290.9 µs | 10.5% | - | - | 109.0 |
+| `identical_siblings` | 96.7 µs | 173.2 µs | 296.7 µs | 3.0% | - | - | 96.6 |
 
 - `rules_10` — 500 boxes against a 13 rule sheet
 - `rules_100` — the same boxes against 103 rules: the curve, not a point
@@ -114,9 +114,9 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `dashboard` | 5.5 µs | 5.6 µs | 5.7 µs | 58.2% | - | - | 112.2 |
-| `table_1k_rows` | 1577.3 µs | 2447.4 µs | 2866.1 µs | 8.1% | 3.286 | 1546.4 | 262.8 |
-| `scroll_10k` | 149.0 µs | 196.5 µs | 324.5 µs | 17.5% | 0.514 | 182.1 | 1231.4 |
+| `dashboard` | 5.5 µs | 9.2 µs | 11.3 µs | 0.0% | - | - | 112.2 |
+| `table_1k_rows` | 1531.1 µs | 2726.8 µs | 3248.6 µs | 4.7% | 3.190 | 1501.1 | 255.1 |
+| `scroll_10k` | 99.5 µs | 152.6 µs | 197.5 µs | 65.7% | 0.343 | 121.6 | 822.3 |
 
 - `dashboard` — the shipped example: rail, nav, six cards, drifting cursor
 - `table_1k_rows` — 1000 rows of 5 cells: 6000 boxes, most of them off screen
@@ -126,11 +126,11 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `overdraw_10x` | 527.9 µs | 644.7 µs | 895.3 µs | 30.9% | 0.110 | - | - |
-| `tiny_boxes_10k` | 229.7 µs | 376.4 µs | 436.4 µs | 9.4% | 2.552 | - | - |
-| `opposite_corners` | 0.1 µs | 0.1 µs | 0.1 µs | 0.0% | - | - | - |
-| `corners_tree` | 1.1 µs | 1.1 µs | 1.1 µs | 18.2% | - | - | - |
-| `arena_churn` | 337.4 µs | 724.2 µs | 777.7 µs | 10.7% | 0.704 | - | 1109.9 |
+| `overdraw_10x` | 501.1 µs | 643.4 µs | 854.9 µs | 0.5% | 0.104 | - | - |
+| `tiny_boxes_10k` | 204.8 µs | 326.4 µs | 538.7 µs | 28.2% | 2.276 | - | - |
+| `opposite_corners` | 0.1 µs | 0.1 µs | 0.3 µs | 0.0% | - | - | - |
+| `corners_tree` | 1.9 µs | 2.1 µs | 2.1 µs | 31.6% | - | - | - |
+| `arena_churn` | 332.4 µs | 800.9 µs | 931.5 µs | 7.2% | 0.693 | - | 1093.4 |
 
 - `overdraw_10x` — ten full-surface fills: pure bandwidth, no cleverness helps
 - `tiny_boxes_10k` — 10000 three pixel fills: all overhead, no pixels
@@ -141,22 +141,22 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 ## What the numbers say
 
 **The rasterizer is bandwidth bound, not compute bound.** `clear_cached` and
-`clear_uncached` run identical code. The first fills at 0.102 ns per pixel, the
-second at 0.180, a factor of 1.8, purely because one surface fits in cache and
+`clear_uncached` run identical code. The first fills at 0.101 ns per pixel, the
+second at 0.169, a factor of 1.7, purely because one surface fits in cache and
 the other does not. The target hardware can never satisfy the first condition,
 so the uncached figure is the one that transfers.
 
-**Blending costs 5.9 times opaque filling** — 1.162 against 0.198 ns per pixel. It
+**Blending costs 5.2 times opaque filling** — 1.180 against 0.226 ns per pixel. It
 reads, blends and writes where opaque only writes, and does four multiplies per
 pixel. That ratio is the measured case for SIMD in 0.15.0.
 
 **The glyph blitter costs per bit tested, not per pixel written.** At scale 2 it
-draws four times the pixels for 3.21 times the money — 152 against 47 ns per
+draws four times the pixels for 2.73 times the money — 170 against 62 ns per
 glyph. Every ink pixel goes through a function call performing two rectangle
 intersections. 0.2.0 replaces the whole path and inherits a tenfold improvement
 as its acceptance criterion.
 
-**Style resolution is linear in rule count.** 50.7, 50.9 and 51.0 µs for 13, 103 and 253
+**Style resolution is linear in rule count.** 51.1, 51.1 and 50.8 µs for 13, 103 and 253
 rules over the same 500 boxes: resolution scans every rule for every box. A
 browser user-agent stylesheet alone is around 400 rules, which is why 0.4.0
 builds a style cache and why the rule table has to stop being a fixed 256.
@@ -178,21 +178,25 @@ rather than a measurement.
 
 | scene | p50 | ns/glyph | spread | what it says |
 | --- | --: | --: | --: | --- |
-| `outline_aa` | 340.1 us | 380 | 2% | antialiased, glyphs cached: the ordinary case |
-| `outline_aliased` | 164.8 us | 184 | 3% | the same with antialiasing off |
-| `outline_sizes` | 1109.7 us | 1238 | 5% | 16 sizes at once, up to 40 px, so the glyphs are larger |
-| `outline_cold` | 122.3 us | 2184 | 2% | cache dropped every frame: rasterizing, not blitting |
+| `outline_aa` | 208.7 us | 233 | 17% | antialiased, glyphs cached: the ordinary case |
+| `outline_aliased` | 122.4 us | 137 | 8% | the same with antialiasing off |
+| `outline_sizes` | 680.5 us | 759 | 11% | 16 sizes at once, up to 40 px, so the glyphs are larger |
+| `outline_cold` | 96.0 us | 1714 | 57% | cache dropped every frame: rasterizing, not blitting |
+
+**This run was too noisy to quote ratios from.** The worst spread above is
+57%, so treat the two figures below as indicative and re-run on a quiet
+machine before citing them.
 
 Read the ratios rather than the absolute times. Across three runs of this set the
 per-glyph figures moved by 1.7x with nothing changed but machine load, while the
 two ratios below stayed within 0.05 of each other: a ratio cancels whatever was
 varying.
 
-**Antialiasing off is 2.06x faster.** A blend reads and writes where an opaque
+**Antialiasing off is 1.70x faster.** A blend reads and writes where an opaque
 store only writes, and on a machine whose whole problem is memory bandwidth that
 is the entire difference. `ar_font_antialias` exposes it as a setting.
 
-**Rasterizing costs 5.8x blitting a cached glyph.** That is why the cache is not
+**Rasterizing costs 7.4x blitting a cached glyph.** That is why the cache is not
 an optimisation but the thing that makes outlines usable at all -- measured,
 rather than asserted in a design document.
 
@@ -225,11 +229,11 @@ that way rather than dropped.
 
 | case | areole | Win32 GDI | ratio | spread | read |
 | --- | --: | --: | --: | --: | --- |
-| `clear_uncached` | 80.1 us | 84.5 us | **1.05x** | 3/4% | noise |
-| `fill_opaque` | 478.5 us | 1579.9 us | **3.30x** | 28/19% | solid |
-| `fill_blend` * | 2592.1 us | 13688.0 us | **5.28x** | 8/3% | solid |
-| `latin_paragraph` * | 88.2 us | 848.6 us | **9.62x** | 8/6% | solid |
-| `hairlines` | 42.7 us | 356.4 us | **8.35x** | 18/10% | solid |
+| `clear_uncached` | 85.1 us | 90.8 us | **1.07x** | 4/5% | noise |
+| `fill_opaque` | 443.6 us | 1480.7 us | **3.34x** | 6/8% | solid |
+| `fill_blend` * | 2420.8 us | 13916.3 us | **5.75x** | 0/1% | solid |
+| `latin_paragraph` * | 94.5 us | 909.2 us | **9.62x** | 24/28% | solid |
+| `hairlines` | 30.4 us | 338.7 us | **11.14x** | 3/1% | solid |
 
 \* `fill_blend`: GDI has no solid-colour alpha fill, so AlphaBlend reads a source surface
   areole does not need. GDI is doing strictly more work here.
@@ -244,8 +248,8 @@ that way rather than dropped.
 
 | case | areole | Clay | ratio | areole layout | ratio | spread | read |
 | --- | --: | --: | --: | --: | --: | --: | --- |
-| `flat_1k` * | 111.4 us | 268.0 us | **2.41x** | 25.0 us | **10.72x** | 2/4% | solid |
-| `flat_8k` * | 1182.3 us | 2455.5 us | **2.08x** | 221.0 us | **11.11x** | 25/19% | solid |
+| `flat_1k` * | 109.7 us | 259.9 us | **2.37x** | 24.0 us | **10.83x** | 2/3% | solid |
+| `flat_8k` * | 1283.9 us | 2565.5 us | **2.00x** | 204.0 us | **12.58x** | 11/13% | solid |
 
 \* `flat_1k`, `flat_8k`: areole resolves a stylesheet for every box and keeps damage
   bookkeeping per box; Clay takes its configuration inline, already resolved, and tracks
@@ -258,8 +262,8 @@ that way rather than dropped.
 
 | case | areole | microui | ratio | areole layout | ratio | spread | read |
 | --- | --: | --: | --: | --: | --: | --: | --- |
-| `flat_1k` * | 100.9 us | 10.3 us | **0.10x** | 21.0 us | **0.49x** | 1/0% | solid |
-| `flat_8k` * | 899.4 us | 80.7 us | **0.09x** | 180.0 us | **0.45x** | 6/1% | solid |
+| `flat_1k` * | 103.4 us | 10.4 us | **0.10x** | 22.0 us | **0.47x** | 57/38% | noise |
+| `flat_8k` * | 923.2 us | 80.4 us | **0.09x** | 180.0 us | **0.45x** | 5/1% | solid |
 
 \* `flat_1k`, `flat_8k`: microui builds no tree, resolves no style and tracks no damage:
   mu_layout_next advances a row cursor and returns a rectangle. areole runs two passes per axis

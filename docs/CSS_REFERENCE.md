@@ -127,3 +127,19 @@ Named so that their absence is a decision rather than an oversight:
 - inheritance — `color` does not cascade to children; set it where you use it
 - `!important`, media queries, `@` rules of any kind
 - shorthand `font`, `background` with anything but a colour
+
+## Fonts
+
+`font-size` is in pixels and both faces honour it. Without a loaded face it
+picks a whole-number scale of the built-in 8x8 bitmap font, rounded down and
+clamped at 1. With one it is the pixel size handed to the rasterizer.
+
+`font-family` is parsed and ignored. Which face draws is decided by
+`ar_font_load` and `ar_font_add` rather than by the stylesheet, because
+selecting between families needs a font database and that is later in 0.2.x. A
+stylesheet naming families is not an error; it simply does not choose yet.
+
+Antialiasing, grid fitting, stem darkening and subpixel positioning are not CSS
+properties in any specification and are not invented as ones here. They are
+context settings: `ar_font_antialias`, `ar_font_grid_fit`, `ar_font_darken`,
+`ar_font_subpixel`.

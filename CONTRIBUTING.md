@@ -22,6 +22,8 @@ If a feature cannot be built inside those two rules, the feature is wrong, not t
 | `src/ar_font.c` | The built-in 8x8 bitmap face and its span blitter |
 | `src/ar_path.c` | Paths and the scanline coverage rasterizer. Integer only, exact analytic antialiasing |
 | `src/ar_font_file.c` | TrueType parsing. Never copies, never allocates, bounds-checks every read |
+| `src/ar_cff.c` | CFF outlines and the Type 2 charstring interpreter. The one place that runs a program out of a file |
+| `src/ar_break.c` | Line breaking, after UAX #14 |
 | `src/ar_text.c` | UTF-8, the glyph cache, outline text drawing |
 | `src/ar_css.c` | Tokenizer, parser, selector matching, the resolved style cache |
 | `src/ar_layout.c` | The flexbox solver. Pure: no allocation, no clock, no drawing |

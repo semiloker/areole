@@ -155,36 +155,43 @@ against one every interface has.
 Without a font file, areole draws with a built-in 8x8 bitmap face. That is why a
 hello-world build is 52 KB and needs nothing on disk.
 
-Given a TrueType file it draws outlines instead, through its own parser, its own
-scanline rasterizer with exact analytic antialiasing, and a glyph cache. No
-FreeType, no stb_truetype, and no floating point anywhere in any of it.
+Given a font file it draws outlines: its own TrueType and CFF parsers, its own
+scanline rasterizer with exact analytic antialiasing, its own glyph cache, its
+own UTF-8 and its own line breaking. No FreeType, no HarfBuzz, no stb_truetype,
+and no floating point anywhere in any of it.
 
 ```c
-ar_font_load(ui, ttf_bytes, ttf_size, 256 * 1024, 48);
-ar_font_antialias(ui, 0);   /* hard edges, 2.06x faster */
+ar_font_load(ui, ttf, ttf_size, 256 * 1024, 48);  /* TrueType or OpenType */
+ar_font_add(ui, cjk, cjk_size);                   /* fallback for what it lacks */
+
+ar_font_antialias(ui, 0);   /* hard edges, 1.70x faster */
+ar_font_grid_fit(ui, 1);    /* snap the x-height to the pixel grid (default) */
+ar_font_darken(ui, 60);     /* lift midtones so thin stems stop reading grey */
+ar_font_subpixel(ui, 1);    /* four positions per pixel (default) */
 ```
 
 | | ns/glyph |
 | --- | --: |
-| Antialiased, cached | 380 |
-| Aliased, cached | **184** |
-| Rasterized from the outline | 2184 |
+| Antialiased, cached | 233 |
+| Aliased, cached | **137** |
+| Rasterized from the outline | 1714 |
 
-Two ratios matter more than the absolute figures, which move with machine load
-while the ratios do not.
+Read the ratios rather than the absolute figures, which move with machine load
+while the ratios do not. **Antialiasing off is 1.70x**, because a blend reads
+and writes where an opaque store only writes, and on a machine whose whole
+problem is memory bandwidth that is the entire difference. **Rasterizing costs
+7.4x blitting a cached glyph**, which is why the cache is not an optimisation
+but the thing that makes outlines usable at all.
 
-**Antialiasing off is 2.06x faster.** A blend reads and writes where an opaque
-store only writes, and on a machine whose whole problem is memory bandwidth that
-is the entire difference. It is also what those machines looked like, so it is a
-choice about appearance and not only about speed.
+**Line breaking is UAX #14**, not "at spaces". `hello world` breaks after the
+space and never before it; `one-two` breaks after the hyphen; `1,000.50` does
+not break anywhere; a closing bracket is never orphaned onto the next line;
+Japanese breaks between ideographs. What the table covers, and the scripts it
+does not, are written beside it.
 
-**Rasterizing costs 5.8x blitting a cached glyph.** That is why the cache is not
-an optimisation but the thing that makes outlines usable at all.
-
-UTF-8 in, including everything above the basic plane. Overlong forms, surrogate
-halves and values past U+10FFFF each become U+FFFD and advance one byte, because
-each of them is a way to make a decoder emit a codepoint the rest of a program
-believed had already been checked.
+**Fallback is a chain.** No face covers Unicode, and asking a Latin face for a
+Japanese character gives the notdef box everyone recognises. Each character is
+drawn by the first face in the chain that has it.
 
 ## Against the alternatives
 
@@ -302,7 +309,7 @@ toolkit breaks that circle.
 - **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
 - **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
-- **0.2.0** *It has real text* — TrueType, an outline rasterizer, a glyph cache 🚧
+- **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
