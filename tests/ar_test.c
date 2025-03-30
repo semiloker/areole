@@ -2620,6 +2620,42 @@ static void test_ttf_rejects_what_it_cannot_read(void)
    not be able to make the parser read outside the buffer it was given. Every
    prefix of the font, and every single-byte corruption of it, goes through the
    whole pipeline. If any read escaped its bounds, this faults. */
+/* CFF is the one place in the library that runs a program out of a file: a
+   charstring is a stack machine with subroutines. There is no minimal CFF font
+   generated here the way there is for glyf, because a valid one is an order of
+   magnitude more structure and the property that matters is not "does it draw
+   an A" -- it is that a malformed program cannot escape its bounds.
+   
+   That is checked outside this suite, under a guard page: Source Han Sans in
+   both weights, all 17,934 glyphs each plus 9,471 codepoints, with the font
+   placed so its last byte ends at an inaccessible page. The three limits that
+   hold it are stated in ar_cff.c. Here we check only that a font claiming to
+   be CFF but containing nothing is refused rather than half accepted. */
+static void test_cff_header_alone_is_not_a_font(void)
+{
+    ar_face f;
+    ar_u8   otto[128];
+    ar_i32  i;
+
+    for (i = 0; i < 128; ++i)
+    {
+        otto[i] = 0;
+    }
+    otto[0] = 'O';
+    otto[1] = 'T';
+    otto[2] = 'T';
+    otto[3] = 'O';
+
+    CHECK(!ar_face_init(&f, otto, 128), "cff: an OTTO header with no tables is refused");
+
+    /* And a truncated one, at every length, must not fault. */
+    for (i = 0; i <= 128; ++i)
+    {
+        ar_face_init(&f, otto, (ar_u32)i);
+    }
+    CHECK(1, "cff: every truncation of it parses without faulting");
+}
+
 static void test_ttf_survives_truncation_and_corruption(void)
 {
     static ar_u8   copy[sizeof AR_TEST_FONT];
@@ -3477,6 +3513,7 @@ int main(void)
     test_ttf_extracts_an_outline();
     test_ttf_empty_glyph_is_not_an_error();
     test_ttf_rejects_what_it_cannot_read();
+    test_cff_header_alone_is_not_a_font();
     test_ttf_survives_truncation_and_corruption();
 
     test_utf8_decodes_valid_sequences();
