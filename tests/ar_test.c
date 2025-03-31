@@ -3000,6 +3000,48 @@ static void test_glyph_cache_refuses_a_glyph_larger_than_its_budget(void)
 /* ------------------------------------------------------------------------
  * Drawing
  * ------------------------------------------------------------------------ */
+static void test_fallback_chain_picks_the_first_face_that_has_it(void)
+{
+    ar_face       f;
+    ar_font_chain ch;
+    ar_i32        which = -1, g;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ch.face[0] = &f;
+    ch.face[1] = &f;
+    ch.count = 2;
+
+    g = ar_font_chain_glyph(&ch, 'A', &which);
+    CHECK(g == 1 && which == 0, "fallback: the first face wins when it has the character");
+
+    /* Nothing in the chain has 'B'. Reporting the notdef box of the first face
+       is right: it says a character is missing, where drawing nothing would
+       say the text was. */
+    g = ar_font_chain_glyph(&ch, 'B', &which);
+    CHECK(g == 0 && which == 0, "fallback: an unmapped character falls through to notdef");
+
+    ch.count = 0;
+    g = ar_font_chain_glyph(&ch, 'A', &which);
+    CHECK(g == 0, "fallback: an empty chain answers without faulting");
+}
+
+static void test_face_family_name(void)
+{
+    ar_face f;
+    char    name[64];
+    ar_i32  n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+
+    /* The generated face has no name table, so the answer is an empty string
+       rather than whatever happened to be in the buffer. */
+    name[0] = 'x';
+    n = ar_face_family(&f, name, (ar_i32)sizeof name);
+    CHECK(n == 0 && name[0] == 0, "family: a face with no name table gives an empty string");
+
+    CHECK(ar_face_family(&f, name, 0) == 0, "family: a zero length buffer is not written to");
+}
+
 static void test_text_draw_matches_measure(void)
 {
     ar_face          f;
@@ -3527,6 +3569,8 @@ int main(void)
     test_glyph_cache_carries_metrics();
     test_glyph_cache_resets_rather_than_overflowing();
     test_glyph_cache_refuses_a_glyph_larger_than_its_budget();
+    test_fallback_chain_picks_the_first_face_that_has_it();
+    test_face_family_name();
     test_text_draw_matches_measure();
     test_text_draws_pixels_and_respects_the_clip();
     test_text_survives_a_face_that_failed_to_load();

@@ -123,7 +123,8 @@ struct ar_ctx
 
     /* Text. Absent until ar_font_load, and the bitmap face is used until then,
        so a build that never calls it pays nothing for any of this. */
-    ar_face          face;
+    ar_face          face[AR_MAX_FACES];
+    ar_font_chain    chain;
     ar_glyph_cache   glyphs;
     ar_glyph_scratch glyph_scratch;
     int              have_face;

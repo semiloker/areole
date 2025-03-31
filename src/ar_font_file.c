@@ -660,6 +660,91 @@ int ar_face_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i
     return ar__outline(f, glyph, ppem, ox, oy, p, buf, 0);
 }
 
+/*
+ * The family name, copied into the caller's buffer as ASCII.
+ *
+ * The name table stores strings in whichever encoding the platform record
+ * says, and the two that matter are Windows UTF-16BE and Macintosh Roman.
+ * Non-ASCII is replaced rather than transcoded: this exists so a stylesheet
+ * can say Helvetica and an application can log which face it got, and both of
+ * those are ASCII questions.
+ */
+ar_i32 ar_face_family(const ar_face *f, char *out, ar_i32 cap)
+{
+    ar_u32 count, offset, i;
+    ar_u32 best = 0, best_len = 0;
+    int    best_utf16 = 0;
+    ar_i32 n = 0;
+
+    if (cap > 0)
+    {
+        out[0] = 0;
+    }
+    if (!f->ok || !f->name || cap <= 1)
+    {
+        return 0;
+    }
+
+    count = ar__u16at(f, f->name + 2);
+    offset = f->name + ar__u16at(f, f->name + 4);
+    if (count > (f->size - f->name) / 12)
+    {
+        return 0;
+    }
+
+    for (i = 0; i < count; ++i)
+    {
+        ar_u32 rec = f->name + 6 + i * 12;
+        ar_u32 plat = ar__u16at(f, rec);
+        ar_u32 enc = ar__u16at(f, rec + 2);
+        ar_u32 nid = ar__u16at(f, rec + 6);
+        ar_u32 len = ar__u16at(f, rec + 8);
+        ar_u32 at = offset + ar__u16at(f, rec + 10);
+
+        if (nid != 1 || len == 0 || at + len > f->size)
+        {
+            continue; /* name ID 1 is the family */
+        }
+        /* Windows Unicode preferred; Macintosh Roman accepted. */
+        if (plat == 3 && (enc == 1 || enc == 0))
+        {
+            best = at;
+            best_len = len;
+            best_utf16 = 1;
+            break;
+        }
+        if (plat == 1 && best == 0)
+        {
+            best = at;
+            best_len = len;
+            best_utf16 = 0;
+        }
+    }
+
+    if (!best)
+    {
+        return 0;
+    }
+    if (best_utf16)
+    {
+        for (i = 0; i + 1 < best_len && n < cap - 1; i += 2)
+        {
+            ar_u32 c = ar__u16at(f, best + i);
+            out[n++] = (char)(c < 128u ? c : '?');
+        }
+    }
+    else
+    {
+        for (i = 0; i < best_len && n < cap - 1; ++i)
+        {
+            ar_u32 c = ar__u8at(f, best + i);
+            out[n++] = (char)(c < 128u ? c : '?');
+        }
+    }
+    out[n] = 0;
+    return n;
+}
+
 void ar_face_grid_fit(const ar_face *f, ar_i32 ppem, ar_i32 *num, ar_i32 *den)
 {
     ar_i32 xh, fitted;
@@ -722,6 +807,7 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     }
 
     f->os2 = ar__find_table(f, "OS/2", 0);
+    f->name = ar__find_table(f, "name", 0);
     f->head = ar__find_table(f, "head", 0);
     f->hhea = ar__find_table(f, "hhea", 0);
     f->maxp = ar__find_table(f, "maxp", 0);

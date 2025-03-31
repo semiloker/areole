@@ -34,7 +34,7 @@ typedef struct ar_face
     ar_u32       size;
 
     /* Offsets into data. Zero means the table is absent. */
-    ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2;
+    ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2, name;
 
     /* PostScript outlines. Zero when the font carries quadratics in glyf
        instead, which is the other half of the world. */
@@ -111,6 +111,10 @@ int ar_face_outline(const ar_face *f, ar_i32 glyph, ar_i32 ppem, ar_i32 ox, ar_i
  * the cheap ninety per cent.
  */
 void ar_face_grid_fit(const ar_face *f, ar_i32 ppem, ar_i32 *num, ar_i32 *den);
+
+/* The family name as ASCII, for matching a stylesheet against and for saying
+   in a log which face was actually used. Returns the length written. */
+ar_i32 ar_face_family(const ar_face *f, char *out, ar_i32 cap);
 
 /* CFF. ar_face_outline dispatches to these when the font has no glyf table,
    so a caller never needs to know which kind of outline it asked for. */
