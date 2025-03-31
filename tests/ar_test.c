@@ -10,6 +10,7 @@
 #include "ar_font_file.h"
 #include "ar_text.h"
 #include "ar_break.h"
+#include "ar_bidi.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -3534,6 +3535,171 @@ static void test_wrap_respects_its_line_limit(void)
     CHECK(lines <= 4, "wrap: never writes more line starts than it was given room for");
 }
 
+
+/* ------------------------------------------------------------------------
+ * The bidirectional algorithm
+ *
+ * Hebrew alef-bet-gimel is used throughout as the right-to-left text, because
+ * it needs no shaping to be a valid test of ordering.
+ * ------------------------------------------------------------------------ */
+#define HEB "\xD7\x90\xD7\x91\xD7\x92"     /* three Hebrew letters */
+#define ARA "\xD8\xA7\xD8\xA8"             /* two Arabic letters   */
+
+static ar_u8       g_bidi_lv[128], g_bidi_cl[128];
+static ar_bidi_run g_bidi_runs[32];
+
+static ar_i32 ar__bidi(const char *s, ar_i32 dir, ar_i32 *para)
+{
+    return ar_bidi_levels(s, dir, g_bidi_lv, g_bidi_cl, 128, para);
+}
+
+static void test_bidi_paragraph_level(void)
+{
+    ar_i32 para = -1;
+
+    ar__bidi("abc", AR_DIR_AUTO, &para);
+    CHECK(para == 0, "bidi: a paragraph starting in Latin is left to right");
+
+    ar__bidi(HEB, AR_DIR_AUTO, &para);
+    CHECK(para == 1, "bidi: one starting in Hebrew is right to left");
+
+    /* P2 skips numbers and punctuation: the first *strong* character decides. */
+    ar__bidi("123 " HEB, AR_DIR_AUTO, &para);
+    CHECK(para == 1, "bidi: a leading number does not make a paragraph left to right");
+
+    ar__bidi("", AR_DIR_AUTO, &para);
+    CHECK(para == 0, "bidi: a paragraph with no strong character is left to right");
+
+    ar__bidi("abc", AR_DIR_RTL, &para);
+    CHECK(para == 1, "bidi: an explicit direction overrides what the text says");
+}
+
+static void test_bidi_levels_of_mixed_text(void)
+{
+    ar_i32 n, para;
+
+    n = ar__bidi("ab " HEB, AR_DIR_AUTO, &para);
+    CHECK(n == 6, "bidi: levels are per codepoint, not per byte");
+    CHECK(g_bidi_lv[0] == 0 && g_bidi_lv[1] == 0, "bidi: Latin stays at the paragraph level");
+    CHECK(g_bidi_lv[3] == 1 && g_bidi_lv[5] == 1, "bidi: Hebrew goes one level up");
+
+    /* A number inside right-to-left text is left to right within it, which is
+       two levels up, not one. Getting this wrong renders 123 as 321. */
+    n = ar__bidi(HEB " 123", AR_DIR_AUTO, &para);
+    CHECK(para == 1 && n == 7, "bidi: Hebrew then a number");
+    CHECK(g_bidi_lv[0] == 1, "bidi: the Hebrew is at level one");
+    CHECK(g_bidi_lv[4] == 2 && g_bidi_lv[6] == 2, "bidi: and the number two levels up, not one");
+}
+
+static void test_bidi_numbers_after_arabic(void)
+{
+    ar_i32 para;
+
+    /* W2: European digits after an Arabic letter are Arabic numbers, which
+       resolve to a different level than they would after Latin. */
+    ar__bidi(ARA " 42", AR_DIR_AUTO, &para);
+    CHECK(para == 1, "bidi: Arabic paragraph");
+    CHECK(g_bidi_lv[3] == 2, "bidi: digits after Arabic are still left to right within it");
+}
+
+static void test_bidi_separators_join_numbers(void)
+{
+    ar_i32 para;
+
+    /* W4: one separator between two digits joins them, so a decimal point or
+       a thousands comma cannot split a number into two runs. */
+    ar__bidi("a 1,234.5 b", AR_DIR_AUTO, &para);
+    CHECK(g_bidi_lv[2] == g_bidi_lv[3] && g_bidi_lv[3] == g_bidi_lv[4],
+          "bidi: a comma inside a number does not break it");
+    CHECK(g_bidi_lv[6] == g_bidi_lv[7], "bidi: nor does a decimal point");
+}
+
+static void test_bidi_reorders_into_visual_runs(void)
+{
+    ar_i32 n, para, nr;
+
+    /* Latin then Hebrew, left to right: read in storage order. */
+    n = ar__bidi("ab " HEB, AR_DIR_AUTO, &para);
+    nr = ar_bidi_runs(g_bidi_lv, n, g_bidi_runs, 32);
+    CHECK(nr == 2, "bidi: Latin then Hebrew is two runs");
+    CHECK(g_bidi_runs[0].start == 0, "bidi: and the Latin is drawn first");
+    CHECK((g_bidi_runs[1].level & 1) == 1, "bidi: with the Hebrew right to left after it");
+
+    /* Hebrew then Latin, right to left. The Latin is *last* in storage and
+       *first* on screen, because the paragraph runs the other way. This is the
+       case that a naive implementation gets backwards. */
+    n = ar__bidi(HEB " ab", AR_DIR_AUTO, &para);
+    nr = ar_bidi_runs(g_bidi_lv, n, g_bidi_runs, 32);
+    CHECK(nr == 2, "bidi: Hebrew then Latin is two runs");
+    CHECK(g_bidi_runs[0].start > g_bidi_runs[1].start,
+          "bidi: and in an RTL paragraph the later text is drawn first");
+    CHECK((g_bidi_runs[0].level & 1) == 0, "bidi: the leftmost run being the Latin one");
+}
+
+static void test_bidi_explicit_overrides(void)
+{
+    ar_i32 n, para;
+    /* RLO makes even Latin right to left until PDF. */
+    const char *s = "a\xE2\x80\xAE" "bc\xE2\x80\xAC" "d";
+
+    n = ar__bidi(s, AR_DIR_AUTO, &para);
+    CHECK(n == 6, "bidi: formatting characters are still characters");
+    CHECK(g_bidi_lv[0] == 0, "bidi: before an override, the paragraph level");
+    CHECK(g_bidi_lv[2] == 1 && g_bidi_lv[3] == 1, "bidi: inside a right-to-left override, odd");
+    CHECK(g_bidi_lv[5] == 0, "bidi: and back to the paragraph level after it");
+}
+
+static void test_bidi_isolates(void)
+{
+    ar_i32 n, para;
+    /* An isolate keeps its contents from affecting the direction around it,
+       which is the whole reason it replaced the embedding characters. */
+    const char *s = "a\xE2\x81\xA7" HEB "\xE2\x81\xA9" "b";
+
+    n = ar__bidi(s, AR_DIR_AUTO, &para);
+    CHECK(para == 0, "bidi: an isolate's contents do not decide the paragraph");
+    CHECK(n == 7, "bidi: isolate initiator and terminator are counted");
+    CHECK(g_bidi_lv[2] == 1, "bidi: the isolated Hebrew is right to left");
+    CHECK(g_bidi_lv[6] == 0, "bidi: and text after the isolate is unaffected");
+}
+
+static void test_bidi_survives_anything(void)
+{
+    static const char *const NASTY[] = {
+        "", " ", "\xE2\x80\xAE", "\xE2\x80\xAC", "\xE2\x81\xA9",
+        "\xE2\x80\xAE\xE2\x80\xAE\xE2\x80\xAE", "\xE2\x81\xA7\xE2\x81\xA7\xE2\x81\xA7",
+        "\xFF\xFE", "\xE2\x80\xAC" HEB, HEB ARA "123"};
+    ar_i32 i;
+    int    ok = 1;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_i32 para, n = ar__bidi(NASTY[i], AR_DIR_AUTO, &para);
+        ar_i32 nr = ar_bidi_runs(g_bidi_lv, n, g_bidi_runs, 32);
+        ar_i32 j, total = 0;
+        for (j = 0; j < nr; ++j)
+        {
+            total += g_bidi_runs[j].count;
+        }
+        /* Every character must end up in exactly one run, or reordering has
+           lost or duplicated text. */
+        if (total != n)
+        {
+            ok = 0;
+        }
+    }
+    CHECK(ok, "bidi: unbalanced formatting characters still cover every character exactly once");
+
+    /* And a buffer too small is refused rather than overrun. */
+    {
+        ar_u8  small[4];
+        ar_u8  smallc[4];
+        ar_i32 para;
+        CHECK(ar_bidi_levels("abcdefgh", AR_DIR_AUTO, small, smallc, 4, &para) == 0,
+              "bidi: a buffer too small is refused, not overrun");
+    }
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3626,6 +3792,15 @@ int main(void)
     test_wrap_does_not_break_a_single_long_word();
     test_wrap_honours_a_mandatory_break();
     test_wrap_respects_its_line_limit();
+
+    test_bidi_paragraph_level();
+    test_bidi_levels_of_mixed_text();
+    test_bidi_numbers_after_arabic();
+    test_bidi_separators_join_numbers();
+    test_bidi_reorders_into_visual_runs();
+    test_bidi_explicit_overrides();
+    test_bidi_isolates();
+    test_bidi_survives_anything();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
