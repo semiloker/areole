@@ -69,6 +69,14 @@ typedef struct ar_slot
     ar_i32  scroll;
     ar_u32  last_frame; /* for eviction; 0 means the slot is free */
     ar_u32  digest;     /* of the resolved style; 0 means never recorded */
+
+    /* The last measured width of this box's text and what it was measured
+       from. Text is measured once per node per frame, and with an outline face
+       that is a glyph cache lookup per character -- on the shipped dashboard,
+       more lookups for measuring than for drawing. Hashing the string costs a
+       byte per character against a hash and a probe per character. */
+    ar_u32  text_key;
+    ar_i32  text_px;
     ar_u32  seen;       /* frame this box last appeared in the tree */
 } ar_slot;
 
