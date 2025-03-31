@@ -397,6 +397,23 @@ const ar_glyph_slot *ar_glyph_get_face(ar_glyph_cache *gc, const ar_face *f, ar_
 /* ------------------------------------------------------------------------
  * Drawing
  * ------------------------------------------------------------------------ */
+/*
+ * One pixel at a time, deliberately.
+ *
+ * Coalescing runs of equal coverage was tried, on the reasoning that it is the
+ * same trick that made the bitmap glyph blitter 10.7x faster. It is 15% slower
+ * here, measured best-of-nine after warmup, in both antialiased and aliased
+ * modes.
+ *
+ * The two situations are not alike. In the bitmap blitter the per-pixel cost
+ * was two rectangle intersections and a function call; here it is already a
+ * load, a compare and a store, and run detection adds a second loop and a
+ * branch that a fourteen-pixel glyph never amortises -- its runs are two to
+ * four pixels long.
+ *
+ * Left as it is, with the measurement recorded, so the idea does not get had
+ * again.
+ */
 static void ar__blit_coverage(ar_surface *s, ar_rect clip, const ar_glyph_slot *g,
                               const ar_u8 *cov, ar_i32 px, ar_i32 py, ar_color c, ar_u32 alpha)
 {
