@@ -14,6 +14,7 @@
 #define AR_TEXT_H
 
 #include "ar_font_file.h"
+#include "ar_shape.h"
 
 /* ------------------------------------------------------------------------
  * UTF-8
@@ -110,6 +111,16 @@ typedef struct ar_glyph_scratch
     ar_outline_buf outline;
     ar_i32        *acc; /* (w + 2) * h integers for the largest glyph */
     ar_i32         acc_cap;
+
+    /* Shaping works on a run of glyphs rather than one character at a time,
+       so a run has to be built somewhere. Text longer than this is shaped in
+       chunks split at spaces, which keeps ligatures whole because ligatures
+       do not cross words. A word longer than the buffer is the one case that
+       could lose one, and it is a word of over a hundred letters. */
+    ar_i32 *shape_glyph;
+    ar_i32 *shape_adv;
+    ar_i32 *shape_cluster;
+    ar_i32  shape_cap;
 } ar_glyph_scratch;
 
 void ar_glyph_cache_init(ar_glyph_cache *gc, ar_glyph_slot *slots, ar_i32 nslots, ar_u8 *pixels,
@@ -172,6 +183,13 @@ ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 p
 ar_i32 ar_text_draw_chain(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
                           const ar_font_chain *ch, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
                           ar_glyph_scratch *sc);
+
+/* The same, with the face's ligature and kerning tables applied. Passing a
+   null shaper is the same as the call above, which is what a caller with no
+   shaper or a face without the tables gets. */
+ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
+                           const ar_font_chain *ch, const ar_shaper *sh, ar_i32 ppem, ar_color c,
+                           ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width);
 
 /*
  * Breaks text into lines no wider than max_w pixels, writing the byte offset

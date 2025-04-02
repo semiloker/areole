@@ -397,6 +397,19 @@ void ar_font_darken(ar_ctx *c, ar_i32 amount);
  */
 void ar_font_subpixel(ar_ctx *c, int on);
 
+/*
+ * Ligatures and kerning, on whenever the face carries the tables.
+ *
+ * A string of characters is not a list of glyphs: fi is one glyph in most
+ * serif faces, and the gap between A and V is not the gap between n and n. A
+ * font says so in GSUB and GPOS, and a renderer that ignores them produces
+ * text that reads as having been set by a program.
+ *
+ * Turning it off is a performance choice rather than a typographic one. It
+ * saves a pass over each run and the buffer that pass needs.
+ */
+void ar_font_shaping(ar_ctx *c, int on);
+
 /* Cache hits, misses and resets since the face was loaded. A rising reset
    count means the atlas is too small for the interface and glyphs are being
    rasterized repeatedly; pass more atlas_bytes. Any argument may be null. */
