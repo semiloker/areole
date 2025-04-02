@@ -36,6 +36,10 @@ typedef struct ar_face
     /* Offsets into data. Zero means the table is absent. */
     ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2, name;
 
+    /* Shaping. gsub and gpos are the modern tables; kern is the legacy one,
+       which plenty of fonts still ship instead of a GPOS kern feature. */
+    ar_u32 gsub, gpos, kern;
+
     /* PostScript outlines. Zero when the font carries quadratics in glyf
        instead, which is the other half of the world. */
     ar_u32       cff;
