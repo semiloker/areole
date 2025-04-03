@@ -11,6 +11,7 @@
 #include "ar_text.h"
 #include "ar_break.h"
 #include "ar_bidi.h"
+#include "ar_shape.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -3700,6 +3701,59 @@ static void test_bidi_survives_anything(void)
     }
 }
 
+
+/* ------------------------------------------------------------------------
+ * Shaping
+ *
+ * The generated test font carries no GSUB or GPOS, so what is checked here is
+ * that a font without them is left exactly alone -- which is most of what a
+ * shaper must get right, because the alternative is corrupting text in every
+ * font that does not opt in.
+ *
+ * The tables themselves are verified against real fonts, where the answers are
+ * checkable: Constantia turns fi into one glyph and office into four, Calibri
+ * and Times kern AV by -89 and -264 units, and nnnn is left alone by all of
+ * them. Georgia's GPOS has no Latin pairs at all, which was confirmed by
+ * decoding its coverage table independently rather than assumed to be a bug.
+ * ------------------------------------------------------------------------ */
+static void test_shape_leaves_a_plain_font_alone(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_i32    g[4], a[4], cl[4], n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    CHECK(ar_shape_init(&sh, &f), "shape: a font with no GSUB or GPOS still gives a shaper");
+    CHECK(sh.liga_count == 0 && sh.kern_count == 0, "shape: with no lookups to apply");
+
+    g[0] = 1; g[1] = 1; g[2] = 1; g[3] = 1;
+    a[0] = 100; a[1] = 200; a[2] = 300; a[3] = 400;
+    cl[0] = 0; cl[1] = 1; cl[2] = 2; cl[3] = 3;
+
+    n = ar_shape_run(&sh, g, a, cl, 4);
+    CHECK(n == 4, "shape: the run keeps its length");
+    CHECK(g[0] == 1 && g[3] == 1, "shape: the glyphs are unchanged");
+    CHECK(a[0] == 100 && a[3] == 400, "shape: and so are the advances");
+    CHECK(cl[2] == 2, "shape: and the clusters");
+}
+
+static void test_shape_refuses_what_it_cannot_shape(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_i32    g[2], a[2];
+
+    /* A shaper over a face that failed to load must not fault, because a
+       caller that ignored ar_face_init's return value exists. */
+    ar_face_init(&f, "not a font", 10);
+    CHECK(!ar_shape_init(&sh, &f), "shape: a face that failed to load gives no shaper");
+
+    g[0] = 1; g[1] = 1; a[0] = 10; a[1] = 10;
+    CHECK(ar_shape_run(&sh, g, a, 0, 2) == 2, "shape: and shaping through it changes nothing");
+    CHECK(ar_shape_run(&sh, 0, 0, 0, 0) == 0, "shape: nor does shaping nothing");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3801,6 +3855,9 @@ int main(void)
     test_bidi_explicit_overrides();
     test_bidi_isolates();
     test_bidi_survives_anything();
+
+    test_shape_leaves_a_plain_font_alone();
+    test_shape_refuses_what_it_cannot_shape();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
