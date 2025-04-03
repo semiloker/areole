@@ -706,3 +706,114 @@ ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 p
     }
     return pen;
 }
+
+/*
+ * Draws with shaping.
+ *
+ * Shaping needs a run, not a character, so the string is split into chunks at
+ * spaces and each chunk is shaped and drawn. Splitting at spaces rather than
+ * at a fixed length is what keeps ligatures whole: a ligature never crosses a
+ * word, so a chunk boundary at a space cannot break one.
+ *
+ * When out_width is given, the pen advance is written there and nothing is
+ * drawn if the surface is null -- which is how measuring gets the same answer
+ * as drawing without walking the string twice with different code.
+ */
+ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
+                           const ar_font_chain *ch, const ar_shaper *sh, ar_i32 ppem, ar_color c,
+                           ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width)
+{
+    ar_i32  pen = x * AR_ONE_PIXEL;
+    ar_u32  alpha;
+    ar_rect bounds;
+    int     draw = (s && s->pixels);
+
+    if (!utf8 || !ch || ch->count <= 0)
+    {
+        if (out_width)
+        {
+            *out_width = 0;
+        }
+        return 0;
+    }
+    if (!sh || !sh->ok || !sc->shape_glyph || sc->shape_cap <= 0)
+    {
+        ar_i32 w = draw ? ar_text_draw_chain(s, clip, x, y, utf8, ch, ppem, c, gc, sc)
+                        : ar_text_measure_chain(utf8, ch, ppem, gc, sc);
+        if (out_width)
+        {
+            *out_width = w;
+        }
+        return w;
+    }
+
+    alpha = AR_ALPHA_OF(c);
+    bounds = draw ? ar_rect_intersect(clip, ar_rect_make(0, 0, s->w, s->h))
+                  : ar_rect_make(0, 0, 0, 0);
+    if (draw)
+    {
+        AR_COUNT(text_calls, 1);
+    }
+
+    while (*utf8)
+    {
+        ar_i32 n = 0, i, which = 0;
+
+        /* One chunk: up to the buffer, ending after a space where possible. */
+        while (*utf8 && n < sc->shape_cap)
+        {
+            const char *before = utf8;
+            ar_u32      cp = ar_utf8_next(&utf8);
+            ar_i32      glyph;
+
+            if (cp == 0)
+            {
+                break;
+            }
+            glyph = ar_font_chain_glyph(ch, cp, &which);
+            sc->shape_glyph[n] = glyph;
+            sc->shape_adv[n] = ar_face_advance(ch->face[which], glyph);
+            sc->shape_cluster[n] = which; /* the face, reused as the cluster tag */
+            ++n;
+            (void)before;
+            if (cp == ' ' && n > sc->shape_cap / 2)
+            {
+                break;
+            }
+        }
+
+        n = ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
+
+        for (i = 0; i < n; ++i)
+        {
+            ar_i32               face = sc->shape_cluster[i];
+            const ar_glyph_slot *g;
+
+            if (face < 0 || face >= ch->count)
+            {
+                face = 0;
+            }
+            g = ar_glyph_get_face(gc, ch->face[face], sc->shape_glyph[i], ppem,
+                                  (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, face, sc);
+            if (!g)
+            {
+                continue;
+            }
+            if (draw && g->w > 0 && g->h > 0 && alpha != 0 && !ar_rect_is_empty(bounds))
+            {
+                AR_COUNT(glyphs, 1);
+                ar__blit_coverage(s, bounds, g, gc->pixels + g->off, (pen / AR_ONE_PIXEL) + g->left,
+                                  y + g->top, c, alpha);
+            }
+            /* The shaped advance, in font units, rather than the cached
+               glyph's own: kerning changed it and a ligature replaced it. */
+            pen += ar_face_scale(ch->face[face], sc->shape_adv[i], ppem);
+        }
+    }
+
+    if (out_width)
+    {
+        *out_width = pen - x * AR_ONE_PIXEL;
+    }
+    return pen - x * AR_ONE_PIXEL;
+}

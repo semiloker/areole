@@ -133,6 +133,8 @@ struct ar_ctx
        so a build that never calls it pays nothing for any of this. */
     ar_face          face[AR_MAX_FACES];
     ar_font_chain    chain;
+    ar_shaper        shaper;
+    int              shaping;
     ar_glyph_cache   glyphs;
     ar_glyph_scratch glyph_scratch;
     int              have_face;

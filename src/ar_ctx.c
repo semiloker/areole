@@ -198,6 +198,7 @@ ar_u32 ar_stylesheet_errors(const ar_ctx *c)
 #define AR_GLYPH_SLOTS  512
 #define AR_GLYPH_PTS    2048
 #define AR_GLYPH_POINTS 512
+#define AR_SHAPE_RUN    192
 
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px)
 {
@@ -208,6 +209,7 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     ar_i32        *oy;
     ar_u8         *on;
     ar_i32        *acc;
+    ar_i32        *shape;
     ar_u32         acc_ints;
 
     if (max_px < 8)
@@ -241,8 +243,9 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     oy = (ar_i32 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS * (ar_u32)sizeof(ar_i32));
     on = (ar_u8 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS);
     acc = (ar_i32 *)ar_arena_persist(&c->arena, acc_ints * (ar_u32)sizeof(ar_i32));
+    shape = (ar_i32 *)ar_arena_persist(&c->arena, AR_SHAPE_RUN * 3u * (ar_u32)sizeof(ar_i32));
 
-    if (!slots || !atlas || !pts || !ox || !oy || !on || !acc)
+    if (!slots || !atlas || !pts || !ox || !oy || !on || !acc || !shape)
     {
         /* The arena is short. Saying so is better than rendering with a face
            whose cache has nowhere to live; the caller sized the block, so the
@@ -258,11 +261,19 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     c->glyph_scratch.outline.cap = AR_GLYPH_POINTS;
     c->glyph_scratch.acc = acc;
     c->glyph_scratch.acc_cap = (ar_i32)acc_ints;
+    c->glyph_scratch.shape_glyph = shape;
+    c->glyph_scratch.shape_adv = shape + AR_SHAPE_RUN;
+    c->glyph_scratch.shape_cluster = shape + AR_SHAPE_RUN * 2;
+    c->glyph_scratch.shape_cap = AR_SHAPE_RUN;
 
     ar_glyph_cache_init(&c->glyphs, slots, AR_GLYPH_SLOTS, atlas, (ar_i32)atlas_bytes);
 
     c->chain.face[0] = &c->face[0];
     c->chain.count = 1;
+
+    /* Ligatures and kerning are on when the face has the tables, because a
+       font that ships them means them. */
+    c->shaping = ar_shape_init(&c->shaper, &c->face[0]);
     c->have_face = 1;
     return 1;
 }
@@ -353,6 +364,18 @@ void ar_font_subpixel(ar_ctx *c, int on)
     }
     c->glyphs.subpx = want;
     ar_glyph_cache_clear(&c->glyphs);
+    ar_invalidate_all(c);
+}
+
+void ar_font_shaping(ar_ctx *c, int on)
+{
+    int want = on ? (c->face[0].gsub || c->face[0].gpos || c->face[0].kern) : 0;
+
+    if (c->shaping == want)
+    {
+        return;
+    }
+    c->shaping = want;
     ar_invalidate_all(c);
 }
 
@@ -761,8 +784,9 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
                    two paths take different y values for the same text. */
                 ar_i32 ppem = n->style.v[AR_P_FONT_SIZE];
                 ar_i32 base = ar_face_scale(&c->face[0], c->face[0].ascender, ppem) / AR_ONE_PIXEL;
-                ar_text_draw_chain(s, tclip, tx, ty + base, n->text, &c->chain, ppem, tc,
-                                   &c->glyphs, &c->glyph_scratch);
+                ar_text_draw_shaped(s, tclip, tx, ty + base, n->text, &c->chain,
+                                    c->shaping ? &c->shaper : 0, ppem, tc, &c->glyphs,
+                                    &c->glyph_scratch, 0);
             }
             else
             {
