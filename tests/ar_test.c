@@ -3754,6 +3754,65 @@ static void test_shape_refuses_what_it_cannot_shape(void)
 }
 
 
+
+/* ------------------------------------------------------------------------
+ * Arabic joining
+ *
+ * The joining classes are a property of the characters and can be checked
+ * without a font, which is what these do. The substitution they drive is
+ * verified against Arial, where the answers were confirmed by decoding its
+ * lookups in Python before the code was believed:
+ *
+ *   beh beh beh    913 913 911   initial, medial, final
+ *   alef beh       unchanged     alef joins only rightward, so beh is isolated
+ *   lam alef       one glyph     the mandatory ligature
+ *   beh alef beh   913 910 911   initial, final, isolated
+ *
+ * Arial maps beh's initial and medial forms to the same glyph and its final
+ * form to the isolated one. That looked like a bug and is a font design
+ * decision.
+ * ------------------------------------------------------------------------ */
+static void test_arabic_joining_classes(void)
+{
+    CHECK(ar_join_type(0x0628) == AR_JOIN_D, "join: beh joins on both sides");
+    CHECK(ar_join_type(0x0633) == AR_JOIN_D, "join: so does seen");
+    CHECK(ar_join_type(0x0627) == AR_JOIN_R, "join: alef joins only to the right");
+    CHECK(ar_join_type(0x062F) == AR_JOIN_R, "join: and so does dal");
+    CHECK(ar_join_type(0x0648) == AR_JOIN_R, "join: and waw");
+    CHECK(ar_join_type(0x0621) == AR_JOIN_U, "join: hamza joins nothing");
+    CHECK(ar_join_type(0x0640) == AR_JOIN_C, "join: tatweel causes joining without joining");
+    CHECK(ar_join_type(0x064E) == AR_JOIN_T, "join: a fatha is transparent");
+    CHECK(ar_join_type(0x0651) == AR_JOIN_T, "join: so is a shadda");
+    CHECK(ar_join_type('a') == AR_JOIN_U, "join: Latin does not join");
+    CHECK(ar_join_type(0x200D) == AR_JOIN_C, "join: the zero width joiner causes joining");
+    CHECK(ar_join_type(0x200C) == AR_JOIN_U, "join: and the non-joiner does not");
+}
+
+static void test_arabic_shaping_needs_a_font_with_the_features(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[3];
+    ar_i32    g[3], a[3], cl[3], n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+    CHECK(sh.init_count == 0 && sh.medi_count == 0 && sh.fina_count == 0,
+          "join: a face with no positional features has no lookups to apply");
+
+    cps[0] = 0x0628; cps[1] = 0x0628; cps[2] = 0x0628;
+    g[0] = 1; g[1] = 1; g[2] = 1;
+    a[0] = 10; a[1] = 10; a[2] = 10;
+    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+
+    /* Without the tables, the glyphs must come through untouched rather than
+       being guessed at. A wrong shape is worse than an unshaped one. */
+    n = ar_shape_run_cp(&sh, cps, g, a, cl, 3);
+    CHECK(n == 3 && g[0] == 1 && g[1] == 1 && g[2] == 1,
+          "join: and leaves the glyphs exactly alone");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3858,6 +3917,8 @@ int main(void)
 
     test_shape_leaves_a_plain_font_alone();
     test_shape_refuses_what_it_cannot_shape();
+    test_arabic_joining_classes();
+    test_arabic_shaping_needs_a_font_with_the_features();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();

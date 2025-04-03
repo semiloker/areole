@@ -771,6 +771,10 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
                 break;
             }
             glyph = ar_font_chain_glyph(ch, cp, &which);
+            if (sc->shape_cp)
+            {
+                sc->shape_cp[n] = cp;
+            }
             sc->shape_glyph[n] = glyph;
             sc->shape_adv[n] = ar_face_advance(ch->face[which], glyph);
             sc->shape_cluster[n] = which; /* the face, reused as the cluster tag */
@@ -782,7 +786,11 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
             }
         }
 
-        n = ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
+        /* With the characters, joining can be resolved and Arabic gets its
+           positional forms; without them, only the glyph-level features. */
+        n = sc->shape_cp ? ar_shape_run_cp(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
+                                           sc->shape_cluster, n)
+                         : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
 
         for (i = 0; i < n; ++i)
         {

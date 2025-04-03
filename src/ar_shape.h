@@ -46,6 +46,20 @@ typedef struct ar_shaper
     ar_u32 kerns[AR_SHAPE_MAX_LOOKUPS];
     ar_i32 kern_count;
 
+    /* Arabic positional forms. A letter has up to four shapes depending on
+       what it joins to on each side, and each shape is a separate glyph
+       reached through a single substitution. Without these, Arabic renders as
+       a row of isolated letters -- readable in the way that S P A C E D
+       C A P I T A L S are readable. */
+    ar_u32 init[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 init_count;
+    ar_u32 medi[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 medi_count;
+    ar_u32 fina[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 fina_count;
+    ar_u32 rlig[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 rlig_count;
+
     int ok;
 } ar_shaper;
 
@@ -65,5 +79,29 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face);
  */
 ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
                     ar_i32 count);
+
+/*
+ * The same, told which characters the glyphs came from so that Arabic
+ * positional forms can be chosen.
+ *
+ * Joining is a property of the characters, not the glyphs: whether a letter
+ * takes its initial form depends on what precedes and follows it in the text.
+ * A shaper handed only glyph indices cannot know that, which is why this takes
+ * the codepoints as well.
+ */
+ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+                       ar_i32 *cluster, ar_i32 count);
+
+/* Arabic joining classes, from the Unicode joining type property. */
+enum
+{
+    AR_JOIN_U = 0, /* non-joining                       */
+    AR_JOIN_R,     /* joins to the right only           */
+    AR_JOIN_D,     /* joins on both sides               */
+    AR_JOIN_C,     /* causes joining, joins nothing     */
+    AR_JOIN_T      /* transparent: marks, skipped over  */
+};
+
+ar_i32 ar_join_type(ar_u32 cp);
 
 #endif /* AR_SHAPE_H */
