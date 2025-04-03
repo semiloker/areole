@@ -788,8 +788,8 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
 
         /* With the characters, joining can be resolved and Arabic gets its
            positional forms; without them, only the glyph-level features. */
-        n = sc->shape_cp ? ar_shape_run_cp(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
-                                           sc->shape_cluster, n)
+        n = sc->shape_cp ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
+                                            sc->shape_dx, sc->shape_dy, sc->shape_cluster, n)
                          : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
 
         for (i = 0; i < n; ++i)
@@ -809,9 +809,17 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
             }
             if (draw && g->w > 0 && g->h > 0 && alpha != 0 && !ar_rect_is_empty(bounds))
             {
+                /* A mark carries a displacement from the letter it belongs to,
+                   in font units, and it is the only thing that ever does. */
+                ar_i32 mx = 0, my = 0;
+                if (sc->shape_dx && sc->shape_dy)
+                {
+                    mx = ar_face_scale(ch->face[face], sc->shape_dx[i], ppem) / AR_ONE_PIXEL;
+                    my = ar_face_scale(ch->face[face], sc->shape_dy[i], ppem) / AR_ONE_PIXEL;
+                }
                 AR_COUNT(glyphs, 1);
-                ar__blit_coverage(s, bounds, g, gc->pixels + g->off, (pen / AR_ONE_PIXEL) + g->left,
-                                  y + g->top, c, alpha);
+                ar__blit_coverage(s, bounds, g, gc->pixels + g->off,
+                                  (pen / AR_ONE_PIXEL) + g->left + mx, y + g->top - my, c, alpha);
             }
             /* The shaped advance, in font units, rather than the cached
                glyph's own: kerning changed it and a ligature replaced it. */

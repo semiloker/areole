@@ -60,6 +60,13 @@ typedef struct ar_shaper
     ar_u32 rlig[AR_SHAPE_MAX_LOOKUPS];
     ar_i32 rlig_count;
 
+    /* Mark attachment. A diacritic has no advance and no position of its own:
+       the font says where it sits relative to the letter it belongs to. With
+       nothing applied, every Arabic and Devanagari mark lands on the baseline
+       at the origin, which reads as the text having lost them. */
+    ar_u32 mark[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 mark_count;
+
     int ok;
 } ar_shaper;
 
@@ -91,6 +98,18 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
  */
 ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                        ar_i32 *cluster, ar_i32 count);
+
+/*
+ * The same again, with somewhere to put mark offsets.
+ *
+ * dx and dy receive a per-glyph displacement in font units, which is zero for
+ * everything except an attached mark. They may be null, and then mark
+ * attachment is skipped rather than silently dropped -- a caller with nowhere
+ * to put the offsets is better off with marks on the baseline than with marks
+ * it thinks are positioned and are not.
+ */
+ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count);
 
 /* Arabic joining classes, from the Unicode joining type property. */
 enum

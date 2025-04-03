@@ -244,6 +244,7 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
     /* rlig is required rather than optional in Arabic: lam-alef must ligate or
        the text is wrong, not merely plain. */
     ar__collect(face, sh->gsub, "rlig", sh->rlig, &sh->rlig_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gpos, "mark", sh->mark, &sh->mark_count, AR_SHAPE_MAX_LOOKUPS);
 
     sh->ok = 1;
     return 1;
@@ -587,6 +588,74 @@ static ar_i32 ar__pair_adjust(const ar_face *f, ar_u32 sub, ar_i32 a, ar_i32 b)
     return 0;
 }
 
+
+/* An anchor is a point in the glyph's own coordinates. Format 2 adds a
+   contour point index for hinted attachment and format 3 device tables; both
+   carry the plain coordinates first, so both are read as format 1. */
+static void ar__anchor(const ar_face *f, ar_u32 at, ar_i32 *x, ar_i32 *y)
+{
+    *x = 0;
+    *y = 0;
+    if (!at || ar__sh_u16(f, at) == 0)
+    {
+        return;
+    }
+    *x = ar__sh_i16(f, at + 2);
+    *y = ar__sh_i16(f, at + 4);
+}
+
+/*
+ * GPOS type 4: mark to base.
+ *
+ * The font gives an anchor on the base glyph and an anchor on the mark, one
+ * per mark class. The mark is placed so the two coincide, which is the whole
+ * of the rule: displacement = base anchor - mark anchor.
+ *
+ * Returns non-zero when the pair was handled, so the caller can stop looking.
+ */
+static int ar__mark_to_base(const ar_face *f, ar_u32 sub, ar_i32 base, ar_i32 mark, ar_i32 *dx,
+                            ar_i32 *dy)
+{
+    ar_u32 mark_cov, base_cov, classes, mark_array, base_array;
+    ar_i32 mi, bi, cls;
+    ar_i32 bx, by, mx, my;
+
+    if (ar__sh_u16(f, sub) != 1)
+    {
+        return 0;
+    }
+    mark_cov = sub + ar__sh_u16(f, sub + 2);
+    base_cov = sub + ar__sh_u16(f, sub + 4);
+    classes = ar__sh_u16(f, sub + 6);
+    mark_array = sub + ar__sh_u16(f, sub + 8);
+    base_array = sub + ar__sh_u16(f, sub + 10);
+
+    mi = ar__coverage(f, mark_cov, mark);
+    bi = ar__coverage(f, base_cov, base);
+    if (mi < 0 || bi < 0 || classes == 0)
+    {
+        return 0;
+    }
+    if ((ar_u32)mi >= ar__sh_u16(f, mark_array) || (ar_u32)bi >= ar__sh_u16(f, base_array))
+    {
+        return 0;
+    }
+
+    cls = (ar_i32)ar__sh_u16(f, mark_array + 2 + (ar_u32)mi * 4);
+    if (cls < 0 || (ar_u32)cls >= classes)
+    {
+        return 0;
+    }
+
+    ar__anchor(f, mark_array + ar__sh_u16(f, mark_array + 4 + (ar_u32)mi * 4), &mx, &my);
+    ar__anchor(f, base_array + ar__sh_u16(f, base_array + 2 + ((ar_u32)bi * classes + (ar_u32)cls) * 2),
+               &bx, &by);
+
+    *dx = bx - mx;
+    *dy = by - my;
+    return 1;
+}
+
 /* ------------------------------------------------------------------------
  * The legacy kern table
  *
@@ -634,11 +703,73 @@ static ar_i32 ar__legacy_kern(const ar_face *f, ar_u32 kern, ar_i32 a, ar_i32 b)
 ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                        ar_i32 *cluster, ar_i32 count)
 {
+    return ar_shape_run_pos(sh, cps, glyphs, adv, 0, 0, cluster, count);
+}
+
+ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count)
+{
+    ar_i32 i;
+
     if (sh && sh->ok && cps && glyphs && count > 0)
     {
         ar__arabic_forms(sh, cps, glyphs, count);
     }
-    return ar_shape_run(sh, glyphs, adv, cluster, count);
+    if (dx && dy)
+    {
+        for (i = 0; i < count; ++i)
+        {
+            dx[i] = 0;
+            dy[i] = 0;
+        }
+    }
+
+    count = ar_shape_run(sh, glyphs, adv, cluster, count);
+
+    if (dx && dy && sh && sh->ok && sh->mark_count > 0)
+    {
+        const ar_face *f = sh->face;
+        ar_i32         base = -1;
+
+        for (i = 0; i < count; ++i)
+        {
+            ar_i32 k;
+            int    attached = 0;
+
+            for (k = 0; k < sh->mark_count && !attached; ++k)
+            {
+                ar_u32 lookup = sh->mark[k];
+                ar_u32 nsub = ar__sh_u16(f, lookup + 4);
+                ar_u32 j;
+
+                for (j = 0; j < nsub && !attached; ++j)
+                {
+                    ar_i32 type;
+                    ar_u32 sub = ar__subtable(f, lookup, j, &type);
+
+                    if (type != 4 || base < 0)
+                    {
+                        continue;
+                    }
+                    attached = ar__mark_to_base(f, sub, glyphs[base], glyphs[i], &dx[i], &dy[i]);
+                }
+            }
+
+            /* Anything that was not attached is a base for what follows. A
+               mark that no lookup claimed is left where it was, which is the
+               honest outcome: the font did not say where it goes. */
+            if (!attached)
+            {
+                base = i;
+            }
+            else if (adv)
+            {
+                /* An attached mark takes no space of its own. */
+                adv[i] = 0;
+            }
+        }
+    }
+    return count;
 }
 
 ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
