@@ -193,6 +193,31 @@ does not, are written beside it.
 Japanese character gives the notdef box everyone recognises. Each character is
 drawn by the first face in the chain that has it.
 
+## Text that behaves
+
+A string of characters is not a list of glyphs, and the order it is stored in
+is not always the order it is drawn in.
+
+**Ligatures and kerning** come from the font's own GSUB and GPOS tables, on
+whenever a face carries them. In Constantia, `office` is four glyphs rather than
+six and `AV` is 180 units tighter; `nnnn` is correctly left alone.
+
+**The bidirectional algorithm** is UAX #9, not "reverse the Arabic parts".
+
+```
+abc אבג     Latin drawn first, then Hebrew
+אבג abc     the Latin drawn FIRST, because in an RTL paragraph the last
+            logical text is leftmost on screen
+אב 123      the digits two levels up, not one, or they render as 321
+```
+
+**Line breaking** is UAX #14, not "at spaces". `one-two` breaks after the
+hyphen, `1,000.50` does not break at all, a closing bracket is never orphaned,
+and Japanese breaks between ideographs.
+
+**Fallback** is a chain: each character is drawn by the first face that has it,
+so a Latin face plus a CJK face renders both rather than one and a row of tofu.
+
 ## Against the alternatives
 
 Same machine, same process, same output buffer, alternating one frame each so
@@ -310,6 +335,7 @@ toolkit breaks that circle.
 - **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
+- **0.3.0** *It shapes text* — bidi, ligatures, kerning 🚧
 - **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
