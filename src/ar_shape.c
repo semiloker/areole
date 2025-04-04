@@ -238,6 +238,12 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
 
     ar__collect(face, sh->gsub, "liga", sh->liga, &sh->liga_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gpos, "kern", sh->kerns, &sh->kern_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gsub, "init", sh->init, &sh->init_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gsub, "medi", sh->medi, &sh->medi_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gsub, "fina", sh->fina, &sh->fina_count, AR_SHAPE_MAX_LOOKUPS);
+    /* rlig is required rather than optional in Arabic: lam-alef must ligate or
+       the text is wrong, not merely plain. */
+    ar__collect(face, sh->gsub, "rlig", sh->rlig, &sh->rlig_count, AR_SHAPE_MAX_LOOKUPS);
 
     sh->ok = 1;
     return 1;
@@ -268,6 +274,206 @@ static ar_u32 ar__subtable(const ar_face *f, ar_u32 lookup, ar_u32 j, ar_i32 *ty
     }
     *type = (ar_i32)t;
     return at;
+}
+
+
+/*
+ * Arabic joining.
+ *
+ * Every Arabic letter has up to four shapes, and which one it takes depends on
+ * what it joins to on each side. Most letters join both ways; a handful --
+ * alef, dal, ra, waw and their relatives -- join only to the right, so the
+ * letter after them always starts a new group. Marks are transparent: a
+ * fatha between two letters does not stop them joining.
+ *
+ * Getting this wrong does not produce garbage, it produces a row of isolated
+ * letters. Which is readable in the way that S P A C E D  C A P I T A L S are
+ * readable, and is how unshaped Arabic looks everywhere it appears.
+ */
+ar_i32 ar_join_type(ar_u32 cp)
+{
+    struct jrange
+    {
+        ar_u32 lo, hi;
+        ar_u8  t;
+    };
+    /* The right-joining letters, listed because they are the exceptions and
+       the rest of the block is dual-joining. */
+    static const struct jrange J[] = {
+        {0x0600, 0x0605, AR_JOIN_U}, {0x0610, 0x061A, AR_JOIN_T}, {0x0620, 0x0620, AR_JOIN_D},
+        {0x0621, 0x0621, AR_JOIN_U}, /* hamza */
+        {0x0622, 0x0625, AR_JOIN_R}, /* alef with madda, hamza above/below */
+        {0x0626, 0x0626, AR_JOIN_D}, {0x0627, 0x0627, AR_JOIN_R}, /* alef */
+        {0x0628, 0x0628, AR_JOIN_D}, {0x0629, 0x0629, AR_JOIN_R}, /* teh marbuta */
+        {0x062A, 0x062E, AR_JOIN_D},
+        {0x062F, 0x0632, AR_JOIN_R}, /* dal, thal, ra, zain */
+        {0x0633, 0x063F, AR_JOIN_D}, {0x0640, 0x0640, AR_JOIN_C}, /* tatweel */
+        {0x0641, 0x0647, AR_JOIN_D}, {0x0648, 0x0648, AR_JOIN_R}, /* waw */
+        {0x0649, 0x064A, AR_JOIN_D}, {0x064B, 0x065F, AR_JOIN_T},
+        {0x0660, 0x066F, AR_JOIN_U}, {0x0670, 0x0670, AR_JOIN_T},
+        {0x0671, 0x0673, AR_JOIN_R}, {0x0674, 0x0674, AR_JOIN_U},
+        {0x0675, 0x0677, AR_JOIN_R}, {0x0678, 0x0688, AR_JOIN_D},
+        {0x0689, 0x0699, AR_JOIN_R}, {0x069A, 0x06BF, AR_JOIN_D},
+        {0x06C0, 0x06CB, AR_JOIN_R}, {0x06CC, 0x06CC, AR_JOIN_D},
+        {0x06CD, 0x06CE, AR_JOIN_R}, {0x06CF, 0x06CF, AR_JOIN_R},
+        {0x06D0, 0x06D3, AR_JOIN_D}, {0x06D4, 0x06D4, AR_JOIN_U},
+        {0x06D5, 0x06D5, AR_JOIN_R}, {0x06D6, 0x06ED, AR_JOIN_T},
+        {0x06EE, 0x06EF, AR_JOIN_R}, {0x06F0, 0x06F9, AR_JOIN_U},
+        {0x06FA, 0x06FF, AR_JOIN_D},
+        {0x0710, 0x0710, AR_JOIN_R}, {0x0711, 0x0711, AR_JOIN_T}, /* Syriac */
+        {0x0712, 0x072F, AR_JOIN_D}, {0x0730, 0x074A, AR_JOIN_T},
+        {0x0750, 0x077F, AR_JOIN_D},
+        {0x200C, 0x200C, AR_JOIN_U}, /* zero width non-joiner */
+        {0x200D, 0x200D, AR_JOIN_C}  /* zero width joiner     */
+    };
+    ar_i32 i, n = (ar_i32)(sizeof J / sizeof J[0]);
+
+    for (i = 0; i < n; ++i)
+    {
+        if (cp >= J[i].lo && cp <= J[i].hi)
+        {
+            return J[i].t;
+        }
+    }
+    return AR_JOIN_U;
+}
+
+/* GSUB type 1: one glyph becomes one other glyph. Both formats: a delta added
+   to the glyph id, or a table of replacements indexed by coverage. */
+static ar_i32 ar__single_sub(const ar_face *f, ar_u32 sub, ar_i32 glyph)
+{
+    ar_u32 format = ar__sh_u16(f, sub);
+    ar_i32 cov = ar__coverage(f, sub + ar__sh_u16(f, sub + 2), glyph);
+
+    if (cov < 0)
+    {
+        return -1;
+    }
+    if (format == 1)
+    {
+        return (glyph + ar__sh_i16(f, sub + 4)) & 0xFFFF;
+    }
+    if (format == 2 && (ar_u32)cov < ar__sh_u16(f, sub + 4))
+    {
+        return (ar_i32)ar__sh_u16(f, sub + 6 + (ar_u32)cov * 2);
+    }
+    return -1;
+}
+
+/* Applies the first single-substitution lookup in a feature that covers this
+   glyph. A font lists one lookup per script; the first that has the glyph is
+   the one that meant it. */
+static ar_i32 ar__apply_single(const ar_shaper *sh, const ar_u32 *lookups, ar_i32 nlookups,
+                               ar_i32 glyph)
+{
+    const ar_face *f = sh->face;
+    ar_i32         k;
+
+    for (k = 0; k < nlookups; ++k)
+    {
+        ar_u32 lookup = lookups[k];
+        ar_u32 nsub = ar__sh_u16(f, lookup + 4);
+        ar_u32 j;
+
+        for (j = 0; j < nsub; ++j)
+        {
+            ar_i32 type;
+            ar_u32 sub = ar__subtable(f, lookup, j, &type);
+            ar_i32 g;
+
+            if (type != 1)
+            {
+                continue;
+            }
+            g = ar__single_sub(f, sub, glyph);
+            if (g >= 0)
+            {
+                return g;
+            }
+        }
+    }
+    return -1;
+}
+
+/*
+ * Chooses each letter's positional form.
+ *
+ * A letter takes its final form when something joins it from the right, its
+ * initial form when it joins something on the left, and its medial form when
+ * both. In logical order -- which is what this walks -- "joins the previous
+ * letter" means the previous letter is dual or join-causing, and "joins the
+ * next" means this letter is dual and the next one can be joined to.
+ */
+static void ar__arabic_forms(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 count)
+{
+    ar_i32 i;
+
+    if (!sh->init_count && !sh->medi_count && !sh->fina_count)
+    {
+        return;
+    }
+
+    for (i = 0; i < count; ++i)
+    {
+        ar_i32 t = ar_join_type(cps[i]);
+        ar_i32 prev, next, j;
+        ar_i32 joins_prev = 0, joins_next = 0;
+        ar_i32 g;
+
+        if (t == AR_JOIN_T || t == AR_JOIN_U)
+        {
+            continue; /* marks and non-joining letters keep their shape */
+        }
+
+        /* Marks are transparent, so look past them in both directions. */
+        prev = -1;
+        for (j = i - 1; j >= 0; --j)
+        {
+            if (ar_join_type(cps[j]) != AR_JOIN_T)
+            {
+                prev = j;
+                break;
+            }
+        }
+        next = -1;
+        for (j = i + 1; j < count; ++j)
+        {
+            if (ar_join_type(cps[j]) != AR_JOIN_T)
+            {
+                next = j;
+                break;
+            }
+        }
+
+        if (prev >= 0)
+        {
+            ar_i32 pt = ar_join_type(cps[prev]);
+            joins_prev = (pt == AR_JOIN_D || pt == AR_JOIN_C);
+        }
+        if (next >= 0 && t == AR_JOIN_D)
+        {
+            ar_i32 nt = ar_join_type(cps[next]);
+            joins_next = (nt == AR_JOIN_D || nt == AR_JOIN_R || nt == AR_JOIN_C);
+        }
+
+        g = -1;
+        if (joins_prev && joins_next)
+        {
+            g = ar__apply_single(sh, sh->medi, sh->medi_count, glyphs[i]);
+        }
+        else if (joins_prev)
+        {
+            g = ar__apply_single(sh, sh->fina, sh->fina_count, glyphs[i]);
+        }
+        else if (joins_next)
+        {
+            g = ar__apply_single(sh, sh->init, sh->init_count, glyphs[i]);
+        }
+        if (g >= 0)
+        {
+            glyphs[i] = g;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -425,6 +631,16 @@ static ar_i32 ar__legacy_kern(const ar_face *f, ar_u32 kern, ar_i32 a, ar_i32 b)
 }
 
 /* ------------------------------------------------------------------------ */
+ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+                       ar_i32 *cluster, ar_i32 count)
+{
+    if (sh && sh->ok && cps && glyphs && count > 0)
+    {
+        ar__arabic_forms(sh, cps, glyphs, count);
+    }
+    return ar_shape_run(sh, glyphs, adv, cluster, count);
+}
+
 ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
                     ar_i32 count)
 {
@@ -444,9 +660,9 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
     {
         ar_i32 replaced = -1, consumed = 1;
 
-        for (k = 0; k < sh->liga_count && replaced < 0; ++k)
+        for (k = 0; k < sh->liga_count + sh->rlig_count && replaced < 0; ++k)
         {
-            ar_u32 lookup = sh->liga[k];
+            ar_u32 lookup = k < sh->liga_count ? sh->liga[k] : sh->rlig[k - sh->liga_count];
             ar_u32 nsub = ar__sh_u16(f, lookup + 4);
             ar_u32 j;
 

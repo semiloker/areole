@@ -243,7 +243,7 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     oy = (ar_i32 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS * (ar_u32)sizeof(ar_i32));
     on = (ar_u8 *)ar_arena_persist(&c->arena, AR_GLYPH_POINTS);
     acc = (ar_i32 *)ar_arena_persist(&c->arena, acc_ints * (ar_u32)sizeof(ar_i32));
-    shape = (ar_i32 *)ar_arena_persist(&c->arena, AR_SHAPE_RUN * 3u * (ar_u32)sizeof(ar_i32));
+    shape = (ar_i32 *)ar_arena_persist(&c->arena, AR_SHAPE_RUN * 4u * (ar_u32)sizeof(ar_i32));
 
     if (!slots || !atlas || !pts || !ox || !oy || !on || !acc || !shape)
     {
@@ -264,6 +264,7 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     c->glyph_scratch.shape_glyph = shape;
     c->glyph_scratch.shape_adv = shape + AR_SHAPE_RUN;
     c->glyph_scratch.shape_cluster = shape + AR_SHAPE_RUN * 2;
+    c->glyph_scratch.shape_cp = (ar_u32 *)(shape + AR_SHAPE_RUN * 3);
     c->glyph_scratch.shape_cap = AR_SHAPE_RUN;
 
     ar_glyph_cache_init(&c->glyphs, slots, AR_GLYPH_SLOTS, atlas, (ar_i32)atlas_bytes);
