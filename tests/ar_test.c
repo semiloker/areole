@@ -3813,6 +3813,59 @@ static void test_arabic_shaping_needs_a_font_with_the_features(void)
 }
 
 
+
+/* Mark attachment. Verified against Arial, where a fatha over a beh comes back
+   with a displacement of +288,-220 font units and an advance of zero, and a
+   shadda and a kasra on the same letter get different displacements because
+   one sits above it and one below. A mark with no advance and no offset lands
+   on the baseline at the origin, which reads as the text having lost it. */
+static void test_marks_need_the_tables(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[2];
+    ar_i32    g[2], a[2], dx[2], dy[2], cl[2], n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+    CHECK(sh.mark_count == 0, "marks: a face with no GPOS mark feature has no lookups");
+
+    cps[0] = 0x0628;
+    cps[1] = 0x064E;
+    g[0] = 1; g[1] = 1;
+    a[0] = 10; a[1] = 10;
+    dx[0] = 99; dx[1] = 99;
+    dy[0] = 99; dy[1] = 99;
+    cl[0] = 0; cl[1] = 1;
+
+    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 2);
+    CHECK(n == 2, "marks: the run is unchanged without the tables");
+    CHECK(dx[0] == 0 && dy[0] == 0 && dx[1] == 0 && dy[1] == 0,
+          "marks: and the offsets are cleared rather than left as they were found");
+    CHECK(a[1] == 10, "marks: an unattached mark keeps its own advance");
+}
+
+static void test_marks_are_optional_to_ask_for(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[2];
+    ar_i32    g[2], a[2], cl[2];
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+
+    cps[0] = 0x0628; cps[1] = 0x064E;
+    g[0] = 1; g[1] = 1; a[0] = 10; a[1] = 10; cl[0] = 0; cl[1] = 1;
+
+    /* Passing no offset arrays must skip attachment rather than write
+       through a null pointer: a caller with nowhere to put the offsets is
+       better off with marks on the baseline than with a fault. */
+    CHECK(ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 2) == 2,
+          "marks: shaping without offset arrays does not fault");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3919,6 +3972,8 @@ int main(void)
     test_shape_refuses_what_it_cannot_shape();
     test_arabic_joining_classes();
     test_arabic_shaping_needs_a_font_with_the_features();
+    test_marks_need_the_tables();
+    test_marks_are_optional_to_ask_for();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();

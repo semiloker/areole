@@ -121,6 +121,8 @@ typedef struct ar_glyph_scratch
     ar_i32 *shape_adv;
     ar_i32 *shape_cluster;
     ar_u32 *shape_cp; /* the characters, which Arabic joining needs */
+    ar_i32 *shape_dx; /* mark displacements, in font units */
+    ar_i32 *shape_dy;
     ar_i32  shape_cap;
 } ar_glyph_scratch;
 
