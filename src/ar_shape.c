@@ -245,6 +245,7 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
        the text is wrong, not merely plain. */
     ar__collect(face, sh->gsub, "rlig", sh->rlig, &sh->rlig_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gpos, "mark", sh->mark, &sh->mark_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gpos, "mkmk", sh->mkmk, &sh->mkmk_count, AR_SHAPE_MAX_LOOKUPS);
 
     sh->ok = 1;
     return 1;
@@ -605,38 +606,42 @@ static void ar__anchor(const ar_face *f, ar_u32 at, ar_i32 *x, ar_i32 *y)
 }
 
 /*
- * GPOS type 4: mark to base.
+ * GPOS types 4, 5 and 6 all say the same thing in the same shape: a mark
+ * carries an anchor and a class, the thing it attaches to carries one anchor
+ * per class, and the mark is placed so the two coincide. What differs is only
+ * where the second array's anchors live.
  *
- * The font gives an anchor on the base glyph and an anchor on the mark, one
- * per mark class. The mark is placed so the two coincide, which is the whole
- * of the rule: displacement = base anchor - mark anchor.
+ *   type 4  mark to base       one anchor set per base glyph
+ *   type 5  mark to ligature   one anchor set per component of the ligature
+ *   type 6  mark to mark       one anchor set per preceding mark
  *
- * Returns non-zero when the pair was handled, so the caller can stop looking.
+ * So one function does all three, told how to find the second anchor.
  */
-static int ar__mark_to_base(const ar_face *f, ar_u32 sub, ar_i32 base, ar_i32 mark, ar_i32 *dx,
-                            ar_i32 *dy)
+static int ar__mark_attach(const ar_face *f, ar_u32 sub, ar_i32 kind, ar_i32 anchor_glyph,
+                           ar_i32 mark, ar_i32 *dx, ar_i32 *dy)
 {
-    ar_u32 mark_cov, base_cov, classes, mark_array, base_array;
-    ar_i32 mi, bi, cls;
-    ar_i32 bx, by, mx, my;
+    ar_u32 mark_cov, other_cov, classes, mark_array, other_array;
+    ar_i32 mi, oi, cls;
+    ar_i32 ax, ay, mx, my;
+    ar_u32 anchor_off;
 
     if (ar__sh_u16(f, sub) != 1)
     {
         return 0;
     }
     mark_cov = sub + ar__sh_u16(f, sub + 2);
-    base_cov = sub + ar__sh_u16(f, sub + 4);
+    other_cov = sub + ar__sh_u16(f, sub + 4);
     classes = ar__sh_u16(f, sub + 6);
     mark_array = sub + ar__sh_u16(f, sub + 8);
-    base_array = sub + ar__sh_u16(f, sub + 10);
+    other_array = sub + ar__sh_u16(f, sub + 10);
 
     mi = ar__coverage(f, mark_cov, mark);
-    bi = ar__coverage(f, base_cov, base);
-    if (mi < 0 || bi < 0 || classes == 0)
+    oi = ar__coverage(f, other_cov, anchor_glyph);
+    if (mi < 0 || oi < 0 || classes == 0)
     {
         return 0;
     }
-    if ((ar_u32)mi >= ar__sh_u16(f, mark_array) || (ar_u32)bi >= ar__sh_u16(f, base_array))
+    if ((ar_u32)mi >= ar__sh_u16(f, mark_array) || (ar_u32)oi >= ar__sh_u16(f, other_array))
     {
         return 0;
     }
@@ -646,13 +651,44 @@ static int ar__mark_to_base(const ar_face *f, ar_u32 sub, ar_i32 base, ar_i32 ma
     {
         return 0;
     }
-
     ar__anchor(f, mark_array + ar__sh_u16(f, mark_array + 4 + (ar_u32)mi * 4), &mx, &my);
-    ar__anchor(f, base_array + ar__sh_u16(f, base_array + 2 + ((ar_u32)bi * classes + (ar_u32)cls) * 2),
-               &bx, &by);
 
-    *dx = bx - mx;
-    *dy = by - my;
+    if (kind == 5)
+    {
+        /* A ligature has one anchor set per component, and which component a
+           mark belongs to depends on which character it followed before the
+           ligature swallowed them. This shaper collapses a ligature to one
+           glyph and does not keep that, so the last component is used.
+
+           That is right for Arabic lam-alef, where a mark after the pair
+           belongs to the alef, and wrong for a mark that belonged to the lam.
+           Keeping component indices means carrying them through substitution,
+           which is what a full shaper does and this one does not yet. */
+        ar_u32 attach = other_array + ar__sh_u16(f, other_array + 2 + (ar_u32)oi * 2);
+        ar_u32 ncomp = ar__sh_u16(f, attach);
+        if (ncomp == 0)
+        {
+            return 0;
+        }
+        anchor_off = ar__sh_u16(f, attach + 2 + ((ncomp - 1) * classes + (ar_u32)cls) * 2);
+        if (!anchor_off)
+        {
+            return 0;
+        }
+        ar__anchor(f, attach + anchor_off, &ax, &ay);
+    }
+    else
+    {
+        anchor_off = ar__sh_u16(f, other_array + 2 + ((ar_u32)oi * classes + (ar_u32)cls) * 2);
+        if (!anchor_off)
+        {
+            return 0;
+        }
+        ar__anchor(f, other_array + anchor_off, &ax, &ay);
+    }
+
+    *dx = ax - mx;
+    *dy = ay - my;
     return 1;
 }
 
@@ -726,17 +762,46 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, 
 
     count = ar_shape_run(sh, glyphs, adv, cluster, count);
 
-    if (dx && dy && sh && sh->ok && sh->mark_count > 0)
+    if (dx && dy && sh && sh->ok && (sh->mark_count > 0 || sh->mkmk_count > 0))
     {
         const ar_face *f = sh->face;
-        ar_i32         base = -1;
+        ar_i32         base = -1;     /* the last thing a mark can attach to  */
+        ar_i32         last_mark = -1; /* and the last mark, for mark to mark */
 
         for (i = 0; i < count; ++i)
         {
             ar_i32 k;
             int    attached = 0;
 
-            for (k = 0; k < sh->mark_count && !attached; ++k)
+            /* Mark to mark first: a vowel above a shadda belongs to the
+               shadda, and only falls back to the letter if the font does not
+               say otherwise. */
+            for (k = 0; k < sh->mkmk_count && !attached && last_mark >= 0; ++k)
+            {
+                ar_u32 lookup = sh->mkmk[k];
+                ar_u32 nsub = ar__sh_u16(f, lookup + 4);
+                ar_u32 j;
+
+                for (j = 0; j < nsub && !attached; ++j)
+                {
+                    ar_i32 type;
+                    ar_u32 sub = ar__subtable(f, lookup, j, &type);
+                    if (type != 6)
+                    {
+                        continue;
+                    }
+                    attached = ar__mark_attach(f, sub, 6, glyphs[last_mark], glyphs[i], &dx[i],
+                                               &dy[i]);
+                    if (attached)
+                    {
+                        /* Relative to a mark that is itself displaced. */
+                        dx[i] += dx[last_mark];
+                        dy[i] += dy[last_mark];
+                    }
+                }
+            }
+
+            for (k = 0; k < sh->mark_count && !attached && base >= 0; ++k)
             {
                 ar_u32 lookup = sh->mark[k];
                 ar_u32 nsub = ar__sh_u16(f, lookup + 4);
@@ -746,12 +811,12 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, 
                 {
                     ar_i32 type;
                     ar_u32 sub = ar__subtable(f, lookup, j, &type);
-
-                    if (type != 4 || base < 0)
+                    if (type != 4 && type != 5)
                     {
                         continue;
                     }
-                    attached = ar__mark_to_base(f, sub, glyphs[base], glyphs[i], &dx[i], &dy[i]);
+                    attached = ar__mark_attach(f, sub, type, glyphs[base], glyphs[i], &dx[i],
+                                               &dy[i]);
                 }
             }
 
@@ -761,11 +826,15 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, 
             if (!attached)
             {
                 base = i;
+                last_mark = -1;
             }
-            else if (adv)
+            else
             {
-                /* An attached mark takes no space of its own. */
-                adv[i] = 0;
+                last_mark = i;
+                if (adv)
+                {
+                    adv[i] = 0; /* an attached mark takes no space of its own */
+                }
             }
         }
     }

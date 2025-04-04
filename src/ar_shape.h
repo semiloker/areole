@@ -67,6 +67,12 @@ typedef struct ar_shaper
     ar_u32 mark[AR_SHAPE_MAX_LOOKUPS];
     ar_i32 mark_count;
 
+    /* Mark to mark. A shadda with a vowel above it needs the vowel placed
+       against the shadda, not against the letter underneath both, or the two
+       marks sit on top of each other. */
+    ar_u32 mkmk[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 mkmk_count;
+
     int ok;
 } ar_shaper;
 
