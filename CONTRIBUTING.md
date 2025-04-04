@@ -25,7 +25,7 @@ If a feature cannot be built inside those two rules, the feature is wrong, not t
 | `src/ar_cff.c` | CFF outlines and the Type 2 charstring interpreter. The one place that runs a program out of a file |
 | `src/ar_break.c` | Line breaking, after UAX #14 |
 | `src/ar_bidi.c` | The bidirectional algorithm, UAX #9 |
-| `src/ar_shape.c` | OpenType shaping: GSUB ligatures, GPOS kerning |
+| `src/ar_shape.c` | OpenType shaping: ligatures, kerning, Arabic joining, mark attachment |
 | `src/ar_text.c` | UTF-8, the glyph cache, outline text drawing |
 | `src/ar_css.c` | Tokenizer, parser, selector matching, the resolved style cache |
 | `src/ar_layout.c` | The flexbox solver. Pure: no allocation, no clock, no drawing |

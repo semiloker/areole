@@ -215,6 +215,17 @@ abc אבג     Latin drawn first, then Hebrew
 hyphen, `1,000.50` does not break at all, a closing bracket is never orphaned,
 and Japanese breaks between ideographs.
 
+**Arabic joins.** Letters have up to four shapes depending on what they connect
+to, and alef joins only rightward, so the letter after it starts a new group.
+Against Arial, `beh beh beh` becomes initial, medial and final forms; `lam alef`
+becomes the one glyph it must; `alef beh` correctly leaves the beh isolated.
+
+**Marks sit where the font says.** A diacritic has no position of its own: the
+font gives an anchor on the letter and one on the mark, and they are made to
+coincide. A fatha over a beh comes out at +288,-220 font units with zero
+advance. Without that, every mark lands on the baseline at the origin, which
+does not read as plain text -- it reads as text that has lost its marks.
+
 **Fallback** is a chain: each character is drawn by the first face that has it,
 so a Latin face plus a CJK face renders both rather than one and a row of tofu.
 
