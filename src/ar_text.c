@@ -789,7 +789,7 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
         /* With the characters, joining can be resolved and Arabic gets its
            positional forms; without them, only the glyph-level features. */
         n = sc->shape_cp ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
-                                            sc->shape_dx, sc->shape_dy, sc->shape_cluster, n)
+                                            sc->shape_dx, sc->shape_dy, sc->shape_cluster, n, sc->shape_cap)
                          : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
 
         for (i = 0; i < n; ++i)

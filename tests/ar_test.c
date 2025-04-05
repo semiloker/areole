@@ -3838,7 +3838,7 @@ static void test_marks_need_the_tables(void)
     dy[0] = 99; dy[1] = 99;
     cl[0] = 0; cl[1] = 1;
 
-    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 2);
+    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 2, 2);
     CHECK(n == 2, "marks: the run is unchanged without the tables");
     CHECK(dx[0] == 0 && dy[0] == 0 && dx[1] == 0 && dy[1] == 0,
           "marks: and the offsets are cleared rather than left as they were found");
@@ -3861,7 +3861,7 @@ static void test_marks_are_optional_to_ask_for(void)
     /* Passing no offset arrays must skip attachment rather than write
        through a null pointer: a caller with nowhere to put the offsets is
        better off with marks on the baseline than with a fault. */
-    CHECK(ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 2) == 2,
+    CHECK(ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 2, 2) == 2,
           "marks: shaping without offset arrays does not fault");
 }
 
@@ -3892,9 +3892,42 @@ static void test_mark_to_mark_needs_the_tables(void)
     a[0] = 10; a[1] = 10; a[2] = 10;
     cl[0] = 0; cl[1] = 1; cl[2] = 2;
 
-    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 3);
+    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 3, 3);
     CHECK(n == 3, "mkmk: the run survives a font that cannot stack marks");
     CHECK(dx[2] == 0 && dy[2] == 0, "mkmk: and the second mark is left where it was");
+}
+
+
+
+/* ccmp and GSUB type 2. Decomposition is the only substitution that makes a
+   run longer, so it is the only one that can overrun a buffer, and the check
+   that matters is that it declines rather than does. */
+static void test_decomposition_respects_the_buffer(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[4];
+    ar_i32    g[4], a[4], cl[4], n;
+    ar_i32    i;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+    CHECK(sh.ccmp_count == 0, "ccmp: a face with no ccmp feature has no lookups");
+
+    for (i = 0; i < 4; ++i)
+    {
+        cps[i] = 'A';
+        g[i] = 1;
+        a[i] = 10;
+        cl[i] = i;
+    }
+
+    /* A capacity smaller than the count must be treated as the count rather
+       than believed, or a caller who got it wrong corrupts memory instead of
+       getting a slightly worse rendering. */
+    n = ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 4, 1);
+    CHECK(n == 4, "ccmp: a capacity below the run length is ignored, not obeyed");
+    CHECK(g[3] == 1, "ccmp: and nothing is disturbed");
 }
 
 
@@ -4007,6 +4040,7 @@ int main(void)
     test_marks_need_the_tables();
     test_marks_are_optional_to_ask_for();
     test_mark_to_mark_needs_the_tables();
+    test_decomposition_respects_the_buffer();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
