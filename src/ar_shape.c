@@ -247,6 +247,11 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
     ar__collect(face, sh->gpos, "mark", sh->mark, &sh->mark_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gpos, "mkmk", sh->mkmk, &sh->mkmk_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gsub, "ccmp", sh->ccmp, &sh->ccmp_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gsub, "calt", sh->calt, &sh->calt_count, AR_SHAPE_MAX_LOOKUPS);
+    if (sh->gsub)
+    {
+        sh->gsub_lookups = sh->gsub + ar__sh_u16(face, sh->gsub + 8);
+    }
 
     sh->ok = 1;
     return 1;
@@ -529,6 +534,162 @@ static ar_i32 ar__apply_ccmp(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, a
         }
     }
     return count;
+}
+
+
+/*
+ * GSUB type 6: chained contextual substitution.
+ *
+ * This is the one lookup that substitutes nothing itself. It matches a pattern
+ * -- some glyphs before, some at the position, some after -- and then names
+ * other lookups by index to run at offsets inside the match. It is how a font
+ * says "an f becomes a different f, but only when a b follows it", and it is
+ * what drives contextual alternates and most of what complex scripts need.
+ *
+ * Format 3 is implemented, because it is what fonts produced this century use:
+ * three lists of coverage tables, one per part of the context. Formats 1 and 2
+ * express the same thing through rule sets keyed on a glyph or a class, and a
+ * lookup in one of those formats is skipped rather than half applied.
+ */
+static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs,
+                                   ar_i32 count, ar_i32 at, ar_i32 depth);
+
+static int ar__chain_match(const ar_face *f, ar_u32 sub, const ar_i32 *glyphs, ar_i32 count,
+                           ar_i32 at, ar_u32 *records, ar_u32 *nrecords, ar_i32 *matched)
+{
+    ar_u32 p = sub + 2;
+    ar_u32 nback, nin, nahead, i;
+
+    nback = ar__sh_u16(f, p);
+    p += 2;
+    /* Backtrack coverages are stored nearest-first, so index i is i+1 glyphs
+       before the position. Reading them forwards is the classic way to get
+       this exactly backwards. */
+    for (i = 0; i < nback; ++i)
+    {
+        ar_i32 k = at - 1 - (ar_i32)i;
+        if (k < 0 || ar__coverage(f, sub + ar__sh_u16(f, p + i * 2), glyphs[k]) < 0)
+        {
+            return 0;
+        }
+    }
+    p += nback * 2;
+
+    nin = ar__sh_u16(f, p);
+    p += 2;
+    if (nin == 0 || at + (ar_i32)nin > count)
+    {
+        return 0;
+    }
+    for (i = 0; i < nin; ++i)
+    {
+        if (ar__coverage(f, sub + ar__sh_u16(f, p + i * 2), glyphs[at + (ar_i32)i]) < 0)
+        {
+            return 0;
+        }
+    }
+    p += nin * 2;
+
+    nahead = ar__sh_u16(f, p);
+    p += 2;
+    for (i = 0; i < nahead; ++i)
+    {
+        ar_i32 k = at + (ar_i32)nin + (ar_i32)i;
+        if (k >= count || ar__coverage(f, sub + ar__sh_u16(f, p + i * 2), glyphs[k]) < 0)
+        {
+            return 0;
+        }
+    }
+    p += nahead * 2;
+
+    *nrecords = ar__sh_u16(f, p);
+    *records = p + 2;
+    *matched = (ar_i32)nin;
+    return 1;
+}
+
+/* Runs one lookup, by offset, at one position. Only the substitutions that do
+   not change the run's length, because a nested lookup that did would move
+   every position the outer match is still holding. */
+static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs,
+                                   ar_i32 count, ar_i32 at, ar_i32 depth)
+{
+    const ar_face *f = sh->face;
+    ar_u32         nsub = ar__sh_u16(f, lookup + 4);
+    ar_u32         j;
+
+    if (depth > 4 || at < 0 || at >= count)
+    {
+        return 0;
+    }
+    for (j = 0; j < nsub; ++j)
+    {
+        ar_i32 type;
+        ar_u32 sub = ar__subtable(f, lookup, j, &type);
+
+        if (type == 1)
+        {
+            ar_i32 g = ar__single_sub(f, sub, glyphs[at]);
+            if (g >= 0)
+            {
+                glyphs[at] = g;
+                return 1;
+            }
+        }
+    }
+    (void)depth;
+    return 0;
+}
+
+static int ar__chained(const ar_shaper *sh, const ar_u32 *lookups, ar_i32 nlookups, ar_i32 *glyphs,
+                       ar_i32 count, ar_i32 at, ar_i32 depth)
+{
+    const ar_face *f = sh->face;
+    ar_i32         k;
+    int            any = 0;
+
+    if (!sh->gsub_lookups)
+    {
+        return 0;
+    }
+    for (k = 0; k < nlookups; ++k)
+    {
+        ar_u32 lookup = lookups[k];
+        ar_u32 nsub = ar__sh_u16(f, lookup + 4);
+        ar_u32 j;
+
+        for (j = 0; j < nsub; ++j)
+        {
+            ar_i32 type;
+            ar_u32 sub = ar__subtable(f, lookup, j, &type);
+            ar_u32 records = 0, nrecords = 0;
+            ar_i32 matched = 0;
+            ar_u32 r;
+
+            if (type != 6 || ar__sh_u16(f, sub) != 3)
+            {
+                continue;
+            }
+            if (!ar__chain_match(f, sub, glyphs, count, at, &records, &nrecords, &matched))
+            {
+                continue;
+            }
+            for (r = 0; r < nrecords; ++r)
+            {
+                ar_u32 seq = ar__sh_u16(f, records + r * 4);
+                ar_u32 idx = ar__sh_u16(f, records + r * 4 + 2);
+                ar_u32 nested;
+
+                if ((ar_i32)seq >= matched || idx >= ar__sh_u16(f, sh->gsub_lookups))
+                {
+                    continue;
+                }
+                nested = sh->gsub_lookups + ar__sh_u16(f, sh->gsub_lookups + 2 + idx * 2);
+                any |= ar__apply_one_lookup(sh, nested, glyphs, count, at + (ar_i32)seq, depth + 1);
+            }
+        }
+    }
+    return any;
 }
 
 /*
@@ -895,6 +1056,15 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, 
     if (sh && sh->ok && cps && glyphs && count > 0)
     {
         ar__arabic_forms(sh, cps, glyphs, count);
+    }
+    if (sh && sh->ok && glyphs && sh->calt_count > 0)
+    {
+        /* Contextual alternates last among the substitutions, because it is
+           the one that reacts to what the others produced. */
+        for (i = 0; i < count; ++i)
+        {
+            ar__chained(sh, sh->calt, sh->calt_count, glyphs, count, i, 0);
+        }
     }
     if (dx && dy)
     {

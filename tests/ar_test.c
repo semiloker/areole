@@ -3931,6 +3931,35 @@ static void test_decomposition_respects_the_buffer(void)
 }
 
 
+
+/* GSUB type 6. A chained contextual lookup substitutes nothing itself: it
+   matches a pattern and names other lookups by index to run inside the match.
+   That indirection is the only place the shaper needs the lookup list rather
+   than the offsets it resolved from it, and an index out of range is the
+   obvious way for a malformed font to reach somewhere it should not. */
+static void test_chained_context_needs_a_lookup_list(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[3];
+    ar_i32    g[3], a[3], cl[3], n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+    CHECK(sh.calt_count == 0, "calt: a face with no contextual feature has no lookups");
+    CHECK(sh.gsub_lookups == 0, "calt: and a face with no GSUB has no lookup list");
+
+    cps[0] = 'A'; cps[1] = 'A'; cps[2] = 'A';
+    g[0] = 1; g[1] = 1; g[2] = 1;
+    a[0] = 10; a[1] = 10; a[2] = 10;
+    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+
+    n = ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 3, 3);
+    CHECK(n == 3 && g[0] == 1 && g[2] == 1,
+          "calt: shaping without a lookup list leaves the run alone");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4041,6 +4070,7 @@ int main(void)
     test_marks_are_optional_to_ask_for();
     test_mark_to_mark_needs_the_tables();
     test_decomposition_respects_the_buffer();
+    test_chained_context_needs_a_lookup_list();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();

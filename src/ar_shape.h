@@ -79,6 +79,16 @@ typedef struct ar_shaper
     ar_u32 ccmp[AR_SHAPE_MAX_LOOKUPS];
     ar_i32 ccmp_count;
 
+    /* Contextual alternates, and the lookup list itself.
+     *
+     * A chained contextual lookup does not substitute anything on its own: it
+     * matches a pattern and then names other lookups by index to run at
+     * positions inside the match. So this is the one feature that needs the
+     * list rather than the handful of offsets resolved from it. */
+    ar_u32 calt[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 calt_count;
+    ar_u32 gsub_lookups;
+
     int ok;
 } ar_shaper;
 
