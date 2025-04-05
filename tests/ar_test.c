@@ -3866,6 +3866,38 @@ static void test_marks_are_optional_to_ask_for(void)
 }
 
 
+
+/* Mark to mark and mark to ligature, GPOS 6 and 5.
+ *
+ * Verified against Arial and Segoe UI. In Arial a fatha alone sits at dy -220
+ * on the letter; put a shadda under it and the fatha moves to +120, stacked
+ * above the shadda rather than through it. A kasra in the same position stays
+ * at -190, attached to the letter and not the shadda, because it belongs below
+ * and the font says so. Both fonts show the same pattern with different
+ * numbers, which is the check that this reads the tables rather than guesses.
+ */
+static void test_mark_to_mark_needs_the_tables(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+    ar_u32    cps[3];
+    ar_i32    g[3], a[3], dx[3], dy[3], cl[3], n;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+    CHECK(sh.mkmk_count == 0, "mkmk: a face with no mark-to-mark feature has no lookups");
+
+    cps[0] = 0x0628; cps[1] = 0x0651; cps[2] = 0x064E;
+    g[0] = 1; g[1] = 1; g[2] = 1;
+    a[0] = 10; a[1] = 10; a[2] = 10;
+    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+
+    n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 3);
+    CHECK(n == 3, "mkmk: the run survives a font that cannot stack marks");
+    CHECK(dx[2] == 0 && dy[2] == 0, "mkmk: and the second mark is left where it was");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -3974,6 +4006,7 @@ int main(void)
     test_arabic_shaping_needs_a_font_with_the_features();
     test_marks_need_the_tables();
     test_marks_are_optional_to_ask_for();
+    test_mark_to_mark_needs_the_tables();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
