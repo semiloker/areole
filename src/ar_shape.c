@@ -246,6 +246,7 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
     ar__collect(face, sh->gsub, "rlig", sh->rlig, &sh->rlig_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gpos, "mark", sh->mark, &sh->mark_count, AR_SHAPE_MAX_LOOKUPS);
     ar__collect(face, sh->gpos, "mkmk", sh->mkmk, &sh->mkmk_count, AR_SHAPE_MAX_LOOKUPS);
+    ar__collect(face, sh->gsub, "ccmp", sh->ccmp, &sh->ccmp_count, AR_SHAPE_MAX_LOOKUPS);
 
     sh->ok = 1;
     return 1;
@@ -395,6 +396,139 @@ static ar_i32 ar__apply_single(const ar_shaper *sh, const ar_u32 *lookups, ar_i3
         }
     }
     return -1;
+}
+
+
+/*
+ * GSUB type 2: one glyph becomes several.
+ *
+ * Used by ccmp to take a character apart so that later rules can see its
+ * pieces -- a precomposed letter-with-accent split into the letter and the
+ * mark, so that mark positioning can then place the mark properly rather than
+ * being stuck with whatever the composed glyph looks like.
+ *
+ * It is the only substitution that makes a run longer, which is why this is
+ * the only one that needs to know the buffer's capacity. A sequence that will
+ * not fit is skipped: leaving the character composed is a worse rendering,
+ * writing past the buffer is a worse program.
+ */
+static ar_i32 ar__multiple_sub(const ar_face *f, ar_u32 sub, ar_i32 glyph, ar_i32 *out,
+                               ar_i32 room)
+{
+    ar_i32 cov;
+    ar_u32 seq, n, i;
+
+    if (ar__sh_u16(f, sub) != 1)
+    {
+        return -1;
+    }
+    cov = ar__coverage(f, sub + ar__sh_u16(f, sub + 2), glyph);
+    if (cov < 0 || (ar_u32)cov >= ar__sh_u16(f, sub + 4))
+    {
+        return -1;
+    }
+    seq = sub + ar__sh_u16(f, sub + 6 + (ar_u32)cov * 2);
+    n = ar__sh_u16(f, seq);
+    if (n == 0 || (ar_i32)n > room)
+    {
+        return -1;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        out[i] = (ar_i32)ar__sh_u16(f, seq + 2 + i * 2);
+    }
+    return (ar_i32)n;
+}
+
+/*
+ * ccmp, applied before anything else because that is what it is for. Handles
+ * both single substitution and decomposition, which is all any font uses it
+ * for in practice.
+ */
+static ar_i32 ar__apply_ccmp(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
+                             ar_i32 count, ar_i32 cap)
+{
+    const ar_face *f = sh->face;
+    ar_i32         i, k;
+
+    if (sh->ccmp_count <= 0)
+    {
+        return count;
+    }
+
+    for (i = 0; i < count; ++i)
+    {
+        for (k = 0; k < sh->ccmp_count; ++k)
+        {
+            ar_u32 lookup = sh->ccmp[k];
+            ar_u32 nsub = ar__sh_u16(f, lookup + 4);
+            ar_u32 j;
+            int    done = 0;
+
+            for (j = 0; j < nsub && !done; ++j)
+            {
+                ar_i32 type;
+                ar_u32 sub = ar__subtable(f, lookup, j, &type);
+
+                if (type == 1)
+                {
+                    ar_i32 g = ar__single_sub(f, sub, glyphs[i]);
+                    if (g >= 0)
+                    {
+                        glyphs[i] = g;
+                        done = 1;
+                    }
+                }
+                else if (type == 2)
+                {
+                    ar_i32 parts[8];
+                    ar_i32 n = ar__multiple_sub(f, sub, glyphs[i], parts,
+                                                cap - count + 1 < 8 ? cap - count + 1 : 8);
+                    if (n > 0)
+                    {
+                        ar_i32 m;
+                        /* Open a gap and drop the parts into it. Everything a
+                           glyph carries moves with it: the advance is taken
+                           from the face afterwards, but the cluster must stay
+                           pointing at the character this came from or a caret
+                           lands in the wrong place. */
+                        for (m = count - 1; m > i; --m)
+                        {
+                            glyphs[m + n - 1] = glyphs[m];
+                            if (adv)
+                            {
+                                adv[m + n - 1] = adv[m];
+                            }
+                            if (cluster)
+                            {
+                                cluster[m + n - 1] = cluster[m];
+                            }
+                        }
+                        for (m = 0; m < n; ++m)
+                        {
+                            glyphs[i + m] = parts[m];
+                            if (adv)
+                            {
+                                adv[i + m] = ar_face_advance(f, parts[m]);
+                            }
+                            if (cluster)
+                            {
+                                cluster[i + m] = cluster[i];
+                            }
+                        }
+                        count += n - 1;
+                        i += n - 1;
+                        done = 1;
+                    }
+                }
+            }
+            if (done)
+            {
+                break;
+            }
+        }
+    }
+    return count;
 }
 
 /*
@@ -739,14 +873,25 @@ static ar_i32 ar__legacy_kern(const ar_face *f, ar_u32 kern, ar_i32 a, ar_i32 b)
 ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                        ar_i32 *cluster, ar_i32 count)
 {
-    return ar_shape_run_pos(sh, cps, glyphs, adv, 0, 0, cluster, count);
+    return ar_shape_run_pos(sh, cps, glyphs, adv, 0, 0, cluster, count, count);
 }
 
 ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
-                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count)
+                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap)
 {
     ar_i32 i;
 
+    if (cap < count)
+    {
+        cap = count;
+    }
+    if (sh && sh->ok && glyphs && count > 0)
+    {
+        /* ccmp first: it exists to put the run into the shape the rest of the
+           rules expect to find. Decomposition can lengthen it, which is why
+           this is the only place a capacity matters. */
+        count = ar__apply_ccmp(sh, glyphs, adv, cluster, count, cap);
+    }
     if (sh && sh->ok && cps && glyphs && count > 0)
     {
         ar__arabic_forms(sh, cps, glyphs, count);

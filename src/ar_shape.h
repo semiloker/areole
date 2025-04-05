@@ -73,6 +73,12 @@ typedef struct ar_shaper
     ar_u32 mkmk[AR_SHAPE_MAX_LOOKUPS];
     ar_i32 mkmk_count;
 
+    /* ccmp runs before everything else and does whatever a font needs done
+       first: composing a letter and its mark into one glyph, or decomposing
+       one character into several so that later rules can see the parts. */
+    ar_u32 ccmp[AR_SHAPE_MAX_LOOKUPS];
+    ar_i32 ccmp_count;
+
     int ok;
 } ar_shaper;
 
@@ -115,7 +121,7 @@ ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, a
  * it thinks are positioned and are not.
  */
 ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
-                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count);
+                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap);
 
 /* Arabic joining classes, from the Unicode joining type property. */
 enum
