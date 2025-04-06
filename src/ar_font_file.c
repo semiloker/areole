@@ -811,6 +811,7 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     f->gsub = ar__find_table(f, "GSUB", 0);
     f->gpos = ar__find_table(f, "GPOS", 0);
     f->kern = ar__find_table(f, "kern", 0);
+    f->gdef = ar__find_table(f, "GDEF", 0);
     f->head = ar__find_table(f, "head", 0);
     f->hhea = ar__find_table(f, "hhea", 0);
     f->maxp = ar__find_table(f, "maxp", 0);

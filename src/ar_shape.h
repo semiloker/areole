@@ -89,6 +89,9 @@ typedef struct ar_shaper
     ar_i32 calt_count;
     ar_u32 gsub_lookups;
 
+    /* GDEF's glyph class definition, which is how a mark is recognised. */
+    ar_u32 glyph_classes;
+
     int ok;
 } ar_shaper;
 
