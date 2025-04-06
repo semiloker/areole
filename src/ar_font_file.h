@@ -40,6 +40,10 @@ typedef struct ar_face
        which plenty of fonts still ship instead of a GPOS kern feature. */
     ar_u32 gsub, gpos, kern;
 
+    /* GDEF says which glyphs are marks. Without it a shaper has to guess, and
+       the usual guess -- zero advance -- is wrong for the ones that matter. */
+    ar_u32 gdef;
+
     /* PostScript outlines. Zero when the font carries quadratics in glyf
        instead, which is the other half of the world. */
     ar_u32       cff;

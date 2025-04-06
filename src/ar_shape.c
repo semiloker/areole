@@ -252,6 +252,10 @@ int ar_shape_init(ar_shaper *sh, const ar_face *face)
     {
         sh->gsub_lookups = sh->gsub + ar__sh_u16(face, sh->gsub + 8);
     }
+    if (face->gdef && ar__sh_u16(face, face->gdef + 4))
+    {
+        sh->glyph_classes = face->gdef + ar__sh_u16(face, face->gdef + 4);
+    }
 
     sh->ok = 1;
     return 1;
@@ -773,15 +777,41 @@ static void ar__arabic_forms(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *gly
     }
 }
 
+
+/* GDEF class 3 is a mark. Fonts that ship no GDEF are treated as having no
+   marks, which is right for the Latin-only fonts that mostly omit it. */
+static int ar__is_mark(const ar_shaper *sh, ar_i32 glyph)
+{
+    if (!sh->glyph_classes)
+    {
+        return 0;
+    }
+    return ar__class_of(sh->face, sh->glyph_classes, glyph) == 3;
+}
+
 /* ------------------------------------------------------------------------
  * GSUB type 4: ligatures
  * ------------------------------------------------------------------------ */
-static ar_i32 ar__try_ligature(const ar_face *f, ar_u32 sub, const ar_i32 *glyphs, ar_i32 count,
-                               ar_i32 at, ar_i32 *consumed)
+/*
+ * Matching skips marks.
+ *
+ * A ligature's components are consecutive *letters*, not consecutive glyphs. A
+ * vowel mark between two of them does not break the ligature, and requiring
+ * exact adjacency meant that lam-alef -- which is mandatory in Arabic --
+ * silently stopped forming as soon as the word was vocalised. Real Arabic text
+ * is vocalised.
+ *
+ * The skipped marks are reported so the caller can keep them: they belong to
+ * the ligature now, and dropping them would delete the vowels.
+ */
+static ar_i32 ar__try_ligature(const ar_shaper *sh, ar_u32 sub, const ar_i32 *glyphs, ar_i32 count,
+                               ar_i32 at, ar_i32 *consumed, ar_i32 *skipped, ar_i32 *nskipped)
 {
-    ar_i32 cov;
-    ar_u32 set, nlig, i;
+    const ar_face *f = sh->face;
+    ar_i32         cov;
+    ar_u32         set, nlig, i;
 
+    *nskipped = 0;
     if (ar__sh_u16(f, sub) != 1)
     {
         return -1;
@@ -800,26 +830,44 @@ static ar_i32 ar__try_ligature(const ar_face *f, ar_u32 sub, const ar_i32 *glyph
         ar_u32 lig = set + ar__sh_u16(f, set + 2 + i * 2);
         ar_u32 ncomp = ar__sh_u16(f, lig + 2);
         ar_u32 k;
+        ar_i32 pos = at + 1;
+        ar_i32 marks[8];
+        ar_i32 nmarks = 0;
         int    match = 1;
 
-        if (ncomp < 1 || at + (ar_i32)ncomp > count)
+        if (ncomp < 1)
         {
             continue;
         }
         /* The first component is the covered glyph itself and is not stored,
-           which is the detail that makes this table compact and this loop look
-           off by one. */
-        for (k = 1; k < ncomp; ++k)
+           which is what makes this table compact and this loop look off by
+           one. */
+        for (k = 1; k < ncomp && match; ++k)
         {
-            if (glyphs[at + (ar_i32)k] != (ar_i32)ar__sh_u16(f, lig + 2 + k * 2))
+            while (pos < count && ar__is_mark(sh, glyphs[pos]))
+            {
+                if (nmarks < 8)
+                {
+                    marks[nmarks++] = pos;
+                }
+                ++pos;
+            }
+            if (pos >= count || glyphs[pos] != (ar_i32)ar__sh_u16(f, lig + 2 + k * 2))
             {
                 match = 0;
                 break;
             }
+            ++pos;
         }
         if (match)
         {
-            *consumed = (ar_i32)ncomp;
+            ar_i32 m;
+            *consumed = pos - at;
+            *nskipped = nmarks;
+            for (m = 0; m < nmarks; ++m)
+            {
+                skipped[m] = marks[m];
+            }
             return (ar_i32)ar__sh_u16(f, lig);
         }
     }
@@ -1174,6 +1222,7 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
     for (i = 0; i < count;)
     {
         ar_i32 replaced = -1, consumed = 1;
+        ar_i32 skipped[8], nskipped = 0;
 
         for (k = 0; k < sh->liga_count + sh->rlig_count && replaced < 0; ++k)
         {
@@ -1189,26 +1238,45 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
                 {
                     continue;
                 }
-                replaced = ar__try_ligature(f, sub, glyphs, count, i, &consumed);
+                replaced = ar__try_ligature(sh, sub, glyphs, count, i, &consumed, skipped,
+                                            &nskipped);
             }
         }
 
         if (replaced >= 0 && consumed >= 1)
         {
+            ar_i32 m;
+
             glyphs[out] = replaced;
             if (cluster)
             {
                 /* The whole ligature belongs to the first character it came
-                   from, so a caret placed before it lands before the f of fi
-                   rather than inside a glyph that has no inside. */
-                cluster[out] = cluster ? cluster[i] : i;
+                   from, so a caret before it lands before the f of fi rather
+                   than inside a glyph that has no inside. */
+                cluster[out] = cluster[i];
             }
             if (adv)
             {
-                adv[out] = adv[i]; /* the ligature carries its own advance */
+                adv[out] = adv[i];
+            }
+            ++out;
+
+            /* The marks that sat between the components survive, in order,
+               after the glyph they now belong to. */
+            for (m = 0; m < nskipped; ++m)
+            {
+                glyphs[out] = glyphs[skipped[m]];
+                if (cluster)
+                {
+                    cluster[out] = cluster[skipped[m]];
+                }
+                if (adv)
+                {
+                    adv[out] = adv[skipped[m]];
+                }
+                ++out;
             }
             i += consumed;
-            ++out;
         }
         else
         {

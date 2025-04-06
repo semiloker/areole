@@ -3960,6 +3960,32 @@ static void test_chained_context_needs_a_lookup_list(void)
 }
 
 
+
+/* Ligature matching skips marks.
+ *
+ * A ligature's components are consecutive letters, not consecutive glyphs. In
+ * Arial, lam-alef ligates to glyph 1019; put a fatha between the two and it
+ * stopped ligating entirely, because matching required exact adjacency. The
+ * lam-alef ligature is mandatory in Arabic and real Arabic text is vocalised,
+ * so that was wrong for the common case rather than an edge one.
+ *
+ * The mark has to survive too: dropping it would delete the vowel. Arial now
+ * gives 1019 followed by the fatha. */
+static void test_marks_do_not_block_a_ligature(void)
+{
+    ar_face   f;
+    ar_shaper sh;
+
+    ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
+    ar_shape_init(&sh, &f);
+
+    /* The generated face has no GDEF, so nothing is a mark and matching is
+       exact -- which is right for a Latin-only font, and is what most of them
+       ship. */
+    CHECK(sh.glyph_classes == 0, "gdef: a face without GDEF has no glyph classes");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4071,6 +4097,7 @@ int main(void)
     test_mark_to_mark_needs_the_tables();
     test_decomposition_respects_the_buffer();
     test_chained_context_needs_a_lookup_list();
+    test_marks_do_not_block_a_ligature();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
