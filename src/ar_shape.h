@@ -120,8 +120,13 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
  * takes its initial form depends on what precedes and follows it in the text.
  * A shaper handed only glyph indices cannot know that, which is why this takes
  * the codepoints as well.
+ *
+ * They are not const, and that is not an oversight. Indic reordering moves
+ * characters as well as glyphs -- a vowel sign typed after its consonant is
+ * drawn before it -- and the passes that follow have to see the order that
+ * will actually be rendered.
  */
-ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+ar_i32 ar_shape_run_cp(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                        ar_i32 *cluster, ar_i32 count);
 
 /*
@@ -133,7 +138,7 @@ ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, a
  * to put the offsets is better off with marks on the baseline than with marks
  * it thinks are positioned and are not.
  */
-ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                         ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap);
 
 /* Arabic joining classes, from the Unicode joining type property. */

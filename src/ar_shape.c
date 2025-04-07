@@ -4,6 +4,8 @@
  */
 #include "ar_shape.h"
 
+#include "ar_indic.h"
+
 #include <string.h>
 
 static ar_u32 ar__sh_u16(const ar_face *f, ar_u32 off)
@@ -1079,13 +1081,13 @@ static ar_i32 ar__legacy_kern(const ar_face *f, ar_u32 kern, ar_i32 a, ar_i32 b)
 }
 
 /* ------------------------------------------------------------------------ */
-ar_i32 ar_shape_run_cp(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+ar_i32 ar_shape_run_cp(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                        ar_i32 *cluster, ar_i32 count)
 {
     return ar_shape_run_pos(sh, cps, glyphs, adv, 0, 0, cluster, count, count);
 }
 
-ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
+ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
                         ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap)
 {
     ar_i32 i;
@@ -1096,7 +1098,25 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *glyphs, 
     }
     if (sh && sh->ok && glyphs && count > 0)
     {
-        /* ccmp first: it exists to put the run into the shape the rest of the
+        /* Indic reordering comes before everything, because the features that
+           follow expect to find the syllable already in rendering order --
+           a pre-base matra has to be before its consonant when rphf and half
+           look at what surrounds them. It rewrites the codepoints too, so the
+           joining and category passes below see what will actually be drawn. */
+        if (cps)
+        {
+            ar_i32 k;
+            for (k = 0; k < count; ++k)
+            {
+                if (ar_indic_is_indic(cps[k]))
+                {
+                    ar_indic_reorder(sh, cps, glyphs, adv, cluster, count);
+                    break;
+                }
+            }
+        }
+
+        /* ccmp next: it exists to put the run into the shape the rest of the
            rules expect to find. Decomposition can lengthen it, which is why
            this is the only place a capacity matters. */
         count = ar__apply_ccmp(sh, glyphs, adv, cluster, count, cap);

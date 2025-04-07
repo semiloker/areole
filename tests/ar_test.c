@@ -12,6 +12,7 @@
 #include "ar_break.h"
 #include "ar_bidi.h"
 #include "ar_shape.h"
+#include "ar_indic.h"
 #include "ar_css.h"
 #include "ar_node.h"
 
@@ -3986,6 +3987,138 @@ static void test_marks_do_not_block_a_ligature(void)
 }
 
 
+
+/* ------------------------------------------------------------------------
+ * Indic reordering
+ *
+ * Devanagari is written in an order that is not the order it is stored in, and
+ * the difference is not cosmetic: the vowel sign i is typed after its consonant
+ * and drawn before it. A renderer that draws storage order does not produce
+ * plain text, it produces a different word.
+ * ------------------------------------------------------------------------ */
+#define DV_KA     0x0915u
+#define DV_HA     0x0939u
+#define DV_NA     0x0928u
+#define DV_DA     0x0926u
+#define DV_YA     0x092Fu
+#define DV_RA     0x0930u
+#define DV_VIRAMA 0x094Du
+#define DV_I      0x093Fu
+#define DV_AA     0x093Eu
+#define DV_II     0x0940u
+
+static ar_u32 g_ind_cp[16];
+static ar_i32 g_ind_g[16], g_ind_a[16], g_ind_cl[16];
+
+static int ar__reorder(const ar_u32 *in, ar_i32 n)
+{
+    ar_i32 i;
+    for (i = 0; i < n; ++i)
+    {
+        g_ind_cp[i] = in[i];
+        g_ind_g[i] = (ar_i32)in[i];
+        g_ind_a[i] = 10;
+        g_ind_cl[i] = i;
+    }
+    return ar_indic_reorder(0, g_ind_cp, g_ind_g, g_ind_a, g_ind_cl, n);
+}
+
+static void test_indic_categories(void)
+{
+    CHECK(ar_indic_category(DV_KA) == AR_IND_CONSONANT, "indic: ka is a consonant");
+    CHECK(ar_indic_category(DV_RA) == AR_IND_RA, "indic: ra is its own category, for reph");
+    CHECK(ar_indic_category(DV_VIRAMA) == AR_IND_VIRAMA, "indic: the virama joins consonants");
+    CHECK(ar_indic_category(DV_I) == AR_IND_MATRA_PRE, "indic: the vowel sign i is drawn before");
+    CHECK(ar_indic_category(DV_AA) == AR_IND_MATRA_POST, "indic: aa is drawn after");
+    CHECK(ar_indic_category(0x0902) == AR_IND_BINDU, "indic: anusvara is a bindu");
+    CHECK(ar_indic_category('a') == AR_IND_OTHER, "indic: Latin is not categorised");
+    CHECK(ar_indic_is_indic(DV_KA) && !ar_indic_is_indic('a'),
+          "indic: and only Indic codepoints are reordered at all");
+}
+
+static void test_indic_pre_base_matra_moves(void)
+{
+    static const ar_u32 KI[] = {DV_KA, DV_I};
+
+    CHECK(ar__reorder(KI, 2), "indic: ki reorders");
+    CHECK(g_ind_cp[0] == DV_I && g_ind_cp[1] == DV_KA,
+          "indic: the vowel sign i is drawn before its consonant");
+    /* The cluster map has to follow, or a caret placed between the two lands
+       on the wrong side of a letter the reader sees as one thing. */
+    CHECK(g_ind_cl[0] == 1 && g_ind_cl[1] == 0, "indic: and the clusters move with it");
+}
+
+static void test_indic_leaves_alone_what_it_should(void)
+{
+    static const ar_u32 KA[] = {DV_KA};
+    static const ar_u32 KAA[] = {DV_KA, DV_AA};
+    static const ar_u32 KYA[] = {DV_KA, DV_VIRAMA, DV_YA};
+
+    CHECK(!ar__reorder(KA, 1), "indic: a lone consonant does not move");
+    CHECK(!ar__reorder(KAA, 2), "indic: a post-base matra stays after its consonant");
+    CHECK(!ar__reorder(KYA, 3), "indic: a conjunct is not reordered");
+    CHECK(g_ind_cp[0] == DV_KA && g_ind_cp[2] == DV_YA, "indic: and comes through intact");
+}
+
+static void test_indic_reph_moves_to_the_end(void)
+{
+    static const ar_u32 RKA[] = {DV_RA, DV_VIRAMA, DV_KA};
+
+    /* A syllable opening ra + virama loses both and gains a mark drawn above
+       the END of the syllable, which is where the consonant now is. */
+    CHECK(ar__reorder(RKA, 3), "indic: rka reorders");
+    CHECK(g_ind_cp[0] == DV_KA, "indic: the base consonant comes first");
+    CHECK(g_ind_cp[1] == DV_RA && g_ind_cp[2] == DV_VIRAMA,
+          "indic: and the reph moves to the end of the syllable");
+}
+
+static void test_indic_a_real_word(void)
+{
+    /* hindii: ha + i + na + virama + da + ii */
+    static const ar_u32 W[] = {DV_HA, DV_I, DV_NA, DV_VIRAMA, DV_DA, DV_II};
+
+    CHECK(ar__reorder(W, 6), "indic: a real word reorders");
+    CHECK(g_ind_cp[0] == DV_I && g_ind_cp[1] == DV_HA,
+          "indic: the i moves in front of the first syllable's consonant");
+    CHECK(g_ind_cp[2] == DV_NA && g_ind_cp[3] == DV_VIRAMA && g_ind_cp[4] == DV_DA,
+          "indic: the second syllable's conjunct is untouched");
+    CHECK(g_ind_cp[5] == DV_II, "indic: and its post-base matra stays put");
+}
+
+static void test_indic_survives_nonsense(void)
+{
+    static const ar_u32 NASTY[][4] = {
+        {DV_VIRAMA, 0, 0, 0},
+        {DV_I, DV_I, DV_I, 0},
+        {DV_RA, DV_VIRAMA, 0, 0},
+        {DV_VIRAMA, DV_VIRAMA, DV_KA, 0}
+    };
+    ar_i32 i;
+    int    ok = 1;
+
+    /* A virama with nothing to join, a matra with no consonant, a reph with
+       nothing after it. All of these appear in real broken text and none of
+       them may loop or lose a character. */
+    for (i = 0; i < 4; ++i)
+    {
+        ar_i32 n = 0, j;
+        while (n < 4 && NASTY[i][n])
+        {
+            ++n;
+        }
+        ar__reorder(NASTY[i], n);
+        for (j = 0; j < n; ++j)
+        {
+            if (g_ind_cp[j] == 0)
+            {
+                ok = 0;
+            }
+        }
+    }
+    CHECK(ok, "indic: malformed syllables terminate and lose nothing");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4098,6 +4231,13 @@ int main(void)
     test_decomposition_respects_the_buffer();
     test_chained_context_needs_a_lookup_list();
     test_marks_do_not_block_a_ligature();
+
+    test_indic_categories();
+    test_indic_pre_base_matra_moves();
+    test_indic_leaves_alone_what_it_should();
+    test_indic_reph_moves_to_the_end();
+    test_indic_a_real_word();
+    test_indic_survives_nonsense();
 
     test_path_aligned_rect_is_solid();
     test_path_half_pixel_edge_is_half_covered();
