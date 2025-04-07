@@ -164,7 +164,7 @@ and no floating point anywhere in any of it.
 ar_font_load(ui, ttf, ttf_size, 256 * 1024, 48);  /* TrueType or OpenType */
 ar_font_add(ui, cjk, cjk_size);                   /* fallback for what it lacks */
 
-ar_font_antialias(ui, 0);   /* hard edges, 1.72x faster */
+ar_font_antialias(ui, 0);   /* hard edges, 1.69x faster */
 ar_font_grid_fit(ui, 1);    /* snap the x-height to the pixel grid (default) */
 ar_font_darken(ui, 60);     /* lift midtones so thin stems stop reading grey */
 ar_font_subpixel(ui, 1);    /* four positions per pixel (default) */
@@ -172,14 +172,14 @@ ar_font_subpixel(ui, 1);    /* four positions per pixel (default) */
 
 | | ns/glyph |
 | --- | --: |
-| Antialiased, cached | 232 |
-| Aliased, cached | **135** |
-| Rasterized from the outline | 2555 |
+| Antialiased, cached | 222 |
+| Aliased, cached | **132** |
+| Rasterized from the outline | 1780 |
 
 Read the ratios rather than the absolute figures, which move with machine load
-while the ratios do not. **Antialiasing off is 1.72x**, because a blend reads
+while the ratios do not. **Antialiasing off is 1.69x**, because a blend reads
 and writes where an opaque store only writes, and on a machine whose whole
-problem is memory bandwidth that is the entire difference. **Rasterizing costs 11.0x blitting a cached glyph**, which is why the cache is not an optimisation
+problem is memory bandwidth that is the entire difference. **Rasterizing costs 8.0x blitting a cached glyph**, which is why the cache is not an optimisation
 but the thing that makes outlines usable at all.
 
 **Line breaking is UAX #14**, not "at spaces". `hello world` breaks after the
@@ -216,8 +216,10 @@ and Japanese breaks between ideographs.
 
 **Arabic joins.** Letters have up to four shapes depending on what they connect
 to, and alef joins only rightward, so the letter after it starts a new group.
-Against Arial, `beh beh beh` becomes initial, medial and final forms; `lam alef`
-becomes the one glyph it must; `alef beh` correctly leaves the beh isolated.
+Against Arial, `beh beh beh` becomes initial, medial and final forms; `alef beh`
+correctly leaves the beh isolated; `lam alef` becomes the one glyph it must --
+and still does when a vowel mark sits between the two, which is how Arabic is
+actually written.
 
 **Marks stack.** A diacritic has no position of its own: the font gives an
 anchor on the letter and one on the mark, and they are made to coincide. In
