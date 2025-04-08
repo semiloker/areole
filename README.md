@@ -233,6 +233,11 @@ coincide. A fatha over a beh comes out at +288,-220 font units with zero
 advance. Without that, every mark lands on the baseline at the origin, which
 does not read as plain text -- it reads as text that has lost its marks.
 
+**Devanagari reorders.** The vowel sign i is typed after its consonant and
+drawn before it, so `ki` is stored KA + I and rendered I + KA. A syllable
+opening ra + virama loses both to a reph mark above the *end* of the syllable.
+Drawing storage order does not give plain text, it gives a different word.
+
 **Fallback** is a chain: each character is drawn by the first face that has it,
 so a Latin face plus a CJK face renders both rather than one and a row of tofu.
 
@@ -353,7 +358,7 @@ toolkit breaks that circle.
 - **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
-- **0.3.0** *It shapes text* — bidi, ligatures, kerning 🚧
+- **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
