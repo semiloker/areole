@@ -109,6 +109,13 @@ typedef struct ar_style
 {
     ar_i32 v[AR_P_COUNT];
     ar_u8  unit[AR_P_COUNT];
+
+    /* Which properties a stylesheet actually stated for this box, as opposed
+       to which have a value -- every property always has a value. Inheritance
+       needs the difference: a box that says nothing about colour takes its
+       parent's, and a box that says `color: black` does not, even though both
+       end up with a colour. */
+    ar_u32 set;
 } ar_style;
 
 /* Pseudo-class of a rule, and the matching state of a node. */
@@ -179,6 +186,26 @@ typedef struct ar_sheet
 ar_u32 ar_hash(const char *s, ar_u32 len);
 
 void ar_style_defaults(ar_style *s);
+
+/*
+ * Inheritance.
+ *
+ * Copies the inherited properties the child did not state for itself. CSS
+ * inherits a specific list -- colour and text properties, not layout ones --
+ * because inheriting a width would be nonsense and inheriting a colour is what
+ * makes a stylesheet short.
+ *
+ * Applied per box after the selectors have been resolved, deliberately: it
+ * means the resolved-style cache still caches only what the selectors produced,
+ * which does not depend on where the box sits in the tree. Caching after
+ * inheritance would need the parent in the key and would be a different and
+ * much worse cache.
+ */
+void ar_style_inherit(ar_style *child, const ar_style *parent);
+
+/* Non-zero if this property inherits. One table, so adding a property to the
+   list is a one-line change and cannot disagree with itself. */
+int ar_prop_inherits(ar_i32 prop);
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
