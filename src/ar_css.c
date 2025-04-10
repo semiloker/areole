@@ -41,6 +41,7 @@ void ar_style_defaults(ar_style *s)
 {
     ar_i32 i;
 
+    s->set = 0;
     for (i = 0; i < AR_P_COUNT; ++i)
     {
         s->v[i] = 0;
@@ -91,6 +92,55 @@ void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set)
             dst->v[i] = src->v[i];
             dst->unit[i] = src->unit[i];
         }
+    }
+    dst->set |= set;
+}
+
+/*
+ * Which properties inherit.
+ *
+ * CSS inherits text and colour and not layout, and the reason is worth stating
+ * because it looks arbitrary until you try the alternative: a width that
+ * inherited would make every box the size of its parent, and a padding that
+ * inherited would compound at every level. Colour and size inherit because a
+ * document has one of each and repeating them is the noise a stylesheet exists
+ * to remove.
+ *
+ * Note that AR_P_DIRECTION is flex-direction, not the CSS `direction`
+ * property, and does not inherit. That the two share a name is a trap worth
+ * one line of comment.
+ */
+int ar_prop_inherits(ar_i32 prop)
+{
+    switch (prop)
+    {
+    case AR_P_COLOR:
+    case AR_P_FONT_SIZE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+void ar_style_inherit(ar_style *child, const ar_style *parent)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR_P_COUNT; ++i)
+    {
+        if (!ar_prop_inherits(i))
+        {
+            continue;
+        }
+        if (child->set & (1u << (ar_u32)i))
+        {
+            continue; /* the child said something; it wins */
+        }
+        child->v[i] = parent->v[i];
+        child->unit[i] = parent->unit[i];
+        /* Marked as set, so a grandchild inherits through a box that only
+           inherited it -- which is the whole point of a cascade. */
+        child->set |= 1u << (ar_u32)i;
     }
 }
 

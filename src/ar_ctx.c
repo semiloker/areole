@@ -637,6 +637,17 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
 
     ar_sheet_resolve(&c->sheet, tag, klass, id, state, &n->style);
 
+    /* Inheritance, after the cache rather than inside it. The cache holds what
+       the selectors produced, which does not depend on where a box sits; the
+       inherited part does, and is a loop over two properties. Caching after
+       inheritance would need the parent in the key and would be a different
+       and much worse cache -- and the key's completeness is the one thing in
+       this file that fails silently when it is wrong. */
+    if (parent >= 0)
+    {
+        ar_style_inherit(&n->style, &c->nodes[parent].style);
+    }
+
     /* font-size is expressed in pixels because that is what people write, and
        the face is eight pixels tall, so the scale is the ratio. Rounding down
        and clamping at one keeps small sizes legible rather than absent. */

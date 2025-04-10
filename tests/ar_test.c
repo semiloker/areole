@@ -4119,6 +4119,99 @@ static void test_indic_survives_nonsense(void)
 }
 
 
+
+/* ------------------------------------------------------------------------
+ * Inheritance
+ * ------------------------------------------------------------------------ */
+static void test_inheritance_flows_down(void)
+{
+    ar_surface s = ar__ui_surface(200, 120);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; color:#E8DFCC; font-size:17px; }"
+                 ".mid  { display:flex; }"
+                 ".own  { color:#FF0000; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.mid");
+    ar_begin(g_ui, "div.leaf");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.own");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xE8DFCC,
+          "inherit: a child takes its parent's colour");
+    /* Through a box that only inherited it, which is what makes it a cascade
+       rather than one level of copying. */
+    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xE8DFCC,
+          "inherit: and a grandchild takes it through a box that only inherited");
+    CHECK(g_ui->nodes[2].style.v[AR_P_FONT_SIZE] == 17,
+          "inherit: font size inherits too");
+    CHECK((g_ui->nodes[3].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+          "inherit: a box that states its own colour keeps it");
+    CHECK(g_ui->nodes[3].style.v[AR_P_FONT_SIZE] == 17,
+          "inherit: while still inheriting what it did not state");
+}
+
+static void test_layout_properties_do_not_inherit(void)
+{
+    ar_surface s = ar__ui_surface(200, 120);
+
+    ar__ui_reset("#root { display:flex; width:150px; padding:9px; color:#112233; }"
+                 ".kid  { height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.kid");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* A width that inherited would make every box the size of its parent, and
+       a padding that inherited would compound at every level. */
+    CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] != 150, "inherit: width does not inherit");
+    CHECK(g_ui->nodes[1].style.v[AR_P_PAD_LEFT] == 0, "inherit: nor does padding");
+    CHECK((g_ui->nodes[1].style.v[AR_P_COLOR] & 0xFFFFFF) == 0x112233,
+          "inherit: but colour still does, from the same rule");
+}
+
+static void test_inheritance_is_not_in_the_style_cache(void)
+{
+    ar_surface s = ar__ui_surface(200, 120);
+    ar_u32     hits_a, hits_b;
+
+    /* Two boxes with the same selector under parents of different colours must
+       resolve differently. If inheritance had been folded into the cache, the
+       second would get the first's answer -- which is the silent rendering bug
+       the cache key comment warns about. */
+    ar__ui_reset("#root { display:flex; }"
+                 ".red { display:flex; color:#FF0000; }"
+                 ".blue { display:flex; color:#0000FF; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.red");
+    ar_begin(g_ui, "div.leaf");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.blue");
+    ar_begin(g_ui, "div.leaf");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    ar_style_cache_stats(g_ui, &hits_a, &hits_b);
+    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+          "inherit: a leaf under the red box is red");
+    CHECK((g_ui->nodes[4].style.v[AR_P_COLOR] & 0xFFFFFF) == 0x0000FF,
+          "inherit: and the same leaf under the blue box is blue");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4254,6 +4347,9 @@ int main(void)
     test_glyph_blitter_renders_the_same_pixels();
     test_glyph_spans_respect_a_tight_clip();
 
+    test_inheritance_flows_down();
+    test_layout_properties_do_not_inherit();
+    test_inheritance_is_not_in_the_style_cache();
     test_style_cache_agrees_with_the_resolver();
     test_style_cache_is_dropped_when_a_sheet_is_added();
     test_style_cache_keeps_states_apart();
