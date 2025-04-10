@@ -36,6 +36,16 @@ typedef struct ar_node
     ar_u32 key;   /* stable across frames, for state and hit testing */
     ar_u8  state; /* hover, active, focus */
 
+    /* What the caller declared, kept because a combinator asks about an
+       ancestor or a sibling and the answer is a property of that box rather
+       than of this one. Only rules with combinators read it, so a stylesheet
+       without them never touches it. */
+    ar_u32     sel_tag;
+    ar_u32     sel_id;
+    ar_classes sel_class;
+
+    ar_i32 prev_sibling;
+
     ar_style    style;
     const char *text;
     ar_i32      scale; /* bitmap font scale derived from font-size */
