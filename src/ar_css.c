@@ -81,6 +81,56 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
 }
 
+
+void ar_classes_clear(ar_classes *c)
+{
+    c->n = 0;
+    c->combined = 0;
+}
+
+void ar_classes_add(ar_classes *c, ar_u32 hash)
+{
+    ar_i32 i;
+
+    if (!hash || c->n >= AR_MAX_CLASSES)
+    {
+        return;
+    }
+    for (i = 0; i < c->n; ++i)
+    {
+        if (c->h[i] == hash)
+        {
+            return;
+        }
+    }
+    c->h[c->n++] = hash;
+    /* Order-independent, so that a box declared .a.b and one declared .b.a
+       land on the same cache entry, because they are the same box. Addition
+       and multiplication by an odd constant is enough to spread them; the
+       collision bound is the same one in 2^32 the rest of this library's
+       hashes carry. */
+    c->combined += hash * 2654435761u;
+}
+
+int ar_classes_contains(const ar_classes *have, const ar_classes *want)
+{
+    ar_i32 i, j;
+
+    for (i = 0; i < want->n; ++i)
+    {
+        int found = 0;
+        for (j = 0; j < have->n && !found; ++j)
+        {
+            found = (have->h[j] == want->h[i]);
+        }
+        if (!found)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set)
 {
     ar_i32 i;
@@ -683,14 +733,14 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
 /* ------------------------------------------------------------------------
  * Selectors
  * ------------------------------------------------------------------------ */
-int ar_selector_split(const char *sel, ar_u32 *tag, ar_u32 *klass, ar_u32 *id)
+int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *id)
 {
     const char *p = sel;
     int         any = 0;
 
     *tag = 0;
-    *klass = 0;
     *id = 0;
+    ar_classes_clear(klass);
 
     if (!sel)
     {
@@ -715,28 +765,38 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_u32 *klass, ar_u32 *id)
             }
             if (mark == '.')
             {
-                *klass = ar_hash(start, (ar_u32)(p - start));
+                /* Several are allowed and all must match. */
+                ar_classes_add(klass, ar_hash(start, (ar_u32)(p - start)));
             }
             else
             {
                 *id = ar_hash(start, (ar_u32)(p - start));
             }
             any = 1;
+            continue;
         }
-        else if (ar__is_ident(*p))
+
+        if (*p == ':')
         {
-            start = p;
-            while (*p && ar__is_ident(*p))
-            {
-                p++;
-            }
-            *tag = ar_hash(start, (ar_u32)(p - start));
-            any = 1;
+            /* Pseudo-classes are parsed by the caller that cares; here they
+               only end the compound. */
+            break;
         }
-        else
+
+        start = p;
+        while (*p && ar__is_ident(*p))
+        {
+            p++;
+        }
+        if (p == start)
         {
             return 0;
         }
+        if (!(p - start == 1 && *start == '*'))
+        {
+            *tag = ar_hash(start, (ar_u32)(p - start));
+        }
+        any = 1;
     }
     return any;
 }
@@ -746,7 +806,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
     int any = 0;
 
     rule->tag = 0;
-    rule->klass = 0;
+    ar_classes_clear(&rule->klass);
     rule->id = 0;
     rule->state = AR_STATE_NONE;
     rule->specificity = 0;
@@ -771,7 +831,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
             }
             if (mark == '.')
             {
-                rule->klass = ar_hash(name, len);
+                ar_classes_add(&rule->klass, ar_hash(name, len));
                 rule->specificity += 10;
             }
             else if (mark == '#')
@@ -979,8 +1039,8 @@ static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state)
     return h;
 }
 
-static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id,
-                                 ar_u8 state, ar_style *out)
+static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                                 ar_u32 id, ar_u8 state, ar_style *out)
 {
     ar_i32 i;
 
@@ -996,7 +1056,7 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass
         {
             continue;
         }
-        if (r->klass && r->klass != klass)
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
         {
             continue;
         }
@@ -1014,8 +1074,8 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, ar_u32 klass
     }
 }
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
-                      ar_style *out)
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                      ar_u8 state, ar_style *out)
 {
     ar_u32 slot, probe;
 
@@ -1025,7 +1085,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u
         return;
     }
 
-    slot = ar__cache_hash(tag, klass, id, state) & (ar_u32)(sheet->cache_cap - 1u);
+    slot = ar__cache_hash(tag, klass->combined, id, state) & (ar_u32)(sheet->cache_cap - 1u);
 
     /* Open addressing with a short probe. The full tuple is compared, never
        the hash alone: a collision that returned the wrong style would be a
@@ -1038,7 +1098,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u
         {
             ar__resolve_uncached(sheet, tag, klass, id, state, out);
             e->tag = tag;
-            e->klass = klass;
+            e->klass = klass->combined;
             e->id = id;
             e->state = state;
             e->style = *out;
@@ -1046,7 +1106,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u
             ++sheet->cache_misses;
             return;
         }
-        if (e->tag == tag && e->klass == klass && e->id == id && e->state == state)
+        if (e->tag == tag && e->klass == klass->combined && e->id == id && e->state == state)
         {
             *out = e->style;
             ++sheet->cache_hits;
