@@ -127,11 +127,30 @@ enum
     AR_STATE_FOCUS = 1 << 2
 };
 
+/*
+ * A selector can name several classes and an element can carry several, and
+ * `.card.selected` has to match a box that is both. Four is the ceiling on
+ * each: a rule naming five classes and a box carrying five are both things
+ * nobody writes, and the alternative is a variable-length list inside a struct
+ * that must stay copyable.
+ */
+#define AR_MAX_CLASSES 4
+
+typedef struct ar_classes
+{
+    ar_u32 h[AR_MAX_CLASSES];
+    ar_i32 n;
+    /* All of them mixed into one word, which is what the resolved-style cache
+       keys on. Order-independent, because a box carrying .a.b is the same box
+       as one carrying .b.a. */
+    ar_u32 combined;
+} ar_classes;
+
 typedef struct ar_rule
 {
-    ar_u32 tag;   /* hash, 0 means any */
-    ar_u32 klass; /* hash, 0 means any */
-    ar_u32 id;    /* hash, 0 means any */
+    ar_u32     tag; /* hash, 0 means any */
+    ar_classes klass;
+    ar_u32     id; /* hash, 0 means any */
     ar_u8  state; /* required state bits, 0 means any */
 
     ar_u16   specificity;
@@ -216,11 +235,19 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state,
-                      ar_style *out);
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                      ar_u8 state, ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may
    be absent. Returns 0 if the selector is malformed. */
-int ar_selector_split(const char *sel, ar_u32 *tag, ar_u32 *klass, ar_u32 *id);
+int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *id);
+
+/* Adds a class hash if there is room and it is not already there. */
+void ar_classes_add(ar_classes *c, ar_u32 hash);
+void ar_classes_clear(ar_classes *c);
+
+/* Every class in `want` is present in `have`. That direction is the whole of
+   compound matching: a rule naming two classes matches a box carrying three. */
+int ar_classes_contains(const ar_classes *have, const ar_classes *want);
 
 #endif /* AR_CSS_H */

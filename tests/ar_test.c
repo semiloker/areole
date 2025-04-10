@@ -695,10 +695,11 @@ static void ar__sheet(const char *css)
 static ar_style ar__resolve(const char *selector, ar_u8 state)
 {
     ar_style st;
-    ar_u32   tag = 0, klass = 0, id = 0;
+    ar_u32 tag = 0, id = 0;
+    ar_classes klass;
 
     ar_selector_split(selector, &tag, &klass, &id);
-    ar_sheet_resolve(&g_sheet, tag, klass, id, state, &st);
+    ar_sheet_resolve(&g_sheet, tag, &klass, id, state, &st);
     return st;
 }
 
@@ -1007,12 +1008,14 @@ static void test_css_capacity(void)
 
 static void test_selector_split(void)
 {
-    ar_u32 tag, klass, id;
+    ar_u32 tag, id;
+    ar_classes klass;
 
     CHECK(ar_selector_split("div.card#first", &tag, &klass, &id),
           "selector: a full selector splits");
     CHECK(tag == ar_hash("div", 3), "selector: the tag is extracted");
-    CHECK(klass == ar_hash("card", 4), "selector: the class is extracted");
+    CHECK(klass.n == 1 && klass.h[0] == ar_hash("card", 4),
+          "selector: the class is extracted");
     CHECK(id == ar_hash("first", 5), "selector: the id is extracted");
 
     CHECK(ar_selector_split(".card", &tag, &klass, &id), "selector: a bare class splits");
@@ -1878,7 +1881,8 @@ static void test_style_cache_agrees_with_the_resolver(void)
     static ar_cache_entry cache[16];
     ar_sheet              cached, plain;
     ar_style              a, b;
-    ar_u32                tag, klass, id;
+    ar_u32 tag, id;
+    ar_classes klass;
     int                   mismatch = 0;
     int                   i, state;
 
@@ -1916,8 +1920,8 @@ static void test_style_cache_agrees_with_the_resolver(void)
             }
             for (state = 0; state < 8; ++state)
             {
-                ar_sheet_resolve(&cached, tag, klass, id, (ar_u8)state, &a);
-                ar_sheet_resolve(&plain, tag, klass, id, (ar_u8)state, &b);
+                ar_sheet_resolve(&cached, tag, &klass, id, (ar_u8)state, &a);
+                ar_sheet_resolve(&plain, tag, &klass, id, (ar_u8)state, &b);
                 if (!ar__styles_agree(&a, &b))
                 {
                     mismatch = 1;
@@ -1936,19 +1940,20 @@ static void test_style_cache_is_dropped_when_a_sheet_is_added(void)
     static ar_cache_entry cache[16];
     ar_sheet              sheet;
     ar_style              before, after;
-    ar_u32                tag, klass, id;
+    ar_u32 tag, id;
+    ar_classes klass;
 
     ar_sheet_init(&sheet, rules, 64);
     ar_sheet_set_cache(&sheet, cache, 16);
     ar_sheet_parse(&sheet, ".box { width:10px; }");
 
     ar_selector_split("div.box", &tag, &klass, &id);
-    ar_sheet_resolve(&sheet, tag, klass, id, 0, &before);
+    ar_sheet_resolve(&sheet, tag, &klass, id, 0, &before);
 
     /* A later sheet that overrides it. If the cached answer survived, the new
        rule would never be seen. */
     ar_sheet_parse(&sheet, ".box { width:99px; }");
-    ar_sheet_resolve(&sheet, tag, klass, id, 0, &after);
+    ar_sheet_resolve(&sheet, tag, &klass, id, 0, &after);
 
     CHECK(before.v[AR_P_WIDTH] == 10, "style cache: the first sheet resolves");
     CHECK(after.v[AR_P_WIDTH] == 99, "style cache: adding a sheet drops what it cached");
@@ -1960,7 +1965,8 @@ static void test_style_cache_keeps_states_apart(void)
     static ar_cache_entry cache[16];
     ar_sheet              sheet;
     ar_style              rest, hover;
-    ar_u32                tag, klass, id;
+    ar_u32 tag, id;
+    ar_classes klass;
 
     ar_sheet_init(&sheet, rules, 64);
     ar_sheet_set_cache(&sheet, cache, 16);
@@ -1968,8 +1974,8 @@ static void test_style_cache_keeps_states_apart(void)
                            ".b:hover { background:#222222; }");
 
     ar_selector_split("div.b", &tag, &klass, &id);
-    ar_sheet_resolve(&sheet, tag, klass, id, 0, &rest);
-    ar_sheet_resolve(&sheet, tag, klass, id, AR_STATE_HOVER, &hover);
+    ar_sheet_resolve(&sheet, tag, &klass, id, 0, &rest);
+    ar_sheet_resolve(&sheet, tag, &klass, id, AR_STATE_HOVER, &hover);
 
     /* The state is part of the key. Dropping it would make every box look
        hovered as soon as one of them was. */
@@ -1997,10 +2003,12 @@ static void test_style_cache_survives_more_tuples_than_it_holds(void)
        resolver has to fall through. Falling through must still be correct. */
     for (i = 0; i < 200; ++i)
     {
-        ar_style a, b;
-        ar_u32   tag = (ar_u32)(i * 2654435761u);
-        ar_sheet_resolve(&small, tag, 0, 0, 0, &a);
-        ar_sheet_resolve(&plain, tag, 0, 0, 0, &b);
+        ar_style   a, b;
+        ar_u32     tag = (ar_u32)(i * 2654435761u);
+        ar_classes none;
+        ar_classes_clear(&none);
+        ar_sheet_resolve(&small, tag, &none, 0, 0, &a);
+        ar_sheet_resolve(&plain, tag, &none, 0, 0, &b);
         if (!ar__styles_agree(&a, &b))
         {
             mismatch = 1;
@@ -4212,6 +4220,92 @@ static void test_inheritance_is_not_in_the_style_cache(void)
 }
 
 
+
+/* ------------------------------------------------------------------------
+ * Compound selectors
+ * ------------------------------------------------------------------------ */
+static void test_compound_selector_matching(void)
+{
+    ar_surface s = ar__ui_surface(200, 120);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".card { width:100px; background:#333333; }"
+                 ".card.selected { background:#00FF00; }"
+                 ".selected { border-width:2px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.card");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.card.selected");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.selected");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x333333,
+          "compound: a box with one class takes the single-class rule");
+    /* Two classes: the compound rule wins on specificity, and the box still
+       picks up what each single-class rule gave it. */
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "compound: .card.selected beats .card on specificity");
+    CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 100,
+          "compound: and still takes the width from .card");
+    CHECK(g_ui->nodes[2].style.v[AR_P_BORDER_WIDTH] == 2,
+          "compound: and the border from .selected");
+    /* A box with only one of the two must not match the compound rule. */
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+          "compound: a box with only one of the classes does not match");
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] != 100,
+          "compound: nor picks up the other class's properties");
+}
+
+static void test_class_set_is_order_independent(void)
+{
+    ar_classes a, b;
+
+    ar_classes_clear(&a);
+    ar_classes_clear(&b);
+    ar_classes_add(&a, 111u);
+    ar_classes_add(&a, 222u);
+    ar_classes_add(&b, 222u);
+    ar_classes_add(&b, 111u);
+
+    /* A box declared .a.b is the same box as one declared .b.a, so they must
+       land on the same resolved-style cache entry. */
+    CHECK(a.combined == b.combined, "compound: the class set hashes the same either order");
+    CHECK(ar_classes_contains(&a, &b) && ar_classes_contains(&b, &a),
+          "compound: and each contains the other");
+
+    /* Containment is one-way where it should be: a rule naming two classes
+       matches a box carrying three, not the reverse. */
+    ar_classes_add(&a, 333u);
+    CHECK(ar_classes_contains(&a, &b), "compound: three classes contain two");
+    CHECK(!ar_classes_contains(&b, &a), "compound: two do not contain three");
+}
+
+static void test_class_list_has_a_ceiling(void)
+{
+    ar_classes c;
+    ar_i32     i;
+
+    ar_classes_clear(&c);
+    for (i = 0; i < 20; ++i)
+    {
+        ar_classes_add(&c, (ar_u32)(i + 1));
+    }
+    CHECK(c.n == AR_MAX_CLASSES, "compound: the class list stops at its ceiling");
+
+    /* And the same class twice is once, or a selector written .a.a would
+       double its own specificity for nothing. */
+    ar_classes_clear(&c);
+    ar_classes_add(&c, 7u);
+    ar_classes_add(&c, 7u);
+    CHECK(c.n == 1, "compound: a repeated class is stored once");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4347,6 +4441,9 @@ int main(void)
     test_glyph_blitter_renders_the_same_pixels();
     test_glyph_spans_respect_a_tight_clip();
 
+    test_compound_selector_matching();
+    test_class_set_is_order_independent();
+    test_class_list_has_a_ceiling();
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
     test_inheritance_is_not_in_the_style_cache();

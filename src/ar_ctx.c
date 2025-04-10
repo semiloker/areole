@@ -581,7 +581,8 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
 {
     ar_i32   idx, parent;
     ar_node *n;
-    ar_u32   tag = 0, klass = 0, id = 0;
+    ar_u32     tag = 0, id = 0;
+    ar_classes klass;
     ar_u32   key;
     ar_slot *slot;
     ar_u8    state = AR_STATE_NONE;
@@ -596,6 +597,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n = &c->nodes[idx];
     parent = c->depth > 0 ? c->stack[c->depth - 1] : -1;
 
+    ar_classes_clear(&klass);
     ar_selector_split(selector, &tag, &klass, &id);
 
     /* Identity is position in the tree, plus an explicit id when one is given.
@@ -635,7 +637,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->fit[1] = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
 
-    ar_sheet_resolve(&c->sheet, tag, klass, id, state, &n->style);
+    ar_sheet_resolve(&c->sheet, tag, &klass, id, state, &n->style);
 
     /* Inheritance, after the cache rather than inside it. The cache holds what
        the selectors produced, which does not depend on where a box sits; the
