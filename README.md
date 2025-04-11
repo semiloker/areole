@@ -150,6 +150,25 @@ The price is `arena_churn`, a scene that rebuilds four thousand boxes every
 frame, which is 25% slower. That is a shape no real interface has, traded
 against one every interface has.
 
+## Style
+
+Real CSS, a subset of it. Selectors carry several classes and combinators:
+
+```css
+.card.selected     { background: #2b7; }   /* both classes */
+.page .card        { padding: 12px; }      /* a descendant */
+#root > .card      { margin: 4px; }        /* a direct child, not a grandchild */
+.row + .row        { border-top-width: 1px; }
+```
+
+`color` and `font-size` inherit, including through a box that only inherited
+them, so a stylesheet states them once rather than on every rule.
+
+Resolution is cached on the selector alone — tag, classes, id and state — which
+is why it is fast. Inheritance and combinators are applied outside that cache,
+because both depend on where a box sits and a cache keyed on the ancestor path
+would not be a cache.
+
 ## Text
 
 Without a font file, areole draws with a built-in 8x8 bitmap face. That is why a
