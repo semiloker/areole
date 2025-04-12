@@ -698,6 +698,15 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     {
         ar_style_inherit(&n->style, &c->nodes[parent].style);
     }
+    else
+    {
+        /* The root has nothing above it, but `inherit` and `initial` still have
+           to be resolved or their units reach layout as themselves. Inheriting
+           from the defaults is what the specification says the root does. */
+        ar_style root;
+        ar_style_defaults(&root);
+        ar_style_inherit(&n->style, &root);
+    }
 
     /* font-size is expressed in pixels because that is what people write, and
        the face is eight pixels tall, so the scale is the ratio. Rounding down

@@ -1037,18 +1037,24 @@ static void test_selector_split(void)
  * output is checked against nothing.
  * ------------------------------------------------------------------------ */
 
-#define AR_LAY_MAX 512
+#define AR_LAY_MAX 1024
 
 static unsigned char g_ui_mem[AR_MEM(256)];
-static ar_u32        g_ui_pixels[AR_LAY_MAX * 64];
+/* Big enough for every size any test asks for, and ar__ui_surface refuses to
+   hand out more. It held 64 rows for a long time and nothing noticed, because
+   no test until now painted a background across the whole surface -- the
+   overrun landed on the next global and turned the context pointer into a
+   colour value. */
+#define AR_LAY_ROWS 400
+static ar_u32 g_ui_pixels[AR_LAY_MAX * AR_LAY_ROWS];
 static ar_ctx       *g_ui;
 
 static ar_surface ar__ui_surface(ar_i32 w, ar_i32 h)
 {
     ar_surface s;
     s.pixels = g_ui_pixels;
-    s.w = w;
-    s.h = h;
+    s.w = w > AR_LAY_MAX ? AR_LAY_MAX : w;
+    s.h = h > AR_LAY_ROWS ? AR_LAY_ROWS : h;
     s.stride = AR_LAY_MAX;
     return s;
 }
@@ -4315,6 +4321,114 @@ static void test_class_list_has_a_ceiling(void)
  * key on. Rules carrying one are held apart and resolved per box without it,
  * so a stylesheet with no combinators pays nothing.
  * ------------------------------------------------------------------------ */
+/*
+ * !important runs a second cascade over only the important declarations, which
+ * is why a one-class rule can beat an id. The test that matters is that one,
+ * not the easy case where important also happens to be more specific.
+ */
+static void test_important_beats_specificity(void)
+{
+    ar_surface s = ar__ui_surface(200, 140);
+
+    ar__ui_reset("#panel { background:#FF0000; border-width:7px; }"
+                 ".loud { background:#00FF00 !important; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#panel.loud");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "important: a class marked important beats an id that is not");
+    CHECK(g_ui->nodes[1].style.v[AR_P_BORDER_WIDTH] == 7,
+          "important: and the id's other properties are untouched");
+}
+
+static void test_important_is_per_declaration(void)
+{
+    ar_sheet   sheet;
+    ar_rule    rules[8];
+    ar_classes klass;
+    ar_style   out;
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, "p { color:#FF0000 !important; width:40px; }");
+
+    CHECK(sheet.count == 1, "important: the rule parsed");
+    CHECK((sheet.rules[0].important & (1u << AR_P_COLOR)) != 0,
+          "important: the marked property carries the flag");
+    CHECK((sheet.rules[0].important & (1u << AR_P_WIDTH)) == 0,
+          "important: and the one next to it does not");
+
+    ar_classes_clear(&klass);
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, ar_hash("p", 1), &klass, 0, 0, &out);
+    CHECK(out.v[AR_P_WIDTH] == 40, "important: the unmarked declaration still applies");
+}
+
+/* Both important, so the ordinary cascade decides between them: the second
+   pass is a cascade of its own, not a free pass to whoever asked first. */
+static void test_important_loses_to_important(void)
+{
+    ar_sheet   sheet;
+    ar_rule    rules[8];
+    ar_classes klass;
+    ar_style   out;
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ".b { color:#00FF00 !important; }"
+                           "#a { color:#0000FF !important; }");
+    ar_classes_clear(&klass);
+    ar_classes_add(&klass, ar_hash("b", 1));
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, 0, &klass, ar_hash("a", 1), 0, &out);
+    CHECK((out.v[AR_P_COLOR] & 0xFFFFFF) == 0x0000FF,
+          "important: between two important rules the more specific one still wins");
+}
+
+/*
+ * inherit, initial, unset and revert.
+ *
+ * `inherit` on a property that does not normally inherit is the case worth
+ * testing: it is what the keyword exists for, and it is the one that fails if
+ * the keyword is handled inside the inherits-by-default loop instead of before
+ * it.
+ */
+static void test_cascade_keywords(void)
+{
+    ar_surface s = ar__ui_surface(200, 140);
+
+    ar__ui_reset("#root { background:#123456; color:#FF0000; font-size:20px; }"
+                 ".takes { background:inherit; }"
+                 ".drops { color:initial; }"
+                 ".unset-inherited { color:unset; }"
+                 ".unset-layout { background:unset; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.takes");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.drops");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.unset-inherited");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.unset-layout");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x123456,
+          "cascade keyword: inherit takes a property that does not inherit by default");
+    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) != 0xFF0000,
+          "cascade keyword: initial drops one that does");
+    CHECK((g_ui->nodes[3].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+          "cascade keyword: unset means inherit on an inherited property");
+    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x123456,
+          "cascade keyword: and initial on one that is not");
+}
+
 static void test_combinators(void)
 {
     ar_surface s = ar__ui_surface(200, 140);
@@ -4525,6 +4639,10 @@ int main(void)
     test_glyph_blitter_renders_the_same_pixels();
     test_glyph_spans_respect_a_tight_clip();
 
+    test_important_beats_specificity();
+    test_important_is_per_declaration();
+    test_important_loses_to_important();
+    test_cascade_keywords();
     test_combinators();
     test_a_sheet_without_combinators_says_so();
     test_selector_depth_is_refused_not_truncated();

@@ -174,10 +174,32 @@ int ar_prop_inherits(ar_i32 prop)
 
 void ar_style_inherit(ar_style *child, const ar_style *parent)
 {
-    ar_i32 i;
+    ar_style defaults;
+    ar_i32   i;
+
+    ar_style_defaults(&defaults);
 
     for (i = 0; i < AR_P_COUNT; ++i)
     {
+        /* The explicit keywords first, because they override the question of
+           whether the property inherits by default -- that is what they are
+           for. `inherit` on a non-inherited property is the interesting case
+           and the one CSS authors reach for. */
+        if (child->set & (1u << (ar_u32)i))
+        {
+            if (child->unit[i] == AR_UNIT_INHERIT)
+            {
+                child->v[i] = parent->v[i];
+                child->unit[i] = parent->unit[i];
+                continue;
+            }
+            if (child->unit[i] == AR_UNIT_INITIAL)
+            {
+                child->v[i] = defaults.v[i];
+                child->unit[i] = defaults.unit[i];
+                continue;
+            }
+        }
         if (!ar_prop_inherits(i))
         {
             continue;
@@ -565,6 +587,32 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             out.ok = 1;
             return out;
         }
+        /*
+         * The explicit cascade keywords.
+         *
+         * `unset` resolves here rather than later because the property is
+         * already known, and it is defined as exactly one of the other two.
+         * `revert` would mean "back to the UA sheet", and there is no separate
+         * UA layer to go back to, so it means the same as `initial`.
+         */
+        if (ar__same(name, len, "inherit"))
+        {
+            out.unit = AR_UNIT_INHERIT;
+            out.ok = 1;
+            return out;
+        }
+        if (ar__same(name, len, "initial") || ar__same(name, len, "revert"))
+        {
+            out.unit = AR_UNIT_INITIAL;
+            out.ok = 1;
+            return out;
+        }
+        if (ar__same(name, len, "unset"))
+        {
+            out.unit = (ar_u8)(ar_prop_inherits(prop) ? AR_UNIT_INHERIT : AR_UNIT_INITIAL);
+            out.ok = 1;
+            return out;
+        }
         if (ar__same(name, len, "transparent"))
         {
             out.unit = AR_UNIT_COLOR;
@@ -590,6 +638,36 @@ static void ar__set(ar_rule *rule, ar_u8 prop, ar_i32 v, ar_u8 unit)
     rule->set |= 1u << prop;
 }
 
+/*
+ * `!important` at the end of a declaration.
+ *
+ * Consumes it if it is there and reports whether it was. Written as a probe
+ * rather than folded into the value parser because it can follow any value of
+ * any type, and every value parser would otherwise have to know about it.
+ */
+static int ar__take_important(ar__scan *z)
+{
+    const char *save = z->p;
+    const char *name;
+    ar_u32      len;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end || *z->p != '!')
+    {
+        z->p = save;
+        return 0;
+    }
+    z->p++;
+    ar__skip_ws(z);
+    len = ar__ident(z, &name);
+    if (len && ar__same(name, len, "important"))
+    {
+        return 1;
+    }
+    z->p = save;
+    return 0;
+}
+
 /* ------------------------------------------------------------------------
  * Declarations
  * ------------------------------------------------------------------------ */
@@ -598,8 +676,12 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
     const char *name;
     ar_u32      len;
     ar_i32      prop;
+    ar_u32      before_set;
+    int         important;
     ar__value   vals[4];
     ar_i32      n;
+
+    important = 0;
 
     len = ar__ident(z, &name);
     if (len == 0)
@@ -659,6 +741,14 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             break;
         }
+        /* Probed here rather than after the loop, because the loop's recovery
+           for a character that cannot begin a value would otherwise eat the
+           `!` and count it as a parse error. */
+        if (*z->p == '!')
+        {
+            important = ar__take_important(z);
+            break;
+        }
 
         before = z->p;
         val = ar__parse_value(z, as);
@@ -683,6 +773,11 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         }
         vals[n++] = val;
     }
+
+    /* The mask is the difference between what the rule had set before this
+       declaration and after it, which marks a shorthand's four properties
+       without the shorthand having to know it is being marked. */
+    before_set = rule->set;
 
     if (n == 0)
     {
@@ -718,6 +813,11 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
     else
     {
         ar__set(rule, (ar_u8)prop, vals[0].v, vals[0].unit);
+    }
+
+    if (important)
+    {
+        rule->important |= rule->set & ~before_set;
     }
 
     while (z->p < z->end && *z->p != ';' && *z->p != '}')
@@ -1191,7 +1291,43 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         {
             continue;
         }
-        ar_style_merge(out, &r->style, r->set);
+        ar_style_merge(out, &r->style, r->set & ~r->important);
+    }
+
+    /*
+     * The important band, after everything normal.
+     *
+     * CSS resolves !important by running a second cascade over only the
+     * important declarations, so an important rule of low specificity beats a
+     * normal rule of high specificity. A second pass in the same order is
+     * exactly what the specification describes, and is cheaper than sorting on
+     * a compound key -- the rules are already in the right order for both.
+     */
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+
+        if (!r->important)
+        {
+            continue;
+        }
+        if (r->tag && r->tag != tag)
+        {
+            continue;
+        }
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
+        {
+            continue;
+        }
+        if (r->id && r->id != id)
+        {
+            continue;
+        }
+        if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        ar_style_merge(out, &r->style, r->important);
     }
 }
 
@@ -1316,7 +1452,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
         {
             continue;
         }
-        ar_style_merge(out, &r->style, r->set);
+        /* Normal declarations then important ones, in one walk: a contextual
+           rule's important declarations still have to land after its normal
+           ones, and there are few enough of these rules that a second walk
+           would cost more than it clarifies. */
+        ar_style_merge(out, &r->style, r->set & ~r->important);
+        ar_style_merge(out, &r->style, r->important);
     }
 }
 
