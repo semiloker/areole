@@ -130,7 +130,30 @@ enum
     AR_STATE_NONE = 0,
     AR_STATE_HOVER = 1 << 0,
     AR_STATE_ACTIVE = 1 << 1,
-    AR_STATE_FOCUS = 1 << 2
+    AR_STATE_FOCUS = 1 << 2,
+
+    /*
+     * The structural pseudo-classes.
+     *
+     * They are state bits like the input ones, which keeps the whole selector
+     * side one integer compare, but they split into two groups by *when* they
+     * can be known. :root, :first-child and the odd/even pair follow from the
+     * box's position among its siblings, which is settled the moment it is
+     * declared. :last-child, :only-child and :empty depend on how many
+     * children the parent turns out to have, which is not settled until the
+     * parent closes -- so a sheet using them gets a second resolve pass.
+     */
+    AR_STATE_ROOT = 1 << 3,
+    AR_STATE_FIRST = 1 << 4,
+    AR_STATE_ODD = 1 << 5,
+    AR_STATE_EVEN = 1 << 6,
+
+    AR_STATE_LAST = 1 << 7,
+    AR_STATE_ONLY = 1 << 8,
+    AR_STATE_EMPTY = 1 << 9,
+
+    /* The ones that cannot be answered until the parent has closed. */
+    AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
 
 /*
@@ -194,7 +217,7 @@ typedef struct ar_rule
        parts means a simple rule, which is the cacheable kind. */
     ar_sel_part ctx[AR_MAX_SEL_PARTS];
     ar_i32      nctx;
-    ar_u8  state; /* required state bits, 0 means any */
+    ar_u16 state; /* required state bits, 0 means any */
 
     ar_u16 specificity;
     ar_u16 order; /* source position, to break specificity ties */
@@ -226,7 +249,7 @@ typedef struct ar_rule
 typedef struct ar_cache_entry
 {
     ar_u32   tag, klass, id;
-    ar_u8    state;
+    ar_u16   state;
     ar_u8    used;
     ar_style style;
 } ar_cache_entry;
@@ -240,6 +263,10 @@ typedef struct ar_sheet
     /* Dropped wholesale whenever a stylesheet is added, which is the only
        thing that can invalidate it. Adding a stylesheet is a startup
        operation, so this never happens in a frame. */
+    /* Whether any rule needs the second resolve pass, for the same reason and
+       with the same payoff as the flag below: a sheet without one skips it. */
+    int has_late_state;
+
     /* Whether any rule in this sheet carries a combinator. A sheet without
        one skips the contextual pass entirely, which is most sheets. */
     int has_contextual;
@@ -289,7 +316,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                      ar_u8 state, ar_style *out);
+                      ar_u16 state, ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may
    be absent. Returns 0 if the selector is malformed. */
@@ -318,7 +345,7 @@ typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index
                            ar_classes *klass, ar_u32 *id);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u8 state,
+                                 const ar_classes *klass, ar_u32 id, ar_u16 state,
                                  ar_sel_walk find, void *ud, ar_style *out);
 
 #endif /* AR_CSS_H */

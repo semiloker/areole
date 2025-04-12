@@ -545,6 +545,92 @@ static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, a
     return 1;
 }
 
+/*
+ * Everything that turns a selector into a resolved style for one box.
+ *
+ * Pulled out of ar_begin because the structural pseudo-classes that depend on
+ * the parent's final child count force a second run, and running it twice has
+ * to mean running the same thing twice.
+ */
+static void ar__resolve(ar_ctx *c, ar_i32 i)
+{
+    ar_node *n = &c->nodes[i];
+
+    ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+
+    /* Rules with a combinator, which the cache cannot hold because their
+       answer depends on where this box sits rather than only on what it is.
+       A stylesheet without combinators skips this entirely. */
+    ar_sheet_resolve_contextual(&c->sheet, i, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                ar__sel_walk, c, &n->style);
+
+    /* Inheritance, after the cache rather than inside it. The cache holds what
+       the selectors produced, which does not depend on where a box sits; the
+       inherited part does, and is a loop over two properties. Caching after
+       inheritance would need the parent in the key and would be a different
+       and much worse cache -- and the key's completeness is the one thing in
+       this file that fails silently when it is wrong. */
+    if (n->parent >= 0)
+    {
+        ar_style_inherit(&n->style, &c->nodes[n->parent].style);
+    }
+    else
+    {
+        /* The root has nothing above it, but `inherit` and `initial` still have
+           to be resolved or their units reach layout as themselves. Inheriting
+           from the defaults is what the specification says the root does. */
+        ar_style root;
+        ar_style_defaults(&root);
+        ar_style_inherit(&n->style, &root);
+    }
+}
+
+/*
+ * :last-child, :only-child and :empty, once every box has been declared.
+ *
+ * Nodes are appended in declaration order, which is preorder, so walking the
+ * array forwards visits every parent before its children and inheritance still
+ * flows the right way on the second pass. A sheet that uses none of these
+ * three never gets here.
+ */
+static void ar__resolve_late(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (!c->sheet.has_late_state)
+    {
+        return;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_u16   was = n->state;
+
+        if (n->child_count == 0 && !n->text)
+        {
+            n->state |= AR_STATE_EMPTY;
+        }
+        if (n->parent >= 0)
+        {
+            if (c->nodes[n->parent].last_child == i)
+            {
+                n->state |= AR_STATE_LAST;
+            }
+            if (c->nodes[n->parent].child_count == 1)
+            {
+                n->state |= AR_STATE_ONLY;
+            }
+        }
+        /* Re-resolving unconditionally would be correct and would also throw
+           away the first pass for every box in the tree. Only the ones whose
+           state actually changed can resolve differently. */
+        if (n->state != was)
+        {
+            ar__resolve(c, i);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
@@ -664,6 +750,23 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
         state |= AR_STATE_ACTIVE;
     }
 
+    /* The structural bits that position among siblings already settles. The
+       other three wait for the parent to close; see ar__resolve_late. */
+    if (parent < 0)
+    {
+        state |= AR_STATE_ROOT;
+    }
+    else
+    {
+        ar_i32 nth = c->nodes[parent].child_count; /* zero-based, so far */
+
+        if (nth == 0)
+        {
+            state |= AR_STATE_FIRST;
+        }
+        state |= (nth & 1) ? AR_STATE_EVEN : AR_STATE_ODD;
+    }
+
     n->parent = parent;
     n->first_child = -1;
     n->last_child = -1;
@@ -680,33 +783,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->fit[1] = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
 
-    ar_sheet_resolve(&c->sheet, tag, &klass, id, state, &n->style);
-
-    /* Rules with a combinator, which the cache cannot hold because their
-       answer depends on where this box sits rather than only on what it is.
-       A stylesheet without combinators skips this entirely. */
-    ar_sheet_resolve_contextual(&c->sheet, c->node_count - 1, tag, &klass, id, state,
-                                ar__sel_walk, c, &n->style);
-
-    /* Inheritance, after the cache rather than inside it. The cache holds what
-       the selectors produced, which does not depend on where a box sits; the
-       inherited part does, and is a loop over two properties. Caching after
-       inheritance would need the parent in the key and would be a different
-       and much worse cache -- and the key's completeness is the one thing in
-       this file that fails silently when it is wrong. */
-    if (parent >= 0)
-    {
-        ar_style_inherit(&n->style, &c->nodes[parent].style);
-    }
-    else
-    {
-        /* The root has nothing above it, but `inherit` and `initial` still have
-           to be resolved or their units reach layout as themselves. Inheriting
-           from the defaults is what the specification says the root does. */
-        ar_style root;
-        ar_style_defaults(&root);
-        ar_style_inherit(&n->style, &root);
-    }
+    ar__resolve(c, c->node_count - 1);
 
     /* font-size is expressed in pixels because that is what people write, and
        the face is eight pixels tall, so the scale is the ratio. Rounding down
@@ -922,6 +999,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     {
         return ar_rect_make(0, 0, 0, 0);
     }
+
+    /* :last-child, :only-child and :empty could not be answered while the tree
+       was being built. This is the first moment they can be. */
+    ar__resolve_late(c);
 
     /* Style resolution happened during tree building, between frame_begin and
        here, so closing that phase now attributes it correctly. */

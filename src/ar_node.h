@@ -34,7 +34,7 @@ typedef struct ar_node
     ar_i32 child_count;
 
     ar_u32 key;   /* stable across frames, for state and hit testing */
-    ar_u8  state; /* hover, active, focus */
+    ar_u16 state; /* hover, active, focus, and the structural pseudo-classes */
 
     /* What the caller declared, kept because a combinator asks about an
        ancestor or a sibling and the answer is a property of that box rather

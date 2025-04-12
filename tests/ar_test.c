@@ -4429,6 +4429,105 @@ static void test_cascade_keywords(void)
           "cascade keyword: and initial on one that is not");
 }
 
+/*
+ * The structural pseudo-classes.
+ *
+ * The split that matters is when each one can be answered. :root, :first-child
+ * and the odd/even pair follow from position among siblings and are settled at
+ * declare time; :last-child, :only-child and :empty are not knowable until the
+ * parent has closed, and get a second resolve pass.
+ */
+static void test_structural_pseudo_classes(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset(":root { border-width:3px; }"
+                 ".row:first-child { background:#FF0000; }"
+                 ".row:last-child { background:#00FF00; }"
+                 ".row:nth-child(odd) { border-width:7px; }"
+                 ".row:nth-child(even) { border-width:9px; }"
+                 ".lone:only-child { background:#0000FF; }"
+                 ".box:empty { background:#FFFF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");  /* 1: no children and no text */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.list"); /* 2 */
+    ar_begin(g_ui, "div.row");  /* 3: first child of the list, odd */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");  /* 4: even */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");  /* 5: last child of the list, odd */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.box");  /* 6: has a child, so not empty */
+    ar_begin(g_ui, "div.lone"); /* 7: the only child of 6 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[0].style.v[AR_P_BORDER_WIDTH] == 3, "structural: :root matches the root");
+    CHECK(g_ui->nodes[2].style.v[AR_P_BORDER_WIDTH] != 3, "structural: and nothing below it");
+
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+          "structural: :first-child matches the first");
+    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0xFF0000,
+          "structural: and not the second");
+    CHECK((g_ui->nodes[5].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "structural: :last-child matches the last, resolved after the parent closed");
+
+    CHECK(g_ui->nodes[3].style.v[AR_P_BORDER_WIDTH] == 7, "structural: nth-child(odd)");
+    CHECK(g_ui->nodes[4].style.v[AR_P_BORDER_WIDTH] == 9, "structural: nth-child(even)");
+    CHECK(g_ui->nodes[5].style.v[AR_P_BORDER_WIDTH] == 7, "structural: and odd again");
+
+    CHECK((g_ui->nodes[7].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x0000FF,
+          "structural: :only-child matches a lone child");
+    CHECK((g_ui->nodes[6].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0xFFFF00,
+          "structural: :empty does not match a box with a child");
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFFFF00,
+          "structural: :empty matches one with neither children nor text");
+}
+
+/* The style cache is keyed on state among other things, and state outgrew a
+   byte when the structural bits arrived. Truncating it there would return the
+   plain box's style for the first child, silently. */
+static void test_structural_state_survives_the_cache_key(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset(".row { background:#111111; }"
+                 ".row:first-child { background:#FF0000; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+          "structural: two boxes differing only in a structural bit do not share a cache entry");
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+          "structural: and the second gets its own style");
+}
+
+/* The general an+b form is not implemented, and a selector using it is refused
+   rather than quietly matching something else. */
+static void test_nth_child_general_form_is_refused(void)
+{
+    ar_sheet sheet;
+    ar_rule  rules[8];
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ".r:nth-child(2n+1) { width:5px; }");
+    CHECK(sheet.count == 0, "structural: nth-child(an+b) is refused");
+    CHECK(sheet.errors > 0, "structural: and counted as an error");
+}
+
 static void test_combinators(void)
 {
     ar_surface s = ar__ui_surface(200, 140);
@@ -4643,6 +4742,9 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_structural_pseudo_classes();
+    test_structural_state_survives_the_cache_key();
+    test_nth_child_general_form_is_refused();
     test_combinators();
     test_a_sheet_without_combinators_says_so();
     test_selector_depth_is_refused_not_truncated();
