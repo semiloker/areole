@@ -104,6 +104,12 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
+      # Every page of the tour, declared against a real surface with no window.
+      # A page that leaves the tree unbalanced or overruns the box budget fails
+      # here rather than when somebody clicks on it.
+      - name: Tour self-check
+        run: ./build/example_tour.exe --selftest
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest

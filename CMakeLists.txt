@@ -63,6 +63,10 @@ if(WIN32)
     add_executable(example_hello examples/01_hello/main.c)
     target_link_libraries(example_hello PRIVATE areole_win32)
     areole_set_warnings(example_hello)
+
+    add_executable(example_tour examples/02_tour/main.c)
+    target_link_libraries(example_tour PRIVATE areole_win32)
+    areole_set_warnings(example_tour)
 endif()
 
 # --- benchmark ----------------------------------------------------------------
