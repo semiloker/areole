@@ -65,7 +65,13 @@ typedef enum ar_unit
     AR_UNIT_AUTO, /* size to content                  */
     AR_UNIT_GROW, /* take a share of the leftover     */
     AR_UNIT_KEYWORD,
-    AR_UNIT_COLOR
+    AR_UNIT_COLOR,
+
+    /* The explicit cascade values. They are units rather than values because
+       they say where the value comes from rather than what it is, and the
+       decision is taken when the parent is known, which is after resolution. */
+    AR_UNIT_INHERIT,
+    AR_UNIT_INITIAL
 } ar_unit;
 
 /* Keyword values, all in one space so the parser can hand back one integer. */
@@ -190,9 +196,15 @@ typedef struct ar_rule
     ar_i32      nctx;
     ar_u8  state; /* required state bits, 0 means any */
 
-    ar_u16   specificity;
-    ar_u16   order; /* source position, to break specificity ties */
-    ar_u32   set;   /* which properties this rule sets */
+    ar_u16 specificity;
+    ar_u16 order; /* source position, to break specificity ties */
+    ar_u32 set;   /* which properties this rule sets */
+
+    /* Which of them were marked !important. Per declaration rather than per
+       rule, because that is what CSS says and because a rule mixing the two is
+       ordinary: `color: red !important; width: 10px;` means one of them wins
+       against everything and the other does not. */
+    ar_u32 important;
     ar_style style;
 } ar_rule;
 
