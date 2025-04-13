@@ -146,11 +146,48 @@ typedef struct ar_classes
     ar_u32 combined;
 } ar_classes;
 
+/*
+ * Combinators.
+ *
+ * A selector like `.page .card` matches a card that has a page somewhere above
+ * it, which makes the resolved style depend on where a box sits rather than
+ * only on what it is. That is precisely what the resolved-style cache cannot
+ * key on, so rules carrying a combinator are held apart and resolved per box
+ * without it. A stylesheet with no combinators pays nothing for this.
+ *
+ * Three context parts, so `#app .page .card` fits and `a b c d e` does not. A
+ * selector that deep is describing the document's structure rather than the
+ * element, and the rule that would be quicker to write is usually a class.
+ */
+enum
+{
+    AR_COMB_NONE = 0,   /* the subject: the rightmost compound      */
+    AR_COMB_DESCENDANT, /* a space: anywhere above                  */
+    AR_COMB_CHILD,      /* >: the immediate parent                  */
+    AR_COMB_ADJACENT,   /* +: the sibling immediately before        */
+    AR_COMB_SIBLING     /* ~: any sibling before                    */
+};
+
+#define AR_MAX_SEL_PARTS 3
+
+typedef struct ar_sel_part
+{
+    ar_u32     tag;
+    ar_classes klass;
+    ar_u32     id;
+    ar_u8      comb; /* how this part reaches the one to its right */
+} ar_sel_part;
+
 typedef struct ar_rule
 {
     ar_u32     tag; /* hash, 0 means any */
     ar_classes klass;
     ar_u32     id; /* hash, 0 means any */
+
+    /* Nearest first: ctx[0] is the part immediately left of the subject. Zero
+       parts means a simple rule, which is the cacheable kind. */
+    ar_sel_part ctx[AR_MAX_SEL_PARTS];
+    ar_i32      nctx;
     ar_u8  state; /* required state bits, 0 means any */
 
     ar_u16   specificity;
@@ -191,6 +228,10 @@ typedef struct ar_sheet
     /* Dropped wholesale whenever a stylesheet is added, which is the only
        thing that can invalidate it. Adding a stylesheet is a startup
        operation, so this never happens in a frame. */
+    /* Whether any rule in this sheet carries a combinator. A sheet without
+       one skips the contextual pass entirely, which is most sheets. */
+    int has_contextual;
+
     ar_cache_entry *cache;
     ar_u16          cache_cap;
     ar_u32          cache_hits, cache_misses;
@@ -249,5 +290,23 @@ void ar_classes_clear(ar_classes *c);
 /* Every class in `want` is present in `have`. That direction is the whole of
    compound matching: a rule naming two classes matches a box carrying three. */
 int ar_classes_contains(const ar_classes *have, const ar_classes *want);
+
+/* Does one part of a selector describe this element? */
+int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id);
+
+/*
+ * The contextual pass.
+ *
+ * `find` is asked for the element at a given relation from the current one and
+ * fills in its tag, classes and id; it returns zero when there is no such
+ * element. That indirection is how this stays ignorant of the box tree, which
+ * lives a layer up and which this file has no business knowing about.
+ */
+typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, ar_u32 *tag,
+                           ar_classes *klass, ar_u32 *id);
+
+void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
+                                 const ar_classes *klass, ar_u32 id, ar_u8 state,
+                                 ar_sel_walk find, void *ud, ar_style *out);
 
 #endif /* AR_CSS_H */

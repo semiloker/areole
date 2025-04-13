@@ -4306,6 +4306,90 @@ static void test_class_list_has_a_ceiling(void)
 }
 
 
+
+/* ------------------------------------------------------------------------
+ * Combinators
+ *
+ * A combinator makes a resolved style depend on where a box sits rather than
+ * only on what it is, which is exactly what the resolved-style cache cannot
+ * key on. Rules carrying one are held apart and resolved per box without it,
+ * so a stylesheet with no combinators pays nothing.
+ * ------------------------------------------------------------------------ */
+static void test_combinators(void)
+{
+    ar_surface s = ar__ui_surface(200, 140);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".page { display:flex; flex-direction:column; }"
+                 ".card { background:#111111; }"
+                 ".page .card { background:#00FF00; }"
+                 "#root > .card { background:#FF0000; }"
+                 ".a + .b { border-width:5px; }"
+                 ".a ~ .c { border-width:9px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.card");   /* 1: a direct child of #root */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.page");   /* 2 */
+    ar_begin(g_ui, "div.card");   /* 3: inside .page, not a child of #root */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.a");      /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");      /* 5: immediately after .a */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");      /* 6: a later sibling of .a */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+          "combinator: > matches a direct child");
+    /* The card inside .page is a descendant of #root but not its child, so the
+       child rule must not reach it. That is the difference between the two
+       combinators and the reason both exist. */
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "combinator: a descendant is not a child");
+    CHECK(g_ui->nodes[5].style.v[AR_P_BORDER_WIDTH] == 5,
+          "combinator: + matches the sibling immediately after");
+    CHECK(g_ui->nodes[6].style.v[AR_P_BORDER_WIDTH] == 9,
+          "combinator: ~ matches a later sibling");
+    CHECK(g_ui->nodes[4].style.v[AR_P_BORDER_WIDTH] == 0,
+          "combinator: and neither matches the box on the left of them");
+}
+
+static void test_a_sheet_without_combinators_says_so(void)
+{
+    static ar_rule rules[16];
+    ar_sheet       sheet;
+
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, ".a { width:1px; } div.b#c:hover { width:2px; }");
+    CHECK(!sheet.has_contextual,
+          "combinator: a sheet with none is flagged, so the pass is skipped entirely");
+
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, ".a .b { width:1px; }");
+    CHECK(sheet.has_contextual, "combinator: and a sheet with one is flagged too");
+    CHECK(sheet.count == 1 && sheet.rules[0].nctx == 1,
+          "combinator: the rule keeps one context part");
+}
+
+static void test_selector_depth_is_refused_not_truncated(void)
+{
+    static ar_rule rules[16];
+    ar_sheet       sheet;
+
+    /* Deeper than the context list holds. Truncating would silently match more
+       elements than the author asked for, which is worse than not matching. */
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, ".a .b .c .d .e { width:1px; }");
+    CHECK(sheet.count == 0, "combinator: a selector deeper than the list is refused");
+    CHECK(sheet.errors > 0, "combinator: and counted as an error rather than ignored");
+}
+
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -4441,6 +4525,9 @@ int main(void)
     test_glyph_blitter_renders_the_same_pixels();
     test_glyph_spans_respect_a_tight_clip();
 
+    test_combinators();
+    test_a_sheet_without_combinators_says_so();
+    test_selector_depth_is_refused_not_truncated();
     test_compound_selector_matching();
     test_class_set_is_order_independent();
     test_class_list_has_a_ceiling();

@@ -801,15 +801,17 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
     return any;
 }
 
-static int ar__parse_selector(ar__scan *z, ar_rule *rule)
+/* One compound: a tag, any number of classes, an id, and pseudo-classes.
+   Returns zero if there was nothing to read, which is how the caller knows a
+   combinator was dangling. */
+static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
+                              ar_u8 *state, ar_u16 *spec)
 {
     int any = 0;
 
-    rule->tag = 0;
-    ar_classes_clear(&rule->klass);
-    rule->id = 0;
-    rule->state = AR_STATE_NONE;
-    rule->specificity = 0;
+    *tag = 0;
+    *id = 0;
+    ar_classes_clear(klass);
 
     for (;;)
     {
@@ -818,7 +820,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
 
         if (z->p >= z->end)
         {
-            return 0;
+            break;
         }
 
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
@@ -831,49 +833,152 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
             }
             if (mark == '.')
             {
-                ar_classes_add(&rule->klass, ar_hash(name, len));
-                rule->specificity += 10;
+                ar_classes_add(klass, ar_hash(name, len));
+                *spec = (ar_u16)(*spec + 10);
             }
             else if (mark == '#')
             {
-                rule->id = ar_hash(name, len);
-                rule->specificity += 100;
+                *id = ar_hash(name, len);
+                *spec = (ar_u16)(*spec + 100);
             }
             else
             {
                 if (ar__same(name, len, "hover"))
                 {
-                    rule->state |= AR_STATE_HOVER;
+                    *state |= AR_STATE_HOVER;
                 }
                 else if (ar__same(name, len, "active"))
                 {
-                    rule->state |= AR_STATE_ACTIVE;
+                    *state |= AR_STATE_ACTIVE;
                 }
                 else if (ar__same(name, len, "focus"))
                 {
-                    rule->state |= AR_STATE_FOCUS;
+                    *state |= AR_STATE_FOCUS;
                 }
                 else
                 {
                     return 0;
                 }
-                rule->specificity += 10;
+                *spec = (ar_u16)(*spec + 10);
             }
             any = 1;
+            continue;
         }
-        else if (ar__is_ident(*z->p))
+
+        if (ar__is_ident(*z->p))
         {
             len = ar__ident(z, &name);
-            rule->tag = ar_hash(name, len);
-            rule->specificity += 1;
+            if (len == 0)
+            {
+                return 0;
+            }
+            *tag = ar_hash(name, len);
+            *spec = (ar_u16)(*spec + 1);
             any = 1;
+            continue;
         }
-        else
+        break;
+    }
+    return any;
+}
+
+/*
+ * A whole selector: compounds joined by combinators.
+ *
+ * The rightmost compound is the subject -- the element the rule is about --
+ * and everything to its left is context. That is why this reads the parts
+ * forwards into a scratch list and then stores them backwards: the subject is
+ * known only when the selector ends.
+ */
+static int ar__parse_selector(ar__scan *z, ar_rule *rule)
+{
+    ar_sel_part parts[AR_MAX_SEL_PARTS + 1];
+    ar_i32      n = 0;
+    ar_u8       comb = AR_COMB_NONE;
+    ar_i32      i;
+
+    rule->tag = 0;
+    ar_classes_clear(&rule->klass);
+    rule->id = 0;
+    rule->state = AR_STATE_NONE;
+    rule->specificity = 0;
+    rule->nctx = 0;
+
+    for (;;)
+    {
+        ar_u32     tag, id;
+        ar_classes klass;
+        int        got;
+
+        if (n > AR_MAX_SEL_PARTS)
         {
+            return 0; /* deeper than this holds; refused rather than truncated */
+        }
+        got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity);
+        if (!got)
+        {
+            return n > 0 ? 0 : 0; /* a dangling combinator is malformed */
+        }
+        parts[n].tag = tag;
+        parts[n].klass = klass;
+        parts[n].id = id;
+        parts[n].comb = comb;
+        ++n;
+
+        /* What separates this compound from the next, if there is a next. */
+        {
+            const char *save = z->p;
+            int         space = 0;
+
+            while (z->p < z->end && (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' ||
+                                     *z->p == '\r'))
+            {
+                ++z->p;
+                space = 1;
+            }
+            if (z->p < z->end && (*z->p == '>' || *z->p == '+' || *z->p == '~'))
+            {
+                comb = (ar_u8)(*z->p == '>'   ? AR_COMB_CHILD
+                               : *z->p == '+' ? AR_COMB_ADJACENT
+                                              : AR_COMB_SIBLING);
+                ++z->p;
+                while (z->p < z->end && (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' ||
+                                         *z->p == '\r'))
+                {
+                    ++z->p;
+                }
+                continue;
+            }
+            if (space && z->p < z->end &&
+                (ar__is_ident(*z->p) || *z->p == '.' || *z->p == '#' || *z->p == ':'))
+            {
+                comb = AR_COMB_DESCENDANT;
+                continue;
+            }
+            z->p = save;
             break;
         }
     }
-    return any;
+
+    if (n == 0)
+    {
+        return 0;
+    }
+
+    /* The last part is the subject; the rest become context, nearest first.
+       Each context part carries the combinator that reaches it from the part
+       to its right, which is why the combinator is shifted along by one. */
+    rule->tag = parts[n - 1].tag;
+    rule->klass = parts[n - 1].klass;
+    rule->id = parts[n - 1].id;
+    rule->nctx = n - 1;
+    for (i = 0; i < n - 1; ++i)
+    {
+        ar_i32 src = n - 2 - i;
+        rule->ctx[i] = parts[src];
+        rule->ctx[i].comb = parts[src + 1].comb;
+    }
+    return 1;
 }
 
 /* ------------------------------------------------------------------------
@@ -886,6 +991,7 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->capacity = capacity;
     sheet->errors = 0;
     sheet->first_error_offset = 0;
+    sheet->has_contextual = 0;
     sheet->cache = 0;
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;
@@ -912,6 +1018,20 @@ void ar_sheet_cache_clear(ar_sheet *sheet)
 /* Ascending specificity, ties broken by source order, so resolution can apply
    rules front to back and let the last writer win. Insertion sort because the
    input is nearly sorted already and this runs once. */
+static void ar__note_contextual(ar_sheet *sheet)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        if (sheet->rules[i].nctx > 0)
+        {
+            sheet->has_contextual = 1;
+            return;
+        }
+    }
+}
+
 static void ar__sort_rules(ar_sheet *sheet)
 {
     ar_i32 i, j;
@@ -1025,6 +1145,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
     }
 
     ar__sort_rules(sheet);
+    ar__note_contextual(sheet);
 }
 
 /* The tuple is four small integers, so a multiplicative mix over them is both
@@ -1067,6 +1188,131 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         /* A rule with no pseudo-class applies in every state. A rule with one
            applies only when the box is in that state. */
         if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        ar_style_merge(out, &r->style, r->set);
+    }
+}
+
+
+int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id)
+{
+    if (p->tag && p->tag != tag)
+    {
+        return 0;
+    }
+    if (p->id && p->id != id)
+    {
+        return 0;
+    }
+    if (p->klass.n && !ar_classes_contains(klass, &p->klass))
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * Walks a rule's context chain outwards from the box.
+ *
+ * Descendant and general-sibling are the two that can match more than one
+ * candidate, so they retry: a rule `.page .card` has to keep looking up the
+ * ancestors until it finds a page or runs out. Child and adjacent look at
+ * exactly one element and fail if it is not the one.
+ */
+static int ar__ctx_matches(const ar_rule *r, ar_i32 index, ar_sel_walk find, void *ud)
+{
+    ar_i32 at = index;
+    ar_i32 i;
+
+    for (i = 0; i < r->nctx; ++i)
+    {
+        const ar_sel_part *part = &r->ctx[i];
+        ar_i32             comb = part->comb;
+        ar_i32             next;
+        ar_u32             tag, id;
+        ar_classes         klass;
+        int                found = 0;
+
+        if (comb == AR_COMB_CHILD || comb == AR_COMB_ADJACENT)
+        {
+            if (!find(ud, at, comb, &next, &tag, &klass, &id))
+            {
+                return 0;
+            }
+            if (!ar_sel_part_matches(part, tag, &klass, id))
+            {
+                return 0;
+            }
+            at = next;
+            continue;
+        }
+
+        /* Descendant or general sibling: keep stepping until one matches. */
+        {
+            ar_i32 cursor = at;
+            while (find(ud, cursor, comb, &next, &tag, &klass, &id))
+            {
+                cursor = next;
+                if (ar_sel_part_matches(part, tag, &klass, id))
+                {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        if (!found)
+        {
+            return 0;
+        }
+        at = next;
+    }
+    return 1;
+}
+
+void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
+                                 const ar_classes *klass, ar_u32 id, ar_u8 state,
+                                 ar_sel_walk find, void *ud, ar_style *out)
+{
+    ar_i32 i;
+
+    if (!sheet->has_contextual || !find)
+    {
+        return;
+    }
+    /* Rules are already in ascending specificity and source order, so applying
+       them front to back leaves the winner on top -- the same property the
+       simple pass relies on. The two passes therefore compose: a contextual
+       rule of higher specificity beats a simple one, because it is applied
+       after. A contextual rule of *lower* specificity also lands after, which
+       is where this parts company with the specification, and is the price of
+       keeping the common case in a cache. */
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+
+        if (r->nctx == 0)
+        {
+            continue;
+        }
+        if (r->tag && r->tag != tag)
+        {
+            continue;
+        }
+        if (r->id && r->id != id)
+        {
+            continue;
+        }
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
+        {
+            continue;
+        }
+        if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        if (!ar__ctx_matches(r, index, find, ud))
         {
             continue;
         }

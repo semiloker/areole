@@ -265,7 +265,19 @@ void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y
 typedef struct ar_ctx ar_ctx;
 
 #define AR_BYTES_PER_BOX 320u
-#define AR_MEM_FIXED     98304u
+
+/*
+ * The part of the block that does not scale with the box count: the context
+ * itself, the rule table, the resolved-style cache.
+ *
+ * Raised from 96 KB to 128 KB when selectors gained combinators. A rule now
+ * carries up to three context parts and is 292 bytes, so 256 of them are 73 KB
+ * on their own, and the total came to 100,280 -- two kilobytes over. The number
+ * is checked by a compile-time assertion against the real structure sizes
+ * rather than trusted, which is why this was a build failure and not a
+ * corruption.
+ */
+#define AR_MEM_FIXED     131072u
 #define AR_MEM(boxes)    (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */

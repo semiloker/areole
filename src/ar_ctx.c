@@ -506,6 +506,45 @@ static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
     return w;
 }
 
+
+/*
+ * The bridge between the selector matcher and the box tree.
+ *
+ * ar_css.c knows nothing about nodes and should not: it is handed a callback
+ * that answers "what is the parent of this box", or "the sibling before it",
+ * and fills in that box's tag, classes and id. Descendant and general-sibling
+ * call it repeatedly, walking outwards until something matches or the tree
+ * runs out.
+ */
+static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, ar_u32 *tag,
+                        ar_classes *klass, ar_u32 *id)
+{
+    ar_ctx *c = (ar_ctx *)ud;
+    ar_i32  to = -1;
+
+    if (from < 0 || from >= c->node_count)
+    {
+        return 0;
+    }
+    if (comb == AR_COMB_CHILD || comb == AR_COMB_DESCENDANT)
+    {
+        to = c->nodes[from].parent;
+    }
+    else
+    {
+        to = c->nodes[from].prev_sibling;
+    }
+    if (to < 0)
+    {
+        return 0;
+    }
+    *out_index = to;
+    *tag = c->nodes[to].sel_tag;
+    *id = c->nodes[to].sel_id;
+    *klass = c->nodes[to].sel_class;
+    return 1;
+}
+
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
@@ -632,12 +671,22 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->child_count = 0;
     n->key = key;
     n->state = state;
+    n->sel_tag = tag;
+    n->sel_id = id;
+    n->sel_class = klass;
+    n->prev_sibling = parent >= 0 ? c->nodes[parent].last_child : -1;
     n->text = text;
     n->fit[0] = 0;
     n->fit[1] = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
 
     ar_sheet_resolve(&c->sheet, tag, &klass, id, state, &n->style);
+
+    /* Rules with a combinator, which the cache cannot hold because their
+       answer depends on where this box sits rather than only on what it is.
+       A stylesheet without combinators skips this entirely. */
+    ar_sheet_resolve_contextual(&c->sheet, c->node_count - 1, tag, &klass, id, state,
+                                ar__sel_walk, c, &n->style);
 
     /* Inheritance, after the cache rather than inside it. The cache holds what
        the selectors produced, which does not depend on where a box sits; the
