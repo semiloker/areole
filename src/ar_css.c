@@ -905,7 +905,7 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
    Returns zero if there was nothing to read, which is how the caller knows a
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
-                              ar_u8 *state, ar_u16 *spec)
+                              ar_u16 *state, ar_u16 *spec)
 {
     int any = 0;
 
@@ -954,6 +954,65 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "focus"))
                 {
                     *state |= AR_STATE_FOCUS;
+                }
+                else if (ar__same(name, len, "root"))
+                {
+                    *state |= AR_STATE_ROOT;
+                }
+                else if (ar__same(name, len, "first-child"))
+                {
+                    *state |= AR_STATE_FIRST;
+                }
+                else if (ar__same(name, len, "last-child"))
+                {
+                    *state |= AR_STATE_LAST;
+                }
+                else if (ar__same(name, len, "only-child"))
+                {
+                    *state |= AR_STATE_ONLY;
+                }
+                else if (ar__same(name, len, "empty"))
+                {
+                    *state |= AR_STATE_EMPTY;
+                }
+                /*
+                 * :nth-child, of which only odd and even are here.
+                 *
+                 * They are the two that striping actually uses, and they are
+                 * two bits set at declare time. The general an+b form needs a
+                 * pair of numbers stored per rule and a modulo per box, which
+                 * is a different mechanism for a much rarer selector; it is
+                 * refused rather than silently mismatched.
+                 */
+                else if (ar__same(name, len, "nth-child"))
+                {
+                    ar_u32 arg;
+
+                    if (z->p >= z->end || *z->p != '(')
+                    {
+                        return 0;
+                    }
+                    z->p++;
+                    ar__skip_ws(z);
+                    arg = ar__ident(z, &name);
+                    ar__skip_ws(z);
+                    if (z->p >= z->end || *z->p != ')')
+                    {
+                        return 0;
+                    }
+                    z->p++;
+                    if (arg && ar__same(name, arg, "odd"))
+                    {
+                        *state |= AR_STATE_ODD;
+                    }
+                    else if (arg && ar__same(name, arg, "even"))
+                    {
+                        *state |= AR_STATE_EVEN;
+                    }
+                    else
+                    {
+                        return 0;
+                    }
                 }
                 else
                 {
@@ -1092,6 +1151,7 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->errors = 0;
     sheet->first_error_offset = 0;
     sheet->has_contextual = 0;
+    sheet->has_late_state = 0;
     sheet->cache = 0;
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;
@@ -1127,7 +1187,10 @@ static void ar__note_contextual(ar_sheet *sheet)
         if (sheet->rules[i].nctx > 0)
         {
             sheet->has_contextual = 1;
-            return;
+        }
+        if (sheet->rules[i].state & AR_STATE_LATE)
+        {
+            sheet->has_late_state = 1;
         }
     }
 }
@@ -1250,7 +1313,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
 
 /* The tuple is four small integers, so a multiplicative mix over them is both
    cheaper and better distributed than hashing their bytes. */
-static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state)
+static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
 {
     ar_u32 h = 2166136261u;
     h = (h ^ tag) * 16777619u;
@@ -1261,7 +1324,7 @@ static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u8 state)
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u8 state, ar_style *out)
+                                 ar_u32 id, ar_u16 state, ar_style *out)
 {
     ar_i32 i;
 
@@ -1408,7 +1471,7 @@ static int ar__ctx_matches(const ar_rule *r, ar_i32 index, ar_sel_walk find, voi
 }
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u8 state,
+                                 const ar_classes *klass, ar_u32 id, ar_u16 state,
                                  ar_sel_walk find, void *ud, ar_style *out)
 {
     ar_i32 i;
@@ -1462,7 +1525,7 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 }
 
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                      ar_u8 state, ar_style *out)
+                      ar_u16 state, ar_style *out)
 {
     ar_u32 slot, probe;
 
