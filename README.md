@@ -378,7 +378,7 @@ toolkit breaks that circle.
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
-- **0.4.0** *It has the cascade* — specificity, inheritance, custom properties
+- **0.4.0** *It has the cascade* — specificity, inheritance, combinators, `!important`, structural selectors ✅
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
@@ -388,12 +388,34 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test          # 210 checks
-./build/example_hello
+./build/ar_test               # 550 checks
+./build/example_hello         # the dashboard on the front page
+./build/example_tour          # one page per release, 0.1.0 to 0.4.0
+./build/example_tour --selftest   # every page, no window; CI runs this
 
 # on a machine with no display, the benchmarks still run
 ./build/ar_bench --all --iters 150 --repeat 3
 ```
+
+## The tour
+
+`example_tour` is one page per release, showing what each one added while it runs:
+
+| | |
+| --- | --- |
+| 0.1.0 | the one static block, the box tree rebuilt each frame, the surface |
+| 0.1.1 | every phase and counter, off the same clock the overlay reads |
+| 0.1.2 | the damage regions presented this frame, listed as they change |
+| 0.2.0 | TrueType outlines, with antialias, grid fit, subpixel and stem darkening as toggles |
+| 0.3.0 | Arabic joining, lam-alef, Hebrew, a number inside right-to-left text, Devanagari |
+| 0.4.0 | inheritance, combinators, a compound selector, `!important`, striping by `:nth-child` |
+
+The toggles are not captions. Switching off antialiasing on the 0.2.0 page changes how the frame
+you are looking at is rasterized; switching off shaping on the 0.3.0 page drops the same strings
+back to one glyph per character, so the difference is visible rather than asserted.
+
+`--selftest` runs every page through a real frame against a real surface with no window, and CI
+runs it, so a page cannot rot unnoticed.
 
 ## Requirements
 
