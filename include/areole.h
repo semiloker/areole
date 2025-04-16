@@ -277,8 +277,8 @@ typedef struct ar_ctx ar_ctx;
  * rather than trusted, which is why this was a build failure and not a
  * corruption.
  */
-#define AR_MEM_FIXED     131072u
-#define AR_MEM(boxes)    (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
+#define AR_MEM_FIXED  131072u
+#define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */
 ar_ctx *ar_init(void *mem, ar_u32 size);
@@ -540,6 +540,29 @@ void ar_memory_stats(const ar_ctx *c, ar_u32 *persist, ar_u32 *frame_now, ar_u32
 /* ------------------------------------------------------------------------
  * Library identity
  * ------------------------------------------------------------------------ */
+/* ------------------------------------------------------------------------
+ * Inspecting the frame that was just laid out
+ *
+ * Valid between ar_frame_end and the next ar_frame_begin, which is the window
+ * in which the box tree exists and has coordinates. Boxes are numbered in
+ * declaration order, so index 0 is the root and every parent comes before its
+ * children.
+ *
+ * This is what a layout comparison needs: examples/02_tour --dump walks these
+ * and prints one line per box, and tools/compare_layout.py lines that up
+ * against the same tree measured by a browser.
+ * ------------------------------------------------------------------------ */
+ar_i32  ar_node_count(const ar_ctx *c);
+ar_rect ar_node_rect(const ar_ctx *c, ar_i32 i);
+ar_i32  ar_node_parent(const ar_ctx *c, ar_i32 i);
+
+/* Which child of its parent this box is, counting from zero. The root is 0. */
+ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i);
+
+/* The text this box was given, or a pointer to "" if it was given none. The
+   caller's own string, not a copy -- areole never copied it. */
+const char *ar_node_text(const ar_ctx *c, ar_i32 i);
+
 const char *ar_version(void);
 
 #ifdef __cplusplus

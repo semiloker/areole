@@ -24,6 +24,7 @@
 #include "areole.h"
 #include "areole_win32.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -119,7 +120,13 @@ static const char *SHEET_STRUCTURE = ".quiet { color:#8d8578 !important; }"
                                      ".tile:last-child  { background:#f3e6da; }"
                                      ".stripe:nth-child(odd) { background:#f2ede2; }"
                                      ".stripe:empty   { height:8px; background:#ddd2ba; }"
-                                     ".loud { color:#a1552b; }";
+                                     ".loud { color:#a1552b; }"
+                                     /* A group that stacks. #demo and #rows would
+                                        otherwise take the default flex-row and lay
+                                        their tiles out side by side -- which is
+                                        exactly what --dump caught. */
+                                     ".stack { display:flex; flex-direction:column;"
+                                     "         gap:6px; }";
 
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
@@ -180,6 +187,48 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "UAX #9, OpenType GSUB and GPOS, Arabic joining, Indic reordering.",
     "Inheritance, combinators, !important, and the structural selectors."};
 
+/*
+ * Strings that have to survive until ar_frame_end.
+ *
+ * areole stores the pointer it is handed and never copies -- that is why the
+ * font parser never allocates and why ar_text costs nothing. The consequence
+ * is that a formatted value cannot live in a stack buffer that the next
+ * sprintf overwrites. It showed up as four bytes of mojibake in every number
+ * on the 0.1.1 page, and only once --dump printed the strings back.
+ *
+ * A pool with a frame lifetime, reset where the frame is. Sixty-four slots is
+ * more than any page formats; overflow returns a marker rather than scribbling
+ * past the end, because a demo that corrupts memory to show a number is worse
+ * than one that shows a dash.
+ */
+#define STRPOOL_N   64
+#define STRPOOL_CAP 64
+
+static char   g_strpool[STRPOOL_N][STRPOOL_CAP];
+static char   g_stroverflow[] = "-";
+static ar_i32 g_strpool_used;
+
+static void strpool_reset(void)
+{
+    g_strpool_used = 0;
+}
+
+static const char *fmt(const char *pattern, ...)
+{
+    va_list ap;
+    char   *out;
+
+    if (g_strpool_used >= STRPOOL_N)
+    {
+        return g_stroverflow;
+    }
+    out = g_strpool[g_strpool_used++];
+    va_start(ap, pattern);
+    vsprintf(out, pattern, ap);
+    va_end(ap);
+    return out;
+}
+
 /* Live settings the pages drive. */
 struct settings
 {
@@ -212,8 +261,7 @@ static void kv(ar_ctx *ui, const char *k, const char *v)
  * ------------------------------------------------------------------------ */
 static void page_core(ar_ctx *ui, const ar_surface *s)
 {
-    char buf[96];
-    int  i;
+    int i;
 
     ar_text(ui, "div.h2", "The box tree");
     ar_text(ui, "div.p",
@@ -231,17 +279,14 @@ static void page_core(ar_ctx *ui, const ar_surface *s)
     ar_end(ui);
 
     ar_text(ui, "div.h2", "The block");
-    sprintf(buf, "%lu KB, allocated once, before main ran",
-            (unsigned long)(sizeof g_memory / 1024u));
-    kv(ui, "static block", buf);
-    sprintf(buf, "%lu bytes this frame", (unsigned long)ar_perf_of(ui)->cur.arena_frame_bytes);
-    kv(ui, "ephemeral end", buf);
-    sprintf(buf, "%lu", (unsigned long)ar_perf_of(ui)->cur.nodes);
-    kv(ui, "boxes declared", buf);
+    kv(ui, "static block",
+       fmt("%lu KB, allocated once, before main ran", (unsigned long)(sizeof g_memory / 1024u)));
+    kv(ui, "ephemeral end",
+       fmt("%lu bytes this frame", (unsigned long)ar_perf_of(ui)->cur.arena_frame_bytes));
+    kv(ui, "boxes declared", fmt("%lu", (unsigned long)ar_perf_of(ui)->cur.nodes));
 
     ar_text(ui, "div.h2", "The surface");
-    sprintf(buf, "%ld x %ld, one blit", (long)s->w, (long)s->h);
-    kv(ui, "back buffer", buf);
+    kv(ui, "back buffer", fmt("%ld x %ld, one blit", (long)s->w, (long)s->h));
     ar_text(ui, "div.dim",
             "The rasterizer writes pixels into a buffer this program owns. "
             "The platform layer hands that buffer to the window, and nothing "
@@ -254,42 +299,30 @@ static void page_core(ar_ctx *ui, const ar_surface *s)
 static void page_perf(ar_ctx *ui)
 {
     const ar_perf *p = ar_perf_of(ui);
-    char           buf[96];
     ar_u32         hits, misses;
 
     ar_text(ui, "div.h2", "This frame");
-    sprintf(buf, "%lu us", (unsigned long)p->cur.total_us);
-    kv(ui, "total", buf);
-    sprintf(buf, "%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_STYLE]);
-    kv(ui, "style", buf);
-    sprintf(buf, "%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_LAYOUT]);
-    kv(ui, "layout", buf);
-    sprintf(buf, "%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_RASTER]);
-    kv(ui, "raster", buf);
-    sprintf(buf, "%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_PRESENT]);
-    kv(ui, "present", buf);
+    kv(ui, "total", fmt("%lu us", (unsigned long)p->cur.total_us));
+    kv(ui, "style", fmt("%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_STYLE]));
+    kv(ui, "layout", fmt("%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_LAYOUT]));
+    kv(ui, "raster", fmt("%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_RASTER]));
+    kv(ui, "present", fmt("%lu us", (unsigned long)p->cur.phase_us[AR_PHASE_PRESENT]));
 
     ar_text(ui, "div.h2", "Over the last frames");
-    sprintf(buf, "%lu us", (unsigned long)ar_perf_percentile(p, AR_PHASE_COUNT, 50));
-    kv(ui, "median", buf);
-    sprintf(buf, "%lu us", (unsigned long)ar_perf_percentile(p, AR_PHASE_COUNT, 99));
-    kv(ui, "99th percentile", buf);
-    sprintf(buf, "%lu us", (unsigned long)ar_perf_max(p, AR_PHASE_COUNT));
-    kv(ui, "worst", buf);
+    kv(ui, "median", fmt("%lu us", (unsigned long)ar_perf_percentile(p, AR_PHASE_COUNT, 50)));
+    kv(ui, "99th percentile",
+       fmt("%lu us", (unsigned long)ar_perf_percentile(p, AR_PHASE_COUNT, 99)));
+    kv(ui, "worst", fmt("%lu us", (unsigned long)ar_perf_max(p, AR_PHASE_COUNT)));
 
     ar_text(ui, "div.h2", "Work");
-    sprintf(buf, "%lu", (unsigned long)p->cur.glyphs);
-    kv(ui, "glyphs drawn", buf);
-    sprintf(buf, "%lu", (unsigned long)p->cur.fills);
-    kv(ui, "rectangles filled", buf);
+    kv(ui, "glyphs drawn", fmt("%lu", (unsigned long)p->cur.glyphs));
+    kv(ui, "rectangles filled", fmt("%lu", (unsigned long)p->cur.fills));
 
     ar_style_cache_stats(ui, &hits, &misses);
-    sprintf(buf, "%lu hit / %lu miss", (unsigned long)hits, (unsigned long)misses);
-    kv(ui, "style cache", buf);
+    kv(ui, "style cache", fmt("%lu hit / %lu miss", (unsigned long)hits, (unsigned long)misses));
 
     ar_font_cache_stats(ui, &hits, &misses, 0);
-    sprintf(buf, "%lu hit / %lu miss", (unsigned long)hits, (unsigned long)misses);
-    kv(ui, "glyph cache", buf);
+    kv(ui, "glyph cache", fmt("%lu hit / %lu miss", (unsigned long)hits, (unsigned long)misses));
 
     ar_text(ui, "div.dim",
             "The overlay in the corner reads the same numbers. It reports the "
@@ -301,18 +334,15 @@ static void page_perf(ar_ctx *ui)
  * ------------------------------------------------------------------------ */
 static void page_damage(ar_ctx *ui, struct settings *set)
 {
-    char   buf[96];
     ar_i32 i, n;
 
     ar_text(ui, "div.h2", "What was presented");
     n = ar_damage_count(ui);
-    sprintf(buf, "%ld region(s)", (long)n);
-    kv(ui, "this frame", buf);
+    kv(ui, "this frame", fmt("%ld region(s)", (long)n));
     for (i = 0; i < n && i < 4; ++i)
     {
         ar_rect r = ar_damage_rect(ui, i);
-        sprintf(buf, "%ld,%ld  %ld x %ld", (long)r.x, (long)r.y, (long)r.w, (long)r.h);
-        kv(ui, "  region", buf);
+        kv(ui, "  region", fmt("%ld,%ld %ld x %ld", (long)r.x, (long)r.y, (long)r.w, (long)r.h));
     }
     if (n == 0)
     {
@@ -344,8 +374,6 @@ static void page_damage(ar_ctx *ui, struct settings *set)
  * ------------------------------------------------------------------------ */
 static void page_text(ar_ctx *ui, struct settings *set, int have_font, const char *family)
 {
-    char buf[128];
-
     if (!have_font)
     {
         ar_text(ui, "div.h2", "No TrueType face was found");
@@ -356,8 +384,7 @@ static void page_text(ar_ctx *ui, struct settings *set, int have_font, const cha
         return;
     }
 
-    sprintf(buf, "Face: %s", family);
-    ar_text(ui, "div.h2", buf);
+    ar_text(ui, "div.h2", fmt("Face: %s", family));
 
     ar_begin(ui, "div.row");
     if (toggle(ui, "antialias", set->antialias))
@@ -474,7 +501,7 @@ static void page_cascade(ar_ctx *ui)
 
     ar_text(ui, "div.h2", "Combinators");
     ar_begin(ui, "div.cascade");
-    ar_begin(ui, "div#demo");
+    ar_begin(ui, "div#demo.stack");
     ar_text(ui, "div.tile", "#demo > .tile -- a child");
     ar_begin(ui, "div");
     ar_text(ui, "div.tile", ".cascade .tile -- a descendant, not a child");
@@ -489,7 +516,7 @@ static void page_cascade(ar_ctx *ui)
             "Nothing below carries a class that says which row it is. The "
             "selectors read that off the tree.");
     ar_begin(ui, "div.cascade");
-    ar_begin(ui, "div#rows");
+    ar_begin(ui, "div#rows.stack");
     ar_text(ui, "div.stripe", "first, and odd");
     ar_text(ui, "div.stripe", "second, and even");
     ar_text(ui, "div.stripe", "third, and odd again");
@@ -565,6 +592,7 @@ static int selftest(ar_ctx *ui, int have_font, const char *family)
         in.mouse_x = -1;
         in.mouse_y = -1;
 
+        strpool_reset();
         ar_frame_begin(ui, &in);
         ar_begin(ui, "div#app");
         ar_begin(ui, "div.page");
@@ -601,6 +629,104 @@ static int selftest(ar_ctx *ui, int have_font, const char *family)
     }
     printf("%s\n", bad ? "selftest FAILED" : "selftest passed");
     return bad;
+}
+
+/*
+ * --dump: every box's rectangle, for comparison against a browser.
+ *
+ * Boxes are identified by their path through the tree -- "0/2/1" is the second
+ * child of the third child of the root -- rather than by a selector. A path is
+ * the one identifier both sides genuinely share: examples/02_tour/tour.html
+ * declares the same tree with the same stylesheet, and tools/compare_layout.py
+ * lines the two dumps up on it.
+ *
+ * The surface is 640x480 so the HTML can state the same viewport.
+ */
+static void dump_path(const ar_ctx *c, ar_i32 i, char *out)
+{
+    ar_i32 stack[32];
+    ar_i32 depth = 0;
+    ar_i32 at = i;
+    char  *w = out;
+
+    while (at >= 0 && depth < 32)
+    {
+        stack[depth++] = at;
+        at = ar_node_parent(c, at);
+    }
+    while (depth > 0)
+    {
+        --depth;
+        if (w != out)
+        {
+            *w++ = '/';
+        }
+        sprintf(w, "%ld", (long)ar_node_child_index(c, stack[depth]));
+        while (*w)
+        {
+            ++w;
+        }
+    }
+    *w = 0;
+}
+
+static void dump_page(ar_ctx *ui, ar_surface *s, ar_i32 page, struct settings *set, int have_font,
+                      const char *family)
+{
+    ar_input in;
+    ar_i32   i;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    strpool_reset();
+    ar_frame_begin(ui, &in);
+    ar_begin(ui, "div#app");
+    ar_begin(ui, "div.page");
+    ar_text(ui, "div.h1", PAGE_NAME[page]);
+    ar_text(ui, "div.sub", PAGE_SUB[page]);
+    page_body(ui, s, page, set, have_font, family);
+    ar_end(ui);
+    ar_end(ui);
+    ar_frame_end(ui, s);
+    ar_frame_presented(ui);
+
+    printf("# page %s %s\n", PAGE_VER[page], PAGE_NAME[page]);
+    for (i = 0; i < ar_node_count(ui); ++i)
+    {
+        char    path[128];
+        ar_rect r = ar_node_rect(ui, i);
+
+        dump_path(ui, i, path);
+        printf("%s %ld %ld %ld %ld |%s\n", path, (long)r.x, (long)r.y, (long)r.w, (long)r.h,
+               ar_node_text(ui, i));
+    }
+}
+
+static void dump_all(ar_ctx *ui, int have_font, const char *family)
+{
+    ar_surface      s;
+    struct settings set;
+    ar_i32          page;
+
+    s.pixels = g_selftest_px;
+    s.w = 640;
+    s.h = 480;
+    s.stride = 640;
+
+    set.antialias = 1;
+    set.grid_fit = 1;
+    set.subpixel = 0;
+    set.shaping = 1;
+    set.darken = 0;
+    set.stress = 0;
+
+    printf("# areole %s  viewport %ld %ld  face %s\n", ar_version(), (long)s.w, (long)s.h, family);
+    for (page = 0; page < PAGE_COUNT; ++page)
+    {
+        dump_page(ui, &s, page, &set, have_font, family);
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -712,6 +838,11 @@ int main(int argc, char **argv)
     {
         return selftest(ui, have_font, family);
     }
+    if (argc > 1 && strcmp(argv[1], "--dump") == 0)
+    {
+        dump_all(ui, have_font, family);
+        return 0;
+    }
 
     win = ar_win_open("areole - the tour", WIN_W, WIN_H);
     if (!win)
@@ -729,6 +860,7 @@ int main(int argc, char **argv)
     {
         s = ar_win_surface(win);
 
+        strpool_reset();
         ar_frame_begin(ui, ar_win_input(win));
 
         ar_begin(ui, "div#app");

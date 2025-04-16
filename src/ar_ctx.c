@@ -24,8 +24,8 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 1 : -1];
 
 typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) +
-                                          AR_STYLE_CACHE * sizeof(ar_cache_entry) + 1024 <=
-                                      AR_MEM_FIXED)
+                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) + 1024 <=
+                                  AR_MEM_FIXED)
                                      ? 1
                                      : -1];
 
@@ -506,7 +506,6 @@ static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
     return w;
 }
 
-
 /*
  * The bridge between the selector matcher and the box tree.
  *
@@ -632,6 +631,66 @@ static void ar__resolve_late(ar_ctx *c)
 }
 
 /* ------------------------------------------------------------------------
+ * Inspecting the frame
+ * ------------------------------------------------------------------------ */
+ar_i32 ar_node_count(const ar_ctx *c)
+{
+    return c ? c->node_count : 0;
+}
+
+ar_rect ar_node_rect(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return ar_rect_make(0, 0, 0, 0);
+    }
+    return c->nodes[i].rect;
+}
+
+ar_i32 ar_node_parent(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return -1;
+    }
+    return c->nodes[i].parent;
+}
+
+const char *ar_node_text(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count || !c->nodes[i].text)
+    {
+        return "";
+    }
+    return c->nodes[i].text;
+}
+
+ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
+{
+    ar_i32 parent;
+    ar_i32 at;
+    ar_i32 n = 0;
+
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return -1;
+    }
+    parent = c->nodes[i].parent;
+    if (parent < 0)
+    {
+        return 0;
+    }
+    /* Counted by walking back along prev_sibling rather than forward from the
+       parent's first child: the links are already there for the sibling
+       combinators, and this way costs nothing extra to maintain. */
+    for (at = c->nodes[i].prev_sibling; at >= 0; at = c->nodes[at].prev_sibling)
+    {
+        ++n;
+    }
+    return n;
+}
+
+/* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
 void ar_frame_begin(ar_ctx *c, const ar_input *in)
@@ -704,13 +763,13 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
  * ------------------------------------------------------------------------ */
 static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
 {
-    ar_i32   idx, parent;
-    ar_node *n;
+    ar_i32     idx, parent;
+    ar_node   *n;
     ar_u32     tag = 0, id = 0;
     ar_classes klass;
-    ar_u32   key;
-    ar_slot *slot;
-    ar_u8    state = AR_STATE_NONE;
+    ar_u32     key;
+    ar_slot   *slot;
+    ar_u8      state = AR_STATE_NONE;
 
     if (c->node_count >= c->node_cap)
     {
