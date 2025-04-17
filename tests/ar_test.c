@@ -694,8 +694,8 @@ static void ar__sheet(const char *css)
 /* Resolves for a box described the way ar_begin will describe one. */
 static ar_style ar__resolve(const char *selector, ar_u8 state)
 {
-    ar_style st;
-    ar_u32 tag = 0, id = 0;
+    ar_style   st;
+    ar_u32     tag = 0, id = 0;
     ar_classes klass;
 
     ar_selector_split(selector, &tag, &klass, &id);
@@ -1008,14 +1008,13 @@ static void test_css_capacity(void)
 
 static void test_selector_split(void)
 {
-    ar_u32 tag, id;
+    ar_u32     tag, id;
     ar_classes klass;
 
     CHECK(ar_selector_split("div.card#first", &tag, &klass, &id),
           "selector: a full selector splits");
     CHECK(tag == ar_hash("div", 3), "selector: the tag is extracted");
-    CHECK(klass.n == 1 && klass.h[0] == ar_hash("card", 4),
-          "selector: the class is extracted");
+    CHECK(klass.n == 1 && klass.h[0] == ar_hash("card", 4), "selector: the class is extracted");
     CHECK(id == ar_hash("first", 5), "selector: the id is extracted");
 
     CHECK(ar_selector_split(".card", &tag, &klass, &id), "selector: a bare class splits");
@@ -1046,8 +1045,8 @@ static unsigned char g_ui_mem[AR_MEM(256)];
    overrun landed on the next global and turned the context pointer into a
    colour value. */
 #define AR_LAY_ROWS 400
-static ar_u32 g_ui_pixels[AR_LAY_MAX * AR_LAY_ROWS];
-static ar_ctx       *g_ui;
+static ar_u32  g_ui_pixels[AR_LAY_MAX * AR_LAY_ROWS];
+static ar_ctx *g_ui;
 
 static ar_surface ar__ui_surface(ar_i32 w, ar_i32 h)
 {
@@ -1483,7 +1482,6 @@ static void test_layout_is_stable_across_frames(void)
           "layout: a frame uses exactly the arena it used last time");
 }
 
-
 /* ------------------------------------------------------------------------
  * Damage tracking
  *
@@ -1546,8 +1544,7 @@ static void test_damage_first_frame_paints_everything(void)
 
     /* Nothing is known about the surface on the first frame, so nothing may be
        assumed unchanged. */
-    CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H,
-          "damage: the first frame repaints the whole surface");
+    CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H, "damage: the first frame repaints the whole surface");
 }
 
 static void test_damage_an_unchanged_frame_paints_nothing(void)
@@ -1640,7 +1637,6 @@ static void test_damage_a_resize_repaints_everything(void)
     /* Every box moved and the memory behind them is new. */
     CHECK(d.w == AR_DMG_W && d.h == AR_DMG_H, "damage: a resize repaints the whole surface");
 }
-
 
 /* Two changes far apart must stay two regions. Merging them into a bounding
    box is correct and costs 625x too much: measured at 800x600, presenting the
@@ -1851,7 +1847,8 @@ static void test_damage_output_is_identical_to_a_full_repaint(void)
     }
 
     CHECK(drew_less, "damage: at least one frame of the run repainted less than the surface");
-    CHECK(bad_frame < 0, "damage: tracked output is pixel identical to a full repaint, every frame");
+    CHECK(bad_frame < 0,
+          "damage: tracked output is pixel identical to a full repaint, every frame");
     if (bad_frame >= 0)
     {
         printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
@@ -1859,7 +1856,6 @@ static void test_damage_output_is_identical_to_a_full_repaint(void)
                (unsigned long)g_dmg_b[bad_px]);
     }
 }
-
 
 /* ------------------------------------------------------------------------
  * The resolved style cache
@@ -1887,8 +1883,8 @@ static void test_style_cache_agrees_with_the_resolver(void)
     static ar_cache_entry cache[16];
     ar_sheet              cached, plain;
     ar_style              a, b;
-    ar_u32 tag, id;
-    ar_classes klass;
+    ar_u32                tag, id;
+    ar_classes            klass;
     int                   mismatch = 0;
     int                   i, state;
 
@@ -1914,8 +1910,8 @@ static void test_style_cache_agrees_with_the_resolver(void)
        the hitting pass are compared. */
     for (i = 0; i < 2; ++i)
     {
-        const char *const SELECTORS[] = {"div", "div.card", "div#hero", "div.card#hero", "span",
-                                         ".card"};
+        const char *const SELECTORS[] = {"div",           "div.card", "div#hero",
+                                         "div.card#hero", "span",     ".card"};
         int               k;
 
         for (k = 0; k < (int)(sizeof SELECTORS / sizeof SELECTORS[0]); ++k)
@@ -1936,7 +1932,8 @@ static void test_style_cache_agrees_with_the_resolver(void)
         }
     }
 
-    CHECK(!mismatch, "style cache: every selector and state resolves as the uncached resolver does");
+    CHECK(!mismatch,
+          "style cache: every selector and state resolves as the uncached resolver does");
     CHECK(cached.cache_hits > 0, "style cache: and the second pass actually hit it");
 }
 
@@ -1946,8 +1943,8 @@ static void test_style_cache_is_dropped_when_a_sheet_is_added(void)
     static ar_cache_entry cache[16];
     ar_sheet              sheet;
     ar_style              before, after;
-    ar_u32 tag, id;
-    ar_classes klass;
+    ar_u32                tag, id;
+    ar_classes            klass;
 
     ar_sheet_init(&sheet, rules, 64);
     ar_sheet_set_cache(&sheet, cache, 16);
@@ -1971,8 +1968,8 @@ static void test_style_cache_keeps_states_apart(void)
     static ar_cache_entry cache[16];
     ar_sheet              sheet;
     ar_style              rest, hover;
-    ar_u32 tag, id;
-    ar_classes klass;
+    ar_u32                tag, id;
+    ar_classes            klass;
 
     ar_sheet_init(&sheet, rules, 64);
     ar_sheet_set_cache(&sheet, cache, 16);
@@ -2024,7 +2021,6 @@ static void test_style_cache_survives_more_tuples_than_it_holds(void)
     CHECK(!mismatch, "style cache: a full table falls through to the resolver, still correctly");
 }
 
-
 /* ------------------------------------------------------------------------
  * The glyph blitter, pinned by checksum
  *
@@ -2062,10 +2058,10 @@ static void test_glyph_blitter_renders_the_same_pixels(void)
     }
     clip = ar_rect_make(0, 0, AR_GLYPH_W, AR_GLYPH_H);
 
-    ar_draw_text(&s, clip, 4, 4, LINE, 1, AR_HEX(0xE8DFCC));            /* the fast path */
-    ar_draw_text(&s, clip, 4, 20, LINE, 2, AR_HEX(0x8A8FA0));           /* scaled        */
-    ar_draw_text(&s, clip, -40, 40, LINE, 1, AR_HEX(0xFFFFFF));         /* off the left  */
-    ar_draw_text(&s, clip, 150, 56, LINE, 1, AR_HEX(0xFFFFFF));         /* off the right */
+    ar_draw_text(&s, clip, 4, 4, LINE, 1, AR_HEX(0xE8DFCC));                 /* the fast path */
+    ar_draw_text(&s, clip, 4, 20, LINE, 2, AR_HEX(0x8A8FA0));                /* scaled        */
+    ar_draw_text(&s, clip, -40, 40, LINE, 1, AR_HEX(0xFFFFFF));              /* off the left  */
+    ar_draw_text(&s, clip, 150, 56, LINE, 1, AR_HEX(0xFFFFFF));              /* off the right */
     ar_draw_text(&s, clip, 4, 72, LINE, 1, AR_RGBA(0xE8, 0xC3, 0x9E, 0x80)); /* blended  */
     ar_draw_text(&s, ar_rect_make(20, 80, 60, 20), 4, 88, LINE, 1, AR_HEX(0xFFFFFF));
     ar_draw_text(&s, clip, 4, 104, "tail\nsecond", 1, AR_HEX(0xFFFFFF));
@@ -2114,7 +2110,6 @@ static void test_glyph_spans_respect_a_tight_clip(void)
 
     CHECK(!outside, "font: a span cut by a clip writes nothing outside it");
 }
-
 
 /* ------------------------------------------------------------------------
  * The coverage rasterizer
@@ -2175,7 +2170,7 @@ static void test_path_aligned_rect_is_solid(void)
     {
         for (x = 0; x < AR_RAST_W; ++x)
         {
-            int inside = (x >= 10 && x < 30 && y >= 8 && y < 24);
+            int   inside = (x >= 10 && x < 30 && y >= 8 && y < 24);
             ar_u8 c = g_cov[y * AR_RAST_W + x];
             if (inside ? (c != 255) : (c != 0))
             {
@@ -2464,7 +2459,6 @@ static void test_path_reports_overflow_rather_than_scribbling(void)
     CHECK(p.count <= 8, "path: and nothing is written past the end of it");
 }
 
-
 /* ------------------------------------------------------------------------
  * TrueType parsing
  *
@@ -2478,33 +2472,26 @@ static void test_path_reports_overflow_rather_than_scribbling(void)
  * which is how a parser gets tested against the input it will actually meet.
  * ------------------------------------------------------------------------ */
 static const ar_u8 AR_TEST_FONT[] = {
-    0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x63, 0x6D, 0x61, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C,
-    0x00, 0x00, 0x00, 0x2C, 0x67, 0x6C, 0x79, 0x66, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x20, 0x68, 0x65, 0x61, 0x64,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x36,
-    0x68, 0x68, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-    0x00, 0x00, 0x00, 0x24, 0x68, 0x6D, 0x74, 0x78, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x24, 0x00, 0x00, 0x00, 0x08, 0x6C, 0x6F, 0x63, 0x61,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x00, 0x00, 0x06,
-    0x6D, 0x61, 0x78, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x34,
-    0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x01,
-    0x00, 0x00, 0x00, 0x0C, 0x00, 0x04, 0x00, 0x20, 0x00, 0x00, 0x00, 0x04,
-    0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x41, 0xFF, 0xFF, 0x00, 0x00,
-    0x00, 0x41, 0xFF, 0xFF, 0xFF, 0xC0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8, 0x03, 0xE8, 0x00, 0x02,
-    0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x03, 0xE8, 0xFE, 0x0C, 0x00,
-    0x00, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5F, 0x0F, 0x3C, 0xF5,
-    0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x03, 0xE8, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03, 0x20, 0xFF, 0x38,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x02, 0x02, 0x58, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-    0x00, 0x02, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6D, 0x61, 0x70,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0x00, 0x00, 0x00, 0x2C, 0x67, 0x6C, 0x79, 0x66,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x20, 0x68, 0x65, 0x61, 0x64,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x36, 0x68, 0x68, 0x65, 0x61,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x24, 0x68, 0x6D, 0x74, 0x78,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x24, 0x00, 0x00, 0x00, 0x08, 0x6C, 0x6F, 0x63, 0x61,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x00, 0x00, 0x06, 0x6D, 0x61, 0x78, 0x70,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x34, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x04, 0x00, 0x20, 0x00, 0x00, 0x00, 0x04,
+    0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x41, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x41, 0xFF, 0xFF,
+    0xFF, 0xC0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8,
+    0x03, 0xE8, 0x00, 0x02, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x03, 0xE8, 0xFE, 0x0C, 0x00,
+    0x00, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x5F, 0x0F, 0x3C, 0xF5, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0xE8, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x03, 0x20, 0xFF, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x02, 0x58, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
 };
 
 static ar_i32 g_ttf_pts[2048 * 2];
@@ -2551,11 +2538,9 @@ static void test_ttf_scales_without_overflowing(void)
     ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
 
     /* One em at 16 pixels is 16 pixels, which in 26.6 is 1024. */
-    CHECK(ar_face_scale(&f, 1000, 16) == 16 * AR_ONE_PIXEL,
-          "ttf: one em scales to the pixel size");
+    CHECK(ar_face_scale(&f, 1000, 16) == 16 * AR_ONE_PIXEL, "ttf: one em scales to the pixel size");
     CHECK(ar_face_scale(&f, 500, 16) == 8 * AR_ONE_PIXEL, "ttf: and half an em to half of it");
-    CHECK(ar_face_scale(&f, -1000, 16) == -16 * AR_ONE_PIXEL,
-          "ttf: negatives scale symmetrically");
+    CHECK(ar_face_scale(&f, -1000, 16) == -16 * AR_ONE_PIXEL, "ttf: negatives scale symmetrically");
 
     /* The combination that overflows the obvious expression: a large
        coordinate at a large size. 32000 * 64 * 1000 is 2.05e9, past the top of
@@ -2642,7 +2627,7 @@ static void test_ttf_rejects_what_it_cannot_read(void)
    generated here the way there is for glyf, because a valid one is an order of
    magnitude more structure and the property that matters is not "does it draw
    an A" -- it is that a malformed program cannot escape its bounds.
-   
+
    That is checked outside this suite, under a guard page: Source Han Sans in
    both weights, all 17,934 glyphs each plus 9,471 codepoints, with the font
    placed so its last byte ends at an inaccessible page. The three limits that
@@ -2714,7 +2699,6 @@ static void test_ttf_survives_truncation_and_corruption(void)
     CHECK(1, "ttf: every truncation and single byte corruption parses without faulting");
     CHECK(parsed > 0, "ttf: and enough still parse for that to be worth something");
 }
-
 
 /* ------------------------------------------------------------------------
  * UTF-8
@@ -2841,7 +2825,7 @@ static void test_glyph_cache_rasterizes_once(void)
 
 /* One glyph at many sizes must occupy many slots, and the slot a key lands in
    must depend on all of the key.
-   
+
    Masking the key directly takes its low bits, which are the glyph index, so
    every size of one glyph collided on one slot. Sixteen sizes exactly filled
    the sixteen-probe window and the cache silently stopped caching: a benchmark
@@ -3145,7 +3129,6 @@ static void test_text_survives_a_face_that_failed_to_load(void)
     CHECK(ar_text_measure("hello", &f, 16, &gc, &sc) == 0, "text: and measures as nothing");
 }
 
-
 /* ------------------------------------------------------------------------
  * Fonts at the context level
  * ------------------------------------------------------------------------ */
@@ -3188,8 +3171,7 @@ static void test_font_load_and_fallback(void)
 
     /* Garbage must fail without disturbing anything: the bitmap font is the
        fallback, and a missing font should degrade an interface, not stop it. */
-    CHECK(!ar_font_load(c, "not a font at all", 17, 32 * 1024, 32),
-          "font: loading garbage fails");
+    CHECK(!ar_font_load(c, "not a font at all", 17, 32 * 1024, 32), "font: loading garbage fails");
     CHECK(!ar_font_loaded(c), "font: and leaves the context without a face");
 
     CHECK(ar_font_load(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 32),
@@ -3325,7 +3307,6 @@ static void test_font_antialias_toggle_invalidates(void)
     CHECK(after > before, "font: and the glyphs are rasterized again under the new setting");
 }
 
-
 /* ------------------------------------------------------------------------
  * Line breaking
  *
@@ -3393,17 +3374,35 @@ static void test_break_hyphens_and_dashes(void)
 {
     CHECK(ar__breaks_at("one-two", 4), "break: after a hyphen in a compound word");
     /* An em dash may be broken either side; an en dash only after. */
-    CHECK(ar__breaks_at("a\xE2\x80\x94""b", 1), "break: before an em dash");
-    CHECK(ar__breaks_at("a\xE2\x80\x94""b", 4), "break: and after it");
+    CHECK(ar__breaks_at("a\xE2\x80\x94"
+                        "b",
+                        1),
+          "break: before an em dash");
+    CHECK(ar__breaks_at("a\xE2\x80\x94"
+                        "b",
+                        4),
+          "break: and after it");
 }
 
 static void test_break_honours_joiners(void)
 {
     /* A non-breaking space is the whole point of a non-breaking space. */
-    CHECK(!ar__breaks_at("a\xC2\xA0" "b", 1), "break: never at a no-break space");
-    CHECK(!ar__breaks_at("a\xC2\xA0" "b", 3), "break: nor after one");
-    CHECK(ar__breaks_at("a\xE2\x80\x8B" "b", 4), "break: but always at a zero width space");
-    CHECK(!ar__breaks_at("a\xE2\x81\xA0" "b", 4), "break: and never at a word joiner");
+    CHECK(!ar__breaks_at("a\xC2\xA0"
+                         "b",
+                         1),
+          "break: never at a no-break space");
+    CHECK(!ar__breaks_at("a\xC2\xA0"
+                         "b",
+                         3),
+          "break: nor after one");
+    CHECK(ar__breaks_at("a\xE2\x80\x8B"
+                        "b",
+                        4),
+          "break: but always at a zero width space");
+    CHECK(!ar__breaks_at("a\xE2\x81\xA0"
+                         "b",
+                         4),
+          "break: and never at a word joiner");
 }
 
 static void test_break_mandatory(void)
@@ -3424,21 +3423,29 @@ static void test_break_between_ideographs(void)
 {
     /* Japanese has no spaces, so a line breaks between characters. Failing to
        do this makes CJK text one unbreakable line. */
-    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 3),
-          "break: between ideographs");
-    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 6),
-          "break: at each of them");
+    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 3), "break: between ideographs");
+    CHECK(ar__breaks_at("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", 6), "break: at each of them");
 }
 
 static void test_break_always_terminates(void)
 {
     /* Every input, including malformed UTF-8 and empty strings, must reach the
        end. A line breaker that loops is a hang in the middle of a paint. */
-    static const char *const NASTY[] = {"",        " ",      "\n",     "\xFF",
-                                        "\xC2",    "\x80\x80", "a\xFF" "b", "\r",
-                                        "\r\r\n",  "((((",   "))))",   "\xE2\x80"};
-    ar_i32 i;
-    int    ok = 1;
+    static const char *const NASTY[] = {"",
+                                        " ",
+                                        "\n",
+                                        "\xFF",
+                                        "\xC2",
+                                        "\x80\x80",
+                                        "a\xFF"
+                                        "b",
+                                        "\r",
+                                        "\r\r\n",
+                                        "((((",
+                                        "))))",
+                                        "\xE2\x80"};
+    ar_i32                   i;
+    int                      ok = 1;
 
     for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
     {
@@ -3475,7 +3482,7 @@ static void test_wrap_fits_the_width(void)
     int              over = 0;
     /* The test face's every glyph is one em wide, so at 10 px each character
        is exactly 10 px and the arithmetic is checkable by hand. */
-    const char      *T = "AAA AAA AAA AAA";
+    const char *T = "AAA AAA AAA AAA";
 
     ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
     ar__gc_setup(&gc, &sc, (ar_i32)sizeof g_gc_pixels);
@@ -3551,15 +3558,14 @@ static void test_wrap_respects_its_line_limit(void)
     CHECK(lines <= 4, "wrap: never writes more line starts than it was given room for");
 }
 
-
 /* ------------------------------------------------------------------------
  * The bidirectional algorithm
  *
  * Hebrew alef-bet-gimel is used throughout as the right-to-left text, because
  * it needs no shaping to be a valid test of ordering.
  * ------------------------------------------------------------------------ */
-#define HEB "\xD7\x90\xD7\x91\xD7\x92"     /* three Hebrew letters */
-#define ARA "\xD8\xA7\xD8\xA8"             /* two Arabic letters   */
+#define HEB "\xD7\x90\xD7\x91\xD7\x92" /* three Hebrew letters */
+#define ARA "\xD8\xA7\xD8\xA8"         /* two Arabic letters   */
 
 static ar_u8       g_bidi_lv[128], g_bidi_cl[128];
 static ar_bidi_run g_bidi_runs[32];
@@ -3656,7 +3662,9 @@ static void test_bidi_explicit_overrides(void)
 {
     ar_i32 n, para;
     /* RLO makes even Latin right to left until PDF. */
-    const char *s = "a\xE2\x80\xAE" "bc\xE2\x80\xAC" "d";
+    const char *s = "a\xE2\x80\xAE"
+                    "bc\xE2\x80\xAC"
+                    "d";
 
     n = ar__bidi(s, AR_DIR_AUTO, &para);
     CHECK(n == 6, "bidi: formatting characters are still characters");
@@ -3670,7 +3678,8 @@ static void test_bidi_isolates(void)
     ar_i32 n, para;
     /* An isolate keeps its contents from affecting the direction around it,
        which is the whole reason it replaced the embedding characters. */
-    const char *s = "a\xE2\x81\xA7" HEB "\xE2\x81\xA9" "b";
+    const char *s = "a\xE2\x81\xA7" HEB "\xE2\x81\xA9"
+                    "b";
 
     n = ar__bidi(s, AR_DIR_AUTO, &para);
     CHECK(para == 0, "bidi: an isolate's contents do not decide the paragraph");
@@ -3681,12 +3690,18 @@ static void test_bidi_isolates(void)
 
 static void test_bidi_survives_anything(void)
 {
-    static const char *const NASTY[] = {
-        "", " ", "\xE2\x80\xAE", "\xE2\x80\xAC", "\xE2\x81\xA9",
-        "\xE2\x80\xAE\xE2\x80\xAE\xE2\x80\xAE", "\xE2\x81\xA7\xE2\x81\xA7\xE2\x81\xA7",
-        "\xFF\xFE", "\xE2\x80\xAC" HEB, HEB ARA "123"};
-    ar_i32 i;
-    int    ok = 1;
+    static const char *const NASTY[] = {"",
+                                        " ",
+                                        "\xE2\x80\xAE",
+                                        "\xE2\x80\xAC",
+                                        "\xE2\x81\xA9",
+                                        "\xE2\x80\xAE\xE2\x80\xAE\xE2\x80\xAE",
+                                        "\xE2\x81\xA7\xE2\x81\xA7\xE2\x81\xA7",
+                                        "\xFF\xFE",
+                                        "\xE2\x80\xAC" HEB,
+                                        HEB ARA "123"};
+    ar_i32                   i;
+    int                      ok = 1;
 
     for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
     {
@@ -3716,7 +3731,6 @@ static void test_bidi_survives_anything(void)
     }
 }
 
-
 /* ------------------------------------------------------------------------
  * Shaping
  *
@@ -3741,9 +3755,18 @@ static void test_shape_leaves_a_plain_font_alone(void)
     CHECK(ar_shape_init(&sh, &f), "shape: a font with no GSUB or GPOS still gives a shaper");
     CHECK(sh.liga_count == 0 && sh.kern_count == 0, "shape: with no lookups to apply");
 
-    g[0] = 1; g[1] = 1; g[2] = 1; g[3] = 1;
-    a[0] = 100; a[1] = 200; a[2] = 300; a[3] = 400;
-    cl[0] = 0; cl[1] = 1; cl[2] = 2; cl[3] = 3;
+    g[0] = 1;
+    g[1] = 1;
+    g[2] = 1;
+    g[3] = 1;
+    a[0] = 100;
+    a[1] = 200;
+    a[2] = 300;
+    a[3] = 400;
+    cl[0] = 0;
+    cl[1] = 1;
+    cl[2] = 2;
+    cl[3] = 3;
 
     n = ar_shape_run(&sh, g, a, cl, 4);
     CHECK(n == 4, "shape: the run keeps its length");
@@ -3763,12 +3786,13 @@ static void test_shape_refuses_what_it_cannot_shape(void)
     ar_face_init(&f, "not a font", 10);
     CHECK(!ar_shape_init(&sh, &f), "shape: a face that failed to load gives no shaper");
 
-    g[0] = 1; g[1] = 1; a[0] = 10; a[1] = 10;
+    g[0] = 1;
+    g[1] = 1;
+    a[0] = 10;
+    a[1] = 10;
     CHECK(ar_shape_run(&sh, g, a, 0, 2) == 2, "shape: and shaping through it changes nothing");
     CHECK(ar_shape_run(&sh, 0, 0, 0, 0) == 0, "shape: nor does shaping nothing");
 }
-
-
 
 /* ------------------------------------------------------------------------
  * Arabic joining
@@ -3815,10 +3839,18 @@ static void test_arabic_shaping_needs_a_font_with_the_features(void)
     CHECK(sh.init_count == 0 && sh.medi_count == 0 && sh.fina_count == 0,
           "join: a face with no positional features has no lookups to apply");
 
-    cps[0] = 0x0628; cps[1] = 0x0628; cps[2] = 0x0628;
-    g[0] = 1; g[1] = 1; g[2] = 1;
-    a[0] = 10; a[1] = 10; a[2] = 10;
-    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+    cps[0] = 0x0628;
+    cps[1] = 0x0628;
+    cps[2] = 0x0628;
+    g[0] = 1;
+    g[1] = 1;
+    g[2] = 1;
+    a[0] = 10;
+    a[1] = 10;
+    a[2] = 10;
+    cl[0] = 0;
+    cl[1] = 1;
+    cl[2] = 2;
 
     /* Without the tables, the glyphs must come through untouched rather than
        being guessed at. A wrong shape is worse than an unshaped one. */
@@ -3826,8 +3858,6 @@ static void test_arabic_shaping_needs_a_font_with_the_features(void)
     CHECK(n == 3 && g[0] == 1 && g[1] == 1 && g[2] == 1,
           "join: and leaves the glyphs exactly alone");
 }
-
-
 
 /* Mark attachment. Verified against Arial, where a fatha over a beh comes back
    with a displacement of +288,-220 font units and an advance of zero, and a
@@ -3847,11 +3877,16 @@ static void test_marks_need_the_tables(void)
 
     cps[0] = 0x0628;
     cps[1] = 0x064E;
-    g[0] = 1; g[1] = 1;
-    a[0] = 10; a[1] = 10;
-    dx[0] = 99; dx[1] = 99;
-    dy[0] = 99; dy[1] = 99;
-    cl[0] = 0; cl[1] = 1;
+    g[0] = 1;
+    g[1] = 1;
+    a[0] = 10;
+    a[1] = 10;
+    dx[0] = 99;
+    dx[1] = 99;
+    dy[0] = 99;
+    dy[1] = 99;
+    cl[0] = 0;
+    cl[1] = 1;
 
     n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 2, 2);
     CHECK(n == 2, "marks: the run is unchanged without the tables");
@@ -3870,8 +3905,14 @@ static void test_marks_are_optional_to_ask_for(void)
     ar_face_init(&f, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT);
     ar_shape_init(&sh, &f);
 
-    cps[0] = 0x0628; cps[1] = 0x064E;
-    g[0] = 1; g[1] = 1; a[0] = 10; a[1] = 10; cl[0] = 0; cl[1] = 1;
+    cps[0] = 0x0628;
+    cps[1] = 0x064E;
+    g[0] = 1;
+    g[1] = 1;
+    a[0] = 10;
+    a[1] = 10;
+    cl[0] = 0;
+    cl[1] = 1;
 
     /* Passing no offset arrays must skip attachment rather than write
        through a null pointer: a caller with nowhere to put the offsets is
@@ -3879,8 +3920,6 @@ static void test_marks_are_optional_to_ask_for(void)
     CHECK(ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 2, 2) == 2,
           "marks: shaping without offset arrays does not fault");
 }
-
-
 
 /* Mark to mark and mark to ligature, GPOS 6 and 5.
  *
@@ -3902,17 +3941,23 @@ static void test_mark_to_mark_needs_the_tables(void)
     ar_shape_init(&sh, &f);
     CHECK(sh.mkmk_count == 0, "mkmk: a face with no mark-to-mark feature has no lookups");
 
-    cps[0] = 0x0628; cps[1] = 0x0651; cps[2] = 0x064E;
-    g[0] = 1; g[1] = 1; g[2] = 1;
-    a[0] = 10; a[1] = 10; a[2] = 10;
-    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+    cps[0] = 0x0628;
+    cps[1] = 0x0651;
+    cps[2] = 0x064E;
+    g[0] = 1;
+    g[1] = 1;
+    g[2] = 1;
+    a[0] = 10;
+    a[1] = 10;
+    a[2] = 10;
+    cl[0] = 0;
+    cl[1] = 1;
+    cl[2] = 2;
 
     n = ar_shape_run_pos(&sh, cps, g, a, dx, dy, cl, 3, 3);
     CHECK(n == 3, "mkmk: the run survives a font that cannot stack marks");
     CHECK(dx[2] == 0 && dy[2] == 0, "mkmk: and the second mark is left where it was");
 }
-
-
 
 /* ccmp and GSUB type 2. Decomposition is the only substitution that makes a
    run longer, so it is the only one that can overrun a buffer, and the check
@@ -3945,8 +3990,6 @@ static void test_decomposition_respects_the_buffer(void)
     CHECK(g[3] == 1, "ccmp: and nothing is disturbed");
 }
 
-
-
 /* GSUB type 6. A chained contextual lookup substitutes nothing itself: it
    matches a pattern and names other lookups by index to run inside the match.
    That indirection is the only place the shaper needs the lookup list rather
@@ -3964,17 +4007,23 @@ static void test_chained_context_needs_a_lookup_list(void)
     CHECK(sh.calt_count == 0, "calt: a face with no contextual feature has no lookups");
     CHECK(sh.gsub_lookups == 0, "calt: and a face with no GSUB has no lookup list");
 
-    cps[0] = 'A'; cps[1] = 'A'; cps[2] = 'A';
-    g[0] = 1; g[1] = 1; g[2] = 1;
-    a[0] = 10; a[1] = 10; a[2] = 10;
-    cl[0] = 0; cl[1] = 1; cl[2] = 2;
+    cps[0] = 'A';
+    cps[1] = 'A';
+    cps[2] = 'A';
+    g[0] = 1;
+    g[1] = 1;
+    g[2] = 1;
+    a[0] = 10;
+    a[1] = 10;
+    a[2] = 10;
+    cl[0] = 0;
+    cl[1] = 1;
+    cl[2] = 2;
 
     n = ar_shape_run_pos(&sh, cps, g, a, 0, 0, cl, 3, 3);
     CHECK(n == 3 && g[0] == 1 && g[2] == 1,
           "calt: shaping without a lookup list leaves the run alone");
 }
-
-
 
 /* Ligature matching skips marks.
  *
@@ -3999,8 +4048,6 @@ static void test_marks_do_not_block_a_ligature(void)
        ship. */
     CHECK(sh.glyph_classes == 0, "gdef: a face without GDEF has no glyph classes");
 }
-
-
 
 /* ------------------------------------------------------------------------
  * Indic reordering
@@ -4101,14 +4148,12 @@ static void test_indic_a_real_word(void)
 
 static void test_indic_survives_nonsense(void)
 {
-    static const ar_u32 NASTY[][4] = {
-        {DV_VIRAMA, 0, 0, 0},
-        {DV_I, DV_I, DV_I, 0},
-        {DV_RA, DV_VIRAMA, 0, 0},
-        {DV_VIRAMA, DV_VIRAMA, DV_KA, 0}
-    };
-    ar_i32 i;
-    int    ok = 1;
+    static const ar_u32 NASTY[][4] = {{DV_VIRAMA, 0, 0, 0},
+                                      {DV_I, DV_I, DV_I, 0},
+                                      {DV_RA, DV_VIRAMA, 0, 0},
+                                      {DV_VIRAMA, DV_VIRAMA, DV_KA, 0}};
+    ar_i32              i;
+    int                 ok = 1;
 
     /* A virama with nothing to join, a matra with no consonant, a reph with
        nothing after it. All of these appear in real broken text and none of
@@ -4131,8 +4176,6 @@ static void test_indic_survives_nonsense(void)
     }
     CHECK(ok, "indic: malformed syllables terminate and lose nothing");
 }
-
-
 
 /* ------------------------------------------------------------------------
  * Inheritance
@@ -4162,8 +4205,7 @@ static void test_inheritance_flows_down(void)
        rather than one level of copying. */
     CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xE8DFCC,
           "inherit: and a grandchild takes it through a box that only inherited");
-    CHECK(g_ui->nodes[2].style.v[AR_P_FONT_SIZE] == 17,
-          "inherit: font size inherits too");
+    CHECK(g_ui->nodes[2].style.v[AR_P_FONT_SIZE] == 17, "inherit: font size inherits too");
     CHECK((g_ui->nodes[3].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
           "inherit: a box that states its own colour keeps it");
     CHECK(g_ui->nodes[3].style.v[AR_P_FONT_SIZE] == 17,
@@ -4224,8 +4266,6 @@ static void test_inheritance_is_not_in_the_style_cache(void)
     CHECK((g_ui->nodes[4].style.v[AR_P_COLOR] & 0xFFFFFF) == 0x0000FF,
           "inherit: and the same leaf under the blue box is blue");
 }
-
-
 
 /* ------------------------------------------------------------------------
  * Compound selectors
@@ -4310,8 +4350,6 @@ static void test_class_list_has_a_ceiling(void)
     ar_classes_add(&c, 7u);
     CHECK(c.n == 1, "compound: a repeated class is stored once");
 }
-
-
 
 /* ------------------------------------------------------------------------
  * Combinators
@@ -4437,6 +4475,128 @@ static void test_cascade_keywords(void)
  * declare time; :last-child, :only-child and :empty are not knowable until the
  * parent has closed, and get a second resolve pass.
  */
+/*
+ * Text wrapping in layout.
+ *
+ * ar_text_wrap has been tested since 0.2.0; what these check is that the
+ * solver calls it, which it did not until now. A box was one line however
+ * narrow it was, and the text ran off the side.
+ *
+ * The harness has no TrueType face, so these run against the built-in bitmap
+ * face, whose advances are known exactly -- which is what lets the expected
+ * heights below be written down rather than approximated.
+ */
+static void test_layout_wraps_text_to_the_box(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_i32     one, many;
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".narrow { width:60px; }"
+                 ".wide   { width:600px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.wide", "one two three four five six seven");
+    ar_text(g_ui, "div.narrow", "one two three four five six seven");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    one = ar__box(1).h;
+    many = ar__box(2).h;
+
+    CHECK(one == ar_text_height(1), "wrap: text that fits stays one line");
+    CHECK(many > one, "wrap: the same text in a narrow box gets taller");
+    /* Five lines. The string is 213 px wide at scale 1 and the box is 60, so
+       four is the floor; it takes five because words do not divide evenly and
+       this breaks between them rather than through them. Written as a number
+       because a measured number catches a regression that "taller than one
+       line" would sleep through. */
+    CHECK(many == ar_text_height(1) + 4 * ar_text_line_height(1),
+          "wrap: and is exactly as many lines as it needs");
+}
+
+/* A box told how tall to be is not resized by its text. Overflowing a stated
+   height is the caller's decision, and silently growing the box would move
+   everything below it. */
+static void test_wrapping_respects_a_stated_height(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".fixed { width:60px; height:12px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.fixed", "one two three four five six seven");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 12, "wrap: a stated height wins over the wrapped text");
+}
+
+/* Padding comes out of the width the text has to fit into, so a padded box
+   wraps sooner than an unpadded one of the same size. */
+static void test_wrapping_is_inside_the_padding(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".bare { width:120px; }"
+                 ".pad  { width:120px; padding:0 40px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.bare", "one two three four five six");
+    ar_text(g_ui, "div.pad", "one two three four five six");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).h > ar__box(1).h,
+          "wrap: padding narrows the line and the box gets taller for it");
+}
+
+/* A box growing along a horizontal main axis only learns its width after the
+   leftover is handed out, which is later than every other box. */
+static void test_wrapping_a_grown_box(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:row; align-items:flex-start; }"
+                 ".rail { width:220px; }"
+                 ".rest { width:grow; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.rail");
+    ar_end(g_ui);
+    ar_text(g_ui, "div.rest", "one two three four five six seven eight");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).w == 80, "wrap: the grown box took the leftover");
+    CHECK(ar__box(2).h > ar_text_height(1),
+          "wrap: and wrapped into it, though its width was settled last");
+}
+
+/* A word wider than the box is not broken. Overflowing is a failure the caller
+   can see; splitting a word at an arbitrary point looks like a rendering bug. */
+static void test_a_long_word_is_not_broken(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".tiny { width:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.tiny", "unbreakable");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == ar_text_height(1), "wrap: a word wider than the box stays on one line");
+}
+
 static void test_structural_pseudo_classes(void)
 {
     ar_surface s = ar__ui_surface(200, 200);
@@ -4451,14 +4611,14 @@ static void test_structural_pseudo_classes(void)
 
     ar__ui_begin();
     ar_begin(g_ui, "#root");
-    ar_begin(g_ui, "div.box");  /* 1: no children and no text */
+    ar_begin(g_ui, "div.box"); /* 1: no children and no text */
     ar_end(g_ui);
     ar_begin(g_ui, "div.list"); /* 2 */
     ar_begin(g_ui, "div.row");  /* 3: first child of the list, odd */
     ar_end(g_ui);
-    ar_begin(g_ui, "div.row");  /* 4: even */
+    ar_begin(g_ui, "div.row"); /* 4: even */
     ar_end(g_ui);
-    ar_begin(g_ui, "div.row");  /* 5: last child of the list, odd */
+    ar_begin(g_ui, "div.row"); /* 5: last child of the list, odd */
     ar_end(g_ui);
     ar_end(g_ui);
     ar_begin(g_ui, "div.box");  /* 6: has a child, so not empty */
@@ -4542,17 +4702,17 @@ static void test_combinators(void)
 
     ar__ui_begin();
     ar_begin(g_ui, "#root");
-    ar_begin(g_ui, "div.card");   /* 1: a direct child of #root */
+    ar_begin(g_ui, "div.card"); /* 1: a direct child of #root */
     ar_end(g_ui);
-    ar_begin(g_ui, "div.page");   /* 2 */
-    ar_begin(g_ui, "div.card");   /* 3: inside .page, not a child of #root */
+    ar_begin(g_ui, "div.page"); /* 2 */
+    ar_begin(g_ui, "div.card"); /* 3: inside .page, not a child of #root */
     ar_end(g_ui);
     ar_end(g_ui);
-    ar_begin(g_ui, "div.a");      /* 4 */
+    ar_begin(g_ui, "div.a"); /* 4 */
     ar_end(g_ui);
-    ar_begin(g_ui, "div.b");      /* 5: immediately after .a */
+    ar_begin(g_ui, "div.b"); /* 5: immediately after .a */
     ar_end(g_ui);
-    ar_begin(g_ui, "div.c");      /* 6: a later sibling of .a */
+    ar_begin(g_ui, "div.c"); /* 6: a later sibling of .a */
     ar_end(g_ui);
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
@@ -4566,8 +4726,7 @@ static void test_combinators(void)
           "combinator: a descendant is not a child");
     CHECK(g_ui->nodes[5].style.v[AR_P_BORDER_WIDTH] == 5,
           "combinator: + matches the sibling immediately after");
-    CHECK(g_ui->nodes[6].style.v[AR_P_BORDER_WIDTH] == 9,
-          "combinator: ~ matches a later sibling");
+    CHECK(g_ui->nodes[6].style.v[AR_P_BORDER_WIDTH] == 9, "combinator: ~ matches a later sibling");
     CHECK(g_ui->nodes[4].style.v[AR_P_BORDER_WIDTH] == 0,
           "combinator: and neither matches the box on the left of them");
 }
@@ -4601,7 +4760,6 @@ static void test_selector_depth_is_refused_not_truncated(void)
     CHECK(sheet.count == 0, "combinator: a selector deeper than the list is refused");
     CHECK(sheet.errors > 0, "combinator: and counted as an error rather than ignored");
 }
-
 
 int main(void)
 {
@@ -4742,6 +4900,11 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_layout_wraps_text_to_the_box();
+    test_wrapping_respects_a_stated_height();
+    test_wrapping_is_inside_the_padding();
+    test_wrapping_a_grown_box();
+    test_a_long_word_is_not_broken();
     test_structural_pseudo_classes();
     test_structural_state_survives_the_cache_key();
     test_nth_child_general_form_is_refused();

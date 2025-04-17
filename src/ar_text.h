@@ -39,11 +39,11 @@ ar_u32 ar_utf8_next(const char **p);
 
 typedef struct ar_glyph_slot
 {
-    ar_u32 key;   /* glyph index and pixel size, packed; 0 means free */
-    ar_i32 off;   /* start of the coverage in the pixel slab */
-    ar_i32 w, h;  /* bitmap size; either may be zero for a blank glyph */
-    ar_i32 left;  /* whole pixels from the pen to the bitmap's left edge */
-    ar_i32 top;   /* whole pixels from the baseline up to its top edge */
+    ar_u32 key;     /* glyph index and pixel size, packed; 0 means free */
+    ar_i32 off;     /* start of the coverage in the pixel slab */
+    ar_i32 w, h;    /* bitmap size; either may be zero for a blank glyph */
+    ar_i32 left;    /* whole pixels from the pen to the bitmap's left edge */
+    ar_i32 top;     /* whole pixels from the baseline up to its top edge */
     ar_i32 advance; /* 26.6 */
 } ar_glyph_slot;
 
@@ -208,8 +208,29 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
  * one that looks like a rendering bug. Emergency breaking belongs with
  * overflow-wrap, which is a CSS property and not this function's decision.
  */
+/*
+ * The width of text[from..to) in 1/AR_ONE_PIXEL units.
+ *
+ * A wrap candidate is a slice of the caller's string, and copying it out to
+ * measure it would be an allocation this library does not make -- so the range
+ * is passed rather than a substring.
+ */
+typedef ar_i32 (*ar_range_fn)(void *ud, const char *text, ar_i32 from, ar_i32 to);
+
+/* The UAX #14 walk, with the measurement left to the caller. `max_w` is in
+   whole pixels; `measure` returns 1/AR_ONE_PIXEL units. */
+ar_i32 ar_text_wrap_by(const char *utf8, ar_range_fn measure, void *ud, ar_i32 max_w,
+                       ar_i32 *starts, ar_i32 max_lines);
+
 ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
                     ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines);
+
+/* The same, measured through a fallback chain. This is the one layout uses:
+   a paragraph that reaches into a fallback face for one word still has to
+   break where it really gets too wide. */
+ar_i32 ar_text_wrap_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem, ar_i32 max_w,
+                          ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts,
+                          ar_i32 max_lines);
 
 /* The same walk without drawing. Costs a cache lookup per glyph, not a
    rasterization, once the glyphs are warm. */

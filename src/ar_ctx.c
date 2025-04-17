@@ -631,6 +631,115 @@ static void ar__resolve_late(ar_ctx *c)
 }
 
 /* ------------------------------------------------------------------------
+ * Wrapping
+ *
+ * Layout needs to know how tall a paragraph is at a given width, and paint
+ * needs to know where each line starts. Both come from here, so a line that
+ * layout made room for is the same line paint draws -- the two drifting apart
+ * is the classic way text ends up overflowing a box that looks the right size.
+ * ------------------------------------------------------------------------ */
+#define AR_MAX_LINES 64
+
+/* The bitmap face's adapter for ar_text_wrap_by. It measures in whole pixels
+   where the outline path measures in 1/AR_ONE_PIXEL, so it scales up. */
+typedef struct ar__bmp_ud
+{
+    ar_i32 scale;
+} ar__bmp_ud;
+
+static ar_i32 ar__wrap_bitmap(void *ud, const char *t, ar_i32 from, ar_i32 to)
+{
+    return ar_text_width_range(t, from, to, ((ar__bmp_ud *)ud)->scale) * AR_ONE_PIXEL;
+}
+
+static ar_i32 ar__wrap_lines(ar_ctx *c, const char *text, ar_i32 font_px, ar_i32 scale,
+                             ar_i32 max_w, ar_i32 *starts, ar_i32 cap)
+{
+    if (!text || max_w <= 0)
+    {
+        return 0;
+    }
+    if (c->have_face)
+    {
+        return ar_text_wrap_chain(text, &c->chain, font_px, max_w, &c->glyphs, &c->glyph_scratch,
+                                  starts, cap);
+    }
+    {
+        ar__bmp_ud ud;
+        ud.scale = scale;
+        return ar_text_wrap_by(text, ar__wrap_bitmap, &ud, max_w, starts, cap);
+    }
+}
+
+/*
+ * A box's vertical text metrics.
+ *
+ * With an outline face they come from the face: ascender to descender is the
+ * line box, and the line gap is the space the designer asked for between
+ * lines. This is the fix for a real bug -- the metrics used to come from the
+ * bitmap face's eight-pixel cell whatever the font size was, so a 13 px font
+ * got an 8 px box, and since text is clipped to its box the bottom of every
+ * glyph was cut off.
+ *
+ * With the bitmap face they stay what they were, because there the eight pixel
+ * cell is the truth rather than an approximation of it.
+ */
+static ar_i32 ar__round_px(ar_i32 v)
+{
+    return (v + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+}
+
+static void ar__text_metrics(ar_ctx *c, ar_node *n)
+{
+    if (!c->have_face)
+    {
+        n->text_h = ar_text_height(n->scale);
+        n->line_h = ar_text_line_height(n->scale);
+        n->ascent = 0; /* the bitmap face draws from the top, not a baseline */
+        return;
+    }
+    {
+        const ar_face *f = &c->face[0];
+        ar_i32         ppem = n->style.v[AR_P_FONT_SIZE];
+
+        /*
+         * Ascent, descent and gap are each rounded to a whole pixel and then
+         * added, rather than added and then rounded once.
+         *
+         * It looks like the worse of the two -- it throws away up to half a
+         * pixel three times instead of once -- and it is what every browser
+         * does, because the ascent alone is the baseline offset and the
+         * baseline has to sit on a pixel. Rounding the sum instead leaves the
+         * baseline and the line box disagreeing by a fraction, and the
+         * disagreement accumulates down a paragraph.
+         */
+        n->ascent = ar__round_px(ar_face_scale(f, f->ascender, ppem));
+        n->text_h = n->ascent + ar__round_px(-ar_face_scale(f, f->descender, ppem)) +
+                    ar__round_px(ar_face_scale(f, f->line_gap, ppem));
+        if (n->text_h < 1)
+        {
+            n->text_h = 1;
+        }
+        n->line_h = n->text_h;
+    }
+}
+
+/* What ar_layout_solve is handed. */
+static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
+{
+    ar_ctx *c = (ar_ctx *)ud;
+    ar_i32  starts[AR_MAX_LINES];
+    ar_i32  lines = ar__wrap_lines(c, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, max_w, starts,
+                                   AR_MAX_LINES);
+
+    if (lines < 1)
+    {
+        lines = 1;
+    }
+    return n->text_h + (lines - 1) * n->line_h;
+}
+
+/* ------------------------------------------------------------------------
  * Inspecting the frame
  * ------------------------------------------------------------------------ */
 ar_i32 ar_node_count(const ar_ctx *c)
@@ -852,6 +961,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     {
         n->scale = 1;
     }
+    ar__text_metrics(c, n);
     n->text_w = ar__measure(c, n);
 
     if (parent >= 0)
@@ -927,6 +1037,78 @@ int ar_button(ar_ctx *c, const char *selector, const char *label)
 /* ------------------------------------------------------------------------
  * Painting
  * ------------------------------------------------------------------------ */
+/*
+ * One wrapped line.
+ *
+ * The drawing calls take a NUL-terminated string and this library does not
+ * copy the caller's text, so a line -- which is a slice -- is copied into a
+ * stack buffer to be terminated. One memcpy against rasterizing a line of
+ * glyphs is not a cost worth designing around, and the alternative is a range
+ * argument threaded through every drawing entry point including the shaper.
+ *
+ * `to` of -1 means "to the end". A line longer than the buffer is truncated at
+ * a UTF-8 lead byte rather than mid-sequence: a clipped word is a visible
+ * failure, half a codepoint is a corrupt one.
+ */
+#define AR_LINE_BUF 512
+
+static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y,
+                          const ar_node *n, ar_i32 from, ar_i32 to, ar_color col)
+{
+    char   buf[AR_LINE_BUF];
+    ar_i32 len = 0;
+    ar_i32 i;
+
+    if (to < 0)
+    {
+        for (to = from; n->text[to]; ++to)
+        {
+        }
+    }
+    len = to - from;
+    if (len <= 0)
+    {
+        return;
+    }
+    if (len > AR_LINE_BUF - 1)
+    {
+        len = AR_LINE_BUF - 1;
+        while (len > 0 && ((unsigned char)n->text[from + len] & 0xC0u) == 0x80u)
+        {
+            --len;
+        }
+    }
+    for (i = 0; i < len; ++i)
+    {
+        buf[i] = n->text[from + i];
+    }
+    /* A break leaves the space at the end of the line it broke. Drawing it
+       would be invisible for a left-aligned line and wrong for anything else,
+       and it makes the measured width disagree with the drawn one. */
+    while (len > 0 && (buf[len - 1] == ' ' || buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+    {
+        --len;
+    }
+    buf[len] = 0;
+    if (len == 0)
+    {
+        return;
+    }
+
+    if (c->have_face)
+    {
+        /* A font puts the baseline below the top of the line box; the bitmap
+           face has no baseline and draws from the top, so the two paths take
+           different y values for the same text. */
+        ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, &c->chain, c->shaping ? &c->shaper : 0,
+                            n->style.v[AR_P_FONT_SIZE], col, &c->glyphs, &c->glyph_scratch, 0);
+    }
+    else
+    {
+        ar_draw_text(s, clip, x, y, buf, n->scale, col);
+    }
+}
+
 static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
 {
     ar_i32 i;
@@ -987,20 +1169,34 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
             ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
             ar_color tc = (ar_color)n->style.v[AR_P_COLOR];
 
-            if (c->have_face)
+            /* The same wrap layout used, so the lines drawn are the lines
+               that were made room for. Wrapping twice per frame is the cost
+               of not storing the line table; it is a cache lookup per glyph
+               against a warm cache, and the alternative is per-box storage
+               for something only the painted boxes need. */
+            ar_i32 starts[AR_MAX_LINES];
+            ar_i32 inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+            ar_i32 lines = ar__wrap_lines(c, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, inner_w,
+                                          starts, AR_MAX_LINES);
+            ar_i32 advance = n->line_h;
+            ar_i32 li;
+
+            if (lines < 1)
             {
-                /* A font puts the baseline below the top of the line box; the
-                   bitmap face has no baseline and draws from the top, so the
-                   two paths take different y values for the same text. */
-                ar_i32 ppem = n->style.v[AR_P_FONT_SIZE];
-                ar_i32 base = ar_face_scale(&c->face[0], c->face[0].ascender, ppem) / AR_ONE_PIXEL;
-                ar_text_draw_shaped(s, tclip, tx, ty + base, n->text, &c->chain,
-                                    c->shaping ? &c->shaper : 0, ppem, tc, &c->glyphs,
-                                    &c->glyph_scratch, 0);
+                lines = 1;
+                starts[0] = 0;
             }
-            else
+
+            for (li = 0; li < lines; ++li)
             {
-                ar_draw_text(s, tclip, tx, ty, n->text, n->scale, tc);
+                /* The line is a slice of the caller's string, and this library
+                   does not copy strings. Drawing is given the whole tail and a
+                   clip that stops it at the next line's start. */
+                ar_i32 from = starts[li];
+                ar_i32 to = (li + 1 < lines) ? starts[li + 1] : -1;
+                ar_i32 ly = ty + li * advance;
+
+                ar__draw_line(c, s, tclip, tx, ly, n, from, to, tc);
             }
         }
     }
@@ -1067,7 +1263,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        here, so closing that phase now attributes it correctly. */
     ar_perf_mark(&c->perf, AR_PHASE_STYLE, ar__now(c));
 
-    ar_layout_solve(c->nodes, c->node_count, viewport);
+    ar_layout_solve(c->nodes, c->node_count, viewport, ar__wrap_cb, c);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
     /* A resize repaints everything: every box moved, and the surface behind

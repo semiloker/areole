@@ -55,6 +55,21 @@ typedef struct ar_node
        once per node rather than once per layout pass. */
     ar_i32 text_w;
 
+    /* The vertical text metrics, in whole pixels, settled where the font is
+       known rather than in the solver -- which has no business knowing what a
+       font is. `text_h` is one line, `line_h` the advance to the next.
+
+       With an outline face both come from the face's own ascender, descender
+       and line gap, so a 13 px font gets a line box that a 13 px glyph fits
+       in. With the built-in bitmap face they stay 8 and 10 at scale 1, which
+       is what they have always been. */
+    ar_i32 text_h;
+    ar_i32 line_h;
+
+    /* Where the baseline sits inside a line box. Kept beside the other two so
+       painting cannot compute it differently from the way layout did. */
+    ar_i32 ascent;
+
     ar_i32  fit[2]; /* intrinsic size, from pass one */
     ar_rect rect;   /* final, absolute */
     ar_rect clip;   /* narrowed by every clipping ancestor */
@@ -85,9 +100,9 @@ typedef struct ar_slot
        that is a glyph cache lookup per character -- on the shipped dashboard,
        more lookups for measuring than for drawing. Hashing the string costs a
        byte per character against a hash and a probe per character. */
-    ar_u32  text_key;
-    ar_i32  text_px;
-    ar_u32  seen;       /* frame this box last appeared in the tree */
+    ar_u32 text_key;
+    ar_i32 text_px;
+    ar_u32 seen; /* frame this box last appeared in the tree */
 } ar_slot;
 
 /* ------------------------------------------------------------------------
@@ -168,7 +183,22 @@ struct ar_ctx
 
 /* The layout solver. Takes a tree whose root is index 0 and gives every box an
    absolute rect. Pure: no allocation, no clock, no drawing. */
-void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport);
+/*
+ * How many lines a string takes at a given width, and how tall that is.
+ *
+ * Layout needs this and has no business knowing what a font is, so it is
+ * handed a function. ar_ctx supplies one that wraps through its fallback chain
+ * and its glyph cache; a caller with no text does not have to supply anything,
+ * and a null callback means every box is one line, which is what the solver
+ * did before wrapping existed.
+ *
+ * `max_w` is the content width in whole pixels. The return value is the height
+ * in whole pixels, not a line count, because line height is the font's
+ * business rather than the solver's.
+ */
+typedef ar_i32 (*ar_wrap_fn)(void *ud, const ar_node *n, ar_i32 max_w);
+
+void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn wrap, void *ud);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 

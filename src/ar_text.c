@@ -227,8 +227,7 @@ static ar_u32 ar__glyph_slot_of(ar_u32 key, ar_u32 mask)
 }
 
 const ar_glyph_slot *ar_glyph_get_face(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph,
-                                       ar_i32 ppem, ar_i32 subpx, ar_i32 face,
-                                       ar_glyph_scratch *sc)
+                                       ar_i32 ppem, ar_i32 subpx, ar_i32 face, ar_glyph_scratch *sc)
 {
     ar_u32  key;
     ar_u32  mask = (ar_u32)gc->slots - 1u;
@@ -414,8 +413,8 @@ const ar_glyph_slot *ar_glyph_get_face(ar_glyph_cache *gc, const ar_face *f, ar_
  * Left as it is, with the measurement recorded, so the idea does not get had
  * again.
  */
-static void ar__blit_coverage(ar_surface *s, ar_rect clip, const ar_glyph_slot *g,
-                              const ar_u8 *cov, ar_i32 px, ar_i32 py, ar_color c, ar_u32 alpha)
+static void ar__blit_coverage(ar_surface *s, ar_rect clip, const ar_glyph_slot *g, const ar_u8 *cov,
+                              ar_i32 px, ar_i32 py, ar_color c, ar_u32 alpha)
 {
     ar_rect d = ar_rect_intersect(ar_rect_make(px, py, g->w, g->h), clip);
     ar_i32  y;
@@ -452,8 +451,8 @@ ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char 
                     const ar_face *f, ar_i32 ppem, ar_color c, ar_glyph_cache *gc,
                     ar_glyph_scratch *sc)
 {
-    ar_i32 pen = x * AR_ONE_PIXEL;
-    ar_u32 alpha;
+    ar_i32  pen = x * AR_ONE_PIXEL;
+    ar_u32  alpha;
     ar_rect bounds;
 
     if (!utf8 || !f || !f->ok || !s || !s->pixels)
@@ -564,14 +563,50 @@ static ar_i32 ar__measure_range(const char *text, ar_i32 from, ar_i32 to, const 
     return pen;
 }
 
-ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
-                    ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines)
+/* The same range, measured through a fallback chain rather than one face, so
+   a line that mixes scripts breaks where it actually gets too wide. */
+static ar_i32 ar__measure_range_chain(const char *text, ar_i32 from, ar_i32 to,
+                                      const ar_font_chain *ch, ar_i32 ppem, ar_glyph_cache *gc,
+                                      ar_glyph_scratch *sc)
+{
+    const char *p = text + from;
+    ar_i32      pen = 0;
+
+    while (p < text + to)
+    {
+        ar_u32               cp = ar_utf8_next(&p);
+        const ar_glyph_slot *g;
+        ar_i32               which = 0, glyph;
+
+        if (cp == 0)
+        {
+            break;
+        }
+        glyph = ar_font_chain_glyph(ch, cp, &which);
+        g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+        if (g)
+        {
+            pen += g->advance;
+        }
+    }
+    return pen;
+}
+
+/*
+ * Breaking a line is the same work whichever face measures it, so the
+ * measurement is the only thing passed in. One face, a fallback chain and the
+ * built-in bitmap face all reach this through their own two-line adapter, and
+ * there is exactly one copy of the UAX #14 walk.
+ */
+ar_i32 ar_text_wrap_by(const char *utf8, ar_range_fn measure, void *ud, ar_i32 max_w,
+                       ar_i32 *starts, ar_i32 max_lines)
 {
     ar_i32 line_start = 0, at = 0, lines = 0;
     ar_i32 len = 0;
     ar_i32 limit = max_w * AR_ONE_PIXEL;
 
-    if (!utf8 || !f || !f->ok || !starts || max_lines <= 0)
+    if (!utf8 || !starts || max_lines <= 0 || !measure)
     {
         return 0;
     }
@@ -597,7 +632,7 @@ ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_
 
         /* Measured from the start of the line rather than accumulated, because
            a glyph's advance can depend on where in the pixel it starts. */
-        if (ar__measure_range(utf8, line_start, next, f, ppem, gc, sc) > limit && at > line_start)
+        if (measure(ud, utf8, line_start, next) > limit && at > line_start)
         {
             if (lines >= max_lines)
             {
@@ -624,6 +659,63 @@ ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_
         }
     }
     return lines;
+}
+
+/* What the two adapters below carry, so the wrap loop stays ignorant of it. */
+typedef struct ar__wrap_ud
+{
+    const ar_face       *face;
+    const ar_font_chain *chain;
+    ar_i32               ppem;
+    ar_glyph_cache      *gc;
+    ar_glyph_scratch    *sc;
+} ar__wrap_ud;
+
+static ar_i32 ar__wrap_face(void *ud, const char *t, ar_i32 from, ar_i32 to)
+{
+    ar__wrap_ud *w = (ar__wrap_ud *)ud;
+    return ar__measure_range(t, from, to, w->face, w->ppem, w->gc, w->sc);
+}
+
+static ar_i32 ar__wrap_chain(void *ud, const char *t, ar_i32 from, ar_i32 to)
+{
+    ar__wrap_ud *w = (ar__wrap_ud *)ud;
+    return ar__measure_range_chain(t, from, to, w->chain, w->ppem, w->gc, w->sc);
+}
+
+ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
+                    ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines)
+{
+    ar__wrap_ud w;
+
+    if (!f || !f->ok)
+    {
+        return 0;
+    }
+    w.face = f;
+    w.chain = 0;
+    w.ppem = ppem;
+    w.gc = gc;
+    w.sc = sc;
+    return ar_text_wrap_by(utf8, ar__wrap_face, &w, max_w, starts, max_lines);
+}
+
+ar_i32 ar_text_wrap_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem, ar_i32 max_w,
+                          ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts,
+                          ar_i32 max_lines)
+{
+    ar__wrap_ud w;
+
+    if (!ch || ch->count <= 0)
+    {
+        return 0;
+    }
+    w.face = 0;
+    w.chain = ch;
+    w.ppem = ppem;
+    w.gc = gc;
+    w.sc = sc;
+    return ar_text_wrap_by(utf8, ar__wrap_chain, &w, max_w, starts, max_lines);
 }
 
 const ar_glyph_slot *ar_glyph_get(ar_glyph_cache *gc, const ar_face *f, ar_i32 glyph, ar_i32 ppem,
@@ -748,8 +840,8 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
     }
 
     alpha = AR_ALPHA_OF(c);
-    bounds = draw ? ar_rect_intersect(clip, ar_rect_make(0, 0, s->w, s->h))
-                  : ar_rect_make(0, 0, 0, 0);
+    bounds =
+        draw ? ar_rect_intersect(clip, ar_rect_make(0, 0, s->w, s->h)) : ar_rect_make(0, 0, 0, 0);
     if (draw)
     {
         AR_COUNT(text_calls, 1);
@@ -788,9 +880,10 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
 
         /* With the characters, joining can be resolved and Arabic gets its
            positional forms; without them, only the glyph-level features. */
-        n = sc->shape_cp ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
-                                            sc->shape_dx, sc->shape_dy, sc->shape_cluster, n, sc->shape_cap)
-                         : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
+        n = sc->shape_cp
+                ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv, sc->shape_dx,
+                                   sc->shape_dy, sc->shape_cluster, n, sc->shape_cap)
+                : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
 
         for (i = 0; i < n; ++i)
         {

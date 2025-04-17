@@ -92,19 +92,22 @@ static int ar__hidden(const ar_node *n)
 }
 
 /* Height of a text block, counting the lines rather than assuming one. */
-static ar_i32 ar__text_block_height(const char *text, ar_i32 scale)
+/* The intrinsic height: what the text wants before anything tells it how wide
+   to be, which is its explicit lines only. Wrapping is not intrinsic -- it is
+   a consequence of a width, and widths are settled in the pass below. */
+static ar_i32 ar__text_block_height(const ar_node *n)
 {
     ar_i32      lines = 1;
     const char *p;
 
-    for (p = text; *p; ++p)
+    for (p = n->text; *p; ++p)
     {
         if (*p == '\n')
         {
             lines++;
         }
     }
-    return ar_text_height(scale) + (lines - 1) * ar_text_line_height(scale);
+    return n->text_h + (lines - 1) * n->line_h;
 }
 
 /* What a child contributes to its parent when the parent is sizing itself to
@@ -184,7 +187,7 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         if (n->text)
         {
             ar_i32 tw = n->text_w;
-            ar_i32 th = ar__text_block_height(n->text, n->scale);
+            ar_i32 th = ar__text_block_height(n);
             ar_i32 tm = axis ? th : tw;
             ar_i32 tc = axis ? tw : th;
 
@@ -239,7 +242,53 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
 /* ------------------------------------------------------------------------
  * Pass two, downwards: what each box actually gets
  * ------------------------------------------------------------------------ */
-static void ar__place(ar_node *nodes, ar_i32 count)
+/*
+ * A text box's height, once the width it has to fit into is known.
+ *
+ * This is the whole of text wrapping in the solver. It is deliberately not in
+ * the measure pass: intrinsic sizing asks "how big does this want to be",
+ * whose answer is the widest single line, and only placement knows how much
+ * width the box actually got.
+ *
+ * Applied only where the height came from the content in the first place. A
+ * box with a stated height, a percentage, a share of the leftover, or one
+ * stretched by align-items has already been told how tall to be, and text that
+ * does not fit that is the caller's decision to make.
+ */
+static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wrap, void *ud)
+{
+    ar_i32 inner_w;
+    ar_i32 h;
+
+    if (!wrap || !n->text)
+    {
+        return;
+    }
+    if (n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO)
+    {
+        return;
+    }
+    /* In a row, height is the cross axis and align-items has already set it. */
+    if (axis == 0 && stretch)
+    {
+        return;
+    }
+
+    inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    if (inner_w <= 0)
+    {
+        return;
+    }
+
+    h = wrap(ud, n, inner_w);
+    h += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
+    if (h > n->rect.h)
+    {
+        n->rect.h = ar__clamp(h, n->style.v[AR_P_MIN_HEIGHT], n->style.v[AR_P_MAX_HEIGHT]);
+    }
+}
+
+static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
 {
     ar_i32 i;
 
@@ -303,6 +352,16 @@ static void ar__place(ar_node *nodes, ar_i32 count)
             }
             *ar__size(&ch->rect, cross) = ar__resolve_size(ch, cross, inner_cross, stretch);
 
+            /* The width is settled now for every child except one growing
+               along a horizontal main axis, whose share is handed out below.
+               In a column -- which is where paragraphs live -- width is the
+               cross axis and is always settled here, so the height this
+               produces is the one that feeds `used`. */
+            if (!(axis == 0 && ch->style.unit[AR_P_WIDTH] == AR_UNIT_GROW))
+            {
+                ar__wrap_height(ch, axis, stretch, wrap, ud);
+            }
+
             used += *ar__size(&ch->rect, axis) + ar__margin_lead(&ch->style, axis) +
                     ar__margin_trail(&ch->style, axis);
             visible++;
@@ -341,6 +400,15 @@ static void ar__place(ar_node *nodes, ar_i32 count)
                 }
                 v = ar__clamp(v, ch->style.v[ar__min_prop(axis)], ch->style.v[ar__max_prop(axis)]);
                 *ar__size(&ch->rect, axis) = v;
+
+                /* A box growing along a horizontal main axis only learns its
+                   width here, so this is the first moment its text can be
+                   wrapped. Its height is the cross axis and does not feed the
+                   main-axis arithmetic above, so doing it late costs nothing. */
+                if (axis == 0)
+                {
+                    ar__wrap_height(ch, axis, stretch, wrap, ud);
+                }
             }
             leftover = 0; /* absorbed, so justify-content has nothing to place */
         }
@@ -414,7 +482,7 @@ static void ar__place(ar_node *nodes, ar_i32 count)
     }
 }
 
-void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport)
+void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn wrap, void *ud)
 {
     if (count <= 0)
     {
@@ -427,5 +495,5 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport)
        ignored, because the window is not negotiable. */
     nodes[0].rect = viewport;
 
-    ar__place(nodes, count);
+    ar__place(nodes, count, wrap, ud);
 }

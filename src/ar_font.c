@@ -70,6 +70,33 @@ ar_i32 ar_text_width(const char *text, ar_i32 scale)
     return line > w ? line : w;
 }
 
+ar_i32 ar_text_width_range(const char *text, ar_i32 from, ar_i32 to, ar_i32 scale)
+{
+    const unsigned char *p;
+    const unsigned char *end;
+    ar_i32               w = 0;
+
+    if (!text || to <= from)
+    {
+        return 0;
+    }
+    if (scale < 1)
+    {
+        scale = 1;
+    }
+    p = (const unsigned char *)text + from;
+    end = (const unsigned char *)text + to;
+    for (; p < end && *p; ++p)
+    {
+        if (*p == '\n' || *p == '\r')
+        {
+            continue;
+        }
+        w += (ar_i32)ar__font_advance[ar__glyph_index(*p)] * scale;
+    }
+    return w;
+}
+
 /* Fills a run of set bits, scaled and clipped. The predecessor of this did the
    same work per bit rather than per run, which cost two rectangle intersections
    and a call to write a single pixel; the baseline showed it plainly, because
