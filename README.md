@@ -417,6 +417,24 @@ back to one glyph per character, so the difference is visible rather than assert
 `--selftest` runs every page through a real frame against a real surface with no window, and CI
 runs it, so a page cannot rot unnoticed.
 
+### Against a browser
+
+`examples/02_tour/tour.html` declares the same six pages with the same stylesheet, so both engines
+can be asked to lay out the same thing:
+
+```sh
+python tools/compare_layout.py --run ./build/example_tour.exe
+```
+
+**153 of 153 boxes match. Every box that flex places lands on the same rectangle as Chromium's,
+exactly. Boxes sized by measuring their own text land within one pixel — mean 0.8 px.**
+
+Getting there needed six compensating rules, and those six are the honest measure of what is
+missing: no text wrapping, quantised line boxes, no flex shrinking, and three deliberate
+departures. Each is written up in
+[examples/02_tour/COMPARISON.md](examples/02_tour/COMPARISON.md) next to the rule that
+compensates for it.
+
 ## Requirements
 
 Windows 2000 or newer. A C89 compiler. That is the entire list.
