@@ -81,7 +81,6 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
 }
 
-
 void ar_classes_clear(ar_classes *c)
 {
     c->n = 0;
@@ -110,6 +109,20 @@ void ar_classes_add(ar_classes *c, ar_u32 hash)
        collision bound is the same one in 2^32 the rest of this library's
        hashes carry. */
     c->combined += hash * 2654435761u;
+}
+
+int ar_classes_has(const ar_classes *have, ar_u32 klass)
+{
+    ar_i32 i;
+
+    for (i = 0; i < have->n; ++i)
+    {
+        if (have->h[i] == klass)
+        {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int ar_classes_contains(const ar_classes *have, const ar_classes *want)
@@ -901,16 +914,204 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
     return any;
 }
 
+/* One state keyword, or zero if the name is not one. Shared by the compound
+   parser and the functional pseudo-classes, which accept the same set. */
+static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
+{
+    if (ar__same(name, len, "hover"))
+    {
+        return AR_STATE_HOVER;
+    }
+    if (ar__same(name, len, "active"))
+    {
+        return AR_STATE_ACTIVE;
+    }
+    if (ar__same(name, len, "focus"))
+    {
+        return AR_STATE_FOCUS;
+    }
+    if (ar__same(name, len, "root"))
+    {
+        return AR_STATE_ROOT;
+    }
+    if (ar__same(name, len, "first-child"))
+    {
+        return AR_STATE_FIRST;
+    }
+    if (ar__same(name, len, "last-child"))
+    {
+        return AR_STATE_LAST;
+    }
+    if (ar__same(name, len, "only-child"))
+    {
+        return AR_STATE_ONLY;
+    }
+    if (ar__same(name, len, "empty"))
+    {
+        return AR_STATE_EMPTY;
+    }
+    return 0;
+}
+
+/*
+ * One simple selector, for the inside of :not(), :is() and :where().
+ *
+ * A tag, a class, an id or a state -- one of each at most, and at least one of
+ * something. Anything more elaborate is refused, which is what stops
+ * `:not(.a.b)` from quietly matching `.a`.
+ */
+static int ar__parse_simple(ar__scan *z, ar_sel_simple *out, ar_u16 *spec)
+{
+    int any = 0;
+
+    out->tag = 0;
+    out->klass = 0;
+    out->id = 0;
+    out->state = 0;
+
+    ar__skip_ws(z);
+    for (;;)
+    {
+        const char *name;
+        ar_u32      len;
+
+        if (z->p >= z->end)
+        {
+            break;
+        }
+        if (*z->p == '.' || *z->p == '#' || *z->p == ':')
+        {
+            char mark = *z->p++;
+
+            len = ar__ident(z, &name);
+            if (len == 0)
+            {
+                return 0;
+            }
+            if (mark == '.')
+            {
+                if (out->klass)
+                {
+                    return 0; /* two classes is a compound, not a simple */
+                }
+                out->klass = ar_hash(name, len);
+                *spec = (ar_u16)(*spec + 10);
+            }
+            else if (mark == '#')
+            {
+                if (out->id)
+                {
+                    return 0;
+                }
+                out->id = ar_hash(name, len);
+                *spec = (ar_u16)(*spec + 100);
+            }
+            else
+            {
+                ar_u16 st = ar__state_keyword(name, len);
+
+                if (!st)
+                {
+                    return 0; /* nesting a functional pseudo-class is refused */
+                }
+                out->state |= st;
+                *spec = (ar_u16)(*spec + 10);
+            }
+            any = 1;
+            continue;
+        }
+        if (ar__is_ident(*z->p))
+        {
+            if (out->tag)
+            {
+                return 0;
+            }
+            len = ar__ident(z, &name);
+            if (len == 0)
+            {
+                return 0;
+            }
+            out->tag = ar_hash(name, len);
+            *spec = (ar_u16)(*spec + 1);
+            any = 1;
+            continue;
+        }
+        break;
+    }
+    return any;
+}
+
+/*
+ * The parenthesised list inside :not(), :is() or :where().
+ *
+ * Specificity follows the specification as closely as this can: :not() and
+ * :is() take the specificity of their most specific argument, :where() takes
+ * none. That is why the running total is snapshotted and restored -- the
+ * arguments are parsed the same way in all three cases and only the
+ * bookkeeping differs.
+ */
+static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar_u16 *spec,
+                              int contributes)
+{
+    ar_u16 before = *spec;
+    ar_u16 best = 0;
+
+    *count = 0;
+    if (z->p >= z->end || *z->p != '(')
+    {
+        return 0;
+    }
+    z->p++;
+
+    for (;;)
+    {
+        ar_u16 mine = 0;
+
+        if (*count >= AR_MAX_ALTS)
+        {
+            return 0; /* longer than the list holds; refused, not truncated */
+        }
+        if (!ar__parse_simple(z, &out[*count], &mine))
+        {
+            return 0;
+        }
+        if (mine > best)
+        {
+            best = mine;
+        }
+        (*count)++;
+
+        ar__skip_ws(z);
+        if (z->p < z->end && *z->p == ',')
+        {
+            z->p++;
+            continue;
+        }
+        break;
+    }
+
+    if (z->p >= z->end || *z->p != ')')
+    {
+        return 0;
+    }
+    z->p++;
+    *spec = (ar_u16)(before + (contributes ? best : 0));
+    return 1;
+}
+
 /* One compound: a tag, any number of classes, an id, and pseudo-classes.
    Returns zero if there was nothing to read, which is how the caller knows a
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
-                              ar_u16 *state, ar_u16 *spec)
+                              ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
+                              ar_sel_simple *alt, ar_i32 *nalt)
 {
     int any = 0;
 
     *tag = 0;
     *id = 0;
+    *nneg = 0;
+    *nalt = 0;
     ar_classes_clear(klass);
 
     for (;;)
@@ -940,6 +1141,20 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
             {
                 *id = ar_hash(name, len);
                 *spec = (ar_u16)(*spec + 100);
+            }
+            else if (ar__same(name, len, "not") || ar__same(name, len, "is") ||
+                     ar__same(name, len, "where"))
+            {
+                int is_not = ar__same(name, len, "not");
+                int contributes = !ar__same(name, len, "where");
+
+                if (!ar__parse_alt_list(z, is_not ? neg : alt, is_not ? nneg : nalt, spec,
+                                        contributes))
+                {
+                    return 0;
+                }
+                any = 1;
+                continue;
             }
             else
             {
@@ -1063,20 +1278,26 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
     rule->specificity = 0;
     rule->nctx = 0;
 
+    rule->nneg = 0;
+    rule->nalt = 0;
+
     for (;;)
     {
-        ar_u32     tag, id;
-        ar_classes klass;
-        int        got;
+        ar_u32        tag, id;
+        ar_classes    klass;
+        ar_sel_simple neg[AR_MAX_ALTS], alt[AR_MAX_ALTS];
+        ar_i32        nneg = 0, nalt = 0;
+        int           got;
 
         if (n > AR_MAX_SEL_PARTS)
         {
             return 0; /* deeper than this holds; refused rather than truncated */
         }
-        got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity);
+        got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity, neg, &nneg,
+                                 alt, &nalt);
         if (!got)
         {
-            return n > 0 ? 0 : 0; /* a dangling combinator is malformed */
+            return 0; /* a dangling combinator is malformed */
         }
         parts[n].tag = tag;
         parts[n].klass = klass;
@@ -1084,13 +1305,43 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
         parts[n].comb = comb;
         ++n;
 
+        /*
+         * The functional pseudo-classes belong to the subject, and which
+         * compound that is only becomes clear when the selector ends. So they
+         * are carried on the newest part and overwrite whatever the previous
+         * one left: if another compound follows, the previous one was context
+         * and had no business carrying them.
+         *
+         * Which means `.page:not(.wide) .card` parses its :not() and then
+         * silently drops it -- so it is caught here instead, once the next
+         * compound proves this one was not the subject.
+         */
+        if (n > 1 && (rule->nneg || rule->nalt))
+        {
+            return 0;
+        }
+        {
+            ar_i32 k;
+
+            for (k = 0; k < nneg; ++k)
+            {
+                rule->neg[k] = neg[k];
+            }
+            for (k = 0; k < nalt; ++k)
+            {
+                rule->alt[k] = alt[k];
+            }
+            rule->nneg = nneg;
+            rule->nalt = nalt;
+        }
+
         /* What separates this compound from the next, if there is a next. */
         {
             const char *save = z->p;
             int         space = 0;
 
-            while (z->p < z->end && (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' ||
-                                     *z->p == '\r'))
+            while (z->p < z->end &&
+                   (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' || *z->p == '\r'))
             {
                 ++z->p;
                 space = 1;
@@ -1101,8 +1352,8 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
                                : *z->p == '+' ? AR_COMB_ADJACENT
                                               : AR_COMB_SIBLING);
                 ++z->p;
-                while (z->p < z->end && (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' ||
-                                         *z->p == '\r'))
+                while (z->p < z->end &&
+                       (*z->p == ' ' || *z->p == '\t' || *z->p == '\n' || *z->p == '\r'))
                 {
                     ++z->p;
                 }
@@ -1192,6 +1443,28 @@ static void ar__note_contextual(ar_sheet *sheet)
         {
             sheet->has_late_state = 1;
         }
+        /* A state inside :not() or :is() counts as much as one on the compound
+           -- `.row:not(:last-child)` needs the second pass just as much as
+           `.row:last-child` does, and needing it without asking for it is a
+           rule that silently never matches. */
+        {
+            ar_i32 k;
+
+            for (k = 0; k < sheet->rules[i].nneg; ++k)
+            {
+                if (sheet->rules[i].neg[k].state & AR_STATE_LATE)
+                {
+                    sheet->has_late_state = 1;
+                }
+            }
+            for (k = 0; k < sheet->rules[i].nalt; ++k)
+            {
+                if (sheet->rules[i].alt[k].state & AR_STATE_LATE)
+                {
+                    sheet->has_late_state = 1;
+                }
+            }
+        }
     }
 }
 
@@ -1235,7 +1508,17 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
 
     for (;;)
     {
-        ar_rule rule;
+        /*
+         * A selector list shares one declaration block: `.a, .b { ... }` is two
+         * rules that happen to have been written once. The selectors are parsed
+         * into this array first and the block is parsed once into the first of
+         * them, then copied across -- parsing the block once per selector would
+         * mean the same declarations counted twice in the error tally, and
+         * `!important` marked twice.
+         */
+        ar_rule rule[AR_MAX_SEL_LIST];
+        ar_i32  sel_count = 0;
+        ar_i32  k;
 
         ar__skip_ws(&z);
         if (z.p >= z.end)
@@ -1243,15 +1526,59 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             break;
         }
 
-        memset(&rule, 0, sizeof rule);
-        ar_style_defaults(&rule.style);
-        rule.set = 0;
+        memset(&rule[0], 0, sizeof rule[0]);
+        ar_style_defaults(&rule[0].style);
+        rule[0].set = 0;
 
-        if (!ar__parse_selector(&z, &rule))
+        if (!ar__parse_selector(&z, &rule[0]))
         {
             ar__fail(&z);
             /* Resynchronise on the next block, so one bad selector costs one
                rule rather than the remainder of the stylesheet. */
+            while (z.p < z.end && *z.p != '}')
+            {
+                z.p++;
+            }
+            if (z.p < z.end)
+            {
+                z.p++;
+            }
+            continue;
+        }
+        sel_count = 1;
+
+        /* The rest of the list, if there is one. Each selector is parsed into
+           its own rule; they differ in nothing else. */
+        for (;;)
+        {
+            ar__skip_ws(&z);
+            if (z.p >= z.end || *z.p != ',')
+            {
+                break;
+            }
+            z.p++;
+            /* ar__parse_compound starts on the first character of a compound,
+               not on the whitespace before one -- the main loop above has
+               always skipped it for the first selector. */
+            ar__skip_ws(&z);
+            if (sel_count >= AR_MAX_SEL_LIST)
+            {
+                sel_count = 0; /* longer than the array holds; refuse the lot */
+                break;
+            }
+            memset(&rule[sel_count], 0, sizeof rule[0]);
+            ar_style_defaults(&rule[sel_count].style);
+            rule[sel_count].set = 0;
+            if (!ar__parse_selector(&z, &rule[sel_count]))
+            {
+                sel_count = 0;
+                break;
+            }
+            sel_count++;
+        }
+        if (sel_count == 0)
+        {
+            ar__fail(&z);
             while (z.p < z.end && *z.p != '}')
             {
                 z.p++;
@@ -1286,25 +1613,33 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             {
                 break;
             }
-            ar__parse_decl(&z, &rule);
+            ar__parse_decl(&z, &rule[0]);
         }
         if (z.p < z.end)
         {
             z.p++; /* the closing brace */
         }
 
-        if (rule.set == 0)
+        if (rule[0].set == 0)
         {
             continue; /* an empty block is legal and simply has no effect */
         }
-        if (sheet->count >= sheet->capacity)
-        {
-            ar__fail(&z);
-            break;
-        }
 
-        rule.order = sheet->count;
-        sheet->rules[sheet->count++] = rule;
+        for (k = 0; k < sel_count; ++k)
+        {
+            if (sheet->count >= sheet->capacity)
+            {
+                ar__fail(&z);
+                break;
+            }
+            /* Everything except the selector is the same, and rule[0] is the
+               one the block was parsed into. */
+            rule[k].style = rule[0].style;
+            rule[k].set = rule[0].set;
+            rule[k].important = rule[0].important;
+            rule[k].order = sheet->count;
+            sheet->rules[sheet->count++] = rule[k];
+        }
     }
 
     ar__sort_rules(sheet);
@@ -1323,6 +1658,62 @@ static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
     return h;
 }
 
+int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                          ar_u16 state)
+{
+    if (p->tag && p->tag != tag)
+    {
+        return 0;
+    }
+    if (p->id && p->id != id)
+    {
+        return 0;
+    }
+    if (p->klass && !ar_classes_has(klass, p->klass))
+    {
+        return 0;
+    }
+    if (p->state && (state & p->state) != p->state)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * :not() and :is() on the subject compound.
+ *
+ * Every negation must fail and, if there are any alternatives at all, at least
+ * one must match. Written as one function because every place that matches a
+ * rule has to ask both questions, and a place that asked only one would be a
+ * silent wrong answer rather than a loud one.
+ */
+static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                                  ar_u16 state)
+{
+    ar_i32 i;
+
+    for (i = 0; i < r->nneg; ++i)
+    {
+        if (ar_sel_simple_matches(&r->neg[i], tag, klass, id, state))
+        {
+            return 0;
+        }
+    }
+    if (r->nalt > 0)
+    {
+        for (i = 0; i < r->nalt; ++i)
+        {
+            if (ar_sel_simple_matches(&r->alt[i], tag, klass, id, state))
+            {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    return 1;
+}
+
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                  ar_u32 id, ar_u16 state, ar_style *out)
 {
@@ -1335,6 +1726,20 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     for (i = 0; i < (ar_i32)sheet->count; ++i)
     {
         const ar_rule *r = &sheet->rules[i];
+
+        /*
+         * A rule with a combinator is the contextual pass's business alone.
+         *
+         * Without this, `.page .card` applied to every `.card` anywhere: this
+         * loop only ever looked at the subject compound, so the context was
+         * silently dropped. It went unnoticed because the sheets that had
+         * combinators also had a second rule that overwrote the wrong answer,
+         * which is exactly the shape of bug that survives a test suite.
+         */
+        if (r->nctx > 0)
+        {
+            continue;
+        }
 
         if (r->tag && r->tag != tag)
         {
@@ -1354,6 +1759,10 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         {
             continue;
         }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
         ar_style_merge(out, &r->style, r->set & ~r->important);
     }
 
@@ -1370,7 +1779,7 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
-        if (!r->important)
+        if (!r->important || r->nctx > 0)
         {
             continue;
         }
@@ -1390,10 +1799,13 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         {
             continue;
         }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
         ar_style_merge(out, &r->style, r->important);
     }
 }
-
 
 int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id)
 {
@@ -1471,8 +1883,8 @@ static int ar__ctx_matches(const ar_rule *r, ar_i32 index, ar_sel_walk find, voi
 }
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state,
-                                 ar_sel_walk find, void *ud, ar_style *out)
+                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 void *ud, ar_style *out)
 {
     ar_i32 i;
 
@@ -1511,6 +1923,10 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
         {
             continue;
         }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
         if (!ar__ctx_matches(r, index, find, ud))
         {
             continue;
@@ -1524,8 +1940,8 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     }
 }
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                      ar_u16 state, ar_style *out)
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+                      ar_style *out)
 {
     ar_u32 slot, probe;
 
