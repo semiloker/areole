@@ -19,7 +19,7 @@
   THREE places where this stylesheet is not a character-for-character copy of
   the C one. Each is a real difference between areole and CSS, and finding them
   is what the comparison was for -- with all three spelled out, every one of the
-  153 boxes lands on the same rectangle in both engines.
+  159 boxes lands on the same rectangle in both engines.
 
   Each is written up beside the rule that compensates for it, below. In short:
 
@@ -125,10 +125,14 @@ button.dump {
 
 /* ------------------------------------------------------------ SHEET_FRAME */
 .app {
-  display: flex; flex-direction: row; background: #fcfaf6;
+  display: flex; flex-direction: column; background: #fcfaf6;
   font-size: 14px; color: #3a3733;
   width: 640px; height: 480px;
 }
+
+/* The interface, above the status bar. A column child, so `.page` inside it is
+   stretched across the row rather than sized to its own content. */
+.main { flex: 1 0 0; overflow: hidden; display: flex; flex-direction: row; }
 
 /* -------------------------------------------------------------- SHEET_NAV */
 /* `flex: 1 0 0` rather than `flex-grow: 1`: with a zero basis the box grows
@@ -201,6 +205,7 @@ button.dump {
 <div class="frame">
   <h2>0.1.0 — One block, one blit</h2>
   <div class="app" data-page="0.1.0 One block, one blit">
+    <div class="main">
     <div class="page">
       <div class="h1">One block, one blit</div>
       <div class="sub">No allocator, no graphics API, no coordinates in the C file.</div>
@@ -221,6 +226,7 @@ button.dump {
       <div class="h2">The surface</div>
       <div class="row"><div class="p">back buffer</div><div class="num">640 x 480, one blit</div></div>
       <div class="dim">The rasterizer writes pixels into a buffer this program owns. The platform layer hands that buffer to the window, and nothing in the core has ever heard of a window.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -229,6 +235,7 @@ button.dump {
 <div class="frame">
   <h2>0.1.1 — The counters</h2>
   <div class="app" data-page="0.1.1 The counters">
+    <div class="main">
     <div class="page">
       <div class="h1">The counters</div>
       <div class="sub">Every phase timed, every box counted, read off a real clock.</div>
@@ -245,9 +252,10 @@ button.dump {
       <div class="h2">Work</div>
       <div class="row"><div class="p">glyphs drawn</div><div class="num">0</div></div>
       <div class="row"><div class="p">rectangles filled</div><div class="num">0</div></div>
-      <div class="row"><div class="p">style cache</div><div class="num">55 hit / 22 miss</div></div>
-      <div class="row"><div class="p">glyph cache</div><div class="num">7417 hit / 282 miss</div></div>
+      <div class="row"><div class="p">style cache</div><div class="num">56 hit / 24 miss</div></div>
+      <div class="row"><div class="p">glyph cache</div><div class="num">7416 hit / 283 miss</div></div>
       <div class="dim">The overlay in the corner reads the same numbers. It reports the previous frame, because measuring the measurement is not useful.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -256,6 +264,7 @@ button.dump {
 <div class="frame">
   <h2>0.1.2 — Damage tracking</h2>
   <div class="app" data-page="0.1.2 Damage tracking">
+    <div class="main">
     <div class="page">
       <div class="h1">Damage tracking</div>
       <div class="sub">Only what changed is presented. Watch the regions move.</div>
@@ -269,6 +278,7 @@ button.dump {
       </div>
       <div class="bar b-narrow"></div>
       <div class="dim">A hovered item in the rail and a status line in the far corner are two regions, not one. Their bounding box would be the whole window, which on a Pentium II is 7.7 ms against 0.01 ms -- the entire reason the region is a list rather than a rectangle.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -277,6 +287,7 @@ button.dump {
 <div class="frame">
   <h2>0.2.0 — Outlines</h2>
   <div class="app" data-page="0.2.0 Outlines">
+    <div class="main">
     <div class="page">
       <div class="h1">Outlines</div>
       <div class="sub">TrueType glyphs rasterized to a coverage buffer, integer end to end.</div>
@@ -295,6 +306,7 @@ button.dump {
       <div class="p">Waltz, bad nymph, for quick jigs vex.</div>
       <div class="dim">Waltz, bad nymph, for quick jigs vex.</div>
       <div class="dim">Coverage is accumulated as signed area and prefix-summed along each row. Twelve fractional bits, because sixteen overflows a 32-bit product -- and no floating point anywhere in the path.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -303,6 +315,7 @@ button.dump {
 <div class="frame">
   <h2>0.3.0 — Scripts</h2>
   <div class="app" data-page="0.3.0 Scripts">
+    <div class="main">
     <div class="page">
       <div class="h1">Scripts</div>
       <div class="sub">UAX #9, OpenType GSUB and GPOS, Arabic joining, Indic reordering.</div>
@@ -324,6 +337,7 @@ button.dump {
       <div class="h2">Devanagari</div>
       <div class="big">हिन्दी</div>
       <div class="dim">The vowel sign is typed after its consonant and drawn before it. Reordering happens before the font is asked for anything.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -332,6 +346,7 @@ button.dump {
 <div class="frame">
   <h2>0.4.0 — The cascade</h2>
   <div class="app" data-page="0.4.0 The cascade">
+    <div class="main">
     <div class="page">
       <div class="h1">The cascade</div>
       <div class="sub">Inheritance, combinators, !important, and the structural selectors.</div>

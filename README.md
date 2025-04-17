@@ -388,7 +388,7 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 583 checks
+./build/ar_test               # 584 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.4.0
 ./build/example_tour --selftest   # every page, no window; CI runs this
@@ -426,7 +426,7 @@ can be asked to lay out the same thing:
 python tools/compare_layout.py --run ./build/example_tour.exe
 ```
 
-**153 of 153 boxes match. Every box that flex places lands on the same rectangle as Chromium's,
+**159 of 159 boxes match. Every box that flex places lands on the same rectangle as Chromium's,
 exactly. Boxes sized by measuring their own text land within one pixel — mean 0.8 px.**
 
 The first run needed six compensating rules to get there, and two of the six were bugs worth

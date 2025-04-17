@@ -166,18 +166,24 @@ int main(void)
 
         ar_end(ui);
 
+        /* Marked dirty before the frame ends, so areole repaints the
+           interface underneath them and the overlay's translucent panel
+           composites over a clean background rather than over its own
+           previous output. Left out, the text piles up frame on frame. */
+        overlay = ar_rect_make(s->w - 296, 16, 296, 200);
+        status_area = ar_rect_make(0, s->h - 24, s->w, 24);
+        ar_invalidate(ui, overlay);
+        ar_invalidate(ui, status_area);
+
         ar_frame_end(ui, s);
 
         /* Drawn over the tree rather than inside it, because it reports on the
            frame that has just been laid out.
-           
+
            The library cannot see this drawing, so the region it covers has to
            be added to the dirty rectangle by hand -- the overlay changes every
            frame, and presenting only what areole reported would leave it
            frozen. This is exactly the case ar_invalidate exists for. */
-        overlay = ar_rect_make(s->w - 296, 16, 296, 200);
-        status_area = ar_rect_make(0, s->h - 24, s->w, 24);
-
         ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
 
         sprintf(status, "areole %s   %ld boxes   %ldx%ld   %s", ar_version(),
