@@ -273,7 +273,10 @@ void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y
  * ------------------------------------------------------------------------ */
 typedef struct ar_ctx ar_ctx;
 
-#define AR_BYTES_PER_BOX 320u
+/* Raised from 320 when block formatting gave every box two collapsed margins.
+   The assertion in ar_ctx.c is what noticed; it is there so this number cannot
+   quietly stop being true. */
+#define AR_BYTES_PER_BOX 336u
 
 /*
  * The part of the block that does not scale with the box count: the context

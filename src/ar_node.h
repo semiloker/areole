@@ -70,6 +70,12 @@ typedef struct ar_node
        painting cannot compute it differently from the way layout did. */
     ar_i32 ascent;
 
+    /* The two vertical margins this box presents to its siblings, after
+       collapsing with its own children. Computed bottom-up in the measure
+       pass; see ar_layout_block.c, which is where the model is explained. */
+    ar_i32 mt;
+    ar_i32 mb;
+
     ar_i32  fit[2]; /* intrinsic size, from pass one */
     ar_rect rect;   /* final, absolute */
     ar_rect clip;   /* narrowed by every clipping ancestor */
@@ -199,6 +205,39 @@ struct ar_ctx
 typedef ar_i32 (*ar_wrap_fn)(void *ud, const ar_node *n, ar_i32 max_w);
 
 void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn wrap, void *ud);
+
+/* ------------------------------------------------------------------------
+ * Block formatting -- ar_layout_block.c
+ * ------------------------------------------------------------------------ */
+
+/* The larger of the positive parts plus the smaller of the negative parts. */
+ar_i32 ar_margin_collapse(ar_i32 a, ar_i32 b);
+
+int ar_is_block(const ar_node *n);
+int ar_establishes_bfc(const ar_node *n);
+
+/* Whether a child's bottom margin reaches through this box's bottom edge. */
+int ar_block_open_at_bottom(const ar_node *n);
+
+/* The gap above the first child, which is zero when its margin escaped. */
+ar_i32 ar_block_top_gap(const ar_node *n, const ar_node *first);
+
+/* Fills in a box's collapsed top and bottom margins. Call bottom-up. */
+void ar_block_margins(ar_node *n, const ar_node *nodes);
+
+/* How tall a child is, asked of whoever is doing the stacking: the measure
+   pass answers with the intrinsic height, the placement pass with the real
+   one, and both get the same margin arithmetic out of it. */
+typedef ar_i32 (*ar_block_height_fn)(void *ud, ar_i32 index);
+
+/* Where a child ended up. `real` is zero for a self-collapsing box, which has
+   no height and is placed only so it has coordinates at all. */
+typedef void (*ar_block_place_fn)(void *ud, ar_i32 index, ar_i32 y, int real);
+
+/* Walks the stack and returns the content height. `place` may be null, which
+   is how the measure pass asks the question without answering it. */
+ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn height,
+                      ar_block_place_fn place, void *ud);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 
