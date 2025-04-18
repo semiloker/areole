@@ -388,7 +388,7 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 550 checks
+./build/ar_test               # 558 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.4.0
 ./build/example_tour --selftest   # every page, no window; CI runs this
@@ -429,11 +429,12 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 **153 of 153 boxes match. Every box that flex places lands on the same rectangle as Chromium's,
 exactly. Boxes sized by measuring their own text land within one pixel — mean 0.8 px.**
 
-Getting there needed six compensating rules, and those six are the honest measure of what is
-missing: no text wrapping, quantised line boxes, no flex shrinking, and three deliberate
-departures. Each is written up in
-[examples/02_tour/COMPARISON.md](examples/02_tour/COMPARISON.md) next to the rule that
-compensates for it.
+The first run needed six compensating rules to get there, and two of the six were bugs worth
+fixing rather than documenting: **text never wrapped** — `ar_text_wrap` had implemented UAX #14
+since 0.2.0 and the layout solver never called it — and **line boxes came from the bitmap face's
+8-pixel cell**, so 13 px text got an 8 px box and had its glyphs clipped through the middle. Both
+are fixed. Three differences remain, all deliberate, all written up in
+[examples/02_tour/COMPARISON.md](examples/02_tour/COMPARISON.md).
 
 ## Requirements
 

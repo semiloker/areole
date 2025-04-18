@@ -16,25 +16,32 @@
   path is the one identifier both sides genuinely share.
 
   ---------------------------------------------------------------------------
-  SIX places where this stylesheet is not a character-for-character copy of the
-  C one. Each is a real difference between areole and CSS, and finding them is
-  what the comparison was for -- with all six spelled out, every one of the 153
-  boxes lands on the same rectangle in both engines.
+  THREE places where this stylesheet is not a character-for-character copy of
+  the C one. Each is a real difference between areole and CSS, and finding them
+  is what the comparison was for -- with all three spelled out, every one of the
+  153 boxes lands on the same rectangle in both engines.
 
   Each is written up beside the rule that compensates for it, below. In short:
 
   1. DEFAULT DISPLAY      areole's is flex-row, CSS's is block.
-  2. LINE BOXES QUANTISED areole's text height is 8 * floor(font-size / 8), so
-                          13 px and 15 px text are both 8 px tall.
-  3. NO WRAPPING          ar_text_wrap implements UAX #14; layout never calls
-                          it. A box is one line however narrow it is.
-  4. NO MINIMUM SIZE      CSS gives a flex item an automatic minimum size and
+  2. NO MINIMUM SIZE      CSS gives a flex item an automatic minimum size and
                           lets it overflow its container. areole clamps to the
                           parent and lets the content overflow instead.
-  5. NO SHRINKING         a CSS flex item shrinks when the line is over-full.
+  3. NO SHRINKING         a CSS flex item shrinks when the line is over-full.
                           areole never shrinks.
-  6. BORDERS ARE PAINT    areole draws a border inside the box and never counts
-                          it in any measurement.
+
+  There used to be six. Three are gone, fixed rather than papered over:
+
+    - areole wraps now. `ar_text_wrap` implemented UAX #14 from 0.2.0 and the
+      solver never called it; it does.
+    - line boxes come from the face's ascender, descender and line gap, each
+      rounded to a whole pixel and then added -- which is what a browser does,
+      and why `line-height: normal` here needs no help to agree with it. They
+      used to be `8 * floor(font-size / 8)`, from the bitmap face's cell, so
+      13 px text got an 8 px box and was clipped through the middle.
+    - a border still does not take space, and that stays deliberate, but it no
+      longer needs a compensating rule here because nothing in these pages
+      measures one.
 
   And `width: grow` is not CSS at all: it means "take the leftover main-axis
   space", which is `flex: 1 0 0`.
@@ -91,7 +98,7 @@ button.dump {
  * the gap directly -- twelve boxes on the 0.1.0 page shift by 8 px, which is
  * one line.
  */
-.app { white-space: nowrap; }
+/* areole wraps now; this rule is gone. */
 
 /* -------------------------------------------------- areole's own default -- */
 /* See note 1. Every box is a flex row until a rule says otherwise.
@@ -119,7 +126,7 @@ button.dump {
 /* ------------------------------------------------------------ SHEET_FRAME */
 .app {
   display: flex; flex-direction: row; background: #fcfaf6;
-  font-size: 14px; line-height: 8px; color: #3a3733;
+  font-size: 14px; color: #3a3733;
   width: 640px; height: 480px;
 }
 
@@ -134,14 +141,15 @@ button.dump {
 }
 
 /* ------------------------------------------------------------- SHEET_TEXT */
-/* line-height per note 2: 8 * max(1, floor(size / 8)) */
-.h1  { font-size: 30px; line-height: 24px; color: #20201e; }
-.sub { font-size: 13px; line-height: 8px;  color: #8d8578; padding-bottom: 14px; }
-.h2  { font-size: 17px; line-height: 16px; color: #20201e; padding-top: 12px; }
-.p   { font-size: 13px; line-height: 8px;  color: #4a453e; }
-.dim { font-size: 12px; line-height: 8px;  color: #a09789; }
-.num { font-size: 13px; line-height: 8px;  color: #a1552b; }
-.big { font-size: 34px; line-height: 32px; color: #20201e; }
+/* No line-height anywhere: `normal` is the font's own ascender + descender +
+   line gap, which is exactly what areole now derives its line box from. */
+.h1  { font-size: 30px; color: #20201e; }
+.sub { font-size: 13px;  color: #8d8578; padding-bottom: 14px; }
+.h2  { font-size: 17px; color: #20201e; padding-top: 12px; }
+.p   { font-size: 13px;  color: #4a453e; }
+.dim { font-size: 12px;  color: #a09789; }
+.num { font-size: 13px;  color: #a1552b; }
+.big { font-size: 34px; color: #20201e; }
 
 /* ------------------------------------------------------------- SHEET_ROWS */
 .row    { display: flex; flex-direction: row; gap: 12px; align-items: center; }
@@ -150,17 +158,17 @@ button.dump {
 
 /* ----------------------------------------------------------- SHEET_TOGGLE */
 .tog {
-  padding: 6px 10px; font-size: 12px; line-height: 8px; color: #6f685d;
+  padding: 6px 10px; font-size: 12px; color: #6f685d;
   box-shadow: inset 0 0 0 1px #e0d6c0;   /* note 3 */
 }
 .tog-on {
-  padding: 6px 10px; font-size: 12px; line-height: 8px; color: #fdfaf3;
+  padding: 6px 10px; font-size: 12px; color: #fdfaf3;
   background: #7a4a2a; box-shadow: inset 0 0 0 1px #7a4a2a;
 }
 
 /* ---------------------------------------------------------- SHEET_CASCADE */
 .cascade {
-  color: #2f5d3f; font-size: 15px; line-height: 8px;
+  color: #2f5d3f; font-size: 15px;
   display: flex; flex-direction: column; gap: 8px;
 }
 .tile          { padding: 8px 10px; background: #eef1ea; }
@@ -238,7 +246,7 @@ button.dump {
       <div class="row"><div class="p">glyphs drawn</div><div class="num">0</div></div>
       <div class="row"><div class="p">rectangles filled</div><div class="num">0</div></div>
       <div class="row"><div class="p">style cache</div><div class="num">55 hit / 22 miss</div></div>
-      <div class="row"><div class="p">glyph cache</div><div class="num">1019 hit / 246 miss</div></div>
+      <div class="row"><div class="p">glyph cache</div><div class="num">7417 hit / 282 miss</div></div>
       <div class="dim">The overlay in the corner reads the same numbers. It reports the previous frame, because measuring the measurement is not useful.</div>
     </div>
   </div>

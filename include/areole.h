@@ -159,6 +159,11 @@ int ar_counters_enabled(void);
  * v0.6.
  * ------------------------------------------------------------------------ */
 ar_i32 ar_text_width(const char *text, ar_i32 scale);
+
+/* The width of a byte range of it, which is what wrapping needs: a candidate
+   line is a slice of the string, and copying it out to measure it would be an
+   allocation this library does not make. */
+ar_i32 ar_text_width_range(const char *text, ar_i32 from, ar_i32 to, ar_i32 scale);
 ar_i32 ar_text_height(ar_i32 scale);
 ar_i32 ar_text_line_height(ar_i32 scale);
 
