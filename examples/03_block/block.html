@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole block corpus — the browser twin</title>
+
+<!--
+  The same margin-collapsing cases as examples/03_block/main.c, in HTML, so a
+  browser can be asked the same questions:
+
+      python tools/compare_layout.py --run ./build/example_block.exe \
+             examples/03_block/block.html
+
+  This twin needs almost none of the compensating rules the flex one did, and
+  that is the point worth noticing: block layout is where areole and CSS agree
+  by construction rather than by adjustment. A div is already a block, already
+  fills its container's width, already takes its height from its contents.
+
+  Two things still have to be said:
+
+  1. Each case is 300x200 with `box-sizing: content-box` — the CSS default, and
+     what areole does. The reset below therefore does NOT set border-box, which
+     nearly every reset does and which would change every width here.
+
+  2. No border case. A border stops a margin escaping just as padding does, but
+     areole paints a border without reserving space for it and CSS reserves a
+     pixel, so the two would differ for a reason that has nothing to do with
+     margins. It is checked in ar_test.c instead.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 18px 0 4px;
+}
+
+/*
+ * `display: flow-root` says "be a block formatting context and nothing else",
+ * which is what areole's root is. Without it these boxes are ordinary divs in
+ * the middle of a page, a first child's margin escapes through the top of the
+ * case entirely, and the case measures the page around it rather than itself.
+ */
+.app {
+  display: flow-root;
+  width: 300px;
+  height: 200px;
+  outline: 1px solid #e6dcc6;   /* outline: draws without taking space */
+  background: #fcfaf6;
+}
+
+/* Every box in a case is visible enough to see, and coloured only so the
+   rendered page is readable by a human. Colour changes no geometry. */
+.app div { background: rgba(194, 112, 61, 0.25); }
+.app .outer { background: rgba(45, 93, 63, 0.10); }
+
+#out {
+  width: 100%; height: 200px; font: 12px/1.4 Consolas, monospace;
+  white-space: pre; overflow: auto; border: 1px solid #ddd; padding: 8px;
+  margin-top: 16px;
+}
+button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: pointer; }
+
+/* ---------------------------------------------------------------- cases -- */
+#siblings .a               { height: 20px; margin-bottom: 20px; }
+#siblings .b               { height: 30px; margin-top: 10px; }
+
+#siblings-negative .a      { height: 20px; margin-bottom: 20px; }
+#siblings-negative .b      { height: 30px; margin-top: -8px; }
+
+#siblings-both-negative .a { height: 20px; margin-bottom: -20px; }
+#siblings-both-negative .b { height: 30px; margin-top: -8px; }
+
+#escapes-through-parent .a     { height: 10px; }
+#escapes-through-parent .inner { height: 20px; margin-top: 30px; }
+
+#padding-stops-escape .a     { height: 10px; }
+#padding-stops-escape .outer { padding-top: 1px; }
+#padding-stops-escape .inner { height: 20px; margin-top: 30px; }
+
+#overflow-stops-escape .a     { height: 10px; }
+#overflow-stops-escape .outer { overflow: hidden; }
+#overflow-stops-escape .inner { height: 20px; margin-top: 30px; }
+
+#last-child-escapes-down .inner { height: 20px; margin-bottom: 30px; }
+#last-child-escapes-down .c     { height: 10px; }
+
+#stated-height-stops-escape .outer { height: 40px; }
+#stated-height-stops-escape .inner { height: 20px; margin-bottom: 30px; }
+#stated-height-stops-escape .c     { height: 10px; }
+
+#empty-collapses-through .a { height: 10px; }
+#empty-collapses-through .b { margin-top: 20px; margin-bottom: 30px; }
+#empty-collapses-through .c { height: 10px; }
+
+#two-empties .a { height: 10px; }
+#two-empties .b { margin-top: 20px; margin-bottom: 5px; }
+#two-empties .c { height: 10px; margin-top: 40px; }
+
+#nested-escape-two-deep .a { height: 10px; }
+#nested-escape-two-deep .b { height: 20px; margin-top: 30px; }
+
+#auto-height-with-padding .outer { padding: 5px; }
+#auto-height-with-padding .a     { height: 20px; margin-bottom: 20px; }
+#auto-height-with-padding .b     { height: 30px; margin-top: 10px; }
+
+#horizontal-margins .a { height: 10px; margin-left: 20px; margin-right: 30px; }
+
+#percentage-width .a { height: 10px; width: 50%; }
+
+#root-first-child-margin .a { height: 20px; margin-top: 20px; }
+</style>
+
+<button class="dump" onclick="dump()">Dump every box</button>
+<textarea id="out" spellcheck="false"></textarea>
+
+<h2>siblings</h2>
+<div class="app" id="siblings" data-page="siblings">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>siblings-negative</h2>
+<div class="app" id="siblings-negative" data-page="siblings-negative">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>siblings-both-negative</h2>
+<div class="app" id="siblings-both-negative" data-page="siblings-both-negative">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>escapes-through-parent</h2>
+<div class="app" id="escapes-through-parent" data-page="escapes-through-parent">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>padding-stops-escape</h2>
+<div class="app" id="padding-stops-escape" data-page="padding-stops-escape">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>overflow-stops-escape</h2>
+<div class="app" id="overflow-stops-escape" data-page="overflow-stops-escape">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>last-child-escapes-down</h2>
+<div class="app" id="last-child-escapes-down" data-page="last-child-escapes-down">
+  <div class="outer"><div class="inner"></div></div><div class="c"></div>
+</div>
+
+<h2>stated-height-stops-escape</h2>
+<div class="app" id="stated-height-stops-escape" data-page="stated-height-stops-escape">
+  <div class="outer"><div class="inner"></div></div><div class="c"></div>
+</div>
+
+<h2>empty-collapses-through</h2>
+<div class="app" id="empty-collapses-through" data-page="empty-collapses-through">
+  <div class="a"></div><div class="b"></div><div class="c"></div>
+</div>
+
+<h2>two-empties</h2>
+<div class="app" id="two-empties" data-page="two-empties">
+  <div class="a"></div><div class="b"></div><div class="c"></div>
+</div>
+
+<h2>nested-escape-two-deep</h2>
+<div class="app" id="nested-escape-two-deep" data-page="nested-escape-two-deep">
+  <div class="a"></div><div class="outer"><div class="inner"><div class="b"></div></div></div>
+</div>
+
+<h2>auto-height-with-padding</h2>
+<div class="app" id="auto-height-with-padding" data-page="auto-height-with-padding">
+  <div class="outer"><div class="a"></div><div class="b"></div></div>
+</div>
+
+<h2>horizontal-margins</h2>
+<div class="app" id="horizontal-margins" data-page="horizontal-margins">
+  <div class="a"></div>
+</div>
+
+<h2>percentage-width</h2>
+<div class="app" id="percentage-width" data-page="percentage-width">
+  <div class="a"></div>
+</div>
+
+<h2>root-first-child-margin</h2>
+<div class="app" id="root-first-child-margin" data-page="root-first-child-margin">
+  <div class="a"></div>
+</div>
+
+<script>
+/*
+ * The same walk and the same output format as the tour's twin: document order
+ * is declaration order, coordinates are relative to the .app origin, and
+ * everything is rounded because areole's layout is integer end to end.
+ */
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    walk(app, '0', app.getBoundingClientRect(), out);
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+dump();
+</script>

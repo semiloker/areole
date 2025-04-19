@@ -263,19 +263,31 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
         /* A first child whose margin escaped through the parent's top edge
            contributes nothing here: it was already counted outside. */
         mt = at_start ? ar_block_top_gap(n, ch) : ch->mt;
-        pending = ar_margin_collapse(pending, mt);
 
         if (ar__self_collapsing(ch, nodes))
         {
-            /* No height, and its two margins are already the same number. It
-               joins the pending margin instead of interrupting it. */
-            pending = ar_margin_collapse(pending, ch->mb);
+            /*
+             * No height, and its two margins are already one number, so it
+             * joins the pending margin rather than interrupting it.
+             *
+             * Its own top edge sits below the margin immediately before it,
+             * not below the whole collapsed run -- the run carries on past
+             * this box and positions whatever comes next. And "the margin
+             * immediately before it" means the one the author wrote, not the
+             * collapsed pair already stored on the node, which is why the
+             * style is read directly here.
+             */
             if (place)
             {
-                place(ud, c, cursor + pending, 0);
+                ar_i32 own = ar_margin_collapse(pending, ch->style.v[AR_P_MARGIN_TOP]);
+
+                place(ud, c, cursor + own, 0);
             }
+            pending = ar_margin_collapse(pending, mt);
             continue;
         }
+
+        pending = ar_margin_collapse(pending, mt);
 
         cursor += pending;
         if (place)

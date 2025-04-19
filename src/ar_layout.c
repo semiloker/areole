@@ -491,7 +491,10 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
     /* An automatic height is whatever that came to. It was already measured
        intrinsically, but the children's real widths may have wrapped their
        text differently, so this is the number that counts. */
-    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO)
+    /* The root keeps the viewport, whatever it says about itself and whatever
+       its contents come to -- the window is not negotiable, which is already
+       true of its width. */
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0)
     {
         ar_i32 used = cursor;
 
