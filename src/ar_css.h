@@ -199,6 +199,34 @@ enum
 
 #define AR_MAX_SEL_PARTS 3
 
+/* How many selectors may share one declaration block. Four covers
+   `h1, h2, h3, h4`; a longer list is refused rather than truncated, because a
+   truncated selector list is a rule that silently does not apply. */
+#define AR_MAX_SEL_LIST 4
+
+/*
+ * The functional pseudo-classes: :not(), :is(), :where().
+ *
+ * Each holds a list of simple selectors -- a tag, a class, an id or a state,
+ * one of each at most. `.card:not(.done, .hidden)` and `:is(.a, .b)` are the
+ * shapes people actually write; `:not(.page > .card)` is not, and a complex
+ * selector inside one of these is refused rather than half-matched.
+ *
+ * They apply to the subject compound only, which is the rightmost one -- the
+ * element the rule is about. `.page:not(.wide) .card` is refused. Carrying the
+ * lists on every context part as well would treble the size of ar_rule for a
+ * case that has not come up, and the refusal is loud rather than silent.
+ */
+#define AR_MAX_ALTS 3
+
+typedef struct ar_sel_simple
+{
+    ar_u32 tag;   /* hash, 0 means any */
+    ar_u32 klass; /* hash, 0 means any -- one class, not a set */
+    ar_u32 id;    /* hash, 0 means any */
+    ar_u16 state; /* required state bits, 0 means any */
+} ar_sel_simple;
+
 typedef struct ar_sel_part
 {
     ar_u32     tag;
@@ -217,7 +245,17 @@ typedef struct ar_rule
        parts means a simple rule, which is the cacheable kind. */
     ar_sel_part ctx[AR_MAX_SEL_PARTS];
     ar_i32      nctx;
-    ar_u16 state; /* required state bits, 0 means any */
+
+    /* :not() -- every one of these must fail for the rule to match. */
+    ar_sel_simple neg[AR_MAX_ALTS];
+    ar_i32        nneg;
+
+    /* :is() and :where() -- at least one of these must match. They differ only
+       in what they contribute to specificity, which is settled at parse time,
+       so by here they are the same thing. */
+    ar_sel_simple alt[AR_MAX_ALTS];
+    ar_i32        nalt;
+    ar_u16        state; /* required state bits, 0 means any */
 
     ar_u16 specificity;
     ar_u16 order; /* source position, to break specificity ties */
@@ -227,7 +265,7 @@ typedef struct ar_rule
        rule, because that is what CSS says and because a rule mixing the two is
        ordinary: `color: red !important; width: 10px;` means one of them wins
        against everything and the other does not. */
-    ar_u32 important;
+    ar_u32   important;
     ar_style style;
 } ar_rule;
 
@@ -304,7 +342,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent);
 
 /* Non-zero if this property inherits. One table, so adding a property to the
    list is a one-line change and cannot disagree with itself. */
-int ar_prop_inherits(ar_i32 prop);
+int  ar_prop_inherits(ar_i32 prop);
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
@@ -315,8 +353,8 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                      ar_u16 state, ar_style *out);
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+                      ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may
    be absent. Returns 0 if the selector is malformed. */
@@ -330,8 +368,17 @@ void ar_classes_clear(ar_classes *c);
    compound matching: a rule naming two classes matches a box carrying three. */
 int ar_classes_contains(const ar_classes *have, const ar_classes *want);
 
+/* Whether one class is in the set. What a simple selector asks, where
+   ar_classes_contains answers the compound's question. */
+int ar_classes_has(const ar_classes *have, ar_u32 klass);
+
 /* Does one part of a selector describe this element? */
 int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id);
+
+/* Does one simple selector describe this element? Used for the contents of
+   :not(), :is() and :where(), which are lists of these and nothing else. */
+int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                          ar_u16 state);
 
 /*
  * The contextual pass.
@@ -345,7 +392,7 @@ typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index
                            ar_classes *klass, ar_u32 *id);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state,
-                                 ar_sel_walk find, void *ud, ar_style *out);
+                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 void *ud, ar_style *out);
 
 #endif /* AR_CSS_H */

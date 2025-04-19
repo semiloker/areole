@@ -4486,6 +4486,285 @@ static void test_cascade_keywords(void)
  * face, whose advances are known exactly -- which is what lets the expected
  * heights below be written down rather than approximated.
  */
+/*
+ * Selector lists.
+ *
+ * `h1, h2 { ... }` is two rules that happen to have been written once. Nothing
+ * supported them until 0.4.0 finished: the comma was not a selector character,
+ * so the whole block was refused and the declarations silently did nothing.
+ */
+/*
+ * A rule with a combinator must not apply through the cached pass.
+ *
+ * It used to. `.page .card` was applied to every `.card` anywhere, because the
+ * cached resolver only ever looks at the subject compound and dropped the
+ * context silently. Every combinator test written before this one passed
+ * anyway, because each of their sheets happened to carry a second rule that
+ * overwrote the wrong answer -- which is the shape of bug that lives happily
+ * inside a green test suite.
+ *
+ * So: one rule, no second rule to hide behind, and a box that must not get it.
+ */
+static void test_a_combinator_does_not_leak_through_the_cache(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".page { display:flex; flex-direction:column; }"
+                 ".page .card { background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page");
+    ar_begin(g_ui, "div.card"); /* 2: inside the page */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.card"); /* 3: outside it */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "combinator: the card inside the page gets the rule");
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+          "combinator: and the identical card outside it does not, with nothing to overwrite it");
+}
+
+static void test_selector_lists(void)
+{
+    ar_sheet   sheet;
+    ar_rule    rules[16];
+    ar_classes klass;
+    ar_style   out;
+
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, ".a, .b, .c { width:40px; }");
+
+    CHECK(sheet.count == 3, "list: one block, three rules");
+    CHECK(sheet.errors == 0, "list: and no complaints");
+
+    ar_classes_clear(&klass);
+    ar_classes_add(&klass, ar_hash("b", 1));
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, 0, &klass, 0, 0, &out);
+    CHECK(out.v[AR_P_WIDTH] == 40, "list: the middle selector applies too");
+}
+
+/* A list longer than the array holds is refused whole. A truncated selector
+   list is a rule that silently does not apply to some of what it names. */
+static void test_selector_list_has_a_ceiling(void)
+{
+    ar_sheet sheet;
+    ar_rule  rules[16];
+
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, ".a, .b, .c, .d, .e { width:40px; }");
+    CHECK(sheet.count == 0, "list: longer than the array holds is refused");
+    CHECK(sheet.errors > 0, "list: and counted as an error");
+}
+
+/* Each selector in the list keeps its own specificity, and one bad entry
+   refuses the block rather than half of it. */
+static void test_selector_list_keeps_its_own_specificity(void)
+{
+    ar_sheet   sheet;
+    ar_rule    rules[16];
+    ar_classes klass;
+    ar_style   out;
+
+    ar_sheet_init(&sheet, rules, 16);
+    ar_sheet_parse(&sheet, "div { width:10px; }"
+                           "#id, .cls { width:20px; }"
+                           "div#id { width:30px; }");
+
+    ar_classes_clear(&klass);
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, ar_hash("div", 3), &klass, ar_hash("id", 2), 0, &out);
+    CHECK(out.v[AR_P_WIDTH] == 30, "list: a tag plus an id still outranks the id alone");
+}
+
+/*
+ * :not(), :is() and :where().
+ *
+ * The three of them are one mechanism: a list of simple selectors on the
+ * subject compound, which either all have to fail or one of which has to
+ * match. They differ in what they contribute to specificity, and that is
+ * settled at parse time.
+ */
+static void test_not_excludes(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".item { background:#111111; }"
+                 ".item:not(.done) { background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.item");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item.done");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "not: matches the box without the class");
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+          "not: and skips the one with it");
+}
+
+/* Every argument must fail, not just the first. */
+static void test_not_takes_a_list(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".item { background:#111111; }"
+                 ".item:not(.done, .hidden) { background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.item");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item.hidden");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "not: a box matching neither argument still matches");
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+          "not: the second argument excludes as well as the first");
+}
+
+/* :not() also accepts a state, which is where it earns its keep -- there is no
+   other way to say "any row that is not the last one". */
+static void test_not_takes_a_state(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".row:not(:last-child) { border-width:4px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_BORDER_WIDTH] == 4, "not: a state argument excludes too");
+    CHECK(g_ui->nodes[2].style.v[AR_P_BORDER_WIDTH] != 4, "not: and the last child is excluded");
+}
+
+static void test_is_matches_any(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ":is(.a, .b) { background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "is: first alternative");
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00, "is: second");
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00, "is: and nothing else");
+}
+
+/*
+ * The one thing that separates :is() from :where().
+ *
+ * :is() takes the specificity of its most specific argument, :where() takes
+ * none -- so a plain class beats `:where(#id)` and loses to `:is(#id)`. Two
+ * sheets rather than one, because the point is the ranking and not the order.
+ */
+static void test_where_contributes_no_specificity(void)
+{
+    ar_sheet   sheet;
+    ar_rule    rules[8];
+    ar_classes klass;
+    ar_style   out;
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ":where(#id) { width:10px; }"
+                           ".cls { width:20px; }");
+    ar_classes_clear(&klass);
+    ar_classes_add(&klass, ar_hash("cls", 3));
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, 0, &klass, ar_hash("id", 2), 0, &out);
+    CHECK(out.v[AR_P_WIDTH] == 20, "where: a class beats :where(#id), which scores nothing");
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ":is(#id) { width:10px; }"
+                           ".cls { width:20px; }");
+    ar_style_defaults(&out);
+    ar_sheet_resolve(&sheet, 0, &klass, ar_hash("id", 2), 0, &out);
+    CHECK(out.v[AR_P_WIDTH] == 10, "where: and loses to :is(#id), which scores as an id");
+}
+
+/* The functional pseudo-classes hold simple selectors only, and belong to the
+   subject. Both limits are refusals rather than partial matches. */
+static void test_functional_limits_are_refusals(void)
+{
+    ar_sheet sheet;
+    ar_rule  rules[8];
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ".x:not(.a.b) { width:5px; }");
+    CHECK(sheet.count == 0, "not: a compound argument is refused, not half-matched");
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ".page:not(.wide) .card { width:5px; }");
+    CHECK(sheet.count == 0, "not: on a context part rather than the subject is refused");
+
+    ar_sheet_init(&sheet, rules, 8);
+    ar_sheet_parse(&sheet, ".x:is(.a, .b, .c, .d) { width:5px; }");
+    CHECK(sheet.count == 0, "is: an argument list longer than the array is refused");
+}
+
+/* :not() combines with everything else rather than replacing it. */
+static void test_not_composes_with_a_combinator(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".page { display:flex; flex-direction:column; }"
+                 ".page .card:not(.muted) { background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page");
+    ar_begin(g_ui, "div.card");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.card.muted");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.card");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+          "not: inside a descendant selector, the plain card matches");
+    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+          "not: the muted one does not");
+    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+          "not: and neither does the card outside the page");
+}
+
 static void test_layout_wraps_text_to_the_box(void)
 {
     ar_surface s = ar__ui_surface(200, 200);
@@ -4900,6 +5179,17 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_a_combinator_does_not_leak_through_the_cache();
+    test_selector_lists();
+    test_selector_list_has_a_ceiling();
+    test_selector_list_keeps_its_own_specificity();
+    test_not_excludes();
+    test_not_takes_a_list();
+    test_not_takes_a_state();
+    test_is_matches_any();
+    test_where_contributes_no_specificity();
+    test_functional_limits_are_refusals();
+    test_not_composes_with_a_combinator();
     test_layout_wraps_text_to_the_box();
     test_wrapping_respects_a_stated_height();
     test_wrapping_is_inside_the_padding();
