@@ -134,6 +134,67 @@ static ar_i32 ar__intrinsic(const ar_node *n, ar_i32 axis)
 }
 
 /* ------------------------------------------------------------------------
+ * Block formatting
+ *
+ * A block container stacks its children down the page. Its intrinsic width is
+ * the widest child, its intrinsic height the stack -- with the margins
+ * collapsed, which ar_layout_block.c works out and this file only asks about.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__fit_height_of(void *ud, ar_i32 index)
+{
+    const ar_node *nodes = (const ar_node *)ud;
+
+    return ar__intrinsic(&nodes[index], 1);
+}
+
+static void ar__measure_block(ar_node *nodes, ar_i32 i)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   widest = 0;
+    ar_i32   c;
+
+    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+        ar_i32   w;
+
+        if (ar__hidden(ch))
+        {
+            continue;
+        }
+        w = ar__intrinsic(ch, 0) + ch->style.v[AR_P_MARGIN_LEFT] + ch->style.v[AR_P_MARGIN_RIGHT];
+        if (w > widest)
+        {
+            widest = w;
+        }
+    }
+
+    if (n->text)
+    {
+        ar_i32 tw = n->text_w;
+        ar_i32 th = ar__text_block_height(n);
+
+        if (tw > widest)
+        {
+            widest = tw;
+        }
+        /* Text and children stack rather than overlap, which is not what CSS
+           does -- there, bare text beside a block sibling gets an anonymous
+           block of its own. This is the same arrangement without the extra
+           box, and is where anonymous boxes will go when they arrive. */
+        n->fit[1] = th + ar_block_stack(n, nodes, ar__fit_height_of, 0, nodes) +
+                    n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
+    }
+    else
+    {
+        n->fit[1] = ar_block_stack(n, nodes, ar__fit_height_of, 0, nodes) +
+                    n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
+    }
+
+    n->fit[0] = widest + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
+}
+
+/* ------------------------------------------------------------------------
  * Pass one, upwards: what each box would like to be
  * ------------------------------------------------------------------------ */
 static void ar__measure(ar_node *nodes, ar_i32 count)
@@ -151,6 +212,16 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         {
             n->fit[0] = 0;
             n->fit[1] = 0;
+            continue;
+        }
+
+        /* Bottom-up, so every child's collapsed margins are settled before
+           its parent asks for them. */
+        ar_block_margins(n, nodes);
+
+        if (ar_is_block(n))
+        {
+            ar__measure_block(nodes, i);
             continue;
         }
 
@@ -288,6 +359,151 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wra
     }
 }
 
+/* What the placement walk carries: the node array, and where the content box
+   starts, because ar_block_stack works in offsets from zero. */
+typedef struct ar__stack_ud
+{
+    ar_node *nodes;
+    ar_i32   top;
+} ar__stack_ud;
+
+static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
+{
+    return ((ar__stack_ud *)ud)->nodes[index].rect.h;
+}
+
+static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
+{
+    ar__stack_ud *su = (ar__stack_ud *)ud;
+
+    su->nodes[index].rect.y = su->top + y;
+    if (!real)
+    {
+        su->nodes[index].rect.h = 0;
+    }
+}
+
+/*
+ * Laying a block container's children out.
+ *
+ * Widths first, all of them, because a block child fills the width it is given
+ * and its height follows from that -- including how many lines its text wraps
+ * to. Then the stack, with the margins collapsed between siblings.
+ */
+static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   inner_w, inner_h;
+    ar_i32   left, top;
+    ar_i32   cursor;
+    ar_i32   c;
+
+    inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    inner_h = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
+    if (inner_w < 0)
+    {
+        inner_w = 0;
+    }
+    if (inner_h < 0)
+    {
+        inner_h = 0;
+    }
+    left = n->rect.x + n->style.v[AR_P_PAD_LEFT];
+    top = n->rect.y + n->style.v[AR_P_PAD_TOP];
+
+    /* A block box with text of its own puts it above its children, in the
+       space its own measurement reserved for it. */
+    if (n->text)
+    {
+        top += ar__text_block_height(n);
+    }
+
+    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+        ar_i32   ml = ch->style.v[AR_P_MARGIN_LEFT];
+        ar_i32   mr = ch->style.v[AR_P_MARGIN_RIGHT];
+
+        if (ar__hidden(ch))
+        {
+            ch->rect.x = left;
+            ch->rect.y = top;
+            ch->rect.w = 0;
+            ch->rect.h = 0;
+            continue;
+        }
+
+        /*
+         * A block child fills the width it is offered. `grow` means nothing
+         * here -- there is no leftover to take a share of, because one box
+         * per line already takes it all -- so it is treated as automatic
+         * rather than refused.
+         */
+        switch (ch->style.unit[AR_P_WIDTH])
+        {
+        case AR_UNIT_PX:
+            ch->rect.w = ch->style.v[AR_P_WIDTH];
+            break;
+        case AR_UNIT_PCT:
+            ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+            break;
+        default:
+            ch->rect.w = inner_w - ml - mr;
+            break;
+        }
+        ch->rect.w =
+            ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
+        if (ch->rect.w < 0)
+        {
+            ch->rect.w = 0;
+        }
+        ch->rect.x = left + ml;
+
+        switch (ch->style.unit[AR_P_HEIGHT])
+        {
+        case AR_UNIT_PX:
+            ch->rect.h = ch->style.v[AR_P_HEIGHT];
+            break;
+        case AR_UNIT_PCT:
+            ch->rect.h = inner_h * ch->style.v[AR_P_HEIGHT] / 100;
+            break;
+        default:
+            ch->rect.h = ch->fit[1];
+            break;
+        }
+        ch->rect.h =
+            ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
+
+        /* The width is settled, so the text can be wrapped into it and the
+           height corrected before anything is stacked on top. */
+        ar__wrap_height(ch, 1, 0, wrap, ud);
+    }
+
+    /* The stack, by the same walk the measure pass used. */
+    {
+        ar__stack_ud su;
+
+        su.nodes = nodes;
+        su.top = top;
+        cursor = ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, &su);
+    }
+
+    /* An automatic height is whatever that came to. It was already measured
+       intrinsically, but the children's real widths may have wrapped their
+       text differently, so this is the number that counts. */
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO)
+    {
+        ar_i32 used = cursor;
+
+        if (n->text)
+        {
+            used += ar__text_block_height(n);
+        }
+        used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
+        n->rect.h = ar__clamp(used, n->style.v[AR_P_MIN_HEIGHT], n->style.v[AR_P_MAX_HEIGHT]);
+    }
+}
+
 static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
 {
     ar_i32 i;
@@ -305,6 +521,12 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
 
         if (ar__hidden(n) || n->first_child < 0)
         {
+            continue;
+        }
+
+        if (ar_is_block(n))
+        {
+            ar__place_block(nodes, i, wrap, ud);
             continue;
         }
 

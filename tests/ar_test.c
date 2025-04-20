@@ -4544,6 +4544,331 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
     ar_frame_presented(g_ui);
 }
 
+/* ------------------------------------------------------------------------
+ * Block formatting
+ *
+ * Written from the specification before the code was, which is the only way
+ * margin collapsing comes out right: it is a small set of rules that interact,
+ * and reading them off an implementation gives you that implementation's
+ * opinion rather than the specification's.
+ * ------------------------------------------------------------------------ */
+
+/* The arithmetic on its own, before any boxes are involved. */
+static void test_margin_collapse_arithmetic(void)
+{
+    CHECK(ar_margin_collapse(0, 0) == 0, "collapse: nothing against nothing");
+    CHECK(ar_margin_collapse(20, 10) == 20, "collapse: two positives take the larger");
+    CHECK(ar_margin_collapse(10, 20) == 20, "collapse: and order does not matter");
+    CHECK(ar_margin_collapse(20, 0) == 20, "collapse: a positive against zero");
+    CHECK(ar_margin_collapse(-20, -10) == -20, "collapse: two negatives take the smaller");
+    CHECK(ar_margin_collapse(20, -8) == 12, "collapse: mixed signs add the two extremes");
+    CHECK(ar_margin_collapse(-8, 20) == 12, "collapse: mixed signs, the other way round");
+    CHECK(ar_margin_collapse(10, -30) == -20, "collapse: a negative large enough to win");
+}
+
+/* display:block stacks its children vertically and gives each the full width,
+   which is the whole difference from a flex row and was not true before. */
+static void test_block_stacks_and_fills(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:20px; }"
+                 ".b { display:block; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 200, 20), "block: the first child fills the width");
+    CHECK(ar__box_is(2, 0, 20, 200, 30), "block: the second stacks below it");
+}
+
+/* Rule one: adjacent siblings. 20 against 10 is 20, not 30. */
+static void test_margin_collapse_between_siblings(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:20px; margin-bottom:20px; }"
+                 ".b { display:block; height:30px; margin-top:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 40, "collapse: siblings share one margin, not two");
+}
+
+/* And with a negative in the mix: 20 against -8 leaves 12. */
+static void test_margin_collapse_negative_between_siblings(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:20px; margin-bottom:20px; }"
+                 ".b { display:block; height:30px; margin-top:-8px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 32, "collapse: a negative margin pulls the sibling up");
+}
+
+/*
+ * Rule two, the one that surprises people: a first child's top margin escapes
+ * its parent when nothing separates them, and moves the parent instead.
+ */
+static void test_margin_escapes_through_the_parent(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".spacer { display:block; height:10px; }"
+                 ".outer { display:block; }"
+                 ".inner { display:block; height:20px; margin-top:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.spacer");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 40, "collapse: the child's margin moved the parent");
+    CHECK(ar__box(3).y == 40, "collapse: and the child sits flush inside it");
+    CHECK(ar__box(2).h == 20, "collapse: the parent is only as tall as the child");
+}
+
+/* Padding on the parent stops it. One pixel of padding is enough. */
+static void test_padding_stops_the_margin_escaping(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".spacer { display:block; height:10px; }"
+                 ".outer { display:block; padding-top:1px; }"
+                 ".inner { display:block; height:20px; margin-top:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.spacer");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 10, "collapse: padding keeps the parent where it was");
+    CHECK(ar__box(3).y == 41, "collapse: and the margin stays inside, below the padding");
+}
+
+/* So does a new formatting context, which overflow other than visible makes. */
+static void test_a_formatting_context_stops_the_margin(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".spacer { display:block; height:10px; }"
+                 ".outer { display:block; overflow:hidden; }"
+                 ".inner { display:block; height:20px; margin-top:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.spacer");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 10, "collapse: margins do not cross a formatting context");
+    CHECK(ar__box(3).y == 40, "collapse: the child keeps its margin inside");
+}
+
+/* Rule three: the last child's bottom margin escapes downwards on the same
+   terms, and a stated height on the parent stops it. */
+static void test_the_last_childs_margin_escapes_downwards(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".outer { display:block; }"
+                 ".inner { display:block; height:20px; margin-bottom:30px; }"
+                 ".after { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 20, "collapse: the parent does not grow to hold the escaped margin");
+    CHECK(ar__box(3).y == 50, "collapse: the sibling below is pushed by it");
+}
+
+/* Rule four: a box with nothing in it collapses through itself, contributing
+   one margin to the flow rather than two. */
+static void test_an_empty_box_collapses_through_itself(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".empty { display:block; margin-top:20px; margin-bottom:30px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.empty");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).y == 40, "collapse: an empty box contributes one margin of 30, not 50");
+}
+
+/* A block container's automatic height is its stack, with the collapsed
+   margins counted once. */
+static void test_block_auto_height(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".outer { display:block; padding:5px; }"
+                 ".a { display:block; height:20px; margin-bottom:20px; }"
+                 ".b { display:block; height:30px; margin-top:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 5 padding + 20 + 20 collapsed + 30 + 5 padding. The margins inside do
+       not escape, because the padding is in the way. */
+    CHECK(ar__box(1).h == 80, "block: automatic height counts the collapsed margins once");
+}
+
+/* The root is a formatting context whatever it says. There is nowhere above
+   it for a margin to escape to, and a margin that escaped the viewport would
+   simply be lost. */
+static void test_the_root_is_a_formatting_context(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:20px; margin-top:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).y == 20, "block: a first child's margin applies at the root, not escapes it");
+}
+
+/* Horizontal margins never collapse. Only the vertical ones do. */
+static void test_horizontal_margins_do_not_collapse(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; margin-left:20px; margin-right:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 20, 0, 150, 10), "block: horizontal margins inset the box on both sides");
+}
+
+/* A flex child inside a block container keeps its own layout, and its margins
+   do not collapse with anything, because it is a formatting context. */
+static void test_a_flex_child_does_not_collapse(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; margin-bottom:20px; }"
+                 ".f { display:flex; flex-direction:row; height:10px; margin-top:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.f");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Between siblings the margins still collapse -- that rule is about the
+       gap, not about either box's insides -- so 20 against 20 is 20. */
+    CHECK(ar__box(2).y == 30, "block: sibling collapsing still applies to a flex sibling");
+}
+
+/* Text in a block box wraps to the width it is given, and the box grows. */
+static void test_block_text_wraps_and_grows(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; width:60px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.p", "one two three four five six seven");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 60, "block: the paragraph took the width it was given");
+    CHECK(ar__box(1).h == ar_text_height(1) + 4 * ar_text_line_height(1),
+          "block: and grew to the five lines that width needs");
+}
+
 static void test_changed_text_is_repainted_not_overdrawn(void)
 {
     ar_surface s = ar__ui_surface(200, 40);
@@ -5249,6 +5574,20 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_margin_collapse_arithmetic();
+    test_block_stacks_and_fills();
+    test_margin_collapse_between_siblings();
+    test_margin_collapse_negative_between_siblings();
+    test_margin_escapes_through_the_parent();
+    test_padding_stops_the_margin_escaping();
+    test_a_formatting_context_stops_the_margin();
+    test_the_last_childs_margin_escapes_downwards();
+    test_an_empty_box_collapses_through_itself();
+    test_block_auto_height();
+    test_the_root_is_a_formatting_context();
+    test_horizontal_margins_do_not_collapse();
+    test_a_flex_child_does_not_collapse();
+    test_block_text_wraps_and_grows();
     test_changed_text_is_repainted_not_overdrawn();
     test_a_combinator_does_not_leak_through_the_cache();
     test_selector_lists();
