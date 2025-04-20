@@ -57,12 +57,27 @@ static unsigned char g_fallback[4u * 1024u * 1024u];
  * pieces costs six calls and nothing else.
  * ------------------------------------------------------------------------ */
 static const char *SHEET_FRAME =
-    "#app  { display:flex; flex-direction:row; background:#fcfaf6;"
+    /* A column: the interface, then the status bar. The bar used to be drawn
+       over the frame at a fixed y, and once text started wrapping the pages
+       grew tall enough to run underneath it -- two different strings on the
+       same pixels, which reads as one smeared dark one. A box cannot collide
+       with its siblings. */
+    "#app  { display:flex; flex-direction:column; background:#fcfaf6;"
     "        font-size:14px; color:#3a3733; }"
+    /* Clipped, because areole neither shrinks a flex item nor scrolls: a
+       page taller than the window would otherwise paint straight over the
+       status bar below it. Clipping is the honest degradation -- the content
+       is cut off where it runs out of room and says so. */
+    ".main { height:grow; overflow:hidden; display:flex; flex-direction:row; }"
     ".rail { width:250px; display:flex; flex-direction:column; padding:18px;"
     "        gap:2px; background:#f4efe4; }"
-    ".brand   { font-size:26px; color:#20201e; }"
-    ".tagline { font-size:12px; color:#8d8578; padding-bottom:16px; }";
+    ".brand   { font-size:26px; color:#20201e; }";
+
+static const char *SHEET_STATUS =
+    ".tagline { font-size:12px; color:#8d8578; padding-bottom:16px; }"
+    ".status { height:22px; padding:0 12px; background:#f4efe4;"
+    "          display:flex; flex-direction:row; align-items:center; }"
+    ".statustext { font-size:12px; color:#8d8578; }";
 
 static const char *SHEET_NAV =
     ".nav    { padding:8px 11px; color:#6f685d; }"
@@ -564,6 +579,213 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
  */
 static ar_u32 g_selftest_px[640 * 480];
 
+/*
+ * Two identical frames must produce identical pixels.
+ *
+ * The overlay and the status line are drawn over the frame by this file, and
+ * areole cannot see them -- so unless their rectangles are invalidated, damage
+ * tracking has no reason to repaint what is underneath and the new text lands
+ * on top of the old. The overlay's panel is deliberately translucent, so it
+ * does not hide the previous frame's glyphs either; the text goes darker and
+ * blurrier every frame until it cannot be read.
+ *
+ * Nothing about that is visible to a test that renders one frame. This renders
+ * two, with the same input and the same page, and compares them. Remove either
+ * ar_invalidate call in the loop above and this fails.
+ */
+/*
+ * Nothing paints over the status bar.
+ *
+ * This is the bug the user saw: once text started wrapping, the pages grew
+ * taller than the window, and the status line -- then drawn over the frame at
+ * a fixed y -- ended up sharing its pixels with whatever page text had run
+ * down that far. Two strings on the same pixels read as one smeared dark one.
+ *
+ * The bar is a box now, so it cannot collide with its siblings, and `.main` is
+ * clipped so an overflowing page is cut off rather than painted past.
+ *
+ * Checked by rendering the band twice: once under the tallest page, once under
+ * an empty one. Any difference is the page bleeding through. Comparing pixels
+ * rather than sampling colours, because the first version of this check used a
+ * brightness threshold and let the page's own light grey straight past it.
+ */
+static ar_u32 g_bar_ref[640 * 22];
+
+static void render_with_page(ar_ctx *ui, ar_surface *s, int page, int empty, struct settings *set,
+                             int have_font, const char *family)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    strpool_reset();
+    ar_frame_begin(ui, &in);
+    ar_begin(ui, "div#app");
+    ar_begin(ui, "div.main");
+    ar_begin(ui, "div.page");
+    if (!empty)
+    {
+        ar_text(ui, "div.h1", PAGE_NAME[page]);
+        ar_text(ui, "div.sub", PAGE_SUB[page]);
+        page_body(ui, s, page, set, have_font, family);
+    }
+    ar_end(ui);
+    ar_end(ui);
+    ar_begin(ui, "div.status");
+    ar_text(ui, "div.statustext", "status");
+    ar_end(ui);
+    ar_end(ui);
+    ar_invalidate_all(ui);
+    ar_frame_end(ui, s);
+    ar_frame_presented(ui);
+}
+
+static int check_status_bar_is_clean(ar_ctx *ui, int have_font, const char *family)
+{
+    ar_surface      s;
+    struct settings set;
+    ar_i32          x, y;
+    ar_i32          strangers = 0;
+
+    /* Deliberately narrow and short. Wrapping makes the page far taller than
+       the window at this width, which is the condition the bug needed: a
+       comfortable 640x480 does not overflow far enough to reach the bar, and a
+       check that cannot fail is not a check. */
+    s.pixels = g_selftest_px;
+    s.w = 320;
+    s.h = 240;
+    s.stride = 640;
+
+    set.antialias = 1;
+    set.grid_fit = 1;
+    set.subpixel = 0;
+    set.shaping = 1;
+    set.darken = 0;
+    set.stress = 0;
+
+    /* The bar with nothing above it: the reference. */
+    render_with_page(ui, &s, PAGE_SCRIPT, 1, &set, have_font, family);
+    for (y = 0; y < 22; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            g_bar_ref[y * 640 + x] = g_selftest_px[(s.h - 22 + y) * s.stride + x];
+        }
+    }
+
+    /* The same bar under the tallest page, which overflows well past it. */
+    render_with_page(ui, &s, PAGE_SCRIPT, 0, &set, have_font, family);
+    for (y = 0; y < 22; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            if (g_bar_ref[y * 640 + x] != g_selftest_px[(s.h - 22 + y) * s.stride + x])
+            {
+                strangers++;
+            }
+        }
+    }
+
+    if (strangers)
+    {
+        printf("FAIL  status bar: %ld pixel(s) of the page bled into it\n", (long)strangers);
+        return 1;
+    }
+    printf("ok    status bar: the tallest page does not paint into it\n");
+    return 0;
+}
+
+static int check_no_ghosting(ar_ctx *ui, int have_font, const char *family)
+{
+    static ar_u32 first[640 * 24];
+
+    ar_surface      s;
+    struct settings set;
+    ar_rect         overlay, status_area;
+    ar_i32          pass, y, x;
+    int             bad = 0;
+
+    s.pixels = g_selftest_px;
+    s.w = 640;
+    s.h = 480;
+    s.stride = 640;
+
+    set.antialias = 1;
+    set.grid_fit = 1;
+    set.subpixel = 0;
+    set.shaping = 1;
+    set.darken = 0;
+    set.stress = 0;
+
+    overlay = ar_rect_make(s.w - 296, 16, 296, 200);
+    status_area = ar_rect_make(0, s.h - 24, s.w, 24);
+
+    for (pass = 0; pass < 2; ++pass)
+    {
+        ar_input in;
+        char     status[192];
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+
+        strpool_reset();
+        ar_frame_begin(ui, &in);
+        ar_begin(ui, "div#app");
+        ar_begin(ui, "div.page");
+        ar_text(ui, "div.h1", PAGE_NAME[PAGE_CASCADE]);
+        ar_text(ui, "div.sub", PAGE_SUB[PAGE_CASCADE]);
+        page_body(ui, &s, PAGE_CASCADE, &set, have_font, family);
+        ar_end(ui);
+        ar_end(ui);
+
+        ar_invalidate(ui, overlay);
+        ar_invalidate(ui, status_area);
+        ar_frame_end(ui, &s);
+
+        ar_perf_overlay(ar_perf_of(ui), &s, ar_rect_make(0, 0, s.w, s.h), s.w - 296, 16, 1);
+        /* A fixed string: the live counters differ between two frames for
+           honest reasons, and this is asking about pixels, not numbers. */
+        sprintf(status, "areole %s   page %s   ghosting check", ar_version(),
+                PAGE_VER[PAGE_CASCADE]);
+        ar_draw_text(&s, ar_rect_make(0, 0, s.w, s.h), 12, s.h - 18, status, 1, AR_HEX(0x8D8578));
+        ar_frame_presented(ui);
+
+        /* The status strip only. The overlay reports the previous frame's
+           timings, so its pixels differ between two frames for an honest
+           reason; the strip is drawn from a fixed string and must not. Both
+           are repainted by the same two ar_invalidate calls, so the strip
+           answers the question for both. */
+        for (y = 0; y < 24; ++y)
+        {
+            for (x = 0; x < 640; ++x)
+            {
+                ar_i32 sy = s.h - 24 + y;
+                ar_u32 px = g_selftest_px[sy * s.stride + x];
+
+                if (pass == 0)
+                {
+                    first[y * 640 + x] = px;
+                }
+                else if (first[y * 640 + x] != px)
+                {
+                    bad++;
+                }
+            }
+        }
+    }
+
+    if (bad)
+    {
+        printf("FAIL  ghosting: %d pixel(s) changed between two identical frames\n", bad);
+        return 1;
+    }
+    printf("ok    ghosting: two identical frames are identical\n");
+    return 0;
+}
+
 static int selftest(ar_ctx *ui, int have_font, const char *family)
 {
     ar_surface      s;
@@ -595,10 +817,12 @@ static int selftest(ar_ctx *ui, int have_font, const char *family)
         strpool_reset();
         ar_frame_begin(ui, &in);
         ar_begin(ui, "div#app");
+        ar_begin(ui, "div.main");
         ar_begin(ui, "div.page");
         ar_text(ui, "div.h1", PAGE_NAME[page]);
         ar_text(ui, "div.sub", PAGE_SUB[page]);
         page_body(ui, &s, page, &set, have_font, family);
+        ar_end(ui);
         ar_end(ui);
         ar_end(ui);
         ar_frame_end(ui, &s);
@@ -625,6 +849,14 @@ static int selftest(ar_ctx *ui, int have_font, const char *family)
     {
         printf("FAIL  stylesheet reports %lu problem(s)\n",
                (unsigned long)ar_stylesheet_errors(ui));
+        bad = 1;
+    }
+    if (check_no_ghosting(ui, have_font, family))
+    {
+        bad = 1;
+    }
+    if (check_status_bar_is_clean(ui, have_font, family))
+    {
         bad = 1;
     }
     printf("%s\n", bad ? "selftest FAILED" : "selftest passed");
@@ -683,10 +915,15 @@ static void dump_page(ar_ctx *ui, ar_surface *s, ar_i32 page, struct settings *s
     strpool_reset();
     ar_frame_begin(ui, &in);
     ar_begin(ui, "div#app");
+    /* The same shell the window builds, minus the rail: `.page` is a row child
+       of `.main`, so it is stretched rather than sized to its content, and the
+       dump describes the layout the application actually gets. */
+    ar_begin(ui, "div.main");
     ar_begin(ui, "div.page");
     ar_text(ui, "div.h1", PAGE_NAME[page]);
     ar_text(ui, "div.sub", PAGE_SUB[page]);
     page_body(ui, s, page, set, have_font, family);
+    ar_end(ui);
     ar_end(ui);
     ar_end(ui);
     ar_frame_end(ui, s);
@@ -761,13 +998,12 @@ int main(int argc, char **argv)
     ar_ctx     *ui;
     ar_win     *win;
     ar_surface *s;
-    ar_rect     overlay, status_area;
+    ar_rect     overlay;
     ar_i32      region;
     ar_i32      page = PAGE_CORE;
     ar_i32      i;
     int         have_font = 0;
     char        family[64];
-    char        status[192];
 
     struct settings set;
 
@@ -788,6 +1024,7 @@ int main(int argc, char **argv)
     }
 
     ar_stylesheet(ui, SHEET_FRAME);
+    ar_stylesheet(ui, SHEET_STATUS);
     ar_stylesheet(ui, SHEET_NAV);
     ar_stylesheet(ui, SHEET_TEXT);
     ar_stylesheet(ui, SHEET_ROWS);
@@ -864,6 +1101,7 @@ int main(int argc, char **argv)
         ar_frame_begin(ui, ar_win_input(win));
 
         ar_begin(ui, "div#app");
+        ar_begin(ui, "div.main");
 
         ar_begin(ui, "div.rail");
         ar_text(ui, "div.brand", "areole");
@@ -888,30 +1126,42 @@ int main(int argc, char **argv)
         page_body(ui, s, page, &set, have_font, family);
         ar_end(ui);
 
+        ar_end(ui); /* .main */
+
+        /* The counters describe the frame that has just been declared, so the
+           bar reports the previous one -- the same trade the overlay makes,
+           and for the same reason. */
+        ar_begin(ui, "div.status");
+        ar_text(ui, "div.statustext",
+                fmt("areole %s   page %s   %ld boxes   %ld region(s)   %s", ar_version(),
+                    PAGE_VER[page], (long)ar_perf_of(ui)->cur.nodes, (long)ar_damage_count(ui),
+                    ar_time_source()));
         ar_end(ui);
+
+        ar_end(ui); /* #app */
+
+        /*
+         * The overlay is drawn over the frame and changes every frame, so its
+         * rectangle is marked dirty BEFORE ar_frame_end and areole repaints
+         * the interface underneath it.
+         *
+         * Without this it composites over its own previous output. Damage
+         * tracking has no reason to repaint a region where no box changed, and
+         * the overlay's panel is deliberately translucent -- so it darkens
+         * frame after frame instead of sitting on a clean background.
+         */
+        overlay = ar_rect_make(s->w - 296, 16, 296, 200);
+        ar_invalidate(ui, overlay);
 
         ar_frame_end(ui, s);
 
-        /* Drawn over the tree rather than inside it, because it reports on the
-           frame that has just been laid out. The library cannot see this
-           drawing, so its rectangle is presented by hand -- exactly the case
-           ar_invalidate exists for. */
-        overlay = ar_rect_make(s->w - 296, 16, 296, 200);
-        status_area = ar_rect_make(0, s->h - 24, s->w, 24);
-
         ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
-
-        sprintf(status, "areole %s   %s   %ld boxes   %ld region(s)   %s", ar_version(),
-                PAGE_VER[page], (long)ar_perf_of(ui)->cur.nodes, (long)ar_damage_count(ui),
-                ar_time_source());
-        ar_draw_text(s, ar_rect_make(0, 0, s->w, s->h), 12, s->h - 18, status, 1, AR_HEX(0x8D8578));
 
         for (region = 0; region < ar_damage_count(ui); ++region)
         {
             ar_win_present(win, ar_damage_rect(ui, region));
         }
         ar_win_present(win, overlay);
-        ar_win_present(win, status_area);
         ar_frame_presented(ui);
 
         /* Hover is resolved from the previous frame and this pump blocks when

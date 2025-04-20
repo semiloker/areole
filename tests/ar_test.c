@@ -4505,6 +4505,76 @@ static void test_cascade_keywords(void)
  *
  * So: one rule, no second rule to hide behind, and a box that must not get it.
  */
+/*
+ * A box whose text changed is repainted, not drawn over.
+ *
+ * This is the bug behind a status line that went dark and smeared: it read
+ * "3 region(s)" one frame and "1 region(s)" the next, and nothing erased the
+ * first, so two different strings shared the same pixels. The digest hashes
+ * the text's *content* rather than its pointer for exactly this reason --
+ * formatting a label into a reused buffer every frame leaves the pointer
+ * identical while the pixels differ.
+ *
+ * Checked by rendering a wide string, then a narrow one in the same box, and
+ * comparing against a context that only ever drew the narrow one. Any pixel of
+ * the wide string still standing is a failure.
+ */
+static ar_u32 g_repaint_a[200 * 40];
+
+static void ar__render_label(const char *first, const char *second, ar_surface *s)
+{
+    ar__ui_reset("#root { display:flex; flex-direction:column; background:#FFFFFF; }"
+                 ".label { width:200px; height:20px; background:#FFFFFF; color:#000000; }");
+
+    if (first)
+    {
+        ar__ui_begin();
+        ar_begin(g_ui, "#root");
+        ar_text(g_ui, "div.label", first);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, s);
+        ar_frame_presented(g_ui);
+    }
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.label", second);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+    ar_frame_presented(g_ui);
+}
+
+static void test_changed_text_is_repainted_not_overdrawn(void)
+{
+    ar_surface s = ar__ui_surface(200, 40);
+    ar_i32     x, y, diff = 0;
+
+    /* The narrow string alone: what the second frame must look like. */
+    ar__render_label(0, "1 region(s)", &s);
+    for (y = 0; y < 40; ++y)
+    {
+        for (x = 0; x < 200; ++x)
+        {
+            g_repaint_a[y * 200 + x] = g_ui_pixels[y * s.stride + x];
+        }
+    }
+
+    /* The wide string first, then the narrow one over it. */
+    ar__render_label("3 region(s) wwwwww", "1 region(s)", &s);
+    for (y = 0; y < 40; ++y)
+    {
+        for (x = 0; x < 200; ++x)
+        {
+            if (g_repaint_a[y * 200 + x] != g_ui_pixels[y * s.stride + x])
+            {
+                diff++;
+            }
+        }
+    }
+
+    CHECK(diff == 0, "damage: a box whose text changed is repainted, leaving none of the old");
+}
+
 static void test_a_combinator_does_not_leak_through_the_cache(void)
 {
     ar_surface s = ar__ui_surface(200, 200);
@@ -5179,6 +5249,7 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_changed_text_is_repainted_not_overdrawn();
     test_a_combinator_does_not_leak_through_the_cache();
     test_selector_lists();
     test_selector_list_has_a_ceiling();

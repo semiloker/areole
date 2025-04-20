@@ -12,12 +12,12 @@ on their path through the tree, which is the one identifier the two genuinely sh
 
 ## The result
 
-Measured 2026-08-13, Edge 151 headless, Segoe UI, 640×480 viewport, 153 boxes across six pages,
+Measured 2026-08-13, Edge 151 headless, Segoe UI, 640×480 viewport, 159 boxes across six pages,
 **after** text wrapping and font-derived line boxes landed.
 
 | | |
 | --- | --- |
-| Boxes matched by path | **153 / 153** |
+| Boxes matched by path | **159 / 159** |
 | Geometry disagreements, boxes not sized by their own text | **0** |
 | Text-sized boxes, width difference | **max 1 px, mean 0.8 px** |
 | Text-sized boxes, x offset | **max 1 px, mean 0.4 px** |
