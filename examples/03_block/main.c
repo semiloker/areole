@@ -41,7 +41,8 @@ static const char *SHEET_BASE = "#root { display:block; }"
                                 ".b { display:block; }"
                                 ".c { display:block; }"
                                 ".outer { display:block; }"
-                                ".inner { display:block; }";
+                                ".inner { display:block; }"
+                                ".i { display:inline-block; }";
 
 struct block_case
 {
@@ -106,7 +107,47 @@ static const struct block_case CASES[] = {
 
     {"percentage-width", ".a { height:10px; width:50%; }", "(a)"},
 
-    {"root-first-child-margin", ".a { height:20px; margin-top:20px; }", "(a)"}};
+    {"root-first-child-margin", ".a { height:20px; margin-top:20px; }", "(a)"},
+
+    /* ------------------------------------------------------------------
+     * Inline formatting. Items are atomic -- inline-block, not inline --
+     * so none of these ask a box to split across two lines.
+     * ------------------------------------------------------------------ */
+    {"inline-share-a-line", ".i { display:inline-block; width:40px; height:10px; }", "(i)(i)"},
+
+    {"inline-wrap", ".outer { width:100px; } .i { display:inline-block; width:40px; height:10px; }",
+     "(outer(i)(i)(i))"},
+
+    {"inline-margins",
+     ".outer { width:100px; }"
+     " .i { display:inline-block; width:40px; height:10px; margin-right:10px; }",
+     "(outer(i)(i))"},
+
+    {"inline-baselines",
+     ".a { display:inline-block; width:20px; height:20px; }"
+     " .b { display:inline-block; width:20px; height:40px; }",
+     "(a)(b)"},
+
+    {"inline-valign",
+     ".outer { } .a { display:inline-block; width:20px; height:40px; }"
+     " .b { display:inline-block; width:20px; height:10px; vertical-align:top; }"
+     " .c { display:inline-block; width:20px; height:10px; vertical-align:bottom; }",
+     "(a)(b)(c)"},
+
+    {"inline-align-right",
+     ".outer { width:100px; text-align:right; }"
+     " .i { display:inline-block; width:40px; height:10px; }",
+     "(outer(i))"},
+
+    {"inline-align-center",
+     ".outer { width:100px; text-align:center; }"
+     " .i { display:inline-block; width:40px; height:10px; }",
+     "(outer(i))"},
+
+    {"inline-in-the-stack",
+     ".a { height:10px; } .i { display:inline-block; width:40px; height:20px; }"
+     " .c { height:10px; }",
+     "(a)(i)(i)(c)"}};
 
 #define CASE_COUNT ((ar_i32)(sizeof CASES / sizeof CASES[0]))
 

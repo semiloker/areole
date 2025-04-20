@@ -243,7 +243,7 @@ ar_i32 ar_block_top_gap(const ar_node *n, const ar_node *first)
  * nothing in between -- which is exactly the case a per-pair gap gets wrong.
  */
 ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn height,
-                      ar_block_place_fn place, void *ud)
+                      ar_block_place_fn place, ar_block_run_fn run, void *ud)
 {
     ar_i32 cursor = 0;
     ar_i32 pending = 0;
@@ -257,6 +257,37 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
 
         if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
+            continue;
+        }
+
+        /*
+         * A run of inline-level siblings stands in for the anonymous block CSS
+         * would wrap them in. An anonymous box has no margins, so the pending
+         * margin is spent before it and nothing collapses through it.
+         */
+        if (ar_is_inline_level(ch))
+        {
+            ar_i32 stop = c;
+
+            while (stop >= 0 && (ar_is_inline_level(&nodes[stop]) ||
+                                 nodes[stop].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE))
+            {
+                stop = nodes[stop].next_sibling;
+            }
+            cursor += pending;
+            pending = 0;
+            if (run)
+            {
+                cursor += run(ud, c, stop, cursor);
+            }
+            at_start = 0;
+            if (stop < 0)
+            {
+                break;
+            }
+            /* The loop's own step would move one sibling; this jumps the run.
+               Stepping back by one is what makes the two agree. */
+            c = nodes[stop].prev_sibling;
             continue;
         }
 

@@ -695,7 +695,12 @@ static void ar__text_metrics(ar_ctx *c, ar_node *n)
     {
         n->text_h = ar_text_height(n->scale);
         n->line_h = ar_text_line_height(n->scale);
-        n->ascent = 0; /* the bitmap face draws from the top, not a baseline */
+        /* The bitmap face draws from the top rather than from a baseline, and
+            painting still does. But a line box needs a baseline to align
+            against, and for a face with no descender the baseline is the
+            bottom of the cell. Painting reads n->ascent only on the outline
+            path, so this is free there and correct here. */
+        n->ascent = ar_text_height(n->scale);
         return;
     }
     {

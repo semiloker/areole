@@ -4545,6 +4545,246 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
 }
 
 /* ------------------------------------------------------------------------
+ * Inline formatting
+ *
+ * Items are atomic -- inline-block, not inline -- so none of these split a box
+ * across two lines. That is fragmentation and it is the next piece.
+ * ------------------------------------------------------------------------ */
+
+/* The first thing a line box has to do: put siblings beside each other rather
+   than under each other, which is the whole difference from a block child. */
+static void test_inline_items_share_a_line(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".i { display:inline-block; width:40px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 40, 10), "inline: the first item sits at the left");
+    CHECK(ar__box_is(2, 40, 0, 40, 10), "inline: the second sits beside it, not below");
+}
+
+/* And the second thing: start a new line when the next item will not fit. */
+static void test_inline_wraps_to_a_new_line(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    /* The width goes on a box inside the root, because the root takes the
+       viewport and ignores anything it says about its own size. */
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:100px; }"
+                 ".i { display:inline-block; width:40px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x == 0 && ar__box(2).y == 0, "inline: two fit on the first line");
+    CHECK(ar__box(3).x == 40 && ar__box(3).y == 0, "inline: and the second is one of them");
+    CHECK(ar__box(4).x == 0 && ar__box(4).y == 10, "inline: the third starts a new line");
+    CHECK(ar__box(1).h == 20, "inline: and the block grew to hold both lines");
+}
+
+/* Margins count towards the width a line has left. */
+static void test_inline_margins_take_room_on_the_line(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".i { display:inline-block; width:40px; height:10px; margin-right:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x == 50, "inline: the second item clears the first item's margin");
+    CHECK(ar__box(2).y == 0, "inline: and 50 plus 50 still fits in 100");
+}
+
+/*
+ * The reason a line box is not just "as tall as its tallest item".
+ *
+ * Two boxes of the same height whose baselines sit at different depths need a
+ * line taller than either of them, so that both baselines can be the same one.
+ * A box with text has its baseline under the ascent; a box without has none,
+ * and sits on the line rather than through it.
+ */
+static void test_line_height_comes_from_the_baselines(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".plain { display:inline-block; width:20px; height:20px; }"
+                 ".padded { display:inline-block; width:20px; padding-top:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.plain");
+    ar_end(g_ui);
+    ar_text(g_ui, "div.padded", "x");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The plain box has no text, so its baseline is its bottom edge: 20 above
+       it, nothing below. The padded one has text, so its baseline is 10 of
+       padding plus the face's ascent of 8, with nothing below that either.
+       The line is max(20, 18) tall and both sit on the same baseline. */
+    CHECK(ar__box(1).y == 0, "baseline: the deeper box defines the line's top");
+    CHECK(ar__box(2).y == 2, "baseline: the shallower one drops to meet it");
+}
+
+/* vertical-align:top ignores the baseline and pins to the line's top edge. */
+static void test_vertical_align_top_and_bottom(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".tall { display:inline-block; width:20px; height:40px; }"
+                 ".t { display:inline-block; width:20px; height:10px; vertical-align:top; }"
+                 ".b { display:inline-block; width:20px; height:10px; vertical-align:bottom; }"
+                 ".m { display:inline-block; width:20px; height:10px; vertical-align:middle; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.t");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.m");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 0, "valign: top pins to the top of the line");
+    CHECK(ar__box(3).y == 30, "valign: bottom pins to the bottom of it");
+    CHECK(ar__box(4).y == 15, "valign: middle centres in it");
+}
+
+/* text-align moves a whole line, and only the leftover. */
+static void test_text_align_moves_the_line(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".right { display:block; width:100px; text-align:right; }"
+                 ".centre { display:block; width:100px; text-align:center; }"
+                 ".i { display:inline-block; width:40px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.right");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.centre");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x == 60, "align: right pushes the line to the far edge");
+    CHECK(ar__box(4).x == 30, "align: centre splits the leftover");
+}
+
+/* An inline run sits in the block stack where an anonymous block would, so
+   blocks above and below it keep their own places. */
+static void test_an_inline_run_takes_its_place_in_the_stack(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".i { display:inline-block; width:40px; height:20px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 10, "inline: the run starts below the block above it");
+    CHECK(ar__box(3).y == 10, "inline: both items are on that line");
+    CHECK(ar__box(4).y == 30, "inline: and the block below clears the whole run");
+}
+
+/* An inline-level box shrinks to fit rather than filling its container, which
+   is the other half of what makes it inline-level. */
+static void test_inline_shrinks_to_fit(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".i { display:inline-block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.i", "abc");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == ar_text_width("abc", 1),
+          "inline: the box is as wide as its content, not as wide as the page");
+}
+
+/* A margin on an inline item does not collapse with anything: it is not a
+   block box and the run is an anonymous one, which has no margins at all. */
+static void test_inline_margins_do_not_collapse(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; margin-bottom:20px; }"
+                 ".i { display:inline-block; width:20px; height:10px; margin-top:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 10 + 20 for the block's own margin, then the item's 20 on top of that
+       rather than collapsed into it: 50, where two blocks would give 30. */
+    CHECK(ar__box(2).y == 50, "inline: an item's margin is added, never collapsed");
+}
+
+/* ------------------------------------------------------------------------
  * Block formatting
  *
  * Written from the specification before the code was, which is the only way
@@ -5602,6 +5842,15 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_inline_items_share_a_line();
+    test_inline_wraps_to_a_new_line();
+    test_inline_margins_take_room_on_the_line();
+    test_line_height_comes_from_the_baselines();
+    test_vertical_align_top_and_bottom();
+    test_text_align_moves_the_line();
+    test_an_inline_run_takes_its_place_in_the_stack();
+    test_inline_shrinks_to_fit();
+    test_inline_margins_do_not_collapse();
     test_margin_collapse_arithmetic();
     test_block_stacks_and_fills();
     test_margin_collapse_between_siblings();

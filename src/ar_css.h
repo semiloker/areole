@@ -51,6 +51,8 @@ typedef enum ar_prop
 
     AR_P_FONT_SIZE,
     AR_P_OVERFLOW,
+    AR_P_TEXT_ALIGN,
+    AR_P_VERTICAL_ALIGN,
 
     AR_P_COUNT
 } ar_prop;
@@ -79,7 +81,36 @@ enum
 {
     AR_DISPLAY_NONE = 0,
     AR_DISPLAY_BLOCK,
-    AR_DISPLAY_FLEX
+    AR_DISPLAY_FLEX,
+
+    /*
+     * Inline-level, and atomic: it sits on a line beside its siblings and is
+     * never split across two of them.
+     *
+     * That last part is why this is `inline-block` and not `inline`. A real
+     * inline box fragments -- half on one line, half on the next, with borders
+     * and padding on the first and last fragment only -- and a fragment is a
+     * second rectangle for a box that has room for one. Fragmentation is the
+     * next piece of 0.5.0; this is the line box model it will need.
+     */
+    AR_DISPLAY_INLINE_BLOCK
+};
+
+enum
+{
+    AR_TEXT_ALIGN_LEFT = 0,
+    AR_TEXT_ALIGN_RIGHT,
+    AR_TEXT_ALIGN_CENTER
+};
+
+/* Where an inline-level box sits in its line box. `baseline` is the default,
+   and the only one that needs the line to have a baseline at all. */
+enum
+{
+    AR_VALIGN_BASELINE = 0,
+    AR_VALIGN_TOP,
+    AR_VALIGN_MIDDLE,
+    AR_VALIGN_BOTTOM
 };
 
 enum
