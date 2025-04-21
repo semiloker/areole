@@ -4,8 +4,12 @@
     python tools/compare_layout.py --run ./build/example_tour.exe
 
 which runs both sides itself: `--dump` for areole, and a headless browser on
-examples/02_tour/tour.html for the other. With two files instead, it compares
-dumps that already exist:
+examples/02_tour/tour.html for the other. A third argument names a different
+page, which is how the block corpus is checked:
+
+    python tools/compare_layout.py --run ./build/example_block.exe            examples/03_block/block.html
+
+With two files instead, it compares dumps that already exist:
 
     python tools/compare_layout.py areole.txt browser.txt
 
@@ -108,7 +112,7 @@ def norm(s):
 
 
 def main(argv):
-    if len(argv) == 3 and argv[1] == '--run':
+    if len(argv) in (3, 4) and argv[1] == '--run':
         browser = find_browser()
         if not browser:
             raise SystemExit('no Chromium found; pass two dump files instead')
@@ -119,7 +123,7 @@ def main(argv):
             f.write(subprocess.run([argv[2], '--dump'], capture_output=True,
                                    text=True, encoding='utf-8',
                                    errors='replace').stdout)
-        run_browser(browser, HTML, b_path)
+        run_browser(browser, argv[3] if len(argv) == 4 else HTML, b_path)
         print('areole  : %s --dump' % argv[2])
         print('browser : %s' % os.path.basename(browser))
         print()

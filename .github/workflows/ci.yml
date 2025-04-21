@@ -110,6 +110,11 @@ jobs:
       - name: Tour self-check
         run: ./build/example_tour.exe --selftest
 
+      # The margin-collapsing corpus. It only prints rectangles here; the
+      # browser comparison needs Chromium and runs locally.
+      - name: Block corpus renders
+        run: ./build/example_block.exe > /dev/null
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest

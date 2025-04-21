@@ -4761,6 +4761,34 @@ static void test_an_empty_box_collapses_through_itself(void)
     CHECK(ar__box(3).y == 40, "collapse: an empty box contributes one margin of 30, not 50");
 }
 
+/* Where the empty box itself ends up. Its top edge sits below the margin
+   immediately before it, not below the whole collapsed run -- the run carries
+   on past it. Chromium settled which of the two it is. */
+static void test_an_empty_box_sits_below_its_own_margin(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".empty { display:block; margin-top:20px; margin-bottom:30px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.empty");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 30, "collapse: the empty box sits below its own top margin");
+    CHECK(ar__box(2).h == 0, "collapse: and has no height");
+    CHECK(ar__box(3).y == 40, "collapse: while the run past it is the collapsed 30");
+}
+
 /* A block container's automatic height is its stack, with the collapsed
    margins counted once. */
 static void test_block_auto_height(void)
@@ -5583,6 +5611,7 @@ int main(void)
     test_a_formatting_context_stops_the_margin();
     test_the_last_childs_margin_escapes_downwards();
     test_an_empty_box_collapses_through_itself();
+    test_an_empty_box_sits_below_its_own_margin();
     test_block_auto_height();
     test_the_root_is_a_formatting_context();
     test_horizontal_margins_do_not_collapse();
