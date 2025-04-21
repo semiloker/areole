@@ -247,8 +247,50 @@ typedef void (*ar_block_place_fn)(void *ud, ar_i32 index, ar_i32 y, int real);
  */
 typedef ar_i32 (*ar_block_run_fn)(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y);
 
+/* Where a box with `clear` has to start, given where it would otherwise have
+   gone. Null when the caller has no floats to clear. */
+typedef ar_i32 (*ar_block_clear_fn)(void *ud, ar_i32 y, ar_i32 which);
+
 ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn height,
-                      ar_block_place_fn place, ar_block_run_fn run, void *ud);
+                      ar_block_place_fn place, ar_block_run_fn run, ar_block_clear_fn clear_to,
+                      void *ud);
+
+int ar_is_floated(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Floats -- ar_layout_float.c
+ * ------------------------------------------------------------------------ */
+
+/* More than a document puts beside one another. Past this a float is placed as
+   though the list were full, which puts it at the container's edge -- a
+   visible failure rather than a silent one. */
+#define AR_MAX_FLOATS 16
+
+typedef struct ar_float_box
+{
+    ar_i32 x0, x1; /* the margin box, because that is what content avoids */
+    ar_i32 y0, y1;
+    ar_u8  side;
+} ar_float_box;
+
+typedef struct ar_float_ctx
+{
+    ar_float_box f[AR_MAX_FLOATS];
+    ar_i32       count;
+    ar_i32       left, right; /* the containing block's content edges */
+} ar_float_ctx;
+
+void ar_float_reset(ar_float_ctx *fc, ar_i32 left, ar_i32 right);
+
+/* The horizontal band still free between y and y + h. */
+void ar_float_band(const ar_float_ctx *fc, ar_i32 y, ar_i32 h, ar_i32 *out_left, ar_i32 *out_right);
+
+/* The lowest edge of the floats on the given sides, at or below y. */
+ar_i32 ar_float_clear_y(const ar_float_ctx *fc, ar_i32 y, ar_i32 which);
+ar_i32 ar_float_bottom(const ar_float_ctx *fc);
+
+/* Puts a float at or below y, as far to its side as it will go. */
+void ar_float_place(ar_float_ctx *fc, ar_node *n, ar_i32 y, ar_i32 side);
 
 /* ------------------------------------------------------------------------
  * Inline formatting -- ar_layout_inline.c
@@ -258,8 +300,16 @@ ar_i32 ar_inline_baseline(const ar_node *n);
 
 /* Lays a run of inline-level siblings into line boxes and returns how tall
    they came to. Sizes must already be resolved. */
+/*
+ * `fc` may be null, which is the same as there being no floats. When it is
+ * not, each line asks it for the band still free at that line's own y -- which
+ * is what makes text wrap around a float rather than through it.
+ *
+ * `abs_top` is where `top` sits in the coordinates the float list uses, since
+ * the run works in offsets and the floats do not.
+ */
 ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_i32 top,
-                     ar_i32 inner_w, ar_i32 align);
+                     ar_i32 inner_w, ar_i32 align, const ar_float_ctx *fc, ar_i32 abs_top);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 

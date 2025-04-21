@@ -273,10 +273,12 @@ void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y
  * ------------------------------------------------------------------------ */
 typedef struct ar_ctx ar_ctx;
 
-/* Raised from 320 when block formatting gave every box two collapsed margins.
-   The assertion in ar_ctx.c is what noticed; it is there so this number cannot
-   quietly stop being true. */
-#define AR_BYTES_PER_BOX 336u
+/* 320 -> 336 when block formatting gave every box two collapsed margins, and
+   336 -> 352 when float and clear were added: a property costs every box and
+   every rule five bytes, in ar_style. The assertions in ar_ctx.c are what
+   noticed both times; they are there so this number cannot quietly stop being
+   true. */
+#define AR_BYTES_PER_BOX 352u
 
 /*
  * The part of the block that does not scale with the box count: the context
@@ -289,7 +291,7 @@ typedef struct ar_ctx ar_ctx;
  * rather than trusted, which is why this was a build failure and not a
  * corruption.
  */
-#define AR_MEM_FIXED  131072u
+#define AR_MEM_FIXED  147456u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */

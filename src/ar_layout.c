@@ -216,12 +216,12 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
            does -- there, bare text beside a block sibling gets an anonymous
            block of its own. This is the same arrangement without the extra
            box, and is where anonymous boxes will go when they arrive. */
-        n->fit[1] = th + ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, nodes) +
+        n->fit[1] = th + ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, 0, nodes) +
                     n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     }
     else
     {
-        n->fit[1] = ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, nodes) +
+        n->fit[1] = ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, 0, nodes) +
                     n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     }
 
@@ -397,14 +397,54 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wra
    starts, because ar_block_stack works in offsets from zero. */
 typedef struct ar__stack_ud
 {
-    ar_node   *nodes;
-    ar_i32     top;
-    ar_i32     left;
-    ar_i32     inner_w;
-    ar_i32     align;
-    ar_wrap_fn wrap;
-    void      *wrap_ud;
+    ar_node     *nodes;
+    ar_i32       top;
+    ar_i32       left;
+    ar_i32       inner_w;
+    ar_i32       align;
+    ar_wrap_fn   wrap;
+    void        *wrap_ud;
+    ar_float_ctx floats;
 } ar__stack_ud;
+
+/* Gives an out-of-flow or inline-level box its size, which for both is
+   shrink-to-fit rather than "fill the container". */
+static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_wrap_fn wrap, void *wrap_ud)
+{
+    switch (ch->style.unit[AR_P_WIDTH])
+    {
+    case AR_UNIT_PX:
+        ch->rect.w = ch->style.v[AR_P_WIDTH];
+        break;
+    case AR_UNIT_PCT:
+        ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+        break;
+    default:
+        ch->rect.w = ch->fit[0];
+        if (ch->rect.w > inner_w)
+        {
+            ch->rect.w = inner_w;
+        }
+        break;
+    }
+    ch->rect.w = ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
+    if (ch->rect.w < 0)
+    {
+        ch->rect.w = 0;
+    }
+
+    if (ch->style.unit[AR_P_HEIGHT] == AR_UNIT_PX)
+    {
+        ch->rect.h = ch->style.v[AR_P_HEIGHT];
+    }
+    else
+    {
+        ch->rect.h = ch->fit[1];
+    }
+    ch->rect.h = ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
+
+    ar__wrap_height(ch, 1, 0, wrap, wrap_ud);
+}
 
 static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
 {
@@ -433,56 +473,66 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
         {
             continue;
         }
-
-        switch (ch->style.unit[AR_P_WIDTH])
-        {
-        case AR_UNIT_PX:
-            ch->rect.w = ch->style.v[AR_P_WIDTH];
-            break;
-        case AR_UNIT_PCT:
-            ch->rect.w = su->inner_w * ch->style.v[AR_P_WIDTH] / 100;
-            break;
-        default:
-            ch->rect.w = ch->fit[0];
-            if (ch->rect.w > su->inner_w)
-            {
-                ch->rect.w = su->inner_w;
-            }
-            break;
-        }
-        ch->rect.w =
-            ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
-        if (ch->rect.w < 0)
-        {
-            ch->rect.w = 0;
-        }
-
-        if (ch->style.unit[AR_P_HEIGHT] == AR_UNIT_PX)
-        {
-            ch->rect.h = ch->style.v[AR_P_HEIGHT];
-        }
-        else
-        {
-            ch->rect.h = ch->fit[1];
-        }
-        ch->rect.h =
-            ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
-
-        ar__wrap_height(ch, 1, 0, su->wrap, su->wrap_ud);
+        ar__size_shrink_to_fit(ch, su->inner_w, su->wrap, su->wrap_ud);
     }
 
-    return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align);
+    return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align,
+                         &su->floats, su->top + y);
 }
 
 static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
 {
     ar__stack_ud *su = (ar__stack_ud *)ud;
+    ar_node      *ch = &su->nodes[index];
 
-    su->nodes[index].rect.y = su->top + y;
+    /* -1 means a float: sized here, because a float shrinks to fit rather than
+       filling the container the way an in-flow block child does, and then
+       handed to the float list to be pushed to its side. */
+    if (real < 0)
+    {
+        ar__size_shrink_to_fit(ch, su->inner_w, su->wrap, su->wrap_ud);
+        ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
+        return;
+    }
+
+    ch->rect.y = su->top + y;
     if (!real)
     {
-        su->nodes[index].rect.h = 0;
+        ch->rect.h = 0;
+        return;
     }
+
+    /*
+     * A box that establishes a formatting context may not overlap a float: it
+     * moves aside and, if its width was automatic, narrows to what is left.
+     *
+     * This is what makes `overflow: hidden` beside a float sit next to it
+     * rather than under it, which is the most-used float idiom there is. An
+     * ordinary block does the opposite -- it spans the container and lets its
+     * lines be narrowed -- and the two being different is the point.
+     */
+    if (su->floats.count > 0 && ar_establishes_bfc(ch))
+    {
+        ar_i32 ml = ch->style.v[AR_P_MARGIN_LEFT];
+        ar_i32 mr = ch->style.v[AR_P_MARGIN_RIGHT];
+        ar_i32 lo, hi;
+
+        ar_float_band(&su->floats, ch->rect.y, ch->rect.h, &lo, &hi);
+        ch->rect.x = lo + ml;
+        if (ch->style.unit[AR_P_WIDTH] == AR_UNIT_AUTO)
+        {
+            ar_i32 avail = hi - lo - ml - mr;
+
+            ch->rect.w = avail < 0 ? 0 : avail;
+        }
+    }
+}
+
+static ar_i32 ar__clear_to(void *ud, ar_i32 y, ar_i32 which)
+{
+    ar__stack_ud *su = (ar__stack_ud *)ud;
+
+    return ar_float_clear_y(&su->floats, su->top + y, which) - su->top;
 }
 
 /*
@@ -592,8 +642,25 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
         su.align = n->style.v[AR_P_TEXT_ALIGN];
         su.wrap = wrap;
         su.wrap_ud = ud;
-        cursor =
-            ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, ar__place_run, &su);
+        ar_float_reset(&su.floats, left, left + inner_w);
+
+        cursor = ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, ar__place_run,
+                                ar__clear_to, &su);
+
+        /*
+         * A formatting context grows to hold its own floats; a plain block box
+         * does not, and a float sticking out of the bottom of one is the
+         * behaviour `clearfix` existed to work around for fifteen years.
+         */
+        if (ar_establishes_bfc(n))
+        {
+            ar_i32 fb = ar_float_bottom(&su.floats) - top;
+
+            if (fb > cursor)
+            {
+                cursor = fb;
+            }
+        }
     }
 
     /* An automatic height is whatever that came to. It was already measured

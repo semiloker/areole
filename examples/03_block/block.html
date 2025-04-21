@@ -153,6 +153,47 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 #inline-align-center .outer { width: 100px; text-align: center; }
 #inline-align-center .i     { display: inline-block; width: 40px; height: 10px; }
 
+/* ------------------------------------------------------------------- floats --
+ * The float cases carry `font-size: 0` for the same reason the inline ones do:
+ * the whitespace between two elements in the source is a text node, and beside
+ * a float it makes a line box that areole has no counterpart for.
+ */
+.app.floats { font-size: 0; }
+.app.floats div { font-size: 0; }
+
+#float-sides .l { float: left; width: 40px; height: 20px; }
+#float-sides .r { float: right; width: 30px; height: 20px; }
+
+#float-stack-then-drop .outer { width: 100px; }
+#float-stack-then-drop .l     { float: left; width: 40px; height: 20px; }
+
+#float-does-not-narrow-a-block .l { float: left; width: 40px; height: 20px; }
+#float-does-not-narrow-a-block .a { height: 10px; }
+
+#float-narrows-the-lines .l { float: left; width: 60px; height: 20px; }
+#float-narrows-the-lines .i { display: inline-block; width: 80px; height: 10px; }
+
+#float-out-of-flow .a { height: 10px; }
+#float-out-of-flow .l { float: left; width: 40px; height: 50px; }
+#float-out-of-flow .c { height: 10px; }
+
+#float-clear .l { float: left; width: 40px; height: 50px; }
+#float-clear .r { float: right; width: 40px; height: 80px; }
+#float-clear .a { height: 10px; clear: left; }
+#float-clear .c { height: 10px; clear: both; }
+
+#float-not-contained .l { float: left; width: 40px; height: 50px; }
+
+#float-contained .bfc { overflow: hidden; }
+#float-contained .l   { float: left; width: 40px; height: 50px; }
+
+#bfc-avoids-a-float .l   { float: left; width: 40px; height: 50px; }
+#bfc-avoids-a-float .bfc { overflow: hidden; height: 20px; }
+
+#float-margins .a { height: 10px; margin-bottom: 20px; }
+#float-margins .l { float: left; width: 40px; height: 20px; margin-top: 20px; }
+#float-margins .c { height: 10px; margin-top: 20px; }
+
 #inline-in-the-stack .a { height: 10px; }
 #inline-in-the-stack .i { display: inline-block; width: 40px; height: 20px; }
 #inline-in-the-stack .c { height: 10px; }
@@ -267,6 +308,46 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 <h2>inline-in-the-stack</h2>
 <div class="app inline" id="inline-in-the-stack" data-page="inline-in-the-stack"><div
   class="a"></div><div class="i"></div><div class="i"></div><div class="c"></div></div>
+
+<h2>float-sides</h2>
+<div class="app floats" id="float-sides" data-page="float-sides"><div class="l"></div><div
+  class="r"></div></div>
+
+<h2>float-stack-then-drop</h2>
+<div class="app floats" id="float-stack-then-drop" data-page="float-stack-then-drop"><div
+  class="outer"><div class="l"></div><div class="l"></div><div class="l"></div></div></div>
+
+<h2>float-does-not-narrow-a-block</h2>
+<div class="app floats" id="float-does-not-narrow-a-block"
+  data-page="float-does-not-narrow-a-block"><div class="l"></div><div class="a"></div></div>
+
+<h2>float-narrows-the-lines</h2>
+<div class="app floats" id="float-narrows-the-lines" data-page="float-narrows-the-lines"><div
+  class="l"></div><div class="i"></div><div class="i"></div></div>
+
+<h2>float-out-of-flow</h2>
+<div class="app floats" id="float-out-of-flow" data-page="float-out-of-flow"><div
+  class="a"></div><div class="l"></div><div class="c"></div></div>
+
+<h2>float-clear</h2>
+<div class="app floats" id="float-clear" data-page="float-clear"><div class="l"></div><div
+  class="r"></div><div class="a"></div><div class="c"></div></div>
+
+<h2>float-not-contained</h2>
+<div class="app floats" id="float-not-contained" data-page="float-not-contained"><div
+  class="outer"><div class="l"></div></div></div>
+
+<h2>float-contained</h2>
+<div class="app floats" id="float-contained" data-page="float-contained"><div class="bfc"><div
+  class="l"></div></div></div>
+
+<h2>bfc-avoids-a-float</h2>
+<div class="app floats" id="bfc-avoids-a-float" data-page="bfc-avoids-a-float"><div
+  class="l"></div><div class="bfc"></div></div>
+
+<h2>float-margins</h2>
+<div class="app floats" id="float-margins" data-page="float-margins"><div class="a"></div><div
+  class="l"></div><div class="c"></div></div>
 
 <script>
 /*

@@ -123,7 +123,7 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     }
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
         {
             return 0;
         }
@@ -138,7 +138,7 @@ static ar_i32 ar__first_in_flow(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
         {
             return c;
         }
@@ -153,7 +153,7 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
         {
             last = c;
         }
@@ -169,6 +169,11 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
  * context, presents its own margins unchanged -- which is the whole meaning of
  * "margins do not collapse across a formatting context boundary".
  */
+int ar_is_floated(const ar_node *n)
+{
+    return n->style.v[AR_P_FLOAT] != AR_FLOAT_NONE && n->style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE;
+}
+
 void ar_block_margins(ar_node *n, const ar_node *nodes)
 {
     ar_i32 mt = n->style.v[AR_P_MARGIN_TOP];
@@ -176,6 +181,14 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
 
     n->mt = mt;
     n->mb = mb;
+
+    /* A float is out of flow. Its margins meet nothing, so they collapse with
+       nothing -- and it contributes neither to the stack nor to the pending
+       margin between the boxes on either side of it. */
+    if (ar_is_floated(n))
+    {
+        return;
+    }
 
     if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
     {
@@ -243,7 +256,8 @@ ar_i32 ar_block_top_gap(const ar_node *n, const ar_node *first)
  * nothing in between -- which is exactly the case a per-pair gap gets wrong.
  */
 ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn height,
-                      ar_block_place_fn place, ar_block_run_fn run, void *ud)
+                      ar_block_place_fn place, ar_block_run_fn run, ar_block_clear_fn clear_to,
+                      void *ud)
 {
     ar_i32 cursor = 0;
     ar_i32 pending = 0;
@@ -258,6 +272,37 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
         if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
             continue;
+        }
+
+        /*
+         * A float is placed where the flow has reached and then stepped over.
+         * It does not advance the cursor and it does not touch the pending
+         * margin: the boxes either side of it are still adjacent to each other.
+         */
+        if (ar_is_floated(ch))
+        {
+            if (place)
+            {
+                place(ud, c, cursor + pending, -1);
+            }
+            continue;
+        }
+
+        /*
+         * `clear` moves this box below the floats on the sides it names. The
+         * pending margin is spent first: clearance is measured from where the
+         * box would otherwise have gone, not from before its own margin.
+         */
+        if (clear_to && ch->style.v[AR_P_CLEAR] != AR_CLEAR_NONE)
+        {
+            ar_i32 want = clear_to(ud, cursor + pending, ch->style.v[AR_P_CLEAR]);
+
+            if (want > cursor + pending)
+            {
+                cursor = want;
+                pending = 0;
+                at_start = 0;
+            }
         }
 
         /*

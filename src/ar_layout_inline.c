@@ -70,7 +70,7 @@ static ar_i32 ar__outer_w(const ar_node *n)
  * the alignment offset needs the width they came to.
  */
 static ar_i32 ar__close_line(ar_node *nodes, ar_i32 first, ar_i32 last, ar_i32 top, ar_i32 used_w,
-                             ar_i32 inner_w, ar_i32 align)
+                             ar_i32 line_left, ar_i32 line_w, ar_i32 align)
 {
     ar_i32 max_ascent = 0;
     ar_i32 max_descent = 0;
@@ -103,13 +103,14 @@ static ar_i32 ar__close_line(ar_node *nodes, ar_i32 first, ar_i32 last, ar_i32 t
 
     height = max_ascent + max_descent;
 
+    (void)line_left;
     if (align == AR_TEXT_ALIGN_RIGHT)
     {
-        shift = inner_w - used_w;
+        shift = line_w - used_w;
     }
     else if (align == AR_TEXT_ALIGN_CENTER)
     {
-        shift = (inner_w - used_w) / 2;
+        shift = (line_w - used_w) / 2;
     }
     if (shift < 0)
     {
@@ -151,6 +152,40 @@ static ar_i32 ar__close_line(ar_node *nodes, ar_i32 first, ar_i32 last, ar_i32 t
 }
 
 /*
+ * How much of a line is left, once the floats that reach into it are counted.
+ *
+ * With no float list this is the whole content width, which is what every
+ * caller before floats existed was getting.
+ */
+static void ar__line_band(const ar_float_ctx *fc, ar_i32 y, ar_i32 left, ar_i32 inner_w,
+                          ar_i32 *out_off, ar_i32 *out_w)
+{
+    ar_i32 lo, hi;
+
+    if (!fc)
+    {
+        *out_off = 0;
+        *out_w = inner_w;
+        return;
+    }
+    ar_float_band(fc, y, 1, &lo, &hi);
+    if (lo < left)
+    {
+        lo = left;
+    }
+    if (hi > left + inner_w)
+    {
+        hi = left + inner_w;
+    }
+    *out_off = lo - left;
+    *out_w = hi - lo;
+    if (*out_w < 0)
+    {
+        *out_w = 0;
+    }
+}
+
+/*
  * Lays a run of inline-level siblings into lines and returns the total height.
  *
  * `first` and `stop` bound the run: everything from `first` up to but not
@@ -158,13 +193,26 @@ static ar_i32 ar__close_line(ar_node *nodes, ar_i32 first, ar_i32 last, ar_i32 t
  * The caller has already given every item its width and height.
  */
 ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_i32 top,
-                     ar_i32 inner_w, ar_i32 align)
+                     ar_i32 inner_w, ar_i32 align, const ar_float_ctx *fc, ar_i32 abs_top)
 {
     ar_i32 line_first = -1;
     ar_i32 line_last = -1;
     ar_i32 x = 0;
     ar_i32 y = 0;
+    ar_i32 line_left = 0;
+    ar_i32 line_w = inner_w;
     ar_i32 c;
+
+    /*
+     * The band this line has, which floats may have narrowed.
+     *
+     * Probed at the line's top with a nominal height, because the line's real
+     * height is not known until it is closed and the band is needed to decide
+     * what fits on it. A float whose bottom edge lands inside a line it did not
+     * narrow is the case this gets wrong, and it is the case CSS also declines
+     * to iterate to a fixed point over.
+     */
+    ar__line_band(fc, abs_top, left, inner_w, &line_left, &line_w);
 
     for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
     {
@@ -185,14 +233,15 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
         /* `x > 0` matters: an item wider than the line still has to go
            somewhere, and putting it on a line of its own and letting it
            overflow is visible, where looping forever is not. */
-        if (line_first >= 0 && x + w > inner_w && x > 0)
+        if (line_first >= 0 && x + w > line_w && x > 0)
         {
-            y += ar__close_line(nodes, line_first, line_last, top + y, x, inner_w, align);
+            y += ar__close_line(nodes, line_first, line_last, top + y, x, line_left, line_w, align);
             line_first = -1;
             x = 0;
+            ar__line_band(fc, abs_top + y, left, inner_w, &line_left, &line_w);
         }
 
-        ch->rect.x = left + x + ch->style.v[AR_P_MARGIN_LEFT];
+        ch->rect.x = left + line_left + x + ch->style.v[AR_P_MARGIN_LEFT];
         if (line_first < 0)
         {
             line_first = c;
@@ -203,7 +252,7 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
 
     if (line_first >= 0)
     {
-        y += ar__close_line(nodes, line_first, line_last, top + y, x, inner_w, align);
+        y += ar__close_line(nodes, line_first, line_last, top + y, x, line_left, line_w, align);
     }
     return y;
 }

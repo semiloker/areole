@@ -42,7 +42,10 @@ static const char *SHEET_BASE = "#root { display:block; }"
                                 ".c { display:block; }"
                                 ".outer { display:block; }"
                                 ".inner { display:block; }"
-                                ".i { display:inline-block; }";
+                                ".i { display:inline-block; }"
+                                ".l { display:block; }"
+                                ".r { display:block; }"
+                                ".bfc { display:block; }";
 
 struct block_case
 {
@@ -143,6 +146,48 @@ static const struct block_case CASES[] = {
      ".outer { width:100px; text-align:center; }"
      " .i { display:inline-block; width:40px; height:10px; }",
      "(outer(i))"},
+
+    /* ------------------------------------------------------------------
+     * Floats.
+     * ------------------------------------------------------------------ */
+    {"float-sides",
+     ".l { float:left; width:40px; height:20px; } .r { float:right; width:30px; height:20px; }",
+     "(l)(r)"},
+
+    {"float-stack-then-drop", ".outer { width:100px; } .l { float:left; width:40px; height:20px; }",
+     "(outer(l)(l)(l))"},
+
+    {"float-does-not-narrow-a-block",
+     ".l { float:left; width:40px; height:20px; } .a { height:10px; }", "(l)(a)"},
+
+    {"float-narrows-the-lines",
+     ".l { float:left; width:60px; height:20px; }"
+     " .i { display:inline-block; width:80px; height:10px; }",
+     "(l)(i)(i)"},
+
+    {"float-out-of-flow",
+     ".a { height:10px; } .l { float:left; width:40px; height:50px; } .c { height:10px; }",
+     "(a)(l)(c)"},
+
+    {"float-clear",
+     ".l { float:left; width:40px; height:50px; } .r { float:right; width:40px; height:80px; }"
+     " .a { height:10px; clear:left; } .c { height:10px; clear:both; }",
+     "(l)(r)(a)(c)"},
+
+    {"float-not-contained", ".outer { } .l { float:left; width:40px; height:50px; }", "(outer(l))"},
+
+    {"float-contained", ".bfc { overflow:hidden; } .l { float:left; width:40px; height:50px; }",
+     "(bfc(l))"},
+
+    {"bfc-avoids-a-float",
+     ".l { float:left; width:40px; height:50px; } .bfc { overflow:hidden; height:20px; }",
+     "(l)(bfc)"},
+
+    {"float-margins",
+     ".a { height:10px; margin-bottom:20px; }"
+     " .l { float:left; width:40px; height:20px; margin-top:20px; }"
+     " .c { height:10px; margin-top:20px; }",
+     "(a)(l)(c)"},
 
     {"inline-in-the-stack",
      ".a { height:10px; } .i { display:inline-block; width:40px; height:20px; }"
