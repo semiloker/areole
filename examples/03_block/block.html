@@ -115,6 +115,47 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 #percentage-width .a { height: 10px; width: 50%; }
 
 #root-first-child-margin .a { height: 20px; margin-top: 20px; }
+
+/* ------------------------------------------------------------------ inline --
+ * `font-size: 0` on every inline case, and this needs saying.
+ *
+ * In HTML the whitespace between two inline-block elements is a text node, and
+ * a text node on a line takes up a space's width. areole has no such thing --
+ * a box is declared by a function call and there is nothing between two calls
+ * -- so the browser would put four pixels between items that areole puts flush
+ * together, and the corpus would be measuring HTML's source formatting rather
+ * than either engine's line breaking.
+ *
+ * Zeroing the font size on the container makes that space zero wide. The items
+ * set their own size back where they need one.
+ */
+.app.inline { font-size: 0; }
+.app.inline div { font-size: 0; }
+
+#inline-share-a-line .i { display: inline-block; width: 40px; height: 10px; }
+
+#inline-wrap .outer { width: 100px; }
+#inline-wrap .i     { display: inline-block; width: 40px; height: 10px; }
+
+#inline-margins .outer { width: 100px; }
+#inline-margins .i     { display: inline-block; width: 40px; height: 10px; margin-right: 10px; }
+
+#inline-baselines .a { display: inline-block; width: 20px; height: 20px; }
+#inline-baselines .b { display: inline-block; width: 20px; height: 40px; }
+
+#inline-valign .a { display: inline-block; width: 20px; height: 40px; }
+#inline-valign .b { display: inline-block; width: 20px; height: 10px; vertical-align: top; }
+#inline-valign .c { display: inline-block; width: 20px; height: 10px; vertical-align: bottom; }
+
+#inline-align-right .outer { width: 100px; text-align: right; }
+#inline-align-right .i     { display: inline-block; width: 40px; height: 10px; }
+
+#inline-align-center .outer { width: 100px; text-align: center; }
+#inline-align-center .i     { display: inline-block; width: 40px; height: 10px; }
+
+#inline-in-the-stack .a { height: 10px; }
+#inline-in-the-stack .i { display: inline-block; width: 40px; height: 20px; }
+#inline-in-the-stack .c { height: 10px; }
 </style>
 
 <button class="dump" onclick="dump()">Dump every box</button>
@@ -194,6 +235,38 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 <div class="app" id="root-first-child-margin" data-page="root-first-child-margin">
   <div class="a"></div>
 </div>
+
+<h2>inline-share-a-line</h2>
+<div class="app inline" id="inline-share-a-line" data-page="inline-share-a-line"><div
+  class="i"></div><div class="i"></div></div>
+
+<h2>inline-wrap</h2>
+<div class="app inline" id="inline-wrap" data-page="inline-wrap"><div class="outer"><div
+  class="i"></div><div class="i"></div><div class="i"></div></div></div>
+
+<h2>inline-margins</h2>
+<div class="app inline" id="inline-margins" data-page="inline-margins"><div class="outer"><div
+  class="i"></div><div class="i"></div></div></div>
+
+<h2>inline-baselines</h2>
+<div class="app inline" id="inline-baselines" data-page="inline-baselines"><div
+  class="a"></div><div class="b"></div></div>
+
+<h2>inline-valign</h2>
+<div class="app inline" id="inline-valign" data-page="inline-valign"><div class="a"></div><div
+  class="b"></div><div class="c"></div></div>
+
+<h2>inline-align-right</h2>
+<div class="app inline" id="inline-align-right" data-page="inline-align-right"><div
+  class="outer"><div class="i"></div></div></div>
+
+<h2>inline-align-center</h2>
+<div class="app inline" id="inline-align-center" data-page="inline-align-center"><div
+  class="outer"><div class="i"></div></div></div>
+
+<h2>inline-in-the-stack</h2>
+<div class="app inline" id="inline-in-the-stack" data-page="inline-in-the-stack"><div
+  class="a"></div><div class="i"></div><div class="i"></div><div class="c"></div></div>
 
 <script>
 /*

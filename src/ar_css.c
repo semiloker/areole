@@ -409,7 +409,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
-                                          {"overflow", AR_P_OVERFLOW}};
+                                          {"overflow", AR_P_OVERFLOW},
+                                          {"text-align", AR_P_TEXT_ALIGN},
+                                          {"vertical-align", AR_P_VERTICAL_ALIGN}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
 
@@ -457,6 +459,16 @@ typedef struct ar__kw
 static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
                                      {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
+                                     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+
+                                     {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
+                                     {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
+                                     {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+
+                                     {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
+                                     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
+                                     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
+                                     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
 
                                      {"row", AR_P_DIRECTION, AR_DIR_ROW},
                                      {"column", AR_P_DIRECTION, AR_DIR_COLUMN},

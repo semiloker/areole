@@ -236,8 +236,30 @@ typedef void (*ar_block_place_fn)(void *ud, ar_i32 index, ar_i32 y, int real);
 
 /* Walks the stack and returns the content height. `place` may be null, which
    is how the measure pass asks the question without answering it. */
+/*
+ * A run of inline-level siblings, from `first` up to but not including `stop`.
+ *
+ * CSS wraps such a run in an anonymous block box. areole does not make one --
+ * there is no node to make it out of -- so the stack asks the caller how tall
+ * the run is and leaves a gap of that size. An anonymous box has no margins,
+ * which is why the run never collapses with anything around it, and that
+ * happens to be exactly right.
+ */
+typedef ar_i32 (*ar_block_run_fn)(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y);
+
 ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn height,
-                      ar_block_place_fn place, void *ud);
+                      ar_block_place_fn place, ar_block_run_fn run, void *ud);
+
+/* ------------------------------------------------------------------------
+ * Inline formatting -- ar_layout_inline.c
+ * ------------------------------------------------------------------------ */
+int    ar_is_inline_level(const ar_node *n);
+ar_i32 ar_inline_baseline(const ar_node *n);
+
+/* Lays a run of inline-level siblings into line boxes and returns how tall
+   they came to. Sizes must already be resolved. */
+ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_i32 top,
+                     ar_i32 inner_w, ar_i32 align);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 

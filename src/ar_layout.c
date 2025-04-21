@@ -147,6 +147,40 @@ static ar_i32 ar__fit_height_of(void *ud, ar_i32 index)
     return ar__intrinsic(&nodes[index], 1);
 }
 
+/*
+ * How tall a run of inline items wants to be, which is the max-content answer:
+ * everything on one line, so as tall as the tallest item plus its margins.
+ *
+ * It ignores baselines, and it is allowed to: intrinsic sizing asks how big
+ * something wants to be, and the placement pass recomputes the real height
+ * once it knows the width the run actually got. Working the baselines out
+ * twice would cost more than it could ever be right about.
+ */
+static ar_i32 ar__fit_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
+{
+    const ar_node *nodes = (const ar_node *)ud;
+    ar_i32         tallest = 0;
+    ar_i32         c;
+
+    (void)y;
+    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
+    {
+        const ar_node *ch = &nodes[c];
+        ar_i32         h;
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        h = ar__intrinsic(ch, 1) + ch->style.v[AR_P_MARGIN_TOP] + ch->style.v[AR_P_MARGIN_BOTTOM];
+        if (h > tallest)
+        {
+            tallest = h;
+        }
+    }
+    return tallest;
+}
+
 static void ar__measure_block(ar_node *nodes, ar_i32 i)
 {
     ar_node *n = &nodes[i];
@@ -182,12 +216,12 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
            does -- there, bare text beside a block sibling gets an anonymous
            block of its own. This is the same arrangement without the extra
            box, and is where anonymous boxes will go when they arrive. */
-        n->fit[1] = th + ar_block_stack(n, nodes, ar__fit_height_of, 0, nodes) +
+        n->fit[1] = th + ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, nodes) +
                     n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     }
     else
     {
-        n->fit[1] = ar_block_stack(n, nodes, ar__fit_height_of, 0, nodes) +
+        n->fit[1] = ar_block_stack(n, nodes, ar__fit_height_of, 0, ar__fit_run, nodes) +
                     n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     }
 
@@ -363,13 +397,81 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wra
    starts, because ar_block_stack works in offsets from zero. */
 typedef struct ar__stack_ud
 {
-    ar_node *nodes;
-    ar_i32   top;
+    ar_node   *nodes;
+    ar_i32     top;
+    ar_i32     left;
+    ar_i32     inner_w;
+    ar_i32     align;
+    ar_wrap_fn wrap;
+    void      *wrap_ud;
 } ar__stack_ud;
 
 static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
 {
     return ((ar__stack_ud *)ud)->nodes[index].rect.h;
+}
+
+/*
+ * A run of inline items: give each one a size, then let the line breaker
+ * arrange them.
+ *
+ * An inline-level box shrinks to fit rather than filling its container, which
+ * is the other half of what makes it inline-level -- a block child of the same
+ * markup would take the whole width and force the next item onto a new line.
+ */
+static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
+{
+    ar__stack_ud *su = (ar__stack_ud *)ud;
+    ar_node      *nodes = su->nodes;
+    ar_i32        c;
+
+    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+
+        switch (ch->style.unit[AR_P_WIDTH])
+        {
+        case AR_UNIT_PX:
+            ch->rect.w = ch->style.v[AR_P_WIDTH];
+            break;
+        case AR_UNIT_PCT:
+            ch->rect.w = su->inner_w * ch->style.v[AR_P_WIDTH] / 100;
+            break;
+        default:
+            ch->rect.w = ch->fit[0];
+            if (ch->rect.w > su->inner_w)
+            {
+                ch->rect.w = su->inner_w;
+            }
+            break;
+        }
+        ch->rect.w =
+            ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
+        if (ch->rect.w < 0)
+        {
+            ch->rect.w = 0;
+        }
+
+        if (ch->style.unit[AR_P_HEIGHT] == AR_UNIT_PX)
+        {
+            ch->rect.h = ch->style.v[AR_P_HEIGHT];
+        }
+        else
+        {
+            ch->rect.h = ch->fit[1];
+        }
+        ch->rect.h =
+            ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
+
+        ar__wrap_height(ch, 1, 0, su->wrap, su->wrap_ud);
+    }
+
+    return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align);
 }
 
 static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
@@ -485,7 +587,13 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
 
         su.nodes = nodes;
         su.top = top;
-        cursor = ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, &su);
+        su.left = left;
+        su.inner_w = inner_w;
+        su.align = n->style.v[AR_P_TEXT_ALIGN];
+        su.wrap = wrap;
+        su.wrap_ud = ud;
+        cursor =
+            ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, ar__place_run, &su);
     }
 
     /* An automatic height is whatever that came to. It was already measured
