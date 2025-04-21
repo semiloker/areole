@@ -411,7 +411,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"overflow", AR_P_OVERFLOW},
                                           {"text-align", AR_P_TEXT_ALIGN},
-                                          {"vertical-align", AR_P_VERTICAL_ALIGN}};
+                                          {"vertical-align", AR_P_VERTICAL_ALIGN},
+                                          {"float", AR_P_FLOAT},
+                                          {"clear", AR_P_CLEAR}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
 
@@ -464,6 +466,12 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
                                      {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
                                      {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+
+                                     {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
+                                     {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
+                                     {"left", AR_P_CLEAR, AR_CLEAR_LEFT},
+                                     {"right", AR_P_CLEAR, AR_CLEAR_RIGHT},
+                                     {"both", AR_P_CLEAR, AR_CLEAR_BOTH},
 
                                      {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
                                      {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},

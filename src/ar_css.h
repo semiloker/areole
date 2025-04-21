@@ -53,6 +53,8 @@ typedef enum ar_prop
     AR_P_OVERFLOW,
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
+    AR_P_FLOAT,
+    AR_P_CLEAR,
 
     AR_P_COUNT
 } ar_prop;
@@ -105,6 +107,23 @@ enum
 
 /* Where an inline-level box sits in its line box. `baseline` is the default,
    and the only one that needs the line to have a baseline at all. */
+enum
+{
+    AR_FLOAT_NONE = 0,
+    AR_FLOAT_LEFT,
+    AR_FLOAT_RIGHT
+};
+
+/* Bits, because `clear: both` is the two of them and asking about one side at
+   a time is what the float list wants. */
+enum
+{
+    AR_CLEAR_NONE = 0,
+    AR_CLEAR_LEFT = 1,
+    AR_CLEAR_RIGHT = 2,
+    AR_CLEAR_BOTH = 3
+};
+
 enum
 {
     AR_VALIGN_BASELINE = 0,

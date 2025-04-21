@@ -4545,6 +4545,252 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
 }
 
 /* ------------------------------------------------------------------------
+ * Floats
+ *
+ * The rule to keep straight: a float shortens *line boxes*, not block boxes.
+ * A paragraph beside a float still spans its container; only the lines inside
+ * it are narrowed. Getting that backwards looks almost right, which is what
+ * makes it worth a test of its own.
+ * ------------------------------------------------------------------------ */
+static void test_a_float_goes_to_its_side(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:40px; height:20px; }"
+                 ".r { display:block; float:right; width:30px; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 40, 20), "float: left goes to the left edge");
+    CHECK(ar__box_is(2, 170, 0, 30, 20), "float: right goes to the right edge");
+}
+
+/* Two left floats sit beside each other until they run out of room. */
+static void test_floats_stack_sideways_then_drop(void)
+{
+    ar_surface s = ar__ui_surface(100, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:40px; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).x == 0 && ar__box(1).y == 0, "float: the first is at the edge");
+    CHECK(ar__box(2).x == 40 && ar__box(2).y == 0, "float: the second sits beside it");
+    CHECK(ar__box(3).x == 0 && ar__box(3).y == 20, "float: the third drops below both");
+}
+
+/* A block box beside a float keeps its full width. Only its lines are cut. */
+static void test_a_float_does_not_narrow_a_block_box(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:40px; height:20px; }"
+                 ".p { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.p");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 0, 0, 200, 10),
+          "float: the block beside it starts at the container edge and spans it");
+}
+
+/* But line boxes inside that block are narrowed, and start after the float. */
+static void test_a_float_narrows_the_lines_beside_it(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:60px; height:20px; }"
+                 ".i { display:inline-block; width:80px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The line beside the float has 140 to give, so one item fits and the
+       second drops. Below the float the full 200 is back. */
+    CHECK(ar__box(2).x == 60, "float: the first line starts after the float");
+    CHECK(ar__box(3).x == 60 && ar__box(3).y == 10,
+          "float: the second wraps but is still beside it");
+}
+
+/* A float takes no room in the flow: the box after it starts where it would
+   have started anyway. */
+static void test_a_float_is_out_of_the_flow(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".l { display:block; float:left; width:40px; height:50px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).y == 10, "float: the block after it ignores its height entirely");
+}
+
+/* clear moves a box below the floats on the sides it names. */
+static void test_clear_moves_below_the_float(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:40px; height:50px; }"
+                 ".r { display:block; float:right; width:40px; height:80px; }"
+                 ".cl { display:block; height:10px; clear:left; }"
+                 ".cb { display:block; height:10px; clear:both; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.cl");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.cb");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).y == 50, "clear: left clears the left float only");
+    CHECK(ar__box(4).y == 80, "clear: both clears the taller right one too");
+}
+
+/*
+ * A formatting context grows to hold its own floats; a plain block box does
+ * not. A float hanging out of the bottom of a box is what `clearfix` existed
+ * to work around for fifteen years, and it is correct behaviour.
+ */
+static void test_only_a_formatting_context_contains_its_floats(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".plain { display:block; }"
+                 ".bfc { display:block; overflow:hidden; }"
+                 ".l { display:block; float:left; width:40px; height:50px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.plain");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.bfc");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 0, "float: a plain block does not grow to hold its float");
+    CHECK(ar__box(3).h == 50, "float: one that establishes a context does");
+}
+
+/*
+ * A box that establishes a formatting context does not overlap a float. It
+ * moves aside and, if its width was automatic, narrows to what is left.
+ *
+ * This is the difference that makes `overflow: hidden` beside a float sit next
+ * to it rather than under it -- the most-used float idiom there is -- while an
+ * ordinary block spans the container and lets only its lines be narrowed.
+ */
+static void test_a_formatting_context_avoids_a_float(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".l { display:block; float:left; width:40px; height:50px; }"
+                 ".bfc { display:block; overflow:hidden; height:20px; }"
+                 ".plain { display:block; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.bfc");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.plain");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 40, 0, 160, 20), "float: a formatting context moves aside and narrows");
+    CHECK(ar__box(3).x == 0 && ar__box(3).w == 200,
+          "float: an ordinary block still spans the container");
+}
+
+/* A float's margins never collapse with anything, because they meet nothing. */
+static void test_a_floats_margins_do_not_collapse(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; margin-bottom:20px; }"
+                 ".l { display:block; float:left; width:40px; height:20px; margin-top:20px; }"
+                 ".b { display:block; height:10px; margin-top:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.l");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The two blocks are still adjacent to each other despite the float
+       between them, so their margins collapse to 20 and .b sits at 30. */
+    CHECK(ar__box(3).y == 30, "float: the blocks either side of it stay adjacent");
+    CHECK(ar__box(2).y == 50, "float: and its own margin is added, not collapsed");
+}
+
+/* ------------------------------------------------------------------------
  * Inline formatting
  *
  * Items are atomic -- inline-block, not inline -- so none of these split a box
@@ -5842,6 +6088,15 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_a_float_goes_to_its_side();
+    test_floats_stack_sideways_then_drop();
+    test_a_float_does_not_narrow_a_block_box();
+    test_a_float_narrows_the_lines_beside_it();
+    test_a_float_is_out_of_the_flow();
+    test_clear_moves_below_the_float();
+    test_only_a_formatting_context_contains_its_floats();
+    test_a_formatting_context_avoids_a_float();
+    test_a_floats_margins_do_not_collapse();
     test_inline_items_share_a_line();
     test_inline_wraps_to_a_new_line();
     test_inline_margins_take_room_on_the_line();
