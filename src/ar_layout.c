@@ -228,6 +228,103 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
     n->fit[0] = widest + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
 }
 
+/*
+ * The min-content width a container needs, from its children.
+ *
+ * A block stacks its children, so it needs the widest of them. A flex row puts
+ * them side by side, so it needs their sum; a flex column stacks them, so the
+ * widest again. An inline run wraps, so its children can be taken one at a
+ * time and the widest wins.
+ *
+ * A box's own text counts too, since text and children stack here.
+ */
+static void ar__min_content(ar_node *nodes, ar_i32 i)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   sum = 0;
+    ar_i32   widest = n->min_w;
+    ar_i32   c;
+    int      side_by_side;
+
+    if (ar__hidden(n))
+    {
+        n->min_w = 0;
+        return;
+    }
+
+    side_by_side = !ar_is_block(n) && ar__main_axis(n) == 0;
+
+    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+        ar_i32   w;
+
+        if (ar__hidden(ch) || ar_is_floated(ch))
+        {
+            continue;
+        }
+        w = ch->min_w + ch->style.v[AR_P_MARGIN_LEFT] + ch->style.v[AR_P_MARGIN_RIGHT];
+
+        /* An inline item wraps to the next line rather than forcing the
+           container wider, so a run of them needs only its widest member. */
+        if (side_by_side && !ar_is_inline_level(ch))
+        {
+            sum += w;
+        }
+        else if (w > widest)
+        {
+            widest = w;
+        }
+    }
+
+    if (sum > widest)
+    {
+        widest = sum;
+    }
+    n->min_w = widest + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
+
+    /*
+     * A box told how wide to be is that wide, whatever is in it. Its content
+     * may overflow, and overflowing is not the same as being narrower -- so a
+     * stated width replaces the answer rather than raising it.
+     *
+     * A percentage does not, because it is not a width until the containing
+     * block has one, and intrinsic sizing runs before that is known.
+     */
+    if (n->style.unit[AR_P_WIDTH] == AR_UNIT_PX)
+    {
+        n->min_w = n->style.v[AR_P_WIDTH];
+    }
+}
+
+/*
+ * A stated width, once the three intrinsic keywords are allowed to be one.
+ *
+ * `available` is what the containing block has left. fit-content is the only
+ * one that uses it, and is the only one of the three anybody writes on purpose.
+ */
+static int ar__intrinsic_width(const ar_node *n, ar_i32 available, ar_i32 *out)
+{
+    switch (n->style.unit[AR_P_WIDTH])
+    {
+    case AR_UNIT_MIN_CONTENT:
+        *out = n->min_w;
+        return 1;
+    case AR_UNIT_MAX_CONTENT:
+        *out = n->fit[0];
+        return 1;
+    case AR_UNIT_FIT_CONTENT:
+        *out = n->fit[0] < available ? n->fit[0] : available;
+        if (*out < n->min_w)
+        {
+            *out = n->min_w;
+        }
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* ------------------------------------------------------------------------
  * Pass one, upwards: what each box would like to be
  * ------------------------------------------------------------------------ */
@@ -249,9 +346,10 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
             continue;
         }
 
-        /* Bottom-up, so every child's collapsed margins are settled before
-           its parent asks for them. */
+        /* Bottom-up, so every child's collapsed margins and min-content
+           widths are settled before its parent asks for them. */
         ar_block_margins(n, nodes);
+        ar__min_content(nodes, i);
 
         if (ar_is_block(n))
         {
@@ -319,6 +417,11 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
 {
     ar_prop p = ar__size_prop(axis);
     ar_i32  v;
+
+    if (axis == 0 && ar__intrinsic_width(ch, inner, &v))
+    {
+        return ar__clamp(v, ch->style.v[ar__min_prop(axis)], ch->style.v[ar__max_prop(axis)]);
+    }
 
     switch (ch->style.unit[p])
     {
@@ -411,21 +514,26 @@ typedef struct ar__stack_ud
    shrink-to-fit rather than "fill the container". */
 static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_wrap_fn wrap, void *wrap_ud)
 {
-    switch (ch->style.unit[AR_P_WIDTH])
+    if (!ar__intrinsic_width(ch, inner_w, &ch->rect.w))
     {
-    case AR_UNIT_PX:
-        ch->rect.w = ch->style.v[AR_P_WIDTH];
-        break;
-    case AR_UNIT_PCT:
-        ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
-        break;
-    default:
-        ch->rect.w = ch->fit[0];
-        if (ch->rect.w > inner_w)
+        switch (ch->style.unit[AR_P_WIDTH])
         {
-            ch->rect.w = inner_w;
+        case AR_UNIT_PX:
+            ch->rect.w = ch->style.v[AR_P_WIDTH];
+            break;
+        case AR_UNIT_PCT:
+            ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+            break;
+        default:
+            /* Shrink to fit, which is fit-content by another name -- an
+               inline-level or floated box has wanted this all along. */
+            ch->rect.w = ch->fit[0] < inner_w ? ch->fit[0] : inner_w;
+            if (ch->rect.w < ch->min_w)
+            {
+                ch->rect.w = ch->min_w;
+            }
+            break;
         }
-        break;
     }
     ch->rect.w = ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
     if (ch->rect.w < 0)
@@ -591,17 +699,20 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
          * per line already takes it all -- so it is treated as automatic
          * rather than refused.
          */
-        switch (ch->style.unit[AR_P_WIDTH])
+        if (!ar__intrinsic_width(ch, inner_w - ml - mr, &ch->rect.w))
         {
-        case AR_UNIT_PX:
-            ch->rect.w = ch->style.v[AR_P_WIDTH];
-            break;
-        case AR_UNIT_PCT:
-            ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
-            break;
-        default:
-            ch->rect.w = inner_w - ml - mr;
-            break;
+            switch (ch->style.unit[AR_P_WIDTH])
+            {
+            case AR_UNIT_PX:
+                ch->rect.w = ch->style.v[AR_P_WIDTH];
+                break;
+            case AR_UNIT_PCT:
+                ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+                break;
+            default:
+                ch->rect.w = inner_w - ml - mr;
+                break;
+            }
         }
         ch->rect.w =
             ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);

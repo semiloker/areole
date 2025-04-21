@@ -683,6 +683,44 @@ static ar_i32 ar__wrap_chain(void *ud, const char *t, ar_i32 from, ar_i32 to)
     return ar__measure_range_chain(t, from, to, w->chain, w->ppem, w->gc, w->sc);
 }
 
+/*
+ * The widest run between two break opportunities.
+ *
+ * The same UAX #14 walk as the wrapper, asking a different question: not
+ * "where does the line end" but "what is the longest piece that cannot be
+ * broken". Trailing spaces are left in the measurement, which makes this a
+ * pixel or two generous on some fonts and never short -- and short is the
+ * direction that would let text overflow a box sized from it.
+ */
+ar_i32 ar_text_min_width_by(const char *utf8, ar_range_fn measure, void *ud)
+{
+    ar_i32 at = 0;
+    ar_i32 widest = 0;
+
+    if (!utf8 || !measure)
+    {
+        return 0;
+    }
+    for (;;)
+    {
+        ar_i32 kind;
+        ar_i32 next = ar_break_next(utf8, at, &kind);
+        ar_i32 w;
+
+        if (next <= at)
+        {
+            break;
+        }
+        w = measure(ud, utf8, at, next);
+        if (w > widest)
+        {
+            widest = w;
+        }
+        at = next;
+    }
+    return widest;
+}
+
 ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_w,
                     ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *starts, ar_i32 max_lines)
 {
@@ -698,6 +736,23 @@ ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_
     w.gc = gc;
     w.sc = sc;
     return ar_text_wrap_by(utf8, ar__wrap_face, &w, max_w, starts, max_lines);
+}
+
+ar_i32 ar_text_min_width_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
+                               ar_glyph_cache *gc, ar_glyph_scratch *sc)
+{
+    ar__wrap_ud w;
+
+    if (!ch || ch->count <= 0)
+    {
+        return 0;
+    }
+    w.face = 0;
+    w.chain = ch;
+    w.ppem = ppem;
+    w.gc = gc;
+    w.sc = sc;
+    return ar_text_min_width_by(utf8, ar__wrap_chain, &w);
 }
 
 ar_i32 ar_text_wrap_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem, ar_i32 max_w,

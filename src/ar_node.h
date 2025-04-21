@@ -76,9 +76,20 @@ typedef struct ar_node
     ar_i32 mt;
     ar_i32 mb;
 
-    ar_i32  fit[2]; /* intrinsic size, from pass one */
-    ar_rect rect;   /* final, absolute */
-    ar_rect clip;   /* narrowed by every clipping ancestor */
+    ar_i32 fit[2]; /* max-content size, from pass one */
+
+    /*
+     * The min-content width: the narrowest this box can be without its
+     * contents spilling out of it. For text that is the widest single word,
+     * because a word does not break; for a container it is whatever its widest
+     * child needs.
+     *
+     * Only the width, because only the width is ever asked. A min-content
+     * height would mean fragmenting, and nothing here fragments yet.
+     */
+    ar_i32  min_w;
+    ar_rect rect; /* final, absolute */
+    ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
 
 /* ------------------------------------------------------------------------
@@ -108,6 +119,11 @@ typedef struct ar_slot
        byte per character against a hash and a probe per character. */
     ar_u32 text_key;
     ar_i32 text_px;
+
+    /* The min-content width, remembered under the same key. Measuring it costs
+       a glyph lookup per character just as the full width does, and a test
+       caught it being paid every frame. */
+    ar_i32 text_min_px;
     ar_u32 seen; /* frame this box last appeared in the tree */
 } ar_slot;
 

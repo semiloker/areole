@@ -75,7 +75,27 @@ typedef enum ar_unit
        they say where the value comes from rather than what it is, and the
        decision is taken when the parent is known, which is after resolution. */
     AR_UNIT_INHERIT,
-    AR_UNIT_INITIAL
+    AR_UNIT_INITIAL,
+
+    /*
+     * The intrinsic sizes.
+     *
+     * min-content is the narrowest a box can be without its contents
+     * overflowing: for text, the widest word, since a word does not break.
+     * max-content is the widest it would ever want to be: for text, the whole
+     * string with no breaking at all.
+     *
+     * fit-content is the useful one, and is neither -- it is max-content
+     * clamped to the space available, and then never narrower than
+     * min-content. "As wide as it wants, but no wider than there is room for,
+     * and never so narrow that it spills."
+     *
+     * They are units rather than properties because they are answers to
+     * `width`, and because there were two property slots left.
+     */
+    AR_UNIT_MIN_CONTENT,
+    AR_UNIT_MAX_CONTENT,
+    AR_UNIT_FIT_CONTENT
 } ar_unit;
 
 /* Keyword values, all in one space so the parser can hand back one integer. */
