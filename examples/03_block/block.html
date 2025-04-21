@@ -194,6 +194,26 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 #float-margins .l { float: left; width: 40px; height: 20px; margin-top: 20px; }
 #float-margins .c { height: 10px; margin-top: 20px; }
 
+/* -------------------------------------------------------------- intrinsic -- */
+#min-content-stack .outer { width: min-content; }
+#min-content-stack .a     { width: 30px; height: 10px; }
+#min-content-stack .b     { width: 50px; height: 10px; }
+
+#max-content-stack .outer { width: max-content; }
+#max-content-stack .a     { width: 30px; height: 10px; }
+#max-content-stack .b     { width: 50px; height: 10px; }
+
+#fit-content-clamped-up .narrow { width: 20px; }
+#fit-content-clamped-up .outer  { width: fit-content; }
+#fit-content-clamped-up .a      { width: 50px; height: 10px; }
+
+#fit-content-in-between .narrow { width: 80px; }
+#fit-content-in-between .outer  { width: fit-content; }
+#fit-content-in-between .a      { width: 50px; height: 10px; }
+
+#min-content-padding .outer { width: min-content; padding: 0 7px; }
+#min-content-padding .a     { width: 30px; height: 10px; }
+
 #inline-in-the-stack .a { height: 10px; }
 #inline-in-the-stack .i { display: inline-block; width: 40px; height: 20px; }
 #inline-in-the-stack .c { height: 10px; }
@@ -304,6 +324,26 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 <h2>inline-align-center</h2>
 <div class="app inline" id="inline-align-center" data-page="inline-align-center"><div
   class="outer"><div class="i"></div></div></div>
+
+<h2>min-content-stack</h2>
+<div class="app" id="min-content-stack" data-page="min-content-stack"><div class="outer"><div
+  class="a"></div><div class="b"></div></div></div>
+
+<h2>max-content-stack</h2>
+<div class="app" id="max-content-stack" data-page="max-content-stack"><div class="outer"><div
+  class="a"></div><div class="b"></div></div></div>
+
+<h2>fit-content-clamped-up</h2>
+<div class="app" id="fit-content-clamped-up" data-page="fit-content-clamped-up"><div
+  class="narrow"><div class="outer"><div class="a"></div></div></div></div>
+
+<h2>fit-content-in-between</h2>
+<div class="app" id="fit-content-in-between" data-page="fit-content-in-between"><div
+  class="narrow"><div class="outer"><div class="a"></div></div></div></div>
+
+<h2>min-content-padding</h2>
+<div class="app" id="min-content-padding" data-page="min-content-padding"><div class="outer"><div
+  class="a"></div></div></div>
 
 <h2>inline-in-the-stack</h2>
 <div class="app inline" id="inline-in-the-stack" data-page="inline-in-the-stack"><div

@@ -69,6 +69,7 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
             s->digest = 0;
             s->seen = 0;
             s->text_key = 0;
+            s->text_min_px = 0;
             return s;
         }
         /* A box that has not been declared for two frames is gone. Reusing
@@ -89,6 +90,7 @@ ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
         stale->digest = 0;
         stale->seen = 0;
         stale->text_key = 0;
+        stale->text_min_px = 0;
         return stale;
     }
     return 0; /* the table is genuinely full; the box loses its hover, not its pixels */
@@ -729,6 +731,62 @@ static void ar__text_metrics(ar_ctx *c, ar_node *n)
     }
 }
 
+/*
+ * The min-content width of a box's own text: its widest unbreakable run.
+ *
+ * Measured once per box in the same place its max-content width already was,
+ * so intrinsic sizing stays linear in the box count. Doing it lazily, per
+ * query, is the classic route to a layout engine that is accidentally
+ * quadratic on a large table.
+ */
+static ar_i32 ar__min_width_uncached(ar_ctx *c, const ar_node *n);
+
+static ar_i32 ar__min_width(ar_ctx *c, const ar_node *n)
+{
+    ar_slot *slot;
+    ar_u32   key;
+    ar_i32   w;
+
+    if (!n->text || !n->text[0])
+    {
+        return 0;
+    }
+
+    key = ar__text_key(n->text, n->style.v[AR_P_FONT_SIZE]);
+    slot = ar_ctx_slot(c, n->key);
+    if (slot && slot->text_key == key && slot->text_min_px > 0)
+    {
+        return slot->text_min_px;
+    }
+
+    w = ar__min_width_uncached(c, n);
+    if (slot)
+    {
+        /* The full width is memoised under the same key, and stores it first;
+           this only ever adds to an entry that is already current. */
+        slot->text_min_px = w;
+    }
+    return w;
+}
+
+static ar_i32 ar__min_width_uncached(ar_ctx *c, const ar_node *n)
+{
+    if (c->have_face)
+    {
+        ar_i32 w = ar_text_min_width_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE],
+                                           &c->glyphs, &c->glyph_scratch);
+
+        return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+    }
+    {
+        ar__bmp_ud ud;
+
+        ud.scale = n->scale;
+        return (ar_text_min_width_by(n->text, ar__wrap_bitmap, &ud) + AR_ONE_PIXEL - 1) /
+               AR_ONE_PIXEL;
+    }
+}
+
 /* What ar_layout_solve is handed. */
 static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
 {
@@ -968,6 +1026,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     }
     ar__text_metrics(c, n);
     n->text_w = ar__measure(c, n);
+    n->min_w = ar__min_width(c, n);
 
     if (parent >= 0)
     {

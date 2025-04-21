@@ -217,6 +217,19 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
  */
 typedef ar_i32 (*ar_range_fn)(void *ud, const char *text, ar_i32 from, ar_i32 to);
 
+/*
+ * The widest run between two break opportunities, in 1/AR_ONE_PIXEL units.
+ *
+ * The min-content width of a piece of text: it is what the text needs in order
+ * not to overflow, because a run with no break opportunity inside it cannot be
+ * made any narrower.
+ */
+ar_i32 ar_text_min_width_by(const char *utf8, ar_range_fn measure, void *ud);
+
+/* The same, measured through a fallback chain. */
+ar_i32 ar_text_min_width_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
+                               ar_glyph_cache *gc, ar_glyph_scratch *sc);
+
 /* The UAX #14 walk, with the measurement left to the caller. `max_w` is in
    whole pixels; `measure` returns 1/AR_ONE_PIXEL units. */
 ar_i32 ar_text_wrap_by(const char *utf8, ar_range_fn measure, void *ud, ar_i32 max_w,

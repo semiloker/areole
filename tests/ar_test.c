@@ -4545,6 +4545,146 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
 }
 
 /* ------------------------------------------------------------------------
+ * Intrinsic sizing
+ *
+ * min-content is the narrowest a box can be without spilling; max-content the
+ * widest it would ever want. fit-content is max-content clamped to the room
+ * available and then never narrower than min-content, and is the only one of
+ * the three anybody writes on purpose.
+ * ------------------------------------------------------------------------ */
+
+/* The widest unbreakable run, which for text is its longest word. */
+static void test_min_content_of_text_is_its_longest_word(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".m { display:block; width:min-content; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.m", "a bb elephantine cc");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == ar_text_width("elephantine ", 1),
+          "min-content: as wide as the longest word, and no wider");
+}
+
+/* max-content is the whole string with nothing broken. */
+static void test_max_content_is_the_unbroken_string(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".m { display:block; width:max-content; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.m", "a bb elephantine cc");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == ar_text_width("a bb elephantine cc", 1),
+          "max-content: the whole string, unbroken");
+}
+
+/*
+ * fit-content takes the room it is given, up to what it wants.
+ *
+ * Three containers, one narrower than min-content, one between the two, one
+ * wider than max-content -- which is the whole behaviour in one test.
+ */
+static void test_fit_content_is_clamped_both_ways(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     minw, maxw;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".narrow { display:block; width:20px; }"
+                 ".middle { display:block; width:90px; }"
+                 ".wide { display:block; width:390px; }"
+                 ".f { display:block; width:fit-content; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.narrow");
+    ar_text(g_ui, "div.f", "a bb elephantine cc");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.middle");
+    ar_text(g_ui, "div.f", "a bb elephantine cc");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.wide");
+    ar_text(g_ui, "div.f", "a bb elephantine cc");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    minw = ar_text_width("elephantine ", 1);
+    maxw = ar_text_width("a bb elephantine cc", 1);
+
+    /* The middle container has to sit between the two for the middle case to
+       mean anything, so the assumption is checked rather than assumed. */
+    CHECK(minw < 90 && 90 < maxw, "fit-content: the middle container is genuinely in between");
+    CHECK(ar__box(2).w == minw, "fit-content: never narrower than min-content");
+    CHECK(ar__box(4).w == 90, "fit-content: takes the room available in between");
+    CHECK(ar__box(6).w == maxw, "fit-content: and never wider than max-content");
+}
+
+/* A container's min-content comes from its children: the widest, when they
+   stack, and the sum when they sit side by side. */
+static void test_min_content_of_a_container(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".stack { display:block; width:min-content; }"
+                 ".row { display:flex; flex-direction:row; width:min-content; }"
+                 ".a { display:block; width:30px; height:10px; }"
+                 ".b { display:block; width:50px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.stack");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 50, "min-content: a block stack needs its widest child");
+    CHECK(ar__box(4).w == 80, "min-content: a flex row needs the sum of them");
+}
+
+/* Padding is part of the box, so an intrinsic width includes it. */
+static void test_intrinsic_width_includes_padding(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".m { display:block; width:min-content; padding:0 7px; }"
+                 ".a { display:block; width:30px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.m");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 44, "min-content: the padding is part of the box");
+}
+
+/* ------------------------------------------------------------------------
  * Floats
  *
  * The rule to keep straight: a float shortens *line boxes*, not block boxes.
@@ -6088,6 +6228,11 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_min_content_of_text_is_its_longest_word();
+    test_max_content_is_the_unbroken_string();
+    test_fit_content_is_clamped_both_ways();
+    test_min_content_of_a_container();
+    test_intrinsic_width_includes_padding();
     test_a_float_goes_to_its_side();
     test_floats_stack_sideways_then_drop();
     test_a_float_does_not_narrow_a_block_box();

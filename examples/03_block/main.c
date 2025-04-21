@@ -45,7 +45,8 @@ static const char *SHEET_BASE = "#root { display:block; }"
                                 ".i { display:inline-block; }"
                                 ".l { display:block; }"
                                 ".r { display:block; }"
-                                ".bfc { display:block; }";
+                                ".bfc { display:block; }"
+                                ".narrow { display:block; }";
 
 struct block_case
 {
@@ -188,6 +189,33 @@ static const struct block_case CASES[] = {
      " .l { float:left; width:40px; height:20px; margin-top:20px; }"
      " .c { height:10px; margin-top:20px; }",
      "(a)(l)(c)"},
+
+    /* ------------------------------------------------------------------
+     * Intrinsic sizing. No text: the corpus compares geometry, and two
+     * rasterizers never agree on a string's width to the pixel.
+     * ------------------------------------------------------------------ */
+    {"min-content-stack",
+     ".outer { width:min-content; } .a { width:30px; height:10px; }"
+     " .b { width:50px; height:10px; }",
+     "(outer(a)(b))"},
+
+    {"max-content-stack",
+     ".outer { width:max-content; } .a { width:30px; height:10px; }"
+     " .b { width:50px; height:10px; }",
+     "(outer(a)(b))"},
+
+    {"fit-content-clamped-up",
+     ".narrow { width:20px; } .outer { width:fit-content; }"
+     " .a { width:50px; height:10px; }",
+     "(narrow(outer(a)))"},
+
+    {"fit-content-in-between",
+     ".narrow { width:80px; } .outer { width:fit-content; }"
+     " .a { width:50px; height:10px; }",
+     "(narrow(outer(a)))"},
+
+    {"min-content-padding",
+     ".outer { width:min-content; padding:0 7px; } .a { width:30px; height:10px; }", "(outer(a))"},
 
     {"inline-in-the-stack",
      ".a { height:10px; } .i { display:inline-block; width:40px; height:20px; }"

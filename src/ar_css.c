@@ -611,6 +611,24 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             out.ok = 1;
             return out;
         }
+        if (ar__same(name, len, "min-content"))
+        {
+            out.unit = AR_UNIT_MIN_CONTENT;
+            out.ok = 1;
+            return out;
+        }
+        if (ar__same(name, len, "max-content"))
+        {
+            out.unit = AR_UNIT_MAX_CONTENT;
+            out.ok = 1;
+            return out;
+        }
+        if (ar__same(name, len, "fit-content"))
+        {
+            out.unit = AR_UNIT_FIT_CONTENT;
+            out.ok = 1;
+            return out;
+        }
         /* Not CSS, and deliberately so. "grow" says what flex-grow:1 does
            without dragging in basis, shrink and the rest of the algebra. */
         if (ar__same(name, len, "grow"))
