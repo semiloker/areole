@@ -462,6 +462,7 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
                                      {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
                                      {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+                                     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
 
                                      {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
                                      {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},

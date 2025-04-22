@@ -25,6 +25,20 @@
  * precedes its children. That single property is what lets both layout passes
  * be plain loops with no recursion and no explicit stack.
  * ------------------------------------------------------------------------ */
+/* ------------------------------------------------------------------------
+ * Fragments
+ *
+ * One piece of an inline box, on one line. A box that fits on a single line
+ * has none of these; a box the line breaker cut has one per line it touches,
+ * each carrying the byte range of the text that landed there.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_frag
+{
+    ar_rect rect;
+    ar_i32  node;
+    ar_i32  from, to; /* byte range of the node's text on this fragment */
+} ar_frag;
+
 typedef struct ar_node
 {
     ar_i32 parent;
@@ -87,7 +101,19 @@ typedef struct ar_node
      * Only the width, because only the width is ever asked. A min-content
      * height would mean fragmenting, and nothing here fragments yet.
      */
-    ar_i32  min_w;
+    ar_i32 min_w;
+
+    /*
+     * Where this box's fragments live, when it has more than one rectangle.
+     *
+     * Zero count means the box is its own single fragment and `rect` is all
+     * there is, which is every box that is not a split inline. When there are
+     * fragments, `rect` is their union -- so hit testing, damage tracking and
+     * anything else that wants one rectangle for a box still gets a truthful
+     * one without knowing fragments exist.
+     */
+    ar_i32  frag_first;
+    ar_i32  frag_count;
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
@@ -163,6 +189,14 @@ struct ar_ctx
     ar_slot *slots;
     ar_i32   slot_cap;
 
+    /* Fragments, from the same end of the arena as the tree and released with
+       it. Sized against the box budget rather than guessed at: a paragraph of
+       inline runs makes a few per box, and a tree with no split inlines uses
+       none of them. */
+    ar_frag *frags;
+    ar_i32   frag_cap;
+    ar_i32   frag_count;
+
     ar_i32 stack[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
@@ -220,7 +254,36 @@ struct ar_ctx
  */
 typedef ar_i32 (*ar_wrap_fn)(void *ud, const ar_node *n, ar_i32 max_w);
 
-void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn wrap, void *ud);
+/*
+ * The width of text[from..to) for this box, in whole pixels.
+ *
+ * The line breaker needs to measure pieces of a string without copying them
+ * out, and it has no business knowing what a font is -- so it is handed this,
+ * the same way the wrapper is handed ar_wrap_fn.
+ */
+typedef ar_i32 (*ar_text_range_fn)(void *ud, const ar_node *n, ar_i32 from, ar_i32 to);
+
+/*
+ * Everything the solver is lent for one pass.
+ *
+ * Grouped rather than passed one at a time because it grew from two arguments
+ * to five, and a struct that says what each is for reads better at the call
+ * site than five positional arguments do.
+ */
+typedef struct ar_layout_env
+{
+    ar_wrap_fn       wrap;
+    ar_text_range_fn measure;
+    void            *ud;
+
+    /* Somewhere to put fragments. May be null, in which case inline boxes are
+       not split -- which is what every caller before fragmentation got. */
+    ar_frag *frags;
+    ar_i32   frag_cap;
+    ar_i32   frag_used;
+} ar_layout_env;
+
+void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 /* ------------------------------------------------------------------------
  * Block formatting -- ar_layout_block.c
@@ -325,7 +388,11 @@ ar_i32 ar_inline_baseline(const ar_node *n);
  * the run works in offsets and the floats do not.
  */
 ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_i32 top,
-                     ar_i32 inner_w, ar_i32 align, const ar_float_ctx *fc, ar_i32 abs_top);
+                     ar_i32 inner_w, ar_i32 align, const ar_float_ctx *fc, ar_i32 abs_top,
+                     ar_layout_env *env);
+
+/* Whether this box's text flows into the lines around it and may be cut. */
+int ar_is_fragmentable(const ar_node *n);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 

@@ -738,6 +738,16 @@ ar_i32 ar_text_wrap(const char *utf8, const ar_face *f, ar_i32 ppem, ar_i32 max_
     return ar_text_wrap_by(utf8, ar__wrap_face, &w, max_w, starts, max_lines);
 }
 
+ar_i32 ar_text_range_chain(const char *utf8, ar_i32 from, ar_i32 to, const ar_font_chain *ch,
+                           ar_i32 ppem, ar_glyph_cache *gc, ar_glyph_scratch *sc)
+{
+    if (!ch || ch->count <= 0)
+    {
+        return 0;
+    }
+    return ar__measure_range_chain(utf8, from, to, ch, ppem, gc, sc);
+}
+
 ar_i32 ar_text_min_width_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
                                ar_glyph_cache *gc, ar_glyph_scratch *sc)
 {

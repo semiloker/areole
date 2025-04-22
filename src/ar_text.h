@@ -230,6 +230,11 @@ ar_i32 ar_text_min_width_by(const char *utf8, ar_range_fn measure, void *ud);
 ar_i32 ar_text_min_width_chain(const char *utf8, const ar_font_chain *ch, ar_i32 ppem,
                                ar_glyph_cache *gc, ar_glyph_scratch *sc);
 
+/* The width of one byte range, through the chain. What the line breaker
+   measures the pieces of a fragmented inline box with. */
+ar_i32 ar_text_range_chain(const char *utf8, ar_i32 from, ar_i32 to, const ar_font_chain *ch,
+                           ar_i32 ppem, ar_glyph_cache *gc, ar_glyph_scratch *sc);
+
 /* The UAX #14 walk, with the measurement left to the caller. `max_w` is in
    whole pixels; `measure` returns 1/AR_ONE_PIXEL units. */
 ar_i32 ar_text_wrap_by(const char *utf8, ar_range_fn measure, void *ud, ar_i32 max_w,
