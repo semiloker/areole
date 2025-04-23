@@ -49,12 +49,6 @@ areole_set_warnings(ar_test)
 
 add_test(NAME ar_test COMMAND ar_test)
 
-# No window: it renders the margin-collapsing corpus to a memory surface and
-# prints the rectangles, for tools/compare_layout.py to hand to a browser.
-add_executable(example_block examples/03_block/main.c)
-target_link_libraries(example_block PRIVATE areole)
-areole_set_warnings(example_block)
-
 # --- platform backend ---------------------------------------------------------
 # Its own target because <windows.h> uses nameless unions and __int64 and will
 # not compile with language extensions disabled. The core keeps the strict
@@ -73,6 +67,12 @@ if(WIN32)
     add_executable(example_tour examples/02_tour/main.c)
     target_link_libraries(example_tour PRIVATE areole_win32)
     areole_set_warnings(example_tour)
+
+    # The block corpus. A window by default, and --dump for the browser
+    # comparison and for CI, which has no display.
+    add_executable(example_block examples/03_block/main.c)
+    target_link_libraries(example_block PRIVATE areole_win32)
+    areole_set_warnings(example_block)
 endif()
 
 # --- benchmark ----------------------------------------------------------------

@@ -15,16 +15,36 @@
  *     python tools/compare_layout.py --run ./build/example_block.exe \
  *            examples/03_block/block.html
  *
- * No window. Every case is a fixed 300x200 surface and there is nothing to
- * look at -- the output is the box rectangles.
+ * Run with --dump it prints the rectangles and exits, which is what the
+ * comparison drives. Run with no arguments it opens a window and draws them,
+ * one case at a time, because a corpus you can only read as numbers is a
+ * corpus nobody looks at.
  */
 #include "areole.h"
+#include "areole_win32.h"
 
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * Two contexts, and that is the interesting part of this file.
+ *
+ * The chrome -- the list of case names down the side -- is one interface, and
+ * the case being shown is another, with its own stylesheet full of names like
+ * `.a` and `.outer` that would collide with anything else in the same sheet.
+ * Keeping them apart is one extra block of memory and no engine support at
+ * all: the case renders into a surface whose pixels point into the middle of
+ * the window's, with the window's stride. A sub-view, not a copy.
+ */
+#define CASE_W 300
+#define CASE_H 200
+#define WIN_W  860
+#define WIN_H  560
+#define RAIL_W 260
+
 static unsigned char g_memory[AR_MEM(128)];
-static ar_u32        g_pixels[300 * 200];
+static unsigned char g_chrome_memory[AR_MEM(256)];
+static ar_u32        g_pixels[CASE_W * CASE_H];
 
 /*
  * Every case shares this: the root is a block container filling the surface,
@@ -47,6 +67,21 @@ static const char *SHEET_BASE = "#root { display:block; }"
                                 ".r { display:block; }"
                                 ".bfc { display:block; }"
                                 ".narrow { display:block; }";
+
+/*
+ * Colour, so the window has something to show. Paint only -- no rule here
+ * touches a size, so --dump prints exactly what it printed before, and there
+ * is a check in the repository history that says so.
+ *
+ * Written as selector lists, which 0.4.0 added and which this file may as well
+ * be the first thing to use.
+ */
+static const char *SHEET_PAINT = ".a, .b, .c { background:#e8c9ae; }"
+                                 ".outer, .narrow { background:#dfe7dc; }"
+                                 ".bfc { background:#c9d8c4; }"
+                                 ".l, .r { background:#c2703d; }"
+                                 ".i, .t { background:#9fb4c7; }"
+                                 ".inner { background:#7a4a2a; }";
 
 struct block_case
 {
@@ -294,15 +329,153 @@ static void dump_path(const ar_ctx *c, ar_i32 i, char *out)
     *w = 0;
 }
 
-int main(void)
+static const char *CHROME_SHEET =
+    "#app  { display:flex; flex-direction:row; background:#fcfaf6;"
+    "        font-size:14px; color:#3a3733; }"
+    ".rail { width:260px; display:flex; flex-direction:column; padding:14px;"
+    "        gap:1px; background:#f4efe4; overflow:hidden; }"
+    ".title { font-size:20px; color:#20201e; padding-bottom:4px; }"
+    ".hint  { font-size:11px; color:#a09789; padding-bottom:10px; }";
+
+static const char *CHROME_SHEET2 =
+    ".case    { padding:4px 8px; font-size:12px; color:#6f685d; }"
+    ".case:hover { background:#ece4d3; color:#20201e; }"
+    ".case-on { padding:4px 8px; font-size:12px; color:#fdfaf3; background:#7a4a2a; }"
+    ".page  { width:grow; display:flex; flex-direction:column; padding:20px; gap:8px; }"
+    ".h1    { font-size:22px; color:#20201e; }"
+    ".css   { font-size:11px; color:#8d8578; }"
+    ".frame { width:300px; height:200px; border:1px solid #d8ccb4; }";
+
+/* Where the case surface sits inside the window, so the frame drawn by the
+   chrome and the pixels drawn by the case land in the same place. */
+#define CASE_X (RAIL_W + 20)
+#define CASE_Y 84
+
+static int run_window(void)
+{
+    ar_ctx *chrome;
+    ar_ctx *ui = 0;
+    ar_win *win;
+    ar_i32  shown = 0;
+    ar_i32  built = -1;
+    ar_i32  k;
+
+    chrome = ar_init(g_chrome_memory, (ar_u32)sizeof g_chrome_memory);
+    if (!chrome)
+    {
+        printf("not enough memory for the chrome\n");
+        return 1;
+    }
+    ar_stylesheet(chrome, CHROME_SHEET);
+    ar_stylesheet(chrome, CHROME_SHEET2);
+    if (ar_stylesheet_errors(chrome))
+    {
+        printf("chrome stylesheet has %lu problem(s)\n",
+               (unsigned long)ar_stylesheet_errors(chrome));
+        return 1;
+    }
+
+    win = ar_win_open("areole - the block corpus", WIN_W, WIN_H);
+    if (!win)
+    {
+        printf("could not open a window\n");
+        return 1;
+    }
+    ar_set_clock(chrome, ar_time_us);
+
+    while (ar_win_pump(win))
+    {
+        ar_surface *s = ar_win_surface(win);
+        ar_surface  cs;
+        ar_input    in;
+
+        ar_frame_begin(chrome, ar_win_input(win));
+        ar_begin(chrome, "div#app");
+
+        ar_begin(chrome, "div.rail");
+        ar_text(chrome, "div.title", "Block corpus");
+        ar_text(chrome, "div.hint", "The cases the browser comparison checks.");
+        for (k = 0; k < CASE_COUNT; ++k)
+        {
+            if (ar_button(chrome, k == shown ? "div.case-on" : "div.case", CASES[k].name))
+            {
+                shown = k;
+                built = -1;
+                ar_invalidate_all(chrome);
+            }
+        }
+        ar_end(chrome);
+
+        ar_begin(chrome, "div.page");
+        ar_text(chrome, "div.h1", CASES[shown].name);
+        ar_text(chrome, "div.css", CASES[shown].css);
+        ar_begin(chrome, "div.frame");
+        ar_end(chrome);
+        ar_end(chrome);
+
+        ar_end(chrome);
+        ar_frame_end(chrome, s);
+
+        /*
+         * The case, into a sub-view of the same pixels. Rebuilt only when the
+         * selection changes: its own context has no input and nothing in it
+         * moves, so laying it out every frame would be work for nothing.
+         */
+        if (built != shown)
+        {
+            ui = ar_init(g_memory, (ar_u32)sizeof g_memory);
+            if (ui)
+            {
+                ar_stylesheet(ui, SHEET_BASE);
+                ar_stylesheet(ui, SHEET_PAINT);
+                ar_stylesheet(ui, CASES[shown].css);
+            }
+            built = shown;
+        }
+
+        cs.pixels = s->pixels + (ar_i32)CASE_Y * s->stride + CASE_X;
+        cs.w = CASE_W;
+        cs.h = CASE_H;
+        cs.stride = s->stride;
+
+        if (ui)
+        {
+            memset(&in, 0, sizeof in);
+            in.mouse_x = -1;
+            in.mouse_y = -1;
+            ar_frame_begin(ui, &in);
+            ar_begin(ui, "div#root");
+            build(ui, CASES[shown].tree);
+            ar_end(ui);
+            /* Everything, every frame: the chrome may have painted over it,
+               and this is an inspector rather than a frame budget. */
+            ar_invalidate_all(ui);
+            ar_frame_end(ui, &cs);
+            ar_frame_presented(ui);
+        }
+
+        ar_win_present(win, ar_rect_make(0, 0, s->w, s->h));
+        ar_frame_presented(chrome);
+
+        if (ar_needs_redraw(chrome))
+        {
+            ar_win_wake(win);
+        }
+    }
+
+    ar_win_close(win);
+    return 0;
+}
+
+static int run_dump(void)
 {
     ar_surface s;
     ar_i32     k;
 
     s.pixels = g_pixels;
-    s.w = 300;
-    s.h = 200;
-    s.stride = 300;
+    s.w = CASE_W;
+    s.h = CASE_H;
+    s.stride = CASE_W;
 
     printf("# areole %s  viewport %ld %ld  block corpus\n", ar_version(), (long)s.w, (long)s.h);
 
@@ -356,4 +529,18 @@ int main(void)
         }
     }
     return 0;
+}
+
+/*
+ * No arguments opens the window, which is what happens when somebody
+ * double-clicks it. --dump prints the rectangles, which is what the browser
+ * comparison drives and what CI runs.
+ */
+int main(int argc, char **argv)
+{
+    if (argc > 1 && strcmp(argv[1], "--dump") == 0)
+    {
+        return run_dump();
+    }
+    return run_window();
 }

@@ -392,6 +392,8 @@ cmake --build build
 ./build/ar_test               # 676 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.4.0
+./build/example_block         # the block, inline and float corpus, drawn
+./build/example_block --dump  # the same, as rectangles, for the comparison
 ./build/example_tour --selftest   # every page, no window; CI runs this
 
 # on a machine with no display, the benchmarks still run
