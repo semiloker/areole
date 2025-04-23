@@ -123,7 +123,8 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     }
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
+            !ar_is_out_of_flow(&nodes[c]))
         {
             return 0;
         }
@@ -138,7 +139,8 @@ static ar_i32 ar__first_in_flow(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
+            !ar_is_out_of_flow(&nodes[c]))
         {
             return c;
         }
@@ -153,7 +155,8 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]))
+        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
+            !ar_is_out_of_flow(&nodes[c]))
         {
             last = c;
         }
@@ -171,7 +174,11 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
  */
 int ar_is_floated(const ar_node *n)
 {
-    return n->style.v[AR_P_FLOAT] != AR_FLOAT_NONE && n->style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE;
+    /* An out-of-flow box is not a float even if it says `float`, because
+       `position: absolute` wins and the float is dropped. CSS says so, and it
+       saves the flow passes from having to consider a box twice. */
+    return n->style.v[AR_P_FLOAT] != AR_FLOAT_NONE && n->style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
+           !ar_is_out_of_flow(n);
 }
 
 void ar_block_margins(ar_node *n, const ar_node *nodes)
@@ -182,10 +189,10 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
     n->mt = mt;
     n->mb = mb;
 
-    /* A float is out of flow. Its margins meet nothing, so they collapse with
-       nothing -- and it contributes neither to the stack nor to the pending
-       margin between the boxes on either side of it. */
-    if (ar_is_floated(n))
+    /* A float is out of flow, and so is a positioned box. Their margins meet
+       nothing, so they collapse with nothing -- and neither contributes to the
+       stack nor to the pending margin between the boxes on either side. */
+    if (ar_is_floated(n) || ar_is_out_of_flow(n))
     {
         return;
     }
@@ -284,6 +291,20 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
             if (place)
             {
                 place(ud, c, cursor + pending, -1);
+            }
+            continue;
+        }
+
+        /*
+         * An out-of-flow box is placed where the flow had reached, which is
+         * its *static position* -- what CSS falls back to when neither edge of
+         * an axis was given. It takes no space and does not move the cursor.
+         */
+        if (ar_is_out_of_flow(ch))
+        {
+            if (place)
+            {
+                place(ud, c, cursor + pending, -2);
             }
             continue;
         }

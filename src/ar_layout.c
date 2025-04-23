@@ -606,13 +606,24 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
     ar__stack_ud *su = (ar__stack_ud *)ud;
     ar_node      *ch = &su->nodes[index];
 
-    /* -1 means a float: sized here, because a float shrinks to fit rather than
+    /* -1 is a float: sized here, because a float shrinks to fit rather than
        filling the container the way an in-flow block child does, and then
        handed to the float list to be pushed to its side. */
-    if (real < 0)
+    if (real == -1)
     {
         ar__size_shrink_to_fit(ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
+        return;
+    }
+
+    /* -2 is out of flow: it gets the static position -- where the flow had
+       reached -- and a shrink-to-fit size, and the pass after the flow
+       resolves whichever of those its offsets override. */
+    if (real == -2)
+    {
+        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ch->rect.x = su->left;
+        ch->rect.y = su->top + y;
         return;
     }
 
@@ -1007,6 +1018,8 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
 
 void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
+    ar_i32 i;
+
     if (count <= 0)
     {
         return;
@@ -1019,4 +1032,21 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     nodes[0].rect = viewport;
 
     ar__place(nodes, count, env);
+
+    /*
+     * Positioning, after the flow has finished.
+     *
+     * Out of flow first, because a box measured against a positioned ancestor
+     * needs that ancestor to have its final rectangle. Then `relative`, which
+     * moves a whole subtree -- doing it earlier would move the children twice,
+     * once with the parent and once on their own.
+     */
+    for (i = 0; i < count; ++i)
+    {
+        if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            ar_position_out_of_flow(nodes, i, viewport);
+        }
+    }
+    ar_position_relative(nodes, count, viewport);
 }
