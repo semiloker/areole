@@ -43,6 +43,40 @@ static ar_u32 ar__mix(ar_u32 a, ar_u32 b)
     return a ? a : 1u;
 }
 
+/*
+ * Finds a slot without claiming one.
+ *
+ * ar_ctx_slot below will take an empty slot and make it this box's, which is
+ * what tree building wants and what a query must not do -- asking where a
+ * container is scrolled to should not create state for a box that has none.
+ */
+const ar_slot *ar_ctx_slot_find(const ar_ctx *c, ar_u32 key)
+{
+    ar_u32 mask;
+    ar_u32 i;
+    ar_u32 probe;
+
+    if (!c || !c->slots || c->slot_cap <= 0)
+    {
+        return 0;
+    }
+    mask = (ar_u32)c->slot_cap - 1u;
+    i = key & mask;
+    for (probe = 0; probe < 32u; ++probe)
+    {
+        if (c->slots[i].key == key)
+        {
+            return &c->slots[i];
+        }
+        if (c->slots[i].last_frame == 0)
+        {
+            return 0;
+        }
+        i = (i + 1u) & mask;
+    }
+    return 0;
+}
+
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key)
 {
     ar_u32   mask = (ar_u32)c->slot_cap - 1u;
@@ -812,6 +846,20 @@ static ar_i32 ar__range_px(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
     return ar_text_width_range(n->text, from, to, n->scale);
 }
 
+/* Where a scroll container currently is, read from its slot. */
+static ar_i32 ar__scroll_of(void *ud, ar_i32 index)
+{
+    ar_ctx  *c = (ar_ctx *)ud;
+    ar_slot *slot;
+
+    if (index < 0 || index >= c->node_count)
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot(c, c->nodes[index].key);
+    return slot ? slot->scroll : 0;
+}
+
 /* What ar_layout_solve is handed. */
 static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
 {
@@ -860,6 +908,50 @@ const char *ar_node_text(const ar_ctx *c, ar_i32 i)
         return "";
     }
     return c->nodes[i].text;
+}
+
+ar_i32 ar_node_scroll(const ar_ctx *c, ar_i32 i)
+{
+    const ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot_find(c, c->nodes[i].key);
+    return slot ? slot->scroll : 0;
+}
+
+ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return ar_scroll_range(&c->nodes[i]);
+}
+
+ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
+{
+    ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count || !ar_is_scroll_container(&c->nodes[i]))
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot(c, c->nodes[i].key);
+    if (!slot)
+    {
+        return 0;
+    }
+    slot->scroll = ar_scroll_clamp(&c->nodes[i], y);
+    ar_damage_add(&c->damage, c->nodes[i].rect);
+    return slot->scroll;
+}
+
+int ar_scrolled(const ar_ctx *c)
+{
+    return c ? c->scrolled : 0;
 }
 
 ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i)
@@ -950,6 +1042,8 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->mouse_pressed = in ? in->mouse_pressed : 0;
     c->mouse_released = in ? in->mouse_released : 0;
     c->mouse_inside = in ? in->mouse_inside : 0;
+    c->wheel = in ? in->wheel : 0;
+    c->scrolled = 0;
 
     /* A press latches whichever box the cursor was over, and a release only
        counts as a click if it lands on the same one. Dragging off a button
@@ -1339,6 +1433,15 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
             ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
         }
 
+        if (ar_scroll_bar_visible(n))
+        {
+            ar_rect track, thumb;
+
+            ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
+            ar_fill_rect(s, track, clip, AR_RGBA(0x00, 0x00, 0x00, 0x14));
+            ar_fill_rect(s, thumb, clip, AR_RGBA(0x00, 0x00, 0x00, 0x50));
+        }
+
         /*
          * A box the line breaker cut has one rectangle per line it touched,
          * and each carries the slice of text that landed there. A box it did
@@ -1409,6 +1512,60 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
 
 /* The box under the cursor, for the next frame to style. Declaration order is
    paint order, so the last box that contains the point is the one on top. */
+/*
+ * A wheel notch goes to the innermost scroll container under the cursor.
+ *
+ * Front to back, so a list inside a panel takes the notch rather than the
+ * panel; and past any container that cannot move, so a list already at its
+ * bottom hands the notch outwards instead of swallowing it -- which is scroll
+ * chaining, and is what makes a nested list feel attached to the page rather
+ * than like a trap.
+ *
+ * Applied after layout, so it lands on the next frame. The box under the
+ * cursor is not known until the frame is laid out, and laying out twice to
+ * find out costs more than the frame it saves. ar_needs_redraw already exists
+ * to close the gap.
+ */
+static void ar__apply_wheel(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (!c->wheel || !c->mouse_inside)
+    {
+        return;
+    }
+    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    {
+        ar_i32   at = c->order ? c->order[i] : i;
+        ar_node *n = &c->nodes[at];
+        ar_slot *slot;
+        ar_i32   want;
+
+        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        {
+            continue;
+        }
+        slot = ar_ctx_slot(c, n->key);
+        if (!slot)
+        {
+            continue;
+        }
+        want = ar_scroll_clamp(n, slot->scroll - c->wheel * AR_SCROLL_STEP);
+        if (want == slot->scroll)
+        {
+            continue; /* nowhere to go here; the notch chains outwards */
+        }
+        slot->scroll = want;
+        ar_damage_add(&c->damage, n->rect);
+        c->scrolled = 1;
+        return;
+    }
+}
+
 static void ar__update_hot(ar_ctx *c)
 {
     ar_u32 was = c->hot;
@@ -1486,6 +1643,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         env.wrap = ar__wrap_cb;
         env.measure = ar__range_px;
         env.ud = c;
+        env.scroll_of = ar__scroll_of;
         env.frags = c->frags;
         env.frag_cap = c->frag_cap;
         env.frag_used = 0;
@@ -1584,6 +1742,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar__paint(c, s, damage);
     }
     ar__update_hot(c);
+    ar__apply_wheel(c);
 
     /* Hover resolves from the previous frame, so the frame that notices a new
        box under the cursor cannot also style it. Damaging both boxes now means

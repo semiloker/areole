@@ -237,7 +237,13 @@ enum
 {
     AR_OVERFLOW_VISIBLE = 0,
     AR_OVERFLOW_HIDDEN,
-    AR_OVERFLOW_SCROLL
+
+    /* Always scrollable, and always showing that it is. */
+    AR_OVERFLOW_SCROLL,
+
+    /* Scrollable only when there is somewhere to go, which is the whole
+       difference between the two and the reason anybody writes `auto`. */
+    AR_OVERFLOW_AUTO
 };
 
 typedef struct ar_style

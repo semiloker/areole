@@ -586,6 +586,8 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
 
                                      {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
                                      {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
+                                     {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
+                                     {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
                                      {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL}};
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))

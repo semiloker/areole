@@ -112,8 +112,16 @@ typedef struct ar_node
      * anything else that wants one rectangle for a box still gets a truthful
      * one without knowing fragments exist.
      */
-    ar_i32  frag_first;
-    ar_i32  frag_count;
+    ar_i32 frag_first;
+    ar_i32 frag_count;
+    /*
+     * How tall this box's contents came to, whatever the box itself ended up
+     * being. The two are the same for an automatic height and differ for a
+     * stated one, and the difference is exactly how far a scroll container can
+     * be scrolled.
+     */
+    ar_i32 content_h;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
@@ -203,6 +211,9 @@ struct ar_ctx
     ar_i32 *order;
     ar_i32  order_count;
 
+    ar_i32 wheel;    /* notches this frame */
+    int    scrolled; /* something moved, so the next frame differs */
+
     ar_i32 stack[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
@@ -282,6 +293,10 @@ typedef struct ar_layout_env
     ar_text_range_fn measure;
     void            *ud;
 
+    /* Where a scroll container currently is. Null means nothing scrolls,
+       which is what every caller before scrolling got. */
+    ar_i32 (*scroll_of)(void *ud, ar_i32 index);
+
     /* Somewhere to put fragments. May be null, in which case inline boxes are
        not split -- which is what every caller before fragmentation got. */
     ar_frag *frags;
@@ -341,6 +356,30 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
                       void *ud);
 
 int ar_is_floated(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Scroll containers -- ar_scroll.c
+ * ------------------------------------------------------------------------ */
+
+/* Drawn inside the container's right edge rather than taken out of its width:
+   a scrollbar that appears and reflows the text beside it makes the interface
+   jump, and on a machine where relayout costs milliseconds it does so
+   visibly. */
+/* How far one wheel notch goes. Three lines of an eight pixel face, which is
+   what every toolkit settled on and what the hand expects. */
+#define AR_SCROLL_STEP 30
+
+#define AR_SCROLLBAR_W   8
+#define AR_SCROLLBAR_MIN 16
+
+int    ar_is_scroll_container(const ar_node *n);
+ar_i32 ar_scroll_range(const ar_node *n);
+ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want);
+int    ar_scroll_bar_visible(const ar_node *n);
+void   ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thumb);
+
+/* Shifts every scroll container's contents by its offset. */
+void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 
 /* ------------------------------------------------------------------------
  * Stacking order -- ar_stack.c
@@ -435,5 +474,8 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
 int ar_is_fragmentable(const ar_node *n);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
+
+/* The same lookup without claiming an empty slot, for queries. */
+const ar_slot *ar_ctx_slot_find(const ar_ctx *c, ar_u32 key);
 
 #endif /* AR_NODE_H */

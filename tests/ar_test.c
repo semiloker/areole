@@ -4544,17 +4544,224 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
     ar_frame_presented(g_ui);
 }
 
+static ar_u32 ar__pixel_at(ar_i32 x, ar_i32 y)
+{
+    return g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu;
+}
+
+/* ------------------------------------------------------------------------
+ * Scroll containers
+ *
+ * The third thing STATUS.md said a real interface hits first: a list longer
+ * than its box could not be reached.
+ * ------------------------------------------------------------------------ */
+
+/* Builds a scroll container with five 40 px rows in a 100 px box. */
+static void ar__scroll_scene(ar_surface *s, const ar_input *in)
+{
+    ar_i32 i;
+
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static const char *AR_SCROLL_CSS = "#root { display:block; }"
+                                   ".list { display:block; height:100px; overflow:scroll; }"
+                                   ".row { display:block; height:40px; }";
+
+/* The range is what does not fit, and nothing more. */
+static void test_scroll_range_is_the_overflow(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar__box(1).h == 100, "scroll: the container keeps its stated height");
+    CHECK(ar_node_scroll_range(g_ui, 1) == 100,
+          "scroll: five forty pixel rows in a hundred leaves a hundred to scroll");
+    CHECK(ar_node_scroll(g_ui, 1) == 0, "scroll: and it starts at the top");
+}
+
+/* Scrolling moves the contents and leaves the container alone. */
+static void test_scrolling_moves_the_contents(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar__box(2).y == 0, "scroll: the first row starts at the top");
+    ar_node_scroll_to(g_ui, 1, 60);
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar__box(1).y == 0, "scroll: the container itself did not move");
+    CHECK(ar__box(2).y == -60, "scroll: but its first row went up by the offset");
+    CHECK(ar__box(3).y == -20, "scroll: and so did the one after it");
+}
+
+/* The position is clamped to the range, in both directions. */
+static void test_scroll_is_clamped(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar_node_scroll_to(g_ui, 1, 9999) == 100, "scroll: past the end stops at the end");
+    CHECK(ar_node_scroll_to(g_ui, 1, -50) == 0, "scroll: and above the top stops at the top");
+}
+
+/* The position survives between frames, which is what makes it state. */
+static void test_scroll_survives_the_frame(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+    ar_node_scroll_to(g_ui, 1, 40);
+
+    ar__scroll_scene(&s, &in);
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) == 40, "scroll: the position is still there two frames later");
+}
+
+/* A wheel notch over the container scrolls it, and lands on the next frame. */
+static void test_the_wheel_scrolls_the_box_under_it(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -1; /* one notch towards the user */
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_scrolled(g_ui), "wheel: the notch moved something");
+
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) > 0, "wheel: and the frame after it shows the new position");
+    CHECK(ar__box(2).y < 0, "wheel: with the rows moved up");
+}
+
+/* A notch outside the container does nothing to it. */
+static void test_the_wheel_ignores_a_box_it_is_not_over(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 250; /* below the hundred pixel container */
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -3;
+    ar__scroll_scene(&s, &in);
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar_node_scroll(g_ui, 1) == 0, "wheel: a notch elsewhere leaves the container alone");
+}
+
+/* A box whose content fits has nowhere to go, and `auto` shows no bar for it
+   while `scroll` shows one anyway -- which is the whole difference. */
+static void test_auto_and_scroll_differ_only_when_it_fits(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:100px; overflow:auto; }"
+                 ".s { display:block; height:100px; overflow:scroll; }"
+                 ".row { display:block; height:10px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.s");
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_node_scroll_range(g_ui, 1) == 0, "scroll: content that fits has no range");
+    CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "scroll: auto hides the bar when it fits");
+    CHECK(ar_scroll_bar_visible(&g_ui->nodes[3]), "scroll: scroll shows one regardless");
+}
+
+/* Contents are clipped to the container, so a scrolled row does not paint
+   outside it. */
+static void test_a_scroll_container_clips(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".list { display:block; height:60px; overflow:scroll; }"
+                 ".row { display:block; height:40px; background:#FF0000; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 50) == 0xFF0000, "scroll: a row inside the container is painted");
+    CHECK(ar__pixel_at(10, 70) != 0xFF0000, "scroll: and the part past its edge is not");
+}
+
 /* ------------------------------------------------------------------------
  * Stacking order
  *
  * Paint order is only observable in pixels, so these read them. Every case is
  * two boxes on the same spot and one question: which colour survived.
  * ------------------------------------------------------------------------ */
-static ar_u32 ar__pixel_at(ar_i32 x, ar_i32 y)
-{
-    return g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu;
-}
-
 /* Without positioning, later wins -- which is what declaration order gave and
    what has to keep being true. */
 static void test_declaration_order_still_decides_when_nothing_is_positioned(void)
@@ -6871,6 +7078,14 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_scroll_range_is_the_overflow();
+    test_scrolling_moves_the_contents();
+    test_scroll_is_clamped();
+    test_scroll_survives_the_frame();
+    test_the_wheel_scrolls_the_box_under_it();
+    test_the_wheel_ignores_a_box_it_is_not_over();
+    test_auto_and_scroll_differ_only_when_it_fits();
+    test_a_scroll_container_clips();
     test_declaration_order_still_decides_when_nothing_is_positioned();
     test_a_positioned_box_paints_above_the_flow();
     test_negative_z_goes_behind_the_flow();
