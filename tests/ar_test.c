@@ -4550,6 +4550,174 @@ static ar_u32 ar__pixel_at(ar_i32 x, ar_i32 y)
 }
 
 /* ------------------------------------------------------------------------
+ * position: sticky
+ *
+ * In flow until a threshold, then pinned, and never outside the box it
+ * belongs to -- which is the part that makes it useful rather than merely
+ * fixed, and the part everyone forgets.
+ * ------------------------------------------------------------------------ */
+static const char *AR_STICKY_CSS = "#root { display:block; }"
+                                   ".list { display:block; height:100px; overflow:scroll; }"
+                                   ".sect { display:block; height:200px; }"
+                                   ".head { display:block; height:20px; position:sticky; top:0; }"
+                                   ".body { display:block; height:180px; }";
+
+/* Two sections, so there is room to scroll the first one all the way past --
+   which is the only way to see a sticky header hand over to the next. */
+static void ar__sticky_scene(ar_surface *s, const ar_input *in)
+{
+    ar_i32 k;
+
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (k = 0; k < 2; ++k)
+    {
+        ar_begin(g_ui, "div.sect");
+        ar_begin(g_ui, "div.head");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.body");
+        ar_end(g_ui);
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* Unscrolled, it sits exactly where the flow put it. */
+static void test_sticky_starts_in_the_flow(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_STICKY_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__sticky_scene(&s, &in);
+
+    CHECK(ar__box(3).y == 0, "sticky: at rest it is where the flow put it");
+    CHECK(ar__box(4).y == 20, "sticky: and the box after it starts below, space kept");
+}
+
+/* Scrolled past its threshold, it pins to the top of the scrollport. */
+static void test_sticky_pins_at_the_threshold(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_STICKY_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__sticky_scene(&s, &in);
+
+    ar_node_scroll_to(g_ui, 1, 50);
+    ar__sticky_scene(&s, &in);
+
+    CHECK(ar__box(4).y == -30, "sticky: the ordinary content scrolled away");
+    CHECK(ar__box(3).y == 0, "sticky: while the header stayed at the top of the scrollport");
+}
+
+/*
+ * And it leaves with its own section rather than piling up.
+ *
+ * Scrolled far enough that the section's bottom passes the top of the
+ * scrollport, the header has to go with it -- otherwise every header in a list
+ * would stack at the top, which is the failure mode of every hand-rolled
+ * sticky header ever written.
+ */
+static void test_sticky_leaves_with_its_section(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_STICKY_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__sticky_scene(&s, &in);
+
+    /* The first section is 200 tall; scrolling 190 leaves 10 of it above the
+       fold, so a 20 tall header pinned at the top of the port would stick out
+       of its own section by 10 and has to be pulled back. */
+    ar_node_scroll_to(g_ui, 1, 190);
+    ar__sticky_scene(&s, &in);
+
+    CHECK(ar__box(2).y == -190, "sticky: the section has nearly gone");
+    CHECK(ar__box(3).y == -10,
+          "sticky: and the header went with it rather than piling up at the top");
+    CHECK(ar__box(3).y + ar__box(3).h == ar__box(2).y + ar__box(2).h,
+          "sticky: its bottom edge is its section's bottom edge");
+}
+
+/* With no scrolling ancestor the viewport is the scrollport. */
+static void test_sticky_against_the_viewport(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".sect { display:block; height:400px; }"
+                 ".head { display:block; height:20px; position:sticky; top:30px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.sect");
+    ar_begin(g_ui, "div.head");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 30, "sticky: pinned thirty pixels down the viewport");
+}
+
+/* A sticky box with no offsets never moves: there is no threshold to cross. */
+static void test_sticky_with_no_offsets_never_moves(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".list { display:block; height:100px; overflow:scroll; }"
+                 ".head { display:block; height:20px; position:sticky; }"
+                 ".body { display:block; height:300px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    ar_begin(g_ui, "div.head");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.body");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    ar_node_scroll_to(g_ui, 1, 60);
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    ar_begin(g_ui, "div.head");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.body");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == -60, "sticky: with nothing to obey it just scrolls away");
+}
+
+/* ------------------------------------------------------------------------
  * Scroll containers
  *
  * The third thing STATUS.md said a real interface hits first: a list longer
@@ -7078,6 +7246,11 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_sticky_starts_in_the_flow();
+    test_sticky_pins_at_the_threshold();
+    test_sticky_leaves_with_its_section();
+    test_sticky_against_the_viewport();
+    test_sticky_with_no_offsets_never_moves();
     test_scroll_range_is_the_overflow();
     test_scrolling_moves_the_contents();
     test_scroll_is_clamped();

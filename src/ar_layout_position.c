@@ -39,6 +39,11 @@
  * ------------------------------------------------------------------------ */
 #include "ar_node.h"
 
+int ar_is_sticky(const ar_node *n)
+{
+    return n->style.v[AR_P_POSITION] == AR_POS_STICKY;
+}
+
 int ar_is_positioned(const ar_node *n)
 {
     return n->style.v[AR_P_POSITION] != AR_POS_STATIC;
@@ -208,6 +213,164 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport)
 }
 
 /*
+ * Moves a box and its whole subtree.
+ *
+ * Children come after their parents in the array, so a forward walk from the
+ * box reaches all of them; the ancestor test is what keeps it to the subtree.
+ */
+static void ar__shift_subtree(ar_node *nodes, ar_i32 count, ar_i32 i, ar_i32 dx, ar_i32 dy)
+{
+    ar_i32 j;
+
+    if (!dx && !dy)
+    {
+        return;
+    }
+    nodes[i].rect.x += dx;
+    nodes[i].rect.y += dy;
+    for (j = i + 1; j < count; ++j)
+    {
+        ar_i32 at = nodes[j].parent;
+
+        while (at >= 0 && at != i)
+        {
+            at = nodes[at].parent;
+        }
+        if (at == i)
+        {
+            nodes[j].rect.x += dx;
+            nodes[j].rect.y += dy;
+        }
+    }
+}
+
+/* The box a sticky element is pinned inside: its nearest scrolling ancestor,
+   or the viewport when there is none. */
+static ar_rect ar__scrollport(const ar_node *nodes, ar_i32 i, ar_rect viewport)
+{
+    ar_i32 at;
+
+    for (at = nodes[i].parent; at >= 0; at = nodes[at].parent)
+    {
+        if (ar_is_scroll_container(&nodes[at]))
+        {
+            const ar_node *a = &nodes[at];
+
+            return ar_rect_make(a->rect.x + a->style.v[AR_P_PAD_LEFT],
+                                a->rect.y + a->style.v[AR_P_PAD_TOP],
+                                a->rect.w - a->style.v[AR_P_PAD_LEFT] - a->style.v[AR_P_PAD_RIGHT],
+                                a->rect.h - a->style.v[AR_P_PAD_TOP] - a->style.v[AR_P_PAD_BOTTOM]);
+        }
+    }
+    return viewport;
+}
+
+/* One axis of one sticky box: how far it has to move to obey its thresholds
+   without leaving the box it belongs to. */
+static ar_i32 ar__sticky_shift(const ar_node *n, const ar_node *parent, ar_i32 port_lo,
+                               ar_i32 port_hi, ar_prop lead_p, ar_prop trail_p, ar_i32 box_lo,
+                               ar_i32 box_size, ar_i32 pad_lead, ar_i32 pad_trail)
+{
+    ar_i32 box_hi = box_lo + box_size;
+    ar_i32 shift = 0;
+
+    if (ar__given(n, lead_p))
+    {
+        ar_i32 want = port_lo + ar__offset(n, lead_p, port_hi - port_lo);
+
+        if (box_lo < want)
+        {
+            shift = want - box_lo;
+        }
+    }
+    if (ar__given(n, trail_p))
+    {
+        ar_i32 want = port_hi - ar__offset(n, trail_p, port_hi - port_lo);
+
+        if (box_hi + shift > want)
+        {
+            shift = want - box_hi;
+        }
+    }
+    if (!shift)
+    {
+        return 0;
+    }
+
+    /*
+     * Never outside the containing block.
+     *
+     * This is the part that makes sticky useful rather than merely fixed: a
+     * section header pins to the top of the scrollport, and then slides back
+     * up and out as its own section scrolls past, handing over to the next
+     * one. Without the clamp every header would pile up at the top.
+     */
+    if (parent)
+    {
+        ar_i32 p_lo, p_hi;
+
+        if (lead_p == AR_P_TOP)
+        {
+            p_lo = parent->rect.y + pad_lead;
+            p_hi = parent->rect.y + parent->rect.h - pad_trail;
+        }
+        else
+        {
+            p_lo = parent->rect.x + pad_lead;
+            p_hi = parent->rect.x + parent->rect.w - pad_trail;
+        }
+        if (box_lo + shift < p_lo)
+        {
+            shift = p_lo - box_lo;
+        }
+        if (box_hi + shift > p_hi)
+        {
+            shift = p_hi - box_hi;
+        }
+    }
+    return shift;
+}
+
+/*
+ * `position: sticky`: in flow, until a threshold.
+ *
+ * It keeps its place in the flow exactly as `relative` does -- the space it
+ * occupied stays occupied -- and is then nudged just far enough to obey
+ * whichever of its four offsets were given, without ever leaving the box it
+ * belongs to.
+ *
+ * Runs after scrolling, because the whole point is to react to it.
+ */
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport)
+{
+    ar_i32 i;
+
+    for (i = 0; i < count; ++i)
+    {
+        ar_node *n = &nodes[i];
+        ar_node *parent;
+        ar_rect  port;
+        ar_i32   dx, dy;
+
+        if (!ar_is_sticky(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        parent = n->parent >= 0 ? &nodes[n->parent] : 0;
+        port = ar__scrollport(nodes, i, viewport);
+
+        dy = ar__sticky_shift(n, parent, port.y, port.y + port.h, AR_P_TOP, AR_P_BOTTOM, n->rect.y,
+                              n->rect.h, parent ? parent->style.v[AR_P_PAD_TOP] : 0,
+                              parent ? parent->style.v[AR_P_PAD_BOTTOM] : 0);
+        dx = ar__sticky_shift(n, parent, port.x, port.x + port.w, AR_P_LEFT, AR_P_RIGHT, n->rect.x,
+                              n->rect.w, parent ? parent->style.v[AR_P_PAD_LEFT] : 0,
+                              parent ? parent->style.v[AR_P_PAD_RIGHT] : 0);
+
+        ar__shift_subtree(nodes, count, i, dx, dy);
+    }
+}
+
+/*
  * `relative` shifts a box and everything inside it, for painting only.
  *
  * The space it occupied stays occupied -- that is the whole difference from
@@ -226,7 +389,6 @@ void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport)
     {
         ar_node *n = &nodes[i];
         ar_i32   dx = 0, dy = 0;
-        ar_i32   j;
 
         if (n->style.v[AR_P_POSITION] != AR_POS_RELATIVE)
         {
@@ -254,32 +416,6 @@ void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport)
             continue;
         }
 
-        /* The box and its whole subtree. Children come after their parents in
-           the array, so a forward walk from here reaches all of them, and
-           stopping at the first node whose parent chain leaves the subtree is
-           cheaper than recursing. */
-        n->rect.x += dx;
-        n->rect.y += dy;
-        for (j = i + 1; j < count; ++j)
-        {
-            ar_i32 at = nodes[j].parent;
-            int    inside = 0;
-
-            while (at >= 0)
-            {
-                if (at == i)
-                {
-                    inside = 1;
-                    break;
-                }
-                at = nodes[at].parent;
-            }
-            if (!inside)
-            {
-                continue;
-            }
-            nodes[j].rect.x += dx;
-            nodes[j].rect.y += dy;
-        }
+        ar__shift_subtree(nodes, count, i, dx, dy);
     }
 }

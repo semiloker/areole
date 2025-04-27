@@ -1058,4 +1058,8 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     }
     ar_position_relative(nodes, count, viewport);
     ar_scroll_apply(nodes, count, env);
+
+    /* Sticky last, because reacting to the scroll position is the whole of
+       what it does. */
+    ar_position_sticky(nodes, count, viewport);
 }
