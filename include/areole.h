@@ -274,11 +274,15 @@ void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y
 typedef struct ar_ctx ar_ctx;
 
 /* 320 -> 336 when block formatting gave every box two collapsed margins, and
-   336 -> 352 when float and clear were added: a property costs every box and
-   every rule five bytes, in ar_style. The assertions in ar_ctx.c are what
-   noticed both times; they are there so this number cannot quietly stop being
+   336 -> 352 when float and clear were added, 352 -> 368 when a box gained the
+   two indices that say where its fragments are, and 368 -> 400 to reserve one
+   fragment per box -- which is not how fragments actually scale, since a
+   twenty-line paragraph is one box and twenty of them, but it is a budget and
+   running out of it costs a split rather than anything worse. A property costs every box
+   and every rule five bytes, in ar_style. The assertions in ar_ctx.c are what
+   noticed each time; they are there so this number cannot quietly stop being
    true. */
-#define AR_BYTES_PER_BOX 352u
+#define AR_BYTES_PER_BOX 400u
 
 /*
  * The part of the block that does not scale with the box count: the context
@@ -576,6 +580,20 @@ ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i);
 /* The text this box was given, or a pointer to "" if it was given none. The
    caller's own string, not a copy -- areole never copied it. */
 const char *ar_node_text(const ar_ctx *c, ar_i32 i);
+
+/*
+ * Fragments: the rectangles of an inline box the line breaker cut.
+ *
+ * Zero means the box was not cut and ar_node_rect is the whole of it, which is
+ * every box that is not a split inline. When there are fragments, ar_node_rect
+ * is their union -- so a caller that does not care about them still gets one
+ * truthful rectangle.
+ */
+ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i);
+
+/* One fragment's rectangle, and the byte range of the node's text on it. The
+   two out parameters may be null. */
+ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i32 *out_to);
 
 const char *ar_version(void);
 

@@ -787,6 +787,31 @@ static ar_i32 ar__min_width_uncached(ar_ctx *c, const ar_node *n)
     }
 }
 
+/*
+ * The width of one slice of a box's text.
+ *
+ * What the line breaker measures pieces with. It cannot be memoised the way
+ * the whole string is -- the slices differ per line and per width -- so it is
+ * a glyph cache lookup per character, against a cache that is warm by then.
+ */
+static ar_i32 ar__range_px(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
+{
+    ar_ctx *c = (ar_ctx *)ud;
+    ar_i32  w;
+
+    if (!n->text || to <= from)
+    {
+        return 0;
+    }
+    if (c->have_face)
+    {
+        w = ar_text_range_chain(n->text, from, to, &c->chain, n->style.v[AR_P_FONT_SIZE],
+                                &c->glyphs, &c->glyph_scratch);
+        return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+    }
+    return ar_text_width_range(n->text, from, to, n->scale);
+}
+
 /* What ar_layout_solve is handed. */
 static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
 {
@@ -835,6 +860,43 @@ const char *ar_node_text(const ar_ctx *c, ar_i32 i)
         return "";
     }
     return c->nodes[i].text;
+}
+
+ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return c->nodes[i].frag_count;
+}
+
+ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i32 *out_to)
+{
+    const ar_frag *f;
+
+    if (!c || i < 0 || i >= c->node_count || k < 0 || k >= c->nodes[i].frag_count)
+    {
+        if (out_from)
+        {
+            *out_from = 0;
+        }
+        if (out_to)
+        {
+            *out_to = 0;
+        }
+        return ar_rect_make(0, 0, 0, 0);
+    }
+    f = &c->frags[c->nodes[i].frag_first + k];
+    if (out_from)
+    {
+        *out_from = f->from;
+    }
+    if (out_to)
+    {
+        *out_to = f->to;
+    }
+    return f->rect;
 }
 
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
@@ -915,9 +977,9 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        it. */
     room = ar_arena_available(&c->arena);
     c->node_cap = c->box_budget;
-    if ((ar_u32)c->node_cap * (ar_u32)sizeof(ar_node) > room)
+    if ((ar_u32)c->node_cap * ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag)) > room)
     {
-        c->node_cap = (ar_i32)(room / (ar_u32)sizeof(ar_node));
+        c->node_cap = (ar_i32)(room / ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag)));
     }
     c->nodes =
         c->node_cap > 0
@@ -927,6 +989,27 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     {
         c->node_cap = 0;
         c->overflowed = 1;
+    }
+
+    /*
+     * Fragments, from whatever the tree left. Two per box is generous -- a box
+     * only has fragments if the line breaker cut it -- and running out means
+     * the last inline stays whole rather than anything being scribbled on.
+     */
+    c->frag_count = 0;
+    room = ar_arena_available(&c->arena);
+    c->frag_cap = c->node_cap;
+    if ((ar_u32)c->frag_cap * (ar_u32)sizeof(ar_frag) > room)
+    {
+        c->frag_cap = (ar_i32)(room / (ar_u32)sizeof(ar_frag));
+    }
+    c->frags =
+        c->frag_cap > 0
+            ? (ar_frag *)ar_arena_frame(&c->arena, (ar_u32)c->frag_cap * (ar_u32)sizeof(ar_frag))
+            : 0;
+    if (!c->frags)
+    {
+        c->frag_cap = 0;
     }
 }
 
@@ -1012,6 +1095,12 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->text = text;
     n->fit[0] = 0;
     n->fit[1] = 0;
+    /* The arena hands back memory it does not clear, so a box that never
+       reaches an inline run would otherwise inherit a fragment count from
+       whatever box held this slot last -- and painting would follow it into
+       another box's text. */
+    n->frag_first = 0;
+    n->frag_count = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
 
     ar__resolve(c, c->node_count - 1);
@@ -1123,6 +1212,10 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
     ar_i32 len = 0;
     ar_i32 i;
 
+    if (!n->text)
+    {
+        return;
+    }
     if (to < 0)
     {
         for (to = from; n->text[to]; ++to)
@@ -1222,6 +1315,32 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
             ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+        }
+
+        /*
+         * A box the line breaker cut has one rectangle per line it touched,
+         * and each carries the slice of text that landed there. A box it did
+         * not cut has none of them and is painted from its own rect, which is
+         * every box that is not a split inline.
+         */
+        if (n->frag_count > 0)
+        {
+            ar_i32 k;
+
+            for (k = 0; k < n->frag_count; ++k)
+            {
+                const ar_frag *f = &c->frags[n->frag_first + k];
+                ar_rect        fclip = ar_rect_intersect(clip, f->rect);
+
+                if (bg >> 24)
+                {
+                    ar_fill_rect(s, f->rect, clip, bg);
+                }
+                ar__draw_line(c, s, fclip, f->rect.x + n->style.v[AR_P_PAD_LEFT],
+                              f->rect.y + n->style.v[AR_P_PAD_TOP], n, f->from, f->to,
+                              (ar_color)n->style.v[AR_P_COLOR]);
+            }
+            continue;
         }
 
         if (n->text)
@@ -1327,7 +1446,19 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        here, so closing that phase now attributes it correctly. */
     ar_perf_mark(&c->perf, AR_PHASE_STYLE, ar__now(c));
 
-    ar_layout_solve(c->nodes, c->node_count, viewport, ar__wrap_cb, c);
+    {
+        ar_layout_env env;
+
+        env.wrap = ar__wrap_cb;
+        env.measure = ar__range_px;
+        env.ud = c;
+        env.frags = c->frags;
+        env.frag_cap = c->frag_cap;
+        env.frag_used = 0;
+
+        ar_layout_solve(c->nodes, c->node_count, viewport, &env);
+        c->frag_count = env.frag_used;
+    }
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
     /* A resize repaints everything: every box moved, and the surface behind

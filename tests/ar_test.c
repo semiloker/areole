@@ -4545,6 +4545,149 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
 }
 
 /* ------------------------------------------------------------------------
+ * Inline fragmentation
+ *
+ * The difference between `inline` and `inline-block`: an inline box's text
+ * flows into the lines around it and is cut wherever a line ends, so one box
+ * becomes one rectangle per line it touches.
+ * ------------------------------------------------------------------------ */
+
+/* Two inline boxes share a line, and their text runs together rather than each
+   getting a line of its own. */
+static void test_inline_boxes_share_a_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.t", "one ");
+    ar_text(g_ui, "div.t", "two");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).y == ar__box(2).y, "inline: two runs sit on the same line");
+    CHECK(ar__box(2).x == ar__box(1).x + ar__box(1).w,
+          "inline: and the second starts where the first ended");
+}
+
+/* The one that needs fragments: a run too long for the line is cut, and gets a
+   rectangle on each line it touches. */
+static void test_an_inline_box_is_cut_across_lines(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     one_line;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:60px; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_text(g_ui, "div.t", "one two three four five");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    one_line = ar_text_height(1);
+
+    CHECK(ar_node_frag_count(g_ui, 2) > 1, "fragment: the run was cut into more than one piece");
+    CHECK(ar__box(2).h > one_line, "fragment: and its box spans every line it touched");
+    CHECK(ar__box(2).w <= 60, "fragment: none of which is wider than the line");
+}
+
+/* Each fragment carries the slice of text that landed on it, and the slices
+   are contiguous and cover the whole string. */
+static void test_fragments_partition_the_text(void)
+{
+    ar_surface  s = ar__ui_surface(400, 200);
+    const char *text = "one two three four five";
+    ar_i32      i, n, at = 0;
+    int         gap = 0;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:60px; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_text(g_ui, "div.t", text);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    n = ar_node_frag_count(g_ui, 2);
+    for (i = 0; i < n; ++i)
+    {
+        ar_i32 from, to;
+
+        (void)ar_node_frag(g_ui, 2, i, &from, &to);
+        if (from != at)
+        {
+            gap = 1;
+        }
+        at = to;
+    }
+    CHECK(n > 1, "fragment: there is more than one to check");
+    CHECK(!gap, "fragment: the slices run end to end with nothing skipped");
+    CHECK(at == (ar_i32)strlen(text), "fragment: and together they are the whole string");
+}
+
+/* A box that fits on one line has no fragments at all: it is its own single
+   rectangle, which is every box that is not a split inline. */
+static void test_a_short_inline_has_no_fragments(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_text(g_ui, "div.t", "short");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_node_frag_count(g_ui, 1) <= 1, "fragment: a run that fits is not cut");
+    CHECK(ar__box(1).w == ar_text_width("short", 1), "fragment: and is as wide as its text");
+}
+
+/* Inline and inline-block on one line: one is cut, the other never is. */
+static void test_atomic_and_fragmented_on_one_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:80px; }"
+                 ".t { display:inline; }"
+                 ".i { display:inline-block; width:30px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_text(g_ui, "div.t", "one two three four");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).w == 30, "fragment: the atomic item keeps its stated width");
+    CHECK(ar_node_frag_count(g_ui, 2) == 0, "fragment: and is never cut");
+    CHECK(ar_node_frag_count(g_ui, 3) > 1, "fragment: while the run beside it is");
+    /* The box's rect is the union of its fragments, and the second line starts
+       at the left edge, so the union starts there too. The question is where
+       the *first* fragment starts, which is after the atomic item. */
+    CHECK(ar_node_frag(g_ui, 3, 0, 0, 0).x == 30,
+          "fragment: the first piece starts after the atomic item");
+    CHECK(ar__box(3).x == 0, "fragment: while the union reaches back to the second line's edge");
+}
+
+/* ------------------------------------------------------------------------
  * Intrinsic sizing
  *
  * min-content is the narrowest a box can be without spilling; max-content the
@@ -6228,6 +6371,11 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_inline_boxes_share_a_line();
+    test_an_inline_box_is_cut_across_lines();
+    test_fragments_partition_the_text();
+    test_a_short_inline_has_no_fragments();
+    test_atomic_and_fragmented_on_one_line();
     test_min_content_of_text_is_its_longest_word();
     test_max_content_is_the_unbroken_string();
     test_fit_content_is_clamped_both_ways();

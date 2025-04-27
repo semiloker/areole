@@ -115,7 +115,17 @@ enum
      * second rectangle for a box that has room for one. Fragmentation is the
      * next piece of 0.5.0; this is the line box model it will need.
      */
-    AR_DISPLAY_INLINE_BLOCK
+    AR_DISPLAY_INLINE_BLOCK,
+
+    /*
+     * Inline, and not atomic: its text flows into the line boxes around it and
+     * splits wherever a line ends.
+     *
+     * The difference from inline-block is fragmentation. `<b>` in the middle of
+     * a paragraph is one box and may be two rectangles, or five, and the ones
+     * in the middle get no borders or padding on the sides where they were cut.
+     */
+    AR_DISPLAY_INLINE
 };
 
 enum

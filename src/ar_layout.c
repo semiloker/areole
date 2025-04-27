@@ -463,12 +463,12 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
  * stretched by align-items has already been told how tall to be, and text that
  * does not fit that is the caller's decision to make.
  */
-static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wrap, void *ud)
+static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
 {
     ar_i32 inner_w;
     ar_i32 h;
 
-    if (!wrap || !n->text)
+    if (!env->wrap || !n->text)
     {
         return;
     }
@@ -488,7 +488,7 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wra
         return;
     }
 
-    h = wrap(ud, n, inner_w);
+    h = env->wrap(env->ud, n, inner_w);
     h += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     if (h > n->rect.h)
     {
@@ -500,20 +500,33 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_wrap_fn wra
    starts, because ar_block_stack works in offsets from zero. */
 typedef struct ar__stack_ud
 {
-    ar_node     *nodes;
-    ar_i32       top;
-    ar_i32       left;
-    ar_i32       inner_w;
-    ar_i32       align;
-    ar_wrap_fn   wrap;
-    void        *wrap_ud;
-    ar_float_ctx floats;
+    ar_node       *nodes;
+    ar_i32         top;
+    ar_i32         left;
+    ar_i32         inner_w;
+    ar_i32         align;
+    ar_layout_env *env;
+    ar_float_ctx   floats;
 } ar__stack_ud;
 
 /* Gives an out-of-flow or inline-level box its size, which for both is
    shrink-to-fit rather than "fill the container". */
-static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_wrap_fn wrap, void *wrap_ud)
+static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *env)
 {
+    /*
+     * A box whose text will be cut into fragments is one line tall, and the
+     * fragments carry the rest. Wrapping it as though it were a block would
+     * make it as tall as all its lines *and* fragment it, which is every line
+     * counted twice -- and the box's own rectangle is the union of its
+     * fragments, so it comes out taller still.
+     */
+    if (ar_is_fragmentable(ch))
+    {
+        ch->rect.w = ch->fit[0] < inner_w ? ch->fit[0] : inner_w;
+        ch->rect.h = ch->text_h;
+        return;
+    }
+
     if (!ar__intrinsic_width(ch, inner_w, &ch->rect.w))
     {
         switch (ch->style.unit[AR_P_WIDTH])
@@ -551,7 +564,7 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_wrap_fn wrap,
     }
     ch->rect.h = ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
 
-    ar__wrap_height(ch, 1, 0, wrap, wrap_ud);
+    ar__wrap_height(ch, 1, 0, env);
 }
 
 static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
@@ -581,11 +594,11 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
         {
             continue;
         }
-        ar__size_shrink_to_fit(ch, su->inner_w, su->wrap, su->wrap_ud);
+        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
     }
 
     return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align,
-                         &su->floats, su->top + y);
+                         &su->floats, su->top + y, su->env);
 }
 
 static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
@@ -598,7 +611,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
        handed to the float list to be pushed to its side. */
     if (real < 0)
     {
-        ar__size_shrink_to_fit(ch, su->inner_w, su->wrap, su->wrap_ud);
+        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
         return;
     }
@@ -650,7 +663,7 @@ static ar_i32 ar__clear_to(void *ud, ar_i32 y, ar_i32 which)
  * and its height follows from that -- including how many lines its text wraps
  * to. Then the stack, with the margins collapsed between siblings.
  */
-static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
+static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 {
     ar_node *n = &nodes[i];
     ar_i32   inner_w, inner_h;
@@ -739,7 +752,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
 
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
-        ar__wrap_height(ch, 1, 0, wrap, ud);
+        ar__wrap_height(ch, 1, 0, env);
     }
 
     /* The stack, by the same walk the measure pass used. */
@@ -751,8 +764,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
         su.left = left;
         su.inner_w = inner_w;
         su.align = n->style.v[AR_P_TEXT_ALIGN];
-        su.wrap = wrap;
-        su.wrap_ud = ud;
+        su.env = env;
         ar_float_reset(&su.floats, left, left + inner_w);
 
         cursor = ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, ar__place_run,
@@ -793,7 +805,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_wrap_fn wrap, void *ud)
     }
 }
 
-static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
+static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
 {
     ar_i32 i;
 
@@ -815,7 +827,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
 
         if (ar_is_block(n))
         {
-            ar__place_block(nodes, i, wrap, ud);
+            ar__place_block(nodes, i, env);
             continue;
         }
 
@@ -870,7 +882,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
                produces is the one that feeds `used`. */
             if (!(axis == 0 && ch->style.unit[AR_P_WIDTH] == AR_UNIT_GROW))
             {
-                ar__wrap_height(ch, axis, stretch, wrap, ud);
+                ar__wrap_height(ch, axis, stretch, env);
             }
 
             used += *ar__size(&ch->rect, axis) + ar__margin_lead(&ch->style, axis) +
@@ -918,7 +930,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
                    main-axis arithmetic above, so doing it late costs nothing. */
                 if (axis == 0)
                 {
-                    ar__wrap_height(ch, axis, stretch, wrap, ud);
+                    ar__wrap_height(ch, axis, stretch, env);
                 }
             }
             leftover = 0; /* absorbed, so justify-content has nothing to place */
@@ -993,7 +1005,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_wrap_fn wrap, void *ud)
     }
 }
 
-void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn wrap, void *ud)
+void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
     if (count <= 0)
     {
@@ -1006,5 +1018,5 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_wrap_fn 
        ignored, because the window is not negotiable. */
     nodes[0].rect = viewport;
 
-    ar__place(nodes, count, wrap, ud);
+    ar__place(nodes, count, env);
 }
