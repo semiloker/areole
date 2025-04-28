@@ -1392,12 +1392,14 @@ static void test_layout_nesting(void)
 
     /* The rail states a width and no height, so it keeps the one and takes the
        full column from align-items: stretch. */
-    CHECK(ar__box_is(1, 0, 0, 120, 300), "layout: a fixed rail keeps its width and stretches");
+    /* 120 of content plus 10 of padding on each side. Under content-box --
+       CSS's default and now areole's -- a stated width is what goes inside. */
+    CHECK(ar__box_is(1, 0, 0, 140, 300), "layout: a fixed rail keeps its width and stretches");
 
     /* Inside the rail the axes swap: it is a column, so the item takes its
        stated height on the main axis and grows across the rail inner width. */
-    CHECK(ar__box_is(2, 10, 10, 100, 24), "layout: a nested box works inside the parent padding");
-    CHECK(ar__box_is(3, 120, 0, 380, 300), "layout: the page takes the rest of the row");
+    CHECK(ar__box_is(2, 10, 10, 120, 24), "layout: a nested box works inside the parent padding");
+    CHECK(ar__box_is(3, 140, 0, 360, 300), "layout: the page takes the rest of the row");
 }
 
 static void test_layout_survives_abuse(void)
@@ -4550,6 +4552,97 @@ static ar_u32 ar__pixel_at(ar_i32 x, ar_i32 y)
 }
 
 /* ------------------------------------------------------------------------
+ * box-sizing
+ *
+ * areole was border-box everywhere until the browser comparison put a stated
+ * size and padding on the same box and found the two engines 18 pixels apart.
+ * The default follows the specification rather than the fashion: a stylesheet
+ * written for the web has to lay out the way it does on the web.
+ * ------------------------------------------------------------------------ */
+static void test_box_sizing_default_is_content_box(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".b { display:block; width:100px; height:40px; padding:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 120, 60),
+          "box-sizing: the stated size is the content, and the padding is added");
+}
+
+static void test_border_box_makes_the_stated_size_the_whole_box(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".b { display:block; width:100px; height:40px; padding:10px;"
+                 "     box-sizing:border-box; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 0, 0, 100, 40),
+          "box-sizing: border-box makes the stated size the whole box");
+}
+
+/* It inherits nothing, like every other box-model property, so the universal
+   selector is how a sheet turns it on everywhere -- and now can. */
+static void test_border_box_applies_through_a_selector(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".b { display:block; box-sizing:border-box; }"
+                 ".one { width:100px; height:40px; padding:10px; }"
+                 ".two { width:80px; height:20px; padding:5px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b.one");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b.two");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 100 && ar__box(1).h == 40, "box-sizing: on the first box");
+    CHECK(ar__box(2).w == 80 && ar__box(2).h == 20, "box-sizing: and on the second");
+}
+
+/* A percentage is a percentage of the containing block, and then the padding
+   goes around that -- the same rule, applied to a computed number. */
+static void test_box_sizing_applies_to_percentages(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".outer { display:block; width:200px; }"
+                 ".half { display:block; width:50%; height:10px; padding:0 5px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.half");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).w == 110, "box-sizing: half of two hundred, plus its padding");
+}
+
+/* ------------------------------------------------------------------------
  * position: sticky
  *
  * In flow until a threshold, then pinned, and never outside the box it
@@ -6887,9 +6980,12 @@ static void test_wrapping_is_inside_the_padding(void)
 {
     ar_surface s = ar__ui_surface(200, 200);
 
+    /* The same *outer* width both times, so the padding is what differs.
+       Under content-box that means stating a smaller content width, which is
+       exactly the arithmetic border-box exists to spare people. */
     ar__ui_reset("#root { display:flex; flex-direction:column; }"
                  ".bare { width:120px; }"
-                 ".pad  { width:120px; padding:0 40px; }");
+                 ".pad  { width:40px; padding:0 40px; }");
 
     ar__ui_begin();
     ar_begin(g_ui, "#root");
@@ -7246,6 +7342,10 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_box_sizing_default_is_content_box();
+    test_border_box_makes_the_stated_size_the_whole_box();
+    test_border_box_applies_through_a_selector();
+    test_box_sizing_applies_to_percentages();
     test_sticky_starts_in_the_flow();
     test_sticky_pins_at_the_threshold();
     test_sticky_leaves_with_its_section();

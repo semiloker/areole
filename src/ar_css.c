@@ -496,7 +496,8 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"right", AR_P_RIGHT},
                                           {"bottom", AR_P_BOTTOM},
                                           {"left", AR_P_LEFT},
-                                          {"z-index", AR_P_Z_INDEX}};
+                                          {"z-index", AR_P_Z_INDEX},
+                                          {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
 
@@ -550,6 +551,9 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
                                      {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
                                      {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+
+                                     {"content-box", AR_P_BOX_SIZING, AR_BOX_CONTENT},
+                                     {"border-box", AR_P_BOX_SIZING, AR_BOX_BORDER},
 
                                      {"static", AR_P_POSITION, AR_POS_STATIC},
                                      {"relative", AR_P_POSITION, AR_POS_RELATIVE},
