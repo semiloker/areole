@@ -16,13 +16,13 @@ extern "C" {
 #endif
 
 #define AR_VERSION_MAJOR 0
-#define AR_VERSION_MINOR 4
+#define AR_VERSION_MINOR 5
 #define AR_VERSION_PATCH 0
 
 /* Bumped when a release lands, which is exactly the discipline that failed
    here: this said 0.1.0-dev through 0.1.1, 0.1.2, 0.2.0, 0.3.0 and 0.4.0,
    because nothing reads it except a status line nobody was checking. */
-#define AR_VERSION_STRING "0.4.0-dev"
+#define AR_VERSION_STRING "0.5.0-dev"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
