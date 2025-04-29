@@ -337,6 +337,19 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
 int ar_is_floated(const ar_node *n);
 
 /* ------------------------------------------------------------------------
+ * Positioning -- ar_layout_position.c
+ * ------------------------------------------------------------------------ */
+int ar_is_positioned(const ar_node *n);
+int ar_is_out_of_flow(const ar_node *n);
+
+/* The box an out-of-flow child is measured against: the padding box of the
+   nearest positioned ancestor, or the viewport. */
+ar_rect ar_containing_block(const ar_node *nodes, ar_i32 i, ar_rect viewport);
+
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
+void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
+/* ------------------------------------------------------------------------
  * Floats -- ar_layout_float.c
  * ------------------------------------------------------------------------ */
 

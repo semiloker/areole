@@ -56,11 +56,43 @@ typedef enum ar_prop
     AR_P_FLOAT,
     AR_P_CLEAR,
 
+    AR_P_POSITION,
+    AR_P_TOP,
+    AR_P_RIGHT,
+    AR_P_BOTTOM,
+    AR_P_LEFT,
+    AR_P_Z_INDEX,
+
     AR_P_COUNT
 } ar_prop;
 
-/* AR_P_COUNT must stay inside the 32 bit "which properties are set" mask. */
-typedef char ar__prop_mask_fits[AR_P_COUNT <= 32 ? 1 : -1];
+/*
+ * Which properties a style or a rule has something to say about.
+ *
+ * One bit each. It was a single ar_u32 until positioning needed a thirty-first
+ * property and then six more; C89 has no sixty-four bit integer this project
+ * is willing to use, so it is two words and a handful of one-line functions.
+ *
+ * Passing it by value keeps every call site reading the way it did when it was
+ * an integer, which is most of why this is a struct rather than an array.
+ */
+#define AR_PSET_WORDS 2
+
+typedef struct ar_pset
+{
+    ar_u32 w[AR_PSET_WORDS];
+} ar_pset;
+
+typedef char ar__prop_mask_fits[AR_P_COUNT <= 32 * AR_PSET_WORDS ? 1 : -1];
+
+ar_pset ar_pset_none(void);
+void    ar_pset_add(ar_pset *p, ar_i32 prop);
+int     ar_pset_has(ar_pset p, ar_i32 prop);
+int     ar_pset_any(ar_pset p);
+
+/* a with everything in b removed, and a with everything in b added. */
+ar_pset ar_pset_minus(ar_pset a, ar_pset b);
+ar_pset ar_pset_plus(ar_pset a, ar_pset b);
 
 typedef enum ar_unit
 {
@@ -139,6 +171,23 @@ enum
    and the only one that needs the line to have a baseline at all. */
 enum
 {
+    AR_POS_STATIC = 0,
+
+    /* In flow, and shifted for painting only: it still occupies the space it
+       would have, which is why it leaves a hole rather than closing one. */
+    AR_POS_RELATIVE,
+
+    /* Out of flow, against the padding box of the nearest positioned
+       ancestor -- which is why `position: relative` with no offsets of its own
+       is not a no-op but the most-used line of CSS there is. */
+    AR_POS_ABSOLUTE,
+
+    /* Out of flow, against the viewport. */
+    AR_POS_FIXED
+};
+
+enum
+{
     AR_FLOAT_NONE = 0,
     AR_FLOAT_LEFT,
     AR_FLOAT_RIGHT
@@ -201,7 +250,7 @@ typedef struct ar_style
        needs the difference: a box that says nothing about colour takes its
        parent's, and a box that says `color: black` does not, even though both
        end up with a colour. */
-    ar_u32 set;
+    ar_pset set;
 } ar_style;
 
 /* Pseudo-class of a rule, and the matching state of a node. */
@@ -337,15 +386,15 @@ typedef struct ar_rule
     ar_i32        nalt;
     ar_u16        state; /* required state bits, 0 means any */
 
-    ar_u16 specificity;
-    ar_u16 order; /* source position, to break specificity ties */
-    ar_u32 set;   /* which properties this rule sets */
+    ar_u16  specificity;
+    ar_u16  order; /* source position, to break specificity ties */
+    ar_pset set;   /* which properties this rule sets */
 
     /* Which of them were marked !important. Per declaration rather than per
        rule, because that is what CSS says and because a rule mixing the two is
        ordinary: `color: red !important; width: 10px;` means one of them wins
        against everything and the other does not. */
-    ar_u32   important;
+    ar_pset  important;
     ar_style style;
 } ar_rule;
 
@@ -423,7 +472,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent);
 /* Non-zero if this property inherits. One table, so adding a property to the
    list is a one-line change and cannot disagree with itself. */
 int  ar_prop_inherits(ar_i32 prop);
-void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set);
+void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);

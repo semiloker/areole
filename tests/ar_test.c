@@ -4395,9 +4395,9 @@ static void test_important_is_per_declaration(void)
     ar_sheet_parse(&sheet, "p { color:#FF0000 !important; width:40px; }");
 
     CHECK(sheet.count == 1, "important: the rule parsed");
-    CHECK((sheet.rules[0].important & (1u << AR_P_COLOR)) != 0,
+    CHECK(ar_pset_has(sheet.rules[0].important, AR_P_COLOR),
           "important: the marked property carries the flag");
-    CHECK((sheet.rules[0].important & (1u << AR_P_WIDTH)) == 0,
+    CHECK(!ar_pset_has(sheet.rules[0].important, AR_P_WIDTH),
           "important: and the one next to it does not");
 
     ar_classes_clear(&klass);
@@ -4542,6 +4542,277 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
     ar_end(g_ui);
     ar_frame_end(g_ui, s);
     ar_frame_presented(g_ui);
+}
+
+/* ------------------------------------------------------------------------
+ * Positioning
+ * ------------------------------------------------------------------------ */
+
+/* relative shifts a box for painting and leaves its space occupied, which is
+   the whole difference from absolute. */
+static void test_relative_shifts_but_keeps_its_space(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".r { display:block; height:10px; position:relative; top:5px; left:7px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x == 7 && ar__box(2).y == 15, "relative: the box moved by its offsets");
+    CHECK(ar__box(3).y == 20, "relative: and the box after it did not, because the space is kept");
+}
+
+/* A relative box takes its subtree with it. */
+static void test_relative_moves_its_children(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".r { display:block; position:relative; left:10px; }"
+                 ".c { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).x == 10, "relative: the box moved");
+    CHECK(ar__box(2).x == 10, "relative: and its child moved with it, not twice");
+}
+
+/*
+ * absolute against the nearest positioned ancestor's *padding* box.
+ *
+ * Not the border box and not the content box: `top: 0` sits under the border
+ * and outside the padding, which is what makes a badge in the corner of a
+ * bordered card land where anyone would expect.
+ */
+static void test_absolute_uses_the_padding_box(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".card { display:block; position:relative; height:80px;"
+                 "        border-width:3px; padding:9px; }"
+                 ".badge { display:block; position:absolute; top:0; left:0;"
+                 "         width:10px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.card");
+    ar_begin(g_ui, "div.badge");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 3, 3, 10, 10),
+          "absolute: measured from inside the border and outside the padding");
+}
+
+/* It takes no space: the box after it sits where it would have anyway. */
+static void test_absolute_is_out_of_the_flow(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".abs { display:block; position:absolute; width:50px; height:50px; }"
+                 ".b { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).y == 10, "absolute: the block after it ignores it entirely");
+}
+
+/* With no offsets it stays at the static position: where the flow had reached.
+   That is what makes `position: absolute` alone look like nothing happened. */
+static void test_absolute_with_no_offsets_keeps_the_static_position(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:10px; }"
+                 ".abs { display:block; position:absolute; width:50px; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).y == 10, "absolute: with no offsets it sits where the flow had got to");
+}
+
+/* Both edges of an axis and no size: the box stretches between them. */
+static void test_absolute_stretches_between_two_edges(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; position:relative; height:100px; }"
+                 ".abs { display:block; position:absolute; left:10px; right:30px;"
+                 "       top:5px; bottom:15px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 10, 5, 160, 80), "absolute: pinned on four edges, sized by the gap");
+}
+
+/* The right edge alone puts the box's far side there. */
+static void test_absolute_from_the_far_edges(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; position:relative; height:100px; }"
+                 ".abs { display:block; position:absolute; right:10px; bottom:20px;"
+                 "       width:30px; height:15px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 160, 65, 30, 15), "absolute: right and bottom place the far edges");
+}
+
+/* fixed is measured against the viewport, whatever is between it and the root. */
+static void test_fixed_uses_the_viewport(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; position:relative; height:100px; padding:20px; }"
+                 ".fix { display:block; position:fixed; top:0; right:0;"
+                 "       width:10px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.fix");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 190, 0, 10, 10),
+          "fixed: the viewport, not the positioned ancestor above it");
+}
+
+/* An unpositioned ancestor is skipped: the walk goes to the next one up. */
+static void test_absolute_skips_an_unpositioned_ancestor(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".outer { display:block; position:relative; height:100px; }"
+                 ".mid { display:block; padding:12px; }"
+                 ".abs { display:block; position:absolute; top:0; left:0;"
+                 "       width:10px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.outer");
+    ar_begin(g_ui, "div.mid");
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(3, 0, 0, 10, 10),
+          "absolute: the unpositioned middle box is not the containing block");
+}
+
+/*
+ * Two automatic margins centre an absolutely positioned box between two given
+ * edges. This is how a modal is centred, and why that needs `left: 0` and
+ * `right: 0` rather than `margin: auto` on its own.
+ */
+static void test_auto_margins_centre_an_absolute_box(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; position:relative; height:100px; }"
+                 ".modal { display:block; position:absolute; left:0; right:0;"
+                 "         top:0; bottom:0; width:60px; height:20px;"
+                 "         margin:auto; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.modal");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(2, 70, 40, 60, 20), "absolute: two auto margins centre it on both axes");
+}
+
+/* A positioned box drops its float, because position wins. */
+static void test_position_beats_float(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".x { display:block; position:absolute; float:left; top:40px; left:50px;"
+                 "     width:20px; height:20px; }"
+                 ".a { display:block; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.x");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_is(1, 50, 40, 20, 20), "position: absolute wins and the float is dropped");
+    CHECK(ar__box(2).y == 0, "position: so nothing in the flow was pushed by it");
 }
 
 /* ------------------------------------------------------------------------
@@ -6371,6 +6642,17 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_relative_shifts_but_keeps_its_space();
+    test_relative_moves_its_children();
+    test_absolute_uses_the_padding_box();
+    test_absolute_is_out_of_the_flow();
+    test_absolute_with_no_offsets_keeps_the_static_position();
+    test_absolute_stretches_between_two_edges();
+    test_absolute_from_the_far_edges();
+    test_fixed_uses_the_viewport();
+    test_absolute_skips_an_unpositioned_ancestor();
+    test_auto_margins_centre_an_absolute_box();
+    test_position_beats_float();
     test_inline_boxes_share_a_line();
     test_an_inline_box_is_cut_across_lines();
     test_fragments_partition_the_text();

@@ -66,7 +66,8 @@ static const char *SHEET_BASE = "#root { display:block; }"
                                 ".l { display:block; }"
                                 ".r { display:block; }"
                                 ".bfc { display:block; }"
-                                ".narrow { display:block; }";
+                                ".narrow { display:block; }"
+                                ".abs { display:block; }";
 
 /*
  * Colour, so the window has something to show. Paint only -- no rule here
@@ -251,6 +252,51 @@ static const struct block_case CASES[] = {
 
     {"min-content-padding",
      ".outer { width:min-content; padding:0 7px; } .a { width:30px; height:10px; }", "(outer(a))"},
+
+    /* ------------------------------------------------------------------
+     * Positioning.
+     * ------------------------------------------------------------------ */
+    {"relative-keeps-its-space",
+     ".a { height:10px; } .r { height:10px; position:relative; top:5px; left:7px; }"
+     " .c { height:10px; }",
+     "(a)(r)(c)"},
+
+    {"relative-moves-children", ".outer { position:relative; left:10px; } .a { height:10px; }",
+     "(outer(a))"},
+
+    {"absolute-padding-box",
+     ".outer { position:relative; height:80px; padding:9px; }"
+     " .abs { position:absolute; top:0; left:0; width:10px; height:10px; }",
+     "(outer(abs))"},
+
+    {"absolute-out-of-flow",
+     ".a { height:10px; } .abs { position:absolute; width:50px; height:50px; }"
+     " .c { height:10px; }",
+     "(a)(abs)(c)"},
+
+    {"absolute-static-position",
+     ".a { height:10px; } .abs { position:absolute; width:50px; height:20px; }", "(a)(abs)"},
+
+    {"absolute-four-edges",
+     ".outer { position:relative; height:100px; }"
+     " .abs { position:absolute; left:10px; right:30px; top:5px; bottom:15px; }",
+     "(outer(abs))"},
+
+    {"absolute-far-edges",
+     ".outer { position:relative; height:100px; }"
+     " .abs { position:absolute; right:10px; bottom:20px; width:30px; height:15px; }",
+     "(outer(abs))"},
+
+    {"absolute-skips-unpositioned",
+     ".outer { position:relative; height:100px; } .narrow { padding:12px; }"
+     " .abs { position:absolute; top:0; left:0; width:10px; height:10px; }",
+     "(outer(narrow(abs)))"},
+
+    {"absolute-auto-margins",
+     ".outer { position:relative; height:100px; }"
+     " .abs { position:absolute; left:0; right:0; top:0; bottom:0;"
+     "        width:60px; height:20px; margin:auto; }",
+     "(outer(abs))"},
 
     {"inline-in-the-stack",
      ".a { height:10px; } .i { display:inline-block; width:40px; height:20px; }"

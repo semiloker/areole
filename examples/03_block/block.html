@@ -29,6 +29,23 @@
 <style>
 * { margin: 0; padding: 0; }
 
+/*
+ * box-sizing: border-box, and this is a real deviation rather than a
+ * convenience.
+ *
+ * areole treats a stated width or height as the border box -- what you asked
+ * for is what the box measures, padding included. CSS's default is
+ * content-box, where padding is added on top, so `height: 80px; padding: 9px`
+ * is 80 in areole and 98 in a browser.
+ *
+ * Nearly every stylesheet written this decade opens by setting border-box, so
+ * areole's default is the one people reach for. It is still not the one CSS
+ * specifies, and a sheet that relies on the specified one lays out differently.
+ * Set here so the positioning cases test positioning; the divergence itself is
+ * recorded in docs/roadmap/STATUS.md.
+ */
+* { box-sizing: border-box; }
+
 body {
   background: #fff;
   font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
@@ -214,6 +231,41 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 #min-content-padding .outer { width: min-content; padding: 0 7px; }
 #min-content-padding .a     { width: 30px; height: 10px; }
 
+/* ------------------------------------------------------------- positioning -- */
+#relative-keeps-its-space .a { height: 10px; }
+#relative-keeps-its-space .r { height: 10px; position: relative; top: 5px; left: 7px; }
+#relative-keeps-its-space .c { height: 10px; }
+
+#relative-moves-children .outer { position: relative; left: 10px; }
+#relative-moves-children .a     { height: 10px; }
+
+#absolute-padding-box .outer { position: relative; height: 80px; padding: 9px; }
+#absolute-padding-box .abs   { position: absolute; top: 0; left: 0; width: 10px; height: 10px; }
+
+#absolute-out-of-flow .a   { height: 10px; }
+#absolute-out-of-flow .abs { position: absolute; width: 50px; height: 50px; }
+#absolute-out-of-flow .c   { height: 10px; }
+
+#absolute-static-position .a   { height: 10px; }
+#absolute-static-position .abs { position: absolute; width: 50px; height: 20px; }
+
+#absolute-four-edges .outer { position: relative; height: 100px; }
+#absolute-four-edges .abs   { position: absolute; left: 10px; right: 30px;
+                              top: 5px; bottom: 15px; }
+
+#absolute-far-edges .outer { position: relative; height: 100px; }
+#absolute-far-edges .abs   { position: absolute; right: 10px; bottom: 20px;
+                             width: 30px; height: 15px; }
+
+#absolute-skips-unpositioned .outer  { position: relative; height: 100px; }
+#absolute-skips-unpositioned .narrow { padding: 12px; }
+#absolute-skips-unpositioned .abs    { position: absolute; top: 0; left: 0;
+                                       width: 10px; height: 10px; }
+
+#absolute-auto-margins .outer { position: relative; height: 100px; }
+#absolute-auto-margins .abs   { position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+                                width: 60px; height: 20px; margin: auto; }
+
 #inline-in-the-stack .a { height: 10px; }
 #inline-in-the-stack .i { display: inline-block; width: 40px; height: 20px; }
 #inline-in-the-stack .c { height: 10px; }
@@ -324,6 +376,42 @@ button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: poin
 <h2>inline-align-center</h2>
 <div class="app inline" id="inline-align-center" data-page="inline-align-center"><div
   class="outer"><div class="i"></div></div></div>
+
+<h2>relative-keeps-its-space</h2>
+<div class="app" id="relative-keeps-its-space" data-page="relative-keeps-its-space"><div
+  class="a"></div><div class="r"></div><div class="c"></div></div>
+
+<h2>relative-moves-children</h2>
+<div class="app" id="relative-moves-children" data-page="relative-moves-children"><div
+  class="outer"><div class="a"></div></div></div>
+
+<h2>absolute-padding-box</h2>
+<div class="app" id="absolute-padding-box" data-page="absolute-padding-box"><div
+  class="outer"><div class="abs"></div></div></div>
+
+<h2>absolute-out-of-flow</h2>
+<div class="app" id="absolute-out-of-flow" data-page="absolute-out-of-flow"><div
+  class="a"></div><div class="abs"></div><div class="c"></div></div>
+
+<h2>absolute-static-position</h2>
+<div class="app" id="absolute-static-position" data-page="absolute-static-position"><div
+  class="a"></div><div class="abs"></div></div>
+
+<h2>absolute-four-edges</h2>
+<div class="app" id="absolute-four-edges" data-page="absolute-four-edges"><div
+  class="outer"><div class="abs"></div></div></div>
+
+<h2>absolute-far-edges</h2>
+<div class="app" id="absolute-far-edges" data-page="absolute-far-edges"><div class="outer"><div
+  class="abs"></div></div></div>
+
+<h2>absolute-skips-unpositioned</h2>
+<div class="app" id="absolute-skips-unpositioned" data-page="absolute-skips-unpositioned"><div
+  class="outer"><div class="narrow"><div class="abs"></div></div></div></div>
+
+<h2>absolute-auto-margins</h2>
+<div class="app" id="absolute-auto-margins" data-page="absolute-auto-margins"><div
+  class="outer"><div class="abs"></div></div></div>
 
 <h2>min-content-stack</h2>
 <div class="app" id="min-content-stack" data-page="min-content-stack"><div class="outer"><div

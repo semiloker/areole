@@ -41,7 +41,7 @@ void ar_style_defaults(ar_style *s)
 {
     ar_i32 i;
 
-    s->set = 0;
+    s->set = ar_pset_none();
     for (i = 0; i < AR_P_COUNT; ++i)
     {
         s->v[i] = 0;
@@ -79,6 +79,21 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
+
+    /*
+     * The offsets default to `auto`, not to zero.
+     *
+     * Everything else in this table is zero because zero is its initial value,
+     * but an offset of zero is a real instruction -- "put this edge against
+     * that edge" -- and `auto` means "wherever the flow or the other three
+     * edges put it". Left at zero, every absolutely positioned box in the
+     * world would pin itself to the top left of its containing block, and
+     * `right` would never be read at all because `left` had already answered.
+     */
+    s->unit[AR_P_TOP] = AR_UNIT_AUTO;
+    s->unit[AR_P_RIGHT] = AR_UNIT_AUTO;
+    s->unit[AR_P_BOTTOM] = AR_UNIT_AUTO;
+    s->unit[AR_P_LEFT] = AR_UNIT_AUTO;
 }
 
 void ar_classes_clear(ar_classes *c)
@@ -144,19 +159,77 @@ int ar_classes_contains(const ar_classes *have, const ar_classes *want)
     return 1;
 }
 
-void ar_style_merge(ar_style *dst, const ar_style *src, ar_u32 set)
+ar_pset ar_pset_none(void)
+{
+    ar_pset p;
+    ar_i32  i;
+
+    for (i = 0; i < AR_PSET_WORDS; ++i)
+    {
+        p.w[i] = 0;
+    }
+    return p;
+}
+
+void ar_pset_add(ar_pset *p, ar_i32 prop)
+{
+    p->w[prop >> 5] |= 1u << (prop & 31);
+}
+
+int ar_pset_has(ar_pset p, ar_i32 prop)
+{
+    return (p.w[prop >> 5] & (1u << (prop & 31))) != 0;
+}
+
+int ar_pset_any(ar_pset p)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR_PSET_WORDS; ++i)
+    {
+        if (p.w[i])
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+ar_pset ar_pset_minus(ar_pset a, ar_pset b)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR_PSET_WORDS; ++i)
+    {
+        a.w[i] &= ~b.w[i];
+    }
+    return a;
+}
+
+ar_pset ar_pset_plus(ar_pset a, ar_pset b)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR_PSET_WORDS; ++i)
+    {
+        a.w[i] |= b.w[i];
+    }
+    return a;
+}
+
+void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set)
 {
     ar_i32 i;
 
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        if (set & (1u << i))
+        if (ar_pset_has(set, (ar_i32)i))
         {
             dst->v[i] = src->v[i];
             dst->unit[i] = src->unit[i];
         }
     }
-    dst->set |= set;
+    dst->set = ar_pset_plus(dst->set, set);
 }
 
 /*
@@ -198,7 +271,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent)
            whether the property inherits by default -- that is what they are
            for. `inherit` on a non-inherited property is the interesting case
            and the one CSS authors reach for. */
-        if (child->set & (1u << (ar_u32)i))
+        if (ar_pset_has(child->set, i))
         {
             if (child->unit[i] == AR_UNIT_INHERIT)
             {
@@ -217,7 +290,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent)
         {
             continue;
         }
-        if (child->set & (1u << (ar_u32)i))
+        if (ar_pset_has(child->set, i))
         {
             continue; /* the child said something; it wins */
         }
@@ -225,7 +298,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent)
         child->unit[i] = parent->unit[i];
         /* Marked as set, so a grandchild inherits through a box that only
            inherited it -- which is the whole point of a cascade. */
-        child->set |= 1u << (ar_u32)i;
+        ar_pset_add(&child->set, i);
     }
 }
 
@@ -413,7 +486,13 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"text-align", AR_P_TEXT_ALIGN},
                                           {"vertical-align", AR_P_VERTICAL_ALIGN},
                                           {"float", AR_P_FLOAT},
-                                          {"clear", AR_P_CLEAR}};
+                                          {"clear", AR_P_CLEAR},
+                                          {"position", AR_P_POSITION},
+                                          {"top", AR_P_TOP},
+                                          {"right", AR_P_RIGHT},
+                                          {"bottom", AR_P_BOTTOM},
+                                          {"left", AR_P_LEFT},
+                                          {"z-index", AR_P_Z_INDEX}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
 
@@ -467,6 +546,11 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
                                      {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
                                      {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+
+                                     {"static", AR_P_POSITION, AR_POS_STATIC},
+                                     {"relative", AR_P_POSITION, AR_POS_RELATIVE},
+                                     {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
+                                     {"fixed", AR_P_POSITION, AR_POS_FIXED},
 
                                      {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
                                      {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
@@ -687,7 +771,7 @@ static void ar__set(ar_rule *rule, ar_u8 prop, ar_i32 v, ar_u8 unit)
 {
     rule->style.v[prop] = v;
     rule->style.unit[prop] = unit;
-    rule->set |= 1u << prop;
+    ar_pset_add(&rule->set, prop);
 }
 
 /*
@@ -728,7 +812,7 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
     const char *name;
     ar_u32      len;
     ar_i32      prop;
-    ar_u32      before_set;
+    ar_pset     before_set;
     int         important;
     ar__value   vals[4];
     ar_i32      n;
@@ -869,7 +953,7 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
 
     if (important)
     {
-        rule->important |= rule->set & ~before_set;
+        rule->important = ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
     }
 
     while (z->p < z->end && *z->p != ';' && *z->p != '}')
@@ -1567,7 +1651,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
 
         memset(&rule[0], 0, sizeof rule[0]);
         ar_style_defaults(&rule[0].style);
-        rule[0].set = 0;
+        rule[0].set = ar_pset_none();
 
         if (!ar__parse_selector(&z, &rule[0]))
         {
@@ -1607,7 +1691,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             }
             memset(&rule[sel_count], 0, sizeof rule[0]);
             ar_style_defaults(&rule[sel_count].style);
-            rule[sel_count].set = 0;
+            rule[sel_count].set = ar_pset_none();
             if (!ar__parse_selector(&z, &rule[sel_count]))
             {
                 sel_count = 0;
@@ -1659,7 +1743,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             z.p++; /* the closing brace */
         }
 
-        if (rule[0].set == 0)
+        if (!ar_pset_any(rule[0].set))
         {
             continue; /* an empty block is legal and simply has no effect */
         }
@@ -1802,7 +1886,7 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         {
             continue;
         }
-        ar_style_merge(out, &r->style, r->set & ~r->important);
+        ar_style_merge(out, &r->style, ar_pset_minus(r->set, r->important));
     }
 
     /*
@@ -1818,7 +1902,7 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
-        if (!r->important || r->nctx > 0)
+        if (!ar_pset_any(r->important) || r->nctx > 0)
         {
             continue;
         }
@@ -1974,7 +2058,7 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
            rule's important declarations still have to land after its normal
            ones, and there are few enough of these rules that a second walk
            would cost more than it clarifies. */
-        ar_style_merge(out, &r->style, r->set & ~r->important);
+        ar_style_merge(out, &r->style, ar_pset_minus(r->set, r->important));
         ar_style_merge(out, &r->style, r->important);
     }
 }
