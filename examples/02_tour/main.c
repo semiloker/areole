@@ -11,6 +11,8 @@
  *          on a pixel grid
  *   0.3.0  bidirectional text and OpenType shaping
  *   0.4.0  the cascade: inheritance, combinators, !important, structure
+ *   0.5.0  block and inline: margin collapsing, floats, fragmented inlines
+ *   0.6.0  position and scroll: absolute, sticky, z-index, a scrollable list
  *
  * Every page is declared with ar_begin and ar_text and laid out from the
  * stylesheet below. There is one coordinate in this file, for the overlay,
@@ -154,6 +156,49 @@ static const char *SHEET_STRUCTURE = ".quiet { color:#8d8578 !important; }"
                                      ".stack { display:flex; flex-direction:column;"
                                      "         gap:6px; }";
 
+/*
+ * The 0.5.0 page's rules.
+ *
+ * Every one of these is a thing that could not be said before 0.5.0: a block
+ * that stacks, two margins that collapse into one, a float the text runs
+ * around, and an inline run cut across lines.
+ */
+static const char *SHEET_FLOW = ".doc   { display:block; background:#f7f3ea; padding:10px; }"
+                                ".para  { display:block; margin:12px 0; background:#eee6d6; }"
+                                ".figure { display:block; float:left; width:70px; height:52px;"
+                                "          margin:0 10px 6px 0; background:#c2703d; }"
+                                ".em    { display:inline; color:#a1552b; }"
+                                ".plain { display:inline; }";
+
+/*
+ * The 0.6.0 page's rules.
+ *
+ * The stack demonstrates z-index by overlapping three boxes on purpose; the
+ * card shows a badge pinned to a corner, which is the whole reason absolute
+ * positioning exists; and the list is a real scroll container with a sticky
+ * header inside it.
+ */
+static const char *SHEET_POS =
+    ".stage { display:block; position:relative; height:96px;"
+    "         background:#f4efe4; }"
+    ".chip  { display:block; position:absolute; width:70px; height:44px;"
+    "         font-size:11px; padding:5px; color:#fdfaf3; }"
+    ".c1 { top:10px; left:10px;  background:#7a4a2a; z-index:3; }"
+    ".c2 { top:26px; left:46px;  background:#c2703d; z-index:2; }"
+    ".c3 { top:42px; left:82px;  background:#d9a273; z-index:1; }"
+    ".pin { top:8px; right:8px; width:56px; height:20px; background:#2f5d3f; }";
+
+static const char *SHEET_POS2 =
+    ".scroller { display:block; height:130px; overflow:scroll;"
+    "            background:#f7f3ea; }"
+    ".sticky { display:block; position:sticky; top:0; padding:4px 8px;"
+    "          font-size:11px; color:#fdfaf3; background:#7a4a2a; }"
+    ".sect { display:block; }"
+    /* Not `.row`: that already means a flex row on four earlier pages, and
+       redefining it here quietly broke every one of them. */
+    ".srow { display:block; padding:3px 8px; font-size:12px; color:#4a453e; }"
+    ".srow:nth-child(even) { background:#efe8d8; }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -197,13 +242,17 @@ enum
     PAGE_TEXT,
     PAGE_SCRIPT,
     PAGE_CASCADE,
+    PAGE_FLOW,
+    PAGE_POSITION,
     PAGE_COUNT
 };
 
-static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0", "0.4.0"};
+static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0",
+                                           "0.3.0", "0.4.0", "0.5.0", "0.6.0"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {
-    "One block, one blit", "The counters", "Damage tracking", "Outlines", "Scripts", "The cascade"};
+    "One block, one blit", "The counters",     "Damage tracking",    "Outlines", "Scripts",
+    "The cascade",         "Block and inline", "Position and scroll"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -211,7 +260,9 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Only what changed is presented. Watch the regions move.",
     "TrueType glyphs rasterized to a coverage buffer, integer end to end.",
     "UAX #9, OpenType GSUB and GPOS, Arabic joining, Indic reordering.",
-    "Inheritance, combinators, !important, and the structural selectors."};
+    "Inheritance, combinators, !important, and the structural selectors.",
+    "Margin collapsing, floats, line boxes and fragmented inlines.",
+    "Absolute, fixed, sticky, z-index, and a list you can scroll."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -552,6 +603,78 @@ static void page_cascade(ar_ctx *ui)
     ar_end(ui);
 }
 
+/* ------------------------------------------------------------------------
+ * 0.5.0 -- block and inline
+ * ------------------------------------------------------------------------ */
+static void page_flow(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "Margin collapsing");
+    ar_text(ui, "div.p",
+            "Two paragraphs with 12 px above and below. The gap between them is "
+            "12, not 24: adjacent margins collapse into one.");
+
+    ar_begin(ui, "div.doc");
+    ar_text(ui, "div.para", "The first paragraph.");
+    ar_text(ui, "div.para", "The second, one margin below it rather than two.");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A float, and the text around it");
+    ar_begin(ui, "div.doc");
+    ar_begin(ui, "div.figure");
+    ar_end(ui);
+    ar_text(ui, "div.para",
+            "This paragraph spans the full width of its container -- a float "
+            "shortens line boxes, not block boxes -- and only its lines are "
+            "narrowed by the block to the left of them. That is why text wraps "
+            "around a figure while the background behind it does not.");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "One inline box, cut across lines");
+    ar_begin(ui, "div.doc");
+    ar_text(ui, "div.plain", "An inline run flows into the lines around it, and ");
+    ar_text(ui, "div.em", "this emphasised part is one box and several rectangles");
+    ar_text(ui, "div.plain", ", because the line breaker cut it where each line ended.");
+    ar_end(ui);
+}
+
+/* ------------------------------------------------------------------------
+ * 0.6.0 -- position and scroll
+ * ------------------------------------------------------------------------ */
+static void page_position(ar_ctx *ui, ar_i32 rows)
+{
+    ar_i32 i;
+
+    ar_text(ui, "div.h2", "z-index decides what covers what");
+    ar_text(ui, "div.dim",
+            "Three absolutely positioned boxes, declared last to first. Paint "
+            "order is the stacking tree, not the order they were written in.");
+    ar_begin(ui, "div.stage");
+    ar_text(ui, "div.chip.c3", "z-index 1");
+    ar_text(ui, "div.chip.c2", "z-index 2");
+    ar_text(ui, "div.chip.c1", "z-index 3");
+    ar_text(ui, "div.chip.pin", "pinned");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A scroll container with a sticky header");
+    ar_text(ui, "div.dim", "Point at the list and turn the wheel.");
+    ar_begin(ui, "div.scroller");
+    ar_begin(ui, "div.sect");
+    ar_text(ui, "div.sticky", "Section one");
+    for (i = 0; i < 8; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("row %ld", (long)(i + 1)));
+    }
+    ar_end(ui);
+    ar_begin(ui, "div.sect");
+    ar_text(ui, "div.sticky", "Section two");
+    for (i = 0; i < rows; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("row %ld", (long)(i + 9)));
+    }
+    ar_end(ui);
+    ar_end(ui);
+}
+
 /* The page dispatch, so the window loop and the self-check below run exactly
    the same declarations rather than two versions that can drift apart. */
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
@@ -573,6 +696,12 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_SCRIPT:
         page_script(ui, set, have_font);
+        break;
+    case PAGE_FLOW:
+        page_flow(ui);
+        break;
+    case PAGE_POSITION:
+        page_position(ui, 10);
         break;
     default:
         page_cascade(ui);
@@ -1043,6 +1172,9 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_TOGGLE);
     ar_stylesheet(ui, SHEET_CASCADE);
     ar_stylesheet(ui, SHEET_STRUCTURE);
+    ar_stylesheet(ui, SHEET_FLOW);
+    ar_stylesheet(ui, SHEET_POS);
+    ar_stylesheet(ui, SHEET_POS2);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */

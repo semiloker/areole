@@ -12,13 +12,13 @@ on their path through the tree, which is the one identifier the two genuinely sh
 
 ## The result
 
-Measured 2026-08-13, Edge 151 headless, Segoe UI, 640×480 viewport, 159 boxes across six pages,
-**after** text wrapping and font-derived line boxes landed.
+Measured 2026-08-14, Edge 151 headless, Segoe UI, 640×480 viewport, 215 boxes across eight pages —
+every release from 0.1.0 to 0.6.0.
 
 | | |
 | --- | --- |
-| Boxes matched by path | **159 / 159** |
-| Geometry disagreements, boxes not sized by their own text | **0** |
+| Boxes matched by path | **215 / 215** |
+| Geometry disagreements, boxes not sized by their own text | **2**, both one line of text, see below |
 | Text-sized boxes, width difference | **max 1 px, mean 0.8 px** |
 | Text-sized boxes, x offset | **max 1 px, mean 0.4 px** |
 
@@ -80,6 +80,20 @@ window had shown:
 - Two mistakes in `tour.html` itself: `.app div` outscoring `.page` on specificity, and
   `flex: 0 0 120px` setting a basis on the vertical axis. Both were caught by the browser
   disagreeing, which is the comparison working in the direction nobody plans for.
+
+## The two that differ, and why they are not a bug
+
+Both are on the 0.5.0 page, and both are exactly one line of text — 19 pixels.
+
+A paragraph beside a float is 568 wide in both engines, with the same float shortening the same
+lines. areole fits it into three lines; Chromium needs four. Nothing about the box model differs:
+the two rasterizers measure the same words about a pixel apart, and across a paragraph that is
+enough to move where one line ends, which moves a whole line into or out of existence.
+
+It is the same divergence the *text-sized* table below reports, one level removed — a container
+whose height comes from wrapped descendants inherits their disagreement. The tool does not fold it
+into that category, because a container whose height is wrong for a real reason looks exactly the
+same, and hiding one to tidy the other would be the wrong trade.
 
 ## Reading the output
 
