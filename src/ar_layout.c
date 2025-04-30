@@ -800,6 +800,14 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     /* An automatic height is whatever that came to. It was already measured
        intrinsically, but the children's real widths may have wrapped their
        text differently, so this is the number that counts. */
+    /*
+     * What the contents came to, whatever the box itself ends up being. For an
+     * automatic height the two are the same; for a stated one they differ, and
+     * the difference is exactly how far a scroll container can be scrolled.
+     */
+    n->content_h = cursor + (n->text ? ar__text_block_height(n) : 0) + n->style.v[AR_P_PAD_TOP] +
+                   n->style.v[AR_P_PAD_BOTTOM];
+
     /* The root keeps the viewport, whatever it says about itself and whatever
        its contents come to -- the window is not negotiable, which is already
        true of its width. */
@@ -1049,4 +1057,5 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
         }
     }
     ar_position_relative(nodes, count, viewport);
+    ar_scroll_apply(nodes, count, env);
 }

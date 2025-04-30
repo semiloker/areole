@@ -540,6 +540,28 @@ int ar_unbalanced(const ar_ctx *c);
    must draw one more frame to show the highlight. */
 int ar_needs_redraw(const ar_ctx *c);
 
+/* ------------------------------------------------------------------------
+ * Scrolling
+ *
+ * A box with `overflow: scroll` or `auto` keeps a scroll position between
+ * frames -- the only piece of layout state areole keeps, because it is the
+ * only one that belongs to the user rather than to the stylesheet.
+ *
+ * A wheel notch is applied after the frame is laid out, so it lands on the
+ * next one. That is the same trade hover makes, for the same reason, and
+ * ar_needs_redraw covers both.
+ * ------------------------------------------------------------------------ */
+ar_i32 ar_node_scroll(const ar_ctx *c, ar_i32 i);
+ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i);
+
+/* Moves a container, clamped to its range. For a keyboard, a scrollbar drag,
+   or scrolling something into view. Returns where it ended up. */
+ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y);
+
+/* Whether a wheel notch moved anything this frame, so a caller whose pump
+   blocks knows to ask for the frame that shows it. */
+int ar_scrolled(const ar_ctx *c);
+
 ar_perf *ar_perf_of(ar_ctx *c);
 
 /* Where the arena stands. Every figure is bytes.

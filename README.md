@@ -389,7 +389,7 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 699 checks
+./build/ar_test               # 718 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.4.0
 ./build/example_block         # the block, inline and float corpus, drawn
