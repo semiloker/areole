@@ -389,15 +389,14 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
  * ------------------------------------------------------------------------ */
 
 /*
- * How far from zero a z-index is allowed to be.
+ * There is no bound on a z-index.
  *
- * The ordering passes sweep this range rather than sorting, so it is a real
- * bound and not a formality. Stylesheets use a handful of layers -- a dropdown
- * over a header over the page -- and a z-index past this is clamped rather
- * than refused, since clamping puts the box at the top of the pile, which is
- * where somebody who wrote 99999 wanted it.
+ * There was one, because the ordering passes swept the whole range rather than
+ * sorting. The comment here claimed a z past it was clamped to the top of the
+ * pile; nothing clamped it, so `z-index: 99999` matched no sweep and the box
+ * was never painted. The passes now visit only the values a stylesheet uses,
+ * so the bound had nothing left to do and the box paints where it asked to.
  */
-#define AR_Z_RANGE 32
 
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
