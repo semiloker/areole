@@ -278,11 +278,12 @@ typedef struct ar_ctx ar_ctx;
    two indices that say where its fragments are, and 368 -> 400 to reserve one
    fragment per box -- which is not how fragments actually scale, since a
    twenty-line paragraph is one box and twenty of them, but it is a budget and
-   running out of it costs a split rather than anything worse. A property costs every box
+   running out of it costs a split rather than anything worse. 400 -> 408 for
+   the paint order, one index per box. A property costs every box
    and every rule five bytes, in ar_style. The assertions in ar_ctx.c are what
    noticed each time; they are there so this number cannot quietly stop being
    true. */
-#define AR_BYTES_PER_BOX 400u
+#define AR_BYTES_PER_BOX 408u
 
 /*
  * The part of the block that does not scale with the box count: the context

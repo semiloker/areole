@@ -90,6 +90,10 @@ void ar_style_defaults(ar_style *s)
      * world would pin itself to the top left of its containing block, and
      * `right` would never be read at all because `left` had already answered.
      */
+    /* `auto` too: a z-index of zero is a real layer, and a box that never
+       mentioned one has to be distinguishable from a box that asked for 0. */
+    s->unit[AR_P_Z_INDEX] = AR_UNIT_AUTO;
+
     s->unit[AR_P_TOP] = AR_UNIT_AUTO;
     s->unit[AR_P_RIGHT] = AR_UNIT_AUTO;
     s->unit[AR_P_BOTTOM] = AR_UNIT_AUTO;

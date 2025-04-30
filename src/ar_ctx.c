@@ -977,9 +977,12 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        it. */
     room = ar_arena_available(&c->arena);
     c->node_cap = c->box_budget;
-    if ((ar_u32)c->node_cap * ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag)) > room)
+    if ((ar_u32)c->node_cap *
+            ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) + (ar_u32)sizeof(ar_i32)) >
+        room)
     {
-        c->node_cap = (ar_i32)(room / ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag)));
+        c->node_cap = (ar_i32)(room / ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) +
+                                       (ar_u32)sizeof(ar_i32)));
     }
     c->nodes =
         c->node_cap > 0
@@ -1011,6 +1014,16 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     {
         c->frag_cap = 0;
     }
+
+    /* Paint order, one entry per box, budgeted alongside the tree. Without it
+       painting falls back to declaration order -- what it did before stacking
+       existed, and wrong rather than blank. */
+    c->order_count = 0;
+    room = ar_arena_available(&c->arena);
+    c->order =
+        (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32) <= room && c->node_cap > 0
+            ? (ar_i32 *)ar_arena_frame(&c->arena, (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32))
+            : 0;
 }
 
 /* ------------------------------------------------------------------------
@@ -1268,10 +1281,19 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
 
 static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
 {
-    ar_i32 i;
+    ar_i32 ord;
+    ar_i32 painted = c->order ? c->order_count : c->node_count;
 
-    for (i = 0; i < c->node_count; ++i)
+    /*
+     * Back to front, in stacking order rather than declaration order.
+     *
+     * The clip inherited from a parent still works, because a box always
+     * appears after its ancestors here: every bucket walk descends from the
+     * context root, and a context root is pushed before anything inside it.
+     */
+    for (ord = 0; ord < painted; ++ord)
     {
+        ar_i32   i = c->order ? c->order[ord] : ord;
         ar_node *n = &c->nodes[i];
         ar_rect  clip;
         ar_color bg, border;
@@ -1397,9 +1419,20 @@ static void ar__update_hot(ar_ctx *c)
     {
         return;
     }
-    for (i = 0; i < c->node_count; ++i)
+    /*
+     * Front to back, in reverse paint order: the first box found under the
+     * cursor is the one on top, which is the one the cursor is actually over.
+     *
+     * It used to be a forward walk of the array taking the last match, which
+     * is the same answer only while paint order and declaration order agree.
+     * The moment anything is positioned they stop agreeing, and clicking a
+     * dropdown would have hit whatever was behind it.
+     */
+    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
     {
-        ar_node *n = &c->nodes[i];
+        ar_i32   at = c->order ? c->order[i] : i;
+        ar_node *n = &c->nodes[at];
+
         if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
             continue;
@@ -1407,6 +1440,7 @@ static void ar__update_hot(ar_ctx *c)
         if (ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
         {
             c->hot = n->key;
+            break;
         }
     }
 
@@ -1459,6 +1493,11 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar_layout_solve(c->nodes, c->node_count, viewport, &env);
         c->frag_count = env.frag_used;
     }
+
+    /* Paint order, once the rectangles are final: a stacking context's bucket
+       depends on nothing layout decides, but its subtree has to be walked and
+       there is no reason to walk it twice. */
+    c->order_count = c->order ? ar_stack_order(c->nodes, c->node_count, c->order, c->node_cap) : 0;
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
     /* A resize repaints everything: every box moved, and the surface behind

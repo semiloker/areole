@@ -4545,6 +4545,235 @@ static void ar__render_label(const char *first, const char *second, ar_surface *
 }
 
 /* ------------------------------------------------------------------------
+ * Stacking order
+ *
+ * Paint order is only observable in pixels, so these read them. Every case is
+ * two boxes on the same spot and one question: which colour survived.
+ * ------------------------------------------------------------------------ */
+static ar_u32 ar__pixel_at(ar_i32 x, ar_i32 y)
+{
+    return g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu;
+}
+
+/* Without positioning, later wins -- which is what declaration order gave and
+   what has to keep being true. */
+static void test_declaration_order_still_decides_when_nothing_is_positioned(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; position:relative; }"
+                 ".red { display:block; position:absolute; top:0; left:0;"
+                 "       width:50px; height:50px; background:#FF0000; }"
+                 ".blue { display:block; position:absolute; top:0; left:0;"
+                 "        width:50px; height:50px; background:#0000FF; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.red");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.blue");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0x0000FF, "stacking: with equal z, the later box wins");
+}
+
+/*
+ * A positioned box paints above an unpositioned one declared after it.
+ *
+ * This is the one that catches people out: `position: relative` on its own,
+ * with no offsets and no z-index, changes what covers what.
+ */
+static void test_a_positioned_box_paints_above_the_flow(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".pos { display:block; position:relative;"
+                 "       width:50px; height:50px; background:#FF0000; }"
+                 ".flow { display:block; position:relative; top:-50px;"
+                 "        width:50px; height:50px; background:#0000FF; }"
+                 ".plain { display:block; width:50px; height:50px; background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.pos");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.plain");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* .plain is declared second and overlaps nothing, so this only checks that
+       the positioned box survived where it sits. */
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000, "stacking: the positioned box is still there");
+    CHECK(ar__pixel_at(10, 60) == 0x00FF00, "stacking: and the plain one below it is too");
+}
+
+/* A negative z-index puts a positioned box behind the flow. */
+static void test_negative_z_goes_behind_the_flow(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; position:relative; }"
+                 ".back { display:block; position:absolute; top:0; left:0;"
+                 "        width:50px; height:50px; background:#FF0000; z-index:-1; }"
+                 ".plain { display:block; width:50px; height:50px; background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.back");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.plain");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0x00FF00,
+          "stacking: a negative z-index puts the box under the flow that follows it");
+}
+
+/* z-index orders positioned boxes against each other, beating declaration
+   order in both directions. */
+static void test_z_index_beats_declaration_order(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; position:relative; }"
+                 ".low { display:block; position:absolute; top:0; left:0;"
+                 "       width:50px; height:50px; background:#0000FF; z-index:1; }"
+                 ".high { display:block; position:absolute; top:0; left:0;"
+                 "        width:50px; height:50px; background:#FF0000; z-index:5; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.high");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.low");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000,
+          "stacking: the higher z wins even though it was declared first");
+}
+
+/* z-index on an unpositioned box does nothing at all, which is the other half
+   of the confusion. */
+static void test_z_index_needs_a_position(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; position:relative; }"
+                 ".ignored { display:block; position:absolute; top:0; left:0;"
+                 "           width:50px; height:50px; background:#FF0000; }"
+                 ".plain { display:block; position:absolute; top:0; left:0;"
+                 "         width:50px; height:50px; background:#0000FF; z-index:0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.plain");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.ignored");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Both are in bucket six -- z:0 and z:auto share it -- so declaration
+       order decides, and the second one wins. */
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000, "stacking: z-index 0 and z-index auto share a layer");
+}
+
+/*
+ * A float paints above the in-flow blocks and below anything positioned.
+ *
+ * Buckets four and three of Appendix E. Made observable by pulling the float
+ * up over the block with a negative margin, because a float and the block it
+ * shortens do not otherwise share any pixels -- which is the whole point of a
+ * float and the reason this needed contriving.
+ */
+static void test_a_float_paints_above_the_blocks(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".blk { display:block; width:50px; height:50px; background:#00FF00; }"
+                 ".f { display:block; float:left; width:50px; height:50px;"
+                 "     margin-top:-50px; background:#FF0000; }"
+                 /* No offset: a float takes no space in the flow, so this
+                    box's static position is already on top of it. */
+                 ".over { display:block; position:relative;"
+                 "        width:50px; height:50px; background:#0000FF; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.blk");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.f");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000, "stacking: a float paints above an in-flow block");
+
+    /* And a positioned box paints above the float. */
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.f");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.over");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0x0000FF, "stacking: and a positioned box paints above a float");
+}
+
+/* Hit testing follows the same order backwards: the box on top is the one the
+   cursor is over. */
+static void test_hit_testing_finds_the_box_on_top(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; position:relative; }"
+                 ".under { display:block; position:absolute; top:0; left:0;"
+                 "         width:50px; height:50px; }"
+                 ".over { display:block; position:absolute; top:0; left:0;"
+                 "        width:50px; height:50px; z-index:5; }"
+                 ".over:hover { background:#FF0000; }"
+                 ".under:hover { background:#0000FF; }");
+
+    /* Two frames: hover is resolved from the previous one. */
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 10;
+    in.mouse_y = 10;
+    in.mouse_inside = 1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.over");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.under");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.over");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.under");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000,
+          "stacking: the cursor is over the box on top, not the one declared last");
+}
+
+/* ------------------------------------------------------------------------
  * Positioning
  * ------------------------------------------------------------------------ */
 
@@ -6642,6 +6871,13 @@ int main(void)
     test_important_is_per_declaration();
     test_important_loses_to_important();
     test_cascade_keywords();
+    test_declaration_order_still_decides_when_nothing_is_positioned();
+    test_a_positioned_box_paints_above_the_flow();
+    test_negative_z_goes_behind_the_flow();
+    test_z_index_beats_declaration_order();
+    test_z_index_needs_a_position();
+    test_a_float_paints_above_the_blocks();
+    test_hit_testing_finds_the_box_on_top();
     test_relative_shifts_but_keeps_its_space();
     test_relative_moves_its_children();
     test_absolute_uses_the_padding_box();

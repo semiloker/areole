@@ -197,6 +197,12 @@ struct ar_ctx
     ar_i32   frag_cap;
     ar_i32   frag_count;
 
+    /* Boxes in paint order, back to front, rebuilt each frame beside the tree.
+       Painting and hit testing both read it -- one forwards, one backwards --
+       so they cannot disagree about what is on top. */
+    ar_i32 *order;
+    ar_i32  order_count;
+
     ar_i32 stack[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
@@ -335,6 +341,27 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
                       void *ud);
 
 int ar_is_floated(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Stacking order -- ar_stack.c
+ * ------------------------------------------------------------------------ */
+
+/*
+ * How far from zero a z-index is allowed to be.
+ *
+ * The ordering passes sweep this range rather than sorting, so it is a real
+ * bound and not a formality. Stylesheets use a handful of layers -- a dropdown
+ * over a header over the page -- and a z-index past this is clamped rather
+ * than refused, since clamping puts the box at the top of the pile, which is
+ * where somebody who wrote 99999 wanted it.
+ */
+#define AR_Z_RANGE 32
+
+int ar_z_is_auto(const ar_node *n);
+int ar_forms_stacking_context(const ar_node *n);
+
+/* Fills `order` with every visible box, back to front. Returns the count. */
+ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap);
 
 /* ------------------------------------------------------------------------
  * Positioning -- ar_layout_position.c
