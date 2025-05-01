@@ -378,6 +378,7 @@ toolkit breaks that circle.
 - **0.1.2** *It redraws less* — damage tracking, scroll by region move
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
+- **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
 - **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, selector lists, combinators, `!important`, structural selectors, `:not`/`:is`/`:where` ✅
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
@@ -389,7 +390,7 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 718 checks
+./build/ar_test               # 727 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.4.0
 ./build/example_block         # the block, inline and float corpus, drawn

@@ -183,7 +183,14 @@ enum
     AR_POS_ABSOLUTE,
 
     /* Out of flow, against the viewport. */
-    AR_POS_FIXED
+    AR_POS_FIXED,
+
+    /*
+     * In flow until a threshold, then pinned -- and never outside the box it
+     * belongs to, which is what makes a sticky section header hand over to the
+     * next one instead of stacking up.
+     */
+    AR_POS_STICKY
 };
 
 enum

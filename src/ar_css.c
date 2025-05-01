@@ -555,6 +555,7 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"relative", AR_P_POSITION, AR_POS_RELATIVE},
                                      {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
                                      {"fixed", AR_P_POSITION, AR_POS_FIXED},
+                                     {"sticky", AR_P_POSITION, AR_POS_STICKY},
 
                                      {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
                                      {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},

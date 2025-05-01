@@ -415,6 +415,9 @@ ar_rect ar_containing_block(const ar_node *nodes, ar_i32 i, ar_rect viewport);
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
 void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
 
+int  ar_is_sticky(const ar_node *n);
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
 /* ------------------------------------------------------------------------
  * Floats -- ar_layout_float.c
  * ------------------------------------------------------------------------ */
