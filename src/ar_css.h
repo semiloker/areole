@@ -62,6 +62,7 @@ typedef enum ar_prop
     AR_P_BOTTOM,
     AR_P_LEFT,
     AR_P_Z_INDEX,
+    AR_P_BOX_SIZING,
 
     AR_P_COUNT
 } ar_prop;
@@ -169,6 +170,26 @@ enum
 
 /* Where an inline-level box sits in its line box. `baseline` is the default,
    and the only one that needs the line to have a baseline at all. */
+/*
+ * What a stated width or height measures.
+ *
+ * `content-box` is CSS's default and therefore areole's: padding is added on
+ * top, so `width: 100px; padding: 10px` occupies 120. `border-box` is what
+ * nearly every stylesheet written this decade asks for on its first line, and
+ * what areole itself did until this existed -- a divergence the browser
+ * comparison found the moment positioning first put a stated size and padding
+ * on the same box.
+ *
+ * The default follows the specification rather than the fashion, because a
+ * sheet written for the web has to lay out the way it does on the web. Anyone
+ * who prefers the other one is one rule away from it.
+ */
+enum
+{
+    AR_BOX_CONTENT = 0,
+    AR_BOX_BORDER
+};
+
 enum
 {
     AR_POS_STATIC = 0,

@@ -30,21 +30,14 @@
 * { margin: 0; padding: 0; }
 
 /*
- * box-sizing: border-box, and this is a real deviation rather than a
- * convenience.
+ * No box-sizing rule, and that is the news.
  *
- * areole treats a stated width or height as the border box -- what you asked
- * for is what the box measures, padding included. CSS's default is
- * content-box, where padding is added on top, so `height: 80px; padding: 9px`
- * is 80 in areole and 98 in a browser.
- *
- * Nearly every stylesheet written this decade opens by setting border-box, so
- * areole's default is the one people reach for. It is still not the one CSS
- * specifies, and a sheet that relies on the specified one lays out differently.
- * Set here so the positioning cases test positioning; the divergence itself is
- * recorded in docs/roadmap/STATUS.md.
+ * This file used to set `border-box` on everything, because areole treated a
+ * stated size as the border box and CSS does not -- so `height: 80px;
+ * padding: 9px` was 80 here and 98 in a browser. areole implements the
+ * property now and defaults to `content-box` as the specification says, so
+ * there is nothing left to compensate for.
  */
-* { box-sizing: border-box; }
 
 body {
   background: #fff;

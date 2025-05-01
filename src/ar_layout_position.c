@@ -128,11 +128,11 @@ static void ar__resolve_axis(const ar_node *n, ar_i32 cb_pos, ar_i32 cb_size, ar
 
     if (n->style.unit[size_p] == AR_UNIT_PCT)
     {
-        size = cb_size * n->style.v[size_p] / 100;
+        size = ar_used_size(n, size_p == AR_P_HEIGHT ? 1 : 0, cb_size * n->style.v[size_p] / 100);
     }
     else if (has_size)
     {
-        size = n->style.v[size_p];
+        size = ar_used_size(n, size_p == AR_P_HEIGHT ? 1 : 0, n->style.v[size_p]);
     }
     else
     {

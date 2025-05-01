@@ -296,7 +296,7 @@ typedef struct ar_ctx ar_ctx;
  * rather than trusted, which is why this was a build failure and not a
  * corruption.
  */
-#define AR_MEM_FIXED  147456u
+#define AR_MEM_FIXED  163840u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */

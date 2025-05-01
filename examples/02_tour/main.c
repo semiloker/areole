@@ -56,6 +56,17 @@ static unsigned char g_fallback[4u * 1024u * 1024u];
  * adjacent literals count as one. ar_stylesheet appends, so a sheet in six
  * pieces costs six calls and nothing else.
  * ------------------------------------------------------------------------ */
+/*
+ * border-box, on everything, which is what an application does.
+ *
+ * areole follows CSS and defaults to `content-box`, where a stated width is
+ * the content and the padding goes around it. That is the right default for a
+ * library that claims to render real CSS, and the wrong one for writing an
+ * interface: this rail is 250 px wide and has 18 px of padding, and nobody
+ * wants to have said 214.
+ */
+static const char *SHEET_RESET = "div { box-sizing:border-box; }";
+
 static const char *SHEET_FRAME =
     /* A column: the interface, then the status bar. The bar used to be drawn
        over the frame at a fixed y, and once text started wrapping the pages
@@ -1023,6 +1034,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    ar_stylesheet(ui, SHEET_RESET);
     ar_stylesheet(ui, SHEET_FRAME);
     ar_stylesheet(ui, SHEET_STATUS);
     ar_stylesheet(ui, SHEET_NAV);

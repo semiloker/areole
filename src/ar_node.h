@@ -357,6 +357,9 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
 
 int ar_is_floated(const ar_node *n);
 
+/* A stated size, turned into the size the box occupies. See box-sizing. */
+ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
+
 /* ------------------------------------------------------------------------
  * Scroll containers -- ar_scroll.c
  * ------------------------------------------------------------------------ */

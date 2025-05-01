@@ -293,7 +293,7 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
      */
     if (n->style.unit[AR_P_WIDTH] == AR_UNIT_PX)
     {
-        n->min_w = n->style.v[AR_P_WIDTH];
+        n->min_w = ar_used_size(n, 0, n->style.v[AR_P_WIDTH]);
     }
 }
 
@@ -426,10 +426,10 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
     switch (ch->style.unit[p])
     {
     case AR_UNIT_PX:
-        v = ch->style.v[p];
+        v = ar_used_size(ch, axis, ch->style.v[p]);
         break;
     case AR_UNIT_PCT:
-        v = inner * ch->style.v[p] / 100;
+        v = ar_used_size(ch, axis, inner * ch->style.v[p] / 100);
         break;
     case AR_UNIT_GROW:
         v = inner - ar__margin_lead(&ch->style, axis) - ar__margin_trail(&ch->style, axis);
@@ -532,10 +532,10 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
         switch (ch->style.unit[AR_P_WIDTH])
         {
         case AR_UNIT_PX:
-            ch->rect.w = ch->style.v[AR_P_WIDTH];
+            ch->rect.w = ar_used_size(ch, 0, ch->style.v[AR_P_WIDTH]);
             break;
         case AR_UNIT_PCT:
-            ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+            ch->rect.w = ar_used_size(ch, 0, inner_w * ch->style.v[AR_P_WIDTH] / 100);
             break;
         default:
             /* Shrink to fit, which is fit-content by another name -- an
@@ -556,7 +556,7 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
 
     if (ch->style.unit[AR_P_HEIGHT] == AR_UNIT_PX)
     {
-        ch->rect.h = ch->style.v[AR_P_HEIGHT];
+        ch->rect.h = ar_used_size(ch, 1, ch->style.v[AR_P_HEIGHT]);
     }
     else
     {
@@ -728,10 +728,10 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             switch (ch->style.unit[AR_P_WIDTH])
             {
             case AR_UNIT_PX:
-                ch->rect.w = ch->style.v[AR_P_WIDTH];
+                ch->rect.w = ar_used_size(ch, 0, ch->style.v[AR_P_WIDTH]);
                 break;
             case AR_UNIT_PCT:
-                ch->rect.w = inner_w * ch->style.v[AR_P_WIDTH] / 100;
+                ch->rect.w = ar_used_size(ch, 0, inner_w * ch->style.v[AR_P_WIDTH] / 100);
                 break;
             default:
                 ch->rect.w = inner_w - ml - mr;
@@ -749,10 +749,10 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         switch (ch->style.unit[AR_P_HEIGHT])
         {
         case AR_UNIT_PX:
-            ch->rect.h = ch->style.v[AR_P_HEIGHT];
+            ch->rect.h = ar_used_size(ch, 1, ch->style.v[AR_P_HEIGHT]);
             break;
         case AR_UNIT_PCT:
-            ch->rect.h = inner_h * ch->style.v[AR_P_HEIGHT] / 100;
+            ch->rect.h = ar_used_size(ch, 1, inner_h * ch->style.v[AR_P_HEIGHT] / 100);
             break;
         default:
             ch->rect.h = ch->fit[1];

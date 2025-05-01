@@ -172,6 +172,30 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
  * context, presents its own margins unchanged -- which is the whole meaning of
  * "margins do not collapse across a formatting context boundary".
  */
+/*
+ * A stated size, turned into the size the box actually occupies.
+ *
+ * Under `content-box` -- CSS's default -- the number the author wrote is the
+ * content, and the padding is added around it. Under `border-box` the number
+ * is the whole thing and nothing is added.
+ *
+ * A border would belong here too. areole paints one without reserving space
+ * for it, so there is nothing to add; the day that changes, this is the
+ * function that changes with it.
+ */
+ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated)
+{
+    ar_i32 pad;
+
+    if (n->style.v[AR_P_BOX_SIZING] == AR_BOX_BORDER)
+    {
+        return stated;
+    }
+    pad = axis ? n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM]
+               : n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
+    return stated + pad;
+}
+
 int ar_is_floated(const ar_node *n)
 {
     /* An out-of-flow box is not a float even if it says `float`, because
