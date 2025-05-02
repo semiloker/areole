@@ -30,6 +30,11 @@ struct ar_win
     int resized;
     int awake;          /* skip the block in the next pump */
     int tracking_leave; /* a TrackMouseEvent subscription is live */
+
+    /* Wheel travel too small to fill a notch, carried between pumps. A
+       high-resolution device reports far less than WHEEL_DELTA per message, so
+       the leftover has to survive to the next one or it is thrown away. */
+    ar_i32 wheel_accum;
 };
 
 /* ponytail: one window per process, so the message procedure can find its
@@ -251,7 +256,31 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_MOUSEWHEEL:
-        win->input.wheel += (ar_i32)GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
+        /*
+         * Accumulate the raw delta and keep what does not fill a notch.
+         *
+         * This divided by WHEEL_DELTA and dropped the remainder. A mouse wheel
+         * sends exactly one WHEEL_DELTA per click, so that worked -- and hid
+         * this for as long as nobody scrolled with a laptop. A Windows
+         * precision touchpad reports a high-resolution delta, 8 or 10 or 40,
+         * and every one of those truncated to zero notches: gentle scrolling
+         * did nothing whatsoever, and only a flick hard enough to pass 120
+         * inside a single message moved anything.
+         *
+         * Stepped rather than divided because C89 leaves the sign of % with a
+         * negative operand to the implementation, and scrolling up is negative.
+         */
+        win->wheel_accum += (ar_i32)GET_WHEEL_DELTA_WPARAM(wp);
+        while (win->wheel_accum >= WHEEL_DELTA)
+        {
+            win->input.wheel += 1;
+            win->wheel_accum -= WHEEL_DELTA;
+        }
+        while (win->wheel_accum <= -WHEEL_DELTA)
+        {
+            win->input.wheel -= 1;
+            win->wheel_accum += WHEEL_DELTA;
+        }
         return 0;
 
     case WM_CLOSE:
