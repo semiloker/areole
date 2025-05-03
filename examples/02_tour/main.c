@@ -1308,22 +1308,12 @@ int main(int argc, char **argv)
         ar_win_present(win, overlay);
         ar_frame_presented(ui);
 
-        /*
-         * Hover is resolved from the previous frame and this pump blocks when
-         * nothing is happening, so the frame that discovers a new box under
-         * the cursor has to ask for one more in order to show it.
-         *
-         * A wheel notch is the same trade and needs the same line. The wheel
-         * is applied at the end of ar_frame_end, after the paint, because the
-         * container under the cursor is not known until the frame has been
-         * laid out -- so the notch moves the list and the frame that would
-         * show it has to be asked for. ar_scrolled exists for exactly this and
-         * had no caller anywhere in the tree, which is why scrolling appeared
-         * to work only every other try: it showed up when the cursor happened
-         * to change box at the same time and ar_needs_redraw asked for the
-         * frame, and did nothing at all when the cursor sat still.
-         */
-        if (ar_needs_redraw(ui) || ar_scrolled(ui))
+        /* Hover and a wheel notch both settle after the paint, and this pump
+           blocks when nothing is happening, so the frame that discovers either
+           has to ask for one more in order to show it. ar_needs_redraw covers
+           every such reason, which is why this is one condition and not a list
+           the caller has to keep up to date. */
+        if (ar_needs_redraw(ui))
         {
             ar_win_wake(win);
         }

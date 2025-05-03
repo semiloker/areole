@@ -456,9 +456,26 @@ int ar_unbalanced(const ar_ctx *c)
     return c->unbalanced;
 }
 
+/*
+ * Every reason the next frame will differ from the one just drawn.
+ *
+ * Hover resolves from the previous frame and a wheel notch is applied after the
+ * paint, so both settle state that only the next frame can show. A caller whose
+ * pump blocks when idle has to draw that frame, and this is the single question
+ * it has to ask.
+ *
+ * This meant hover alone, and ar_scrolled was left for the caller to remember
+ * on its own. Nothing remembered it: ar_scrolled had no caller anywhere in the
+ * tree, so the tour woke on hover only and scrolling appeared to work every
+ * other try -- it showed up when the cursor happened to change box at the same
+ * time and did nothing when the cursor sat still. A predicate that has to be
+ * ORed with another one to be correct is a predicate that gets got wrong, so
+ * the reasons live behind this one and ar_scrolled stays for a caller that
+ * wants to know which reason it was.
+ */
 int ar_needs_redraw(const ar_ctx *c)
 {
-    return c->hot_changed;
+    return c->hot_changed || c->scrolled;
 }
 
 ar_perf *ar_perf_of(ar_ctx *c)

@@ -4935,6 +4935,52 @@ static void test_the_wheel_scrolls_the_box_under_it(void)
     CHECK(ar__box(2).y < 0, "wheel: with the rows moved up");
 }
 
+/*
+ * A scroll asks for the next frame through ar_needs_redraw, not only through
+ * ar_scrolled.
+ *
+ * This is the half of the contract that was never checked, and the tour got it
+ * wrong for exactly that reason: it woke on hover alone, so a notch moved the
+ * list and nothing drew the frame that would have shown it. One predicate has
+ * to answer "will the next frame differ", whatever the reason -- otherwise
+ * every caller has to remember the full list of reasons, and one did not.
+ */
+static void test_a_scroll_asks_for_the_next_frame(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    /* Settle, so that hover cannot be the thing asking for the frame. */
+    ar__scroll_scene(&s, &in);
+    CHECK(!ar_needs_redraw(g_ui), "redraw: a still cursor over a settled frame asks for nothing");
+
+    in.wheel = -1;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_needs_redraw(g_ui), "redraw: a notch that moved a container asks for the next frame");
+
+    /*
+     * The scroll reason is an edge and must not latch: it is cleared by
+     * ar_frame_begin, so a caller that wakes on it draws one extra frame rather
+     * than spinning for ever.
+     *
+     * ar_needs_redraw is deliberately not asserted false here. Scrolling moved
+     * the rows underneath a cursor that never moved, so a different row is now
+     * under it and hover genuinely did change -- one more frame really is owed,
+     * for a different reason. That is the code being right and the first draft
+     * of this test being wrong.
+     */
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(!ar_scrolled(g_ui), "redraw: the scroll reason does not latch");
+}
+
 /* A notch outside the container does nothing to it. */
 static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 {
@@ -7420,6 +7466,7 @@ int main(void)
     test_scroll_is_clamped();
     test_scroll_survives_the_frame();
     test_the_wheel_scrolls_the_box_under_it();
+    test_a_scroll_asks_for_the_next_frame();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();
     test_a_scroll_container_clips();
