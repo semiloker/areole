@@ -392,7 +392,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/ar_test               # 732 checks
 ./build/example_hello         # the dashboard on the front page
-./build/example_tour          # one page per release, 0.1.0 to 0.4.0
+./build/example_tour          # one page per release, 0.1.0 to 0.6.0
 ./build/example_block         # the block, inline and float corpus, drawn
 ./build/example_block --dump  # the same, as rectangles, for the comparison
 ./build/example_tour --selftest   # every page, no window; CI runs this
@@ -403,7 +403,7 @@ cmake --build build
 
 ## The tour
 
-`example_tour` is one page per release, showing what each one added while it runs:
+`example_tour` is one page per release, 0.1.0 to 0.6.0, showing what each added while it runs:
 
 | | |
 | --- | --- |
@@ -413,6 +413,8 @@ cmake --build build
 | 0.2.0 | TrueType outlines, with antialias, grid fit, subpixel and stem darkening as toggles |
 | 0.3.0 | Arabic joining, lam-alef, Hebrew, a number inside right-to-left text, Devanagari |
 | 0.4.0 | inheritance, combinators, a compound selector, `!important`, striping by `:nth-child` |
+| 0.5.0 | margins collapsing, text wrapping around a float, an inline box cut across lines |
+| 0.6.0 | boxes overlapping by `z-index`, a pinned badge, a scrollable list with a sticky header |
 
 The toggles are not captions. Switching off antialiasing on the 0.2.0 page changes how the frame
 you are looking at is rasterized; switching off shaping on the 0.3.0 page drops the same strings
@@ -430,8 +432,10 @@ can be asked to lay out the same thing:
 python tools/compare_layout.py --run ./build/example_tour.exe
 ```
 
-**159 of 159 boxes match. Every box that flex places lands on the same rectangle as Chromium's,
-exactly. Boxes sized by measuring their own text land within one pixel — mean 0.8 px.**
+**215 of 215 boxes match, across every release from 0.1.0 to 0.6.0. Two disagree on geometry, both
+one line of text: a paragraph beside a float fits in three lines here and four in Chromium, because
+two rasterizers measure the same words about a pixel apart. Everything else lands on the same
+rectangle exactly.**
 
 The first run needed six compensating rules to get there, and two of the six were bugs worth
 fixing rather than documenting: **text never wrapped** — `ar_text_wrap` had implemented UAX #14

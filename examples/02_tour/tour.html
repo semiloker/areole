@@ -123,6 +123,12 @@ button.dump {
   min-width: 0; min-height: 0; flex-shrink: 0;
 }
 
+/* Except the ones that are genuinely inline. The rule above is a stand-in for
+   areole's flex-row default, and an inline box is exactly the case where that
+   default does not apply -- in either engine. */
+:where(.app) div.em,
+:where(.app) div.plain { display: inline; }
+
 /* ------------------------------------------------------------ SHEET_FRAME */
 .app {
   display: flex; flex-direction: column; background: #fcfaf6;
@@ -188,6 +194,54 @@ button.dump {
 .stripe:empty          { height: 8px; background: #ddd2ba; }
 .loud                  { color: #a1552b; }
 .stack                 { display: flex; flex-direction: column; gap: 6px; }
+
+/* ------------------------------------------------------------- SHEET_FLOW */
+
+/*
+ * These say `display: block` in the C sheet, and have to say it here too.
+ *
+ * The rule above turns every div into a flex row, standing in for areole's
+ * default. A box that asked to be a block in the stylesheet is exactly the
+ * case where that stand-in is wrong, and leaving it out put eighteen list rows
+ * side by side in the browser and stacked in areole.
+ */
+.doc, .para, .stage, .chip, .scroller, .sticky, .sect, .srow { display: block; }
+
+.doc    { background: #f7f3ea; padding: 10px; }
+.para   { margin: 12px 0; background: #eee6d6; }
+.figure { float: left; width: 70px; height: 52px; margin: 0 10px 6px 0;
+          background: #c2703d; }
+
+/* `display: inline` for real: these fragment across lines, and the twin has
+   to let them, so they are the one place in this file that is not a flex box. */
+.em, .plain { display: inline; }
+.em         { color: #a1552b; }
+
+/* -------------------------------------------------------------- SHEET_POS */
+.stage { position: relative; height: 96px; background: #f4efe4; }
+.chip  { position: absolute; width: 70px; height: 44px; font-size: 11px;
+         padding: 5px; color: #fdfaf3; }
+.c1 { top: 10px; left: 10px; background: #7a4a2a; z-index: 3; }
+.c2 { top: 26px; left: 46px; background: #c2703d; z-index: 2; }
+.c3 { top: 42px; left: 82px; background: #d9a273; z-index: 1; }
+.pin { top: 8px; right: 8px; width: 56px; height: 20px; background: #2f5d3f; }
+
+/*
+ * An overlay scrollbar, because areole's is one.
+ *
+ * Chromium's `overflow: scroll` reserves fifteen pixels of the width for a
+ * classic bar, which is why the list inside was fifteen narrower here than in
+ * areole. areole draws over the content instead, deliberately: on a machine
+ * where relayout costs milliseconds, a bar that appears and reflows the text
+ * beside it makes the interface jump.
+ */
+.scroller { height: 130px; overflow: scroll; background: #f7f3ea;
+            scrollbar-width: none; }
+.scroller::-webkit-scrollbar { display: none; }
+.sticky   { position: sticky; top: 0; padding: 4px 8px; font-size: 11px;
+            color: #fdfaf3; background: #7a4a2a; }
+.srow     { padding: 3px 8px; font-size: 12px; color: #4a453e; }
+.srow:nth-child(even) { background: #efe8d8; }
 
 /* The swatch colours, written last in the C sheet so they override. */
 .sw                       { background: #c2703d; }
@@ -375,6 +429,55 @@ button.dump {
           <div class="stripe">third, and odd again</div>
           <div class="stripe"></div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================== 0.5.0 =========== -->
+<div class="frame">
+  <h2>0.5.0 — Block and inline</h2>
+  <div class="app" data-page="0.5.0 Block and inline">
+    <div class="main">
+    <div class="page">
+      <div class="h1">Block and inline</div>
+      <div class="sub">Margin collapsing, floats, line boxes and fragmented inlines.</div>
+      <div class="h2">Margin collapsing</div>
+      <div class="p">Two paragraphs with 12 px above and below. The gap between them is 12, not 24: adjacent margins collapse into one.</div>
+      <div class="doc">
+        <div class="para">The first paragraph.</div><div class="para">The second, one margin below it rather than two.</div>
+      </div>
+      <div class="h2">A float, and the text around it</div>
+      <div class="doc">
+        <div class="figure"></div><div class="para">This paragraph spans the full width of its container -- a float shortens line boxes, not block boxes -- and only its lines are narrowed by the block to the left of them. That is why text wraps around a figure while the background behind it does not.</div>
+      </div>
+      <div class="h2">One inline box, cut across lines</div>
+      <div class="doc">
+        <div class="plain">An inline run flows into the lines around it, and </div><div class="em">this emphasised part is one box and several rectangles</div><div class="plain">, because the line breaker cut it where each line ended.</div>
+      </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================================================== 0.6.0 =========== -->
+<div class="frame">
+  <h2>0.6.0 — Position and scroll</h2>
+  <div class="app" data-page="0.6.0 Position and scroll">
+    <div class="main">
+    <div class="page">
+      <div class="h1">Position and scroll</div>
+      <div class="sub">Absolute, fixed, sticky, z-index, and a list you can scroll.</div>
+      <div class="h2">z-index decides what covers what</div>
+      <div class="dim">Three absolutely positioned boxes, declared last to first. Paint order is the stacking tree, not the order they were written in.</div>
+      <div class="stage">
+        <div class="chip c3">z-index 1</div><div class="chip c2">z-index 2</div><div class="chip c1">z-index 3</div><div class="chip pin">pinned</div>
+      </div>
+      <div class="h2">A scroll container with a sticky header</div>
+      <div class="dim">Point at the list and turn the wheel.</div>
+      <div class="scroller">
+        <div class="sect"><div class="sticky">Section one</div><div class="srow">row 1</div><div class="srow">row 2</div><div class="srow">row 3</div><div class="srow">row 4</div><div class="srow">row 5</div><div class="srow">row 6</div><div class="srow">row 7</div><div class="srow">row 8</div></div><div class="sect"><div class="sticky">Section two</div><div class="srow">row 9</div><div class="srow">row 10</div><div class="srow">row 11</div><div class="srow">row 12</div><div class="srow">row 13</div><div class="srow">row 14</div><div class="srow">row 15</div><div class="srow">row 16</div><div class="srow">row 17</div><div class="srow">row 18</div></div>
+      </div>
       </div>
     </div>
   </div>
