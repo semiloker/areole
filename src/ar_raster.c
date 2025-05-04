@@ -180,3 +180,82 @@ void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c)
         row += s->stride;
     }
 }
+
+/* ------------------------------------------------------------------------
+ * Moving pixels that are already correct
+ * ------------------------------------------------------------------------ */
+int ar_surface_move_rows(ar_surface *s, ar_i32 x, ar_i32 w, ar_i32 src_y, ar_i32 dst_y, ar_i32 h)
+{
+    ar_i32 row;
+
+    if (!s || !s->pixels || w <= 0 || h <= 0)
+    {
+        return 0;
+    }
+    if (src_y == dst_y)
+    {
+        return 1; /* already where it belongs, and nothing to do is success */
+    }
+
+    /*
+     * Refused rather than clamped, and the caller is obliged to notice.
+     *
+     * Clamping would move part of the region and still report success, and by
+     * then the caller has already decided not to repaint what it believes was
+     * moved -- so a partial move is a smear that nothing will ever come back
+     * and correct. Refusing sends it to a full repaint, which is merely slow.
+     */
+    if (x < 0 || x + w > s->w)
+    {
+        return 0;
+    }
+    if (src_y < 0 || dst_y < 0 || src_y + h > s->h || dst_y + h > s->h)
+    {
+        return 0;
+    }
+
+    /*
+     * Whole rows at different y cannot overlap each other, so the only hazard
+     * is the order they are copied in: going towards the destination never
+     * reads a row that has already been written. That is why this is a row loop
+     * and not one memmove over the block -- the block overlaps itself, the rows
+     * do not.
+     *
+     * A plain copy loop rather than memcpy keeps the rasterizer free of libc,
+     * which 0.17.0 needs and which costs nothing here.
+     *
+     * Deliberately uncounted. These pixels are moved, not filled, and adding
+     * them to fill_px would inflate the fill totals and make ns_per_px describe
+     * work the rasterizer did not do. The dirty ratio is what shows the move
+     * working.
+     */
+    if (dst_y < src_y)
+    {
+        for (row = 0; row < h; ++row)
+        {
+            const ar_u32 *src = s->pixels + (src_y + row) * s->stride + x;
+            ar_u32       *dst = s->pixels + (dst_y + row) * s->stride + x;
+            ar_i32        k;
+
+            for (k = 0; k < w; ++k)
+            {
+                dst[k] = src[k];
+            }
+        }
+    }
+    else
+    {
+        for (row = h - 1; row >= 0; --row)
+        {
+            const ar_u32 *src = s->pixels + (src_y + row) * s->stride + x;
+            ar_u32       *dst = s->pixels + (dst_y + row) * s->stride + x;
+            ar_i32        k;
+
+            for (k = 0; k < w; ++k)
+            {
+                dst[k] = src[k];
+            }
+        }
+    }
+    return 1;
+}

@@ -89,4 +89,19 @@ ar_u32 ar_arena_frame_used(const ar_arena *a);
 ar_u32 ar_arena_frame_peak(const ar_arena *a);
 ar_u32 ar_arena_available(const ar_arena *a);
 
+/* ------------------------------------------------------------------------
+ * Moving pixels that are already correct
+ *
+ * Copies `h` rows of `w` pixels at column `x` from `src_y` to `dst_y` inside
+ * one surface. Returns non-zero when the pixels were moved and zero when the
+ * region was refused, which a caller must treat as "repaint it instead" --
+ * silently declining would leave the surface holding pixels that damage
+ * tracking has already been told are correct.
+ *
+ * Deliberately not public. A caller that moves pixels behind areole's back
+ * breaks damage tracking, and the only thing entitled to do it is the scroll
+ * path, which then tells damage exactly what it did.
+ * ------------------------------------------------------------------------ */
+int ar_surface_move_rows(ar_surface *s, ar_i32 x, ar_i32 w, ar_i32 src_y, ar_i32 dst_y, ar_i32 h);
+
 #endif /* AR_INTERNAL_H */
