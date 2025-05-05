@@ -1602,11 +1602,114 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
  * find out costs more than the frame it saves. ar_needs_redraw already exists
  * to close the gap.
  */
+/*
+ * Dragging the scrollbar thumb.
+ *
+ * The bar is drawn by the container rather than declared as a box, so
+ * ar__update_hot never sees it and the ordinary hot and active machinery
+ * cannot carry it. It gets its own pass, for the same reason the wheel does.
+ *
+ * Once a drag has started it follows the cursor wherever it goes, including
+ * off the container and out of the window: only letting go ends it. That is
+ * what every scrollbar does, and it is what makes a long drag usable rather
+ * than something that slips out from under you.
+ *
+ * The thumb's top is (rect.h - thumb.h) * scroll / range, so a drag is that
+ * read backwards. The grab offset keeps the thumb where it was picked up.
+ */
+static void ar__apply_drag(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (c->drag_key)
+    {
+        if (!(c->mouse_down & AR_MOUSE_LEFT))
+        {
+            c->drag_key = 0;
+            return;
+        }
+        for (i = 0; i < c->node_count; ++i)
+        {
+            ar_node *n = &c->nodes[i];
+            ar_slot *slot;
+            ar_rect  track, thumb;
+            ar_i32   range, span, want;
+
+            if (n->key != c->drag_key || !ar_is_scroll_container(n))
+            {
+                continue;
+            }
+            range = ar_scroll_range(n);
+            slot = ar_ctx_slot(c, n->key);
+            if (range <= 0 || !slot)
+            {
+                c->drag_key = 0;
+                return;
+            }
+            ar_scroll_bar(n, slot->scroll, &track, &thumb);
+            span = n->rect.h - thumb.h;
+            if (span <= 0)
+            {
+                return; /* the thumb fills the track; there is nowhere to drag */
+            }
+            want = ar_scroll_clamp(n, (c->mouse_y - track.y - c->drag_grab) * range / span);
+            if (want != slot->scroll)
+            {
+                ar__scroll_moved(c, n->key, want - slot->scroll);
+                slot->scroll = want;
+                ar_damage_add(&c->damage, n->rect);
+                c->scrolled = 1;
+            }
+            return;
+        }
+        c->drag_key = 0; /* the container is no longer in the tree */
+        return;
+    }
+
+    if (!(c->mouse_pressed & AR_MOUSE_LEFT) || !c->mouse_inside)
+    {
+        return;
+    }
+
+    /* Front to back, so the innermost bar takes the press. */
+    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    {
+        ar_i32   at = c->order ? c->order[i] : i;
+        ar_node *n = &c->nodes[at];
+        ar_slot *slot;
+        ar_rect  track, thumb;
+
+        if (!ar_is_scroll_container(n) || !ar_scroll_bar_visible(n))
+        {
+            continue;
+        }
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || ar_scroll_range(n) <= 0)
+        {
+            continue;
+        }
+        slot = ar_ctx_slot(c, n->key);
+        if (!slot)
+        {
+            continue;
+        }
+        ar_scroll_bar(n, slot->scroll, &track, &thumb);
+        if (!ar_rect_contains(thumb, c->mouse_x, c->mouse_y))
+        {
+            continue;
+        }
+        c->drag_key = n->key;
+        c->drag_grab = c->mouse_y - thumb.y;
+        return;
+    }
+}
+
 static void ar__apply_wheel(ar_ctx *c)
 {
     ar_i32 i;
 
-    if (!c->wheel || !c->mouse_inside)
+    /* A drag owns its container for as long as it lasts, and a notch arriving
+       mid-drag would fight it for the same position. */
+    if (!c->wheel || !c->mouse_inside || c->drag_key)
     {
         return;
     }
@@ -2123,6 +2226,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar__paint(c, s, damage);
     }
     ar__update_hot(c);
+    ar__apply_drag(c);
     ar__apply_wheel(c);
 
     /* Hover resolves from the previous frame, so the frame that notices a new

@@ -267,6 +267,19 @@ struct ar_ctx
     ar_i32 move_dy;
     int    move_many;
 
+    /*
+     * The scrollbar thumb being dragged, and where inside it the press landed.
+     *
+     * The grab offset is what separates a scrollbar from a slider: without it
+     * the thumb jumps to centre itself under the cursor on the first frame.
+     *
+     * On the context because only one thing can be dragged at a time, and
+     * keyed rather than indexed because the tree is rebuilt every frame while a
+     * drag lasts for many. Zero means nothing is being dragged.
+     */
+    ar_u32 drag_key;
+    ar_i32 drag_grab;
+
     /* The core owns no clock. The backend lends it one so the frame can time
        its own phases without src/ ever learning what a platform is. */
     ar_u32 (*clock)(void);
