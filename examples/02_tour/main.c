@@ -926,6 +926,73 @@ static int check_no_ghosting(ar_ctx *ui, int have_font, const char *family)
     return 0;
 }
 
+/*
+ * The 0.5.0 page claims to cut an inline box across lines. This is the check
+ * that it does, and that the pieces add up.
+ *
+ * ar_node_frag and ar_node_frag_count are the two inspection calls no
+ * application was using -- the same gap that left ar_scrolled with no caller
+ * and scrolling broken for a release. A fragment's documented invariant is
+ * that the slices partition the text end to end, and an invariant nothing
+ * exercises is a comment.
+ */
+static int check_fragments(ar_ctx *ui)
+{
+    ar_i32 i, n = ar_node_count(ui);
+    ar_i32 split = -1;
+
+    for (i = 0; i < n; ++i)
+    {
+        if (ar_node_frag_count(ui, i) > 1)
+        {
+            split = i;
+            break;
+        }
+    }
+    if (split < 0)
+    {
+        printf("FAIL  0.5.0  nothing on the page was cut across lines\n");
+        return 1;
+    }
+
+    {
+        ar_i32  k, count = ar_node_frag_count(ui, split);
+        ar_i32  expect = 0;
+        ar_rect whole = ar_node_rect(ui, split);
+        ar_rect seen = ar_node_frag(ui, split, 0, 0, 0);
+
+        for (k = 0; k < count; ++k)
+        {
+            ar_i32  from = -1, to = -1;
+            ar_rect r = ar_node_frag(ui, split, k, &from, &to);
+
+            if (from != expect)
+            {
+                printf("FAIL  0.5.0  fragment %ld starts at %ld, not where %ld ended\n", (long)k,
+                       (long)from, (long)(k - 1));
+                return 1;
+            }
+            if (to < from)
+            {
+                printf("FAIL  0.5.0  fragment %ld runs backwards\n", (long)k);
+                return 1;
+            }
+            expect = to;
+            seen = ar_rect_union(seen, r);
+        }
+
+        /* Every piece inside the box, and the box no larger than the pieces:
+           ar_node_rect is documented as their union, which is what lets damage
+           tracking and hit testing ignore fragments entirely. */
+        if (seen.x != whole.x || seen.y != whole.y || seen.w != whole.w || seen.h != whole.h)
+        {
+            printf("FAIL  0.5.0  the box is not the union of its %ld fragments\n", (long)count);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int selftest(ar_ctx *ui, int have_font, const char *family)
 {
     ar_surface      s;
@@ -972,6 +1039,17 @@ static int selftest(ar_ctx *ui, int have_font, const char *family)
         if (ar_unbalanced(ui))
         {
             printf("FAIL  %s  tree left unbalanced\n", PAGE_VER[page]);
+            bad = 1;
+        }
+        /* A page that outgrows the box budget drops boxes and says nothing
+           about it unless somebody asks, which until now nobody did. */
+        else if (ar_overflowed(ui))
+        {
+            printf("FAIL  %s  tree did not fit the box budget\n", PAGE_VER[page]);
+            bad = 1;
+        }
+        else if (page == 6 && check_fragments(ui))
+        {
             bad = 1;
         }
         else if (boxes == 0)
