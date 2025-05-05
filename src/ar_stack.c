@@ -172,22 +172,78 @@ static void ar__bucket_walk(ar__walk *w, ar_i32 root, ar_i32 at, ar_i32 want, ar
 }
 
 /*
+ * The smallest z greater than `prev` used by a context-forming box in this
+ * context. Zero is skipped: it is bucket 6 and needs no sweep of its own.
+ *
+ * Descends exactly as ar__bucket_walk does, and for the same reason: an atomic
+ * box's own z belongs to this context, and its descendants' z values belong to
+ * the context it forms.
+ */
+static void ar__z_next(ar__walk *w, ar_i32 at, int have_prev, ar_i32 prev, int *have, ar_i32 *out)
+{
+    ar_i32 c;
+
+    for (c = w->nodes[at].first_child; c >= 0; c = w->nodes[c].next_sibling)
+    {
+        ar_node *ch = &w->nodes[c];
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (ar__atomic(ch))
+        {
+            if (ar_forms_stacking_context(ch))
+            {
+                ar_i32 z = ch->style.v[AR_P_Z_INDEX];
+
+                if (z != 0 && (!have_prev || z > prev) && (!*have || z < *out))
+                {
+                    *out = z;
+                    *have = 1;
+                }
+            }
+            continue; /* never descend into it from here */
+        }
+        ar__z_next(w, c, have_prev, prev, have, out);
+    }
+}
+
+/*
  * One stacking context, in Appendix E order.
  *
- * The negative and positive passes run twice over a narrowing z range rather
- * than sorting: a stylesheet uses a handful of distinct z-indices, and two
- * ordered sweeps beat carrying a sort into a file that has no allocator.
+ * The negative and positive passes visit the z values the stylesheet actually
+ * uses, found by repeatedly asking for the next one up. Sweeping every
+ * representable value instead -- which is what this did -- walked the whole
+ * tree 68 times a frame whatever the stylesheet said. flat_1k has no
+ * positioned box in it at all and spent 1106 us in layout against 42 before
+ * paint order existed: a 26x regression on a scene with no z-index. Bisected,
+ * not guessed.
+ *
+ * Asking for the next value costs one walk per distinct z, which is why this
+ * beats both the old sweep and a sort: a stylesheet uses a handful of layers,
+ * and a file with no allocator has nowhere to sort them anyway. It also has no
+ * ceiling, where the sweep silently never painted a box past its range.
  */
 static void ar__context(ar__walk *w, ar_i32 root)
 {
-    ar_i32 z;
+    ar_i32 z = 0, prev = 0;
+    int    have_prev = 0, have;
 
     ar__push(w, root); /* 1: the context's own background and borders */
 
     /* 2: negative z, most negative first. */
-    for (z = -AR_Z_RANGE; z < 0; ++z)
+    for (;;)
     {
+        have = 0;
+        ar__z_next(w, root, have_prev, prev, &have, &z);
+        if (!have || z > 0)
+        {
+            break;
+        }
         ar__bucket_walk(w, root, root, 2, z, z);
+        prev = z;
+        have_prev = 1;
     }
 
     ar__bucket_walk(w, root, root, 3, 0, 0); /* in-flow blocks   */
@@ -195,10 +251,19 @@ static void ar__context(ar__walk *w, ar_i32 root)
     ar__bucket_walk(w, root, root, 5, 0, 0); /* inline content   */
     ar__bucket_walk(w, root, root, 6, 0, 0); /* positioned, z auto or 0 */
 
-    /* 7: positive z, least positive first. */
-    for (z = 1; z <= AR_Z_RANGE; ++z)
+    /* 7: positive z, least positive first. The negative loop stopped on the
+       first non-negative it saw without consuming it, so this finds it again. */
+    for (;;)
     {
+        have = 0;
+        ar__z_next(w, root, have_prev, prev, &have, &z);
+        if (!have)
+        {
+            break;
+        }
         ar__bucket_walk(w, root, root, 7, z, z);
+        prev = z;
+        have_prev = 1;
     }
 }
 

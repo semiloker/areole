@@ -5128,6 +5128,70 @@ static void test_z_index_beats_declaration_order(void)
           "stacking: the higher z wins even though it was declared first");
 }
 
+/*
+ * A z-index far past the old sweep range paints, and paints on top.
+ *
+ * The ordering passes used to sweep a fixed [-32, 32] one value at a time, so
+ * `z-index: 99999` -- what somebody writes when they mean "in front of
+ * everything" -- matched no sweep and the box was never painted at all. The
+ * header claimed it was clamped; nothing clamped it.
+ */
+static void test_z_index_has_no_ceiling(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; position:relative; }"
+                 ".top { display:block; position:absolute; top:0; left:0;"
+                 "       width:50px; height:50px; background:#FF0000; z-index:99999; }"
+                 ".mid { display:block; position:absolute; top:0; left:0;"
+                 "       width:50px; height:50px; background:#0000FF; z-index:1; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.top");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mid");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0xFF0000, "stacking: a huge z-index paints, and paints on top");
+}
+
+/*
+ * A negative and a positive z in one context, with flow between them.
+ *
+ * This is the handover between the two ordered passes: the negative pass stops
+ * on the first non-negative it finds without consuming it, and the positive
+ * pass has to find that same value again. Getting it wrong loses a layer
+ * entirely, and losing one is invisible until something is behind it.
+ */
+static void test_z_index_negative_and_positive_together(void)
+{
+    ar_surface s = ar__ui_surface(100, 100);
+
+    ar__ui_reset("#root { display:block; position:relative; width:100px; height:100px; }"
+                 ".under { display:block; position:absolute; top:0; left:0;"
+                 "         width:50px; height:50px; background:#FF0000; z-index:-1; }"
+                 ".flow { display:block; width:50px; height:50px; background:#00FF00; }"
+                 ".over { display:block; position:absolute; top:0; left:0;"
+                 "        width:20px; height:20px; background:#0000FF; z-index:2; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.under");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.flow");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.over");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0x0000FF, "stacking: the positive z is on top of both");
+    CHECK(ar__pixel_at(30, 30) == 0x00FF00, "stacking: the negative z stays behind the flow");
+}
+
 /* z-index on an unpositioned box does nothing at all, which is the other half
    of the confusion. */
 static void test_z_index_needs_a_position(void)
@@ -7363,6 +7427,8 @@ int main(void)
     test_a_positioned_box_paints_above_the_flow();
     test_negative_z_goes_behind_the_flow();
     test_z_index_beats_declaration_order();
+    test_z_index_has_no_ceiling();
+    test_z_index_negative_and_positive_together();
     test_z_index_needs_a_position();
     test_a_float_paints_above_the_blocks();
     test_hit_testing_finds_the_box_on_top();
