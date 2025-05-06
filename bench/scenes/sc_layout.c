@@ -169,6 +169,216 @@ static const bench_scene SC_MIXED = {
     "mixed_tree", "layout",   "alternating rows and columns, three levels, 1400 boxes", 800, 600, 1,
     common_init,  frame_mixed};
 
+/* ------------------------------------------------------------------------
+ * Block formatting and margin collapsing
+ *
+ * Every scene above declares display:flex, and so did every other scene in
+ * this benchmark: 0.5.0 and 0.6.0 shipped block layout, inline layout,
+ * floats, intrinsic sizing, positioning, stacking and scroll containers
+ * without one scene touching any of them. The four below are that gap.
+ *
+ * Collapsing is the expensive half rather than the stacking -- a margin has
+ * to consult its siblings, its parent's first and last child, and whether
+ * anything between them stops it -- so the tree is shaped to make all of
+ * those cases happen rather than to look like a document.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_BLOCK = "#root { display:block; background:#101214; padding:4px; }"
+                                       ".sec { display:block; margin:8px 0px; }"
+                                       ".p { display:block; height:14px; margin:6px 0px;"
+                                       "     background:#2a3442; }";
+
+static void init_block(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_BLOCK);
+}
+
+static void frame_block_1k(bench_env *e)
+{
+    int i, j;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 100; ++i)
+    {
+        ar_begin(e->ui, "div.sec");
+        for (j = 0; j < 9; ++j)
+        {
+            ar_begin(e->ui, "div.p");
+            ar_end(e->ui);
+        }
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_BLOCK_1K = {
+    "block_1k", "layout",      "1000 blocks whose margins collapse on every edge", 800, 600, 1,
+    init_block, frame_block_1k};
+
+/* ------------------------------------------------------------------------
+ * Inline formatting, wrapping and fragmentation
+ *
+ * A line box takes its height from the deepest ascent and the deepest descent
+ * on the line rather than from the tallest box, so two font sizes on one line
+ * is what exercises it. The runs are wider than their box on purpose: a run
+ * the breaker has to cut becomes one rectangle per line it touches, and that
+ * is the path with the most arithmetic in it.
+ *
+ * Box count is low and cost is high, which is the point -- this measures text
+ * and line breaking, where the scenes above measure the solver.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_INLINE =
+    "#root { display:block; width:600px; background:#101214; padding:8px; }"
+    ".para { display:block; width:280px; margin:6px 0px; }"
+    ".t { display:inline; font-size:8px; color:#c8d0d8; }"
+    ".big { display:inline; font-size:16px; color:#ffffff; }";
+
+static void init_inline(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_INLINE);
+}
+
+static void frame_inline_wrap(bench_env *e)
+{
+    int i;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 60; ++i)
+    {
+        ar_begin(e->ui, "div.para");
+        ar_text(e->ui, "div.t", "the quick brown fox jumps over the lazy dog and keeps going");
+        ar_text(e->ui, "div.big", "headline");
+        ar_text(e->ui, "div.t", "and a second run that also has to be broken across lines");
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_INLINE_WRAP = {"inline_wrap",
+                                           "layout",
+                                           "60 paragraphs of mixed sizes, wrapped and fragmented",
+                                           800,
+                                           600,
+                                           1,
+                                           init_inline,
+                                           frame_inline_wrap};
+
+/* ------------------------------------------------------------------------
+ * Floats, clear and intrinsic sizing
+ *
+ * A float shortens the line boxes beside it and not the block boxes, so the
+ * text is what has to notice it. `clear` then has to find the bottom of
+ * everything on that side, and fit-content has to ask a box how wide it would
+ * like to be before anything has told it how wide it is -- three different
+ * questions about the same card.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_FLOAT =
+    "#root { display:block; width:600px; background:#101214; padding:8px; }"
+    ".card { display:block; margin:4px 0px; }"
+    ".thumb { float:left; width:48px; height:48px; margin:0px 6px 6px 0px;"
+    "         background:#3a4a5a; }"
+    ".cap { display:inline; font-size:8px; color:#c8d0d8; }"
+    ".tag { display:block; width:fit-content; font-size:8px; color:#9fb0c0;"
+    "       background:#22303c; }"
+    ".clear { display:block; clear:both; height:0px; }";
+
+static void init_float(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_FLOAT);
+}
+
+static void frame_float_gallery(bench_env *e)
+{
+    int i;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 80; ++i)
+    {
+        ar_begin(e->ui, "div.card");
+        ar_begin(e->ui, "div.thumb");
+        ar_end(e->ui);
+        ar_text(e->ui, "div.cap", "a caption long enough to wrap beside the thumbnail twice over");
+        ar_text(e->ui, "div.tag", "shrink to fit");
+        ar_begin(e->ui, "div.clear");
+        ar_end(e->ui);
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_FLOAT_GALLERY = {
+    "float_gallery",
+    "layout",
+    "80 cards: a float, text beside it, clear, fit-content",
+    800,
+    600,
+    1,
+    init_float,
+    frame_float_gallery};
+
+/* ------------------------------------------------------------------------
+ * A real scroll container
+ *
+ * scroll_10k in sc_realistic.c simulates scrolling the way an application
+ * does, by rebuilding the rows it wants visible. This one uses 0.6.0's
+ * container instead: the whole list is declared, overflow clips it, and the
+ * position moves underneath. Both are worth having -- they are different
+ * things an application can do, and only one of them existed to measure.
+ *
+ * This is also the number 0.6.1's region move has to beat. Today the exposed
+ * strip is repainted rather than blitted, so this is the honest before.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_SCROLLER =
+    "#root { display:block; overflow:scroll; height:600px; background:#ffffff; }"
+    ".item { display:block; height:36px; margin:2px 0px; padding:4px 8px;"
+    "        background:#fafafa; }"
+    ".label { display:inline; font-size:8px; color:#2b2b2b; }";
+
+static void init_scroller(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_SCROLLER);
+}
+
+static void frame_scroll_container(bench_env *e)
+{
+    int i;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 300; ++i)
+    {
+        ar_begin(e->ui, "div.item");
+        ar_text(e->ui, "div.label", "a list row with enough text on it to measure");
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+
+    /* Boxes are numbered in declaration order, so the container is 0. Moving
+       it after the frame rather than before is deliberate: the position is
+       read by the next layout, which is exactly what a wheel notch does. */
+    ar_node_scroll_to(e->ui, 0, (ar_i32)((e->frame * 7u) % 9000u));
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_SCROLL_CONTAINER = {
+    "scroll_container",
+    "layout",
+    "300 rows in an overflow:scroll box, moved 7 px a frame",
+    800,
+    600,
+    1,
+    init_scroller,
+    frame_scroll_container};
+
 void bench_register_layout(void)
 {
     bench_register(&SC_FLAT_100);
@@ -176,4 +386,8 @@ void bench_register_layout(void)
     bench_register(&SC_FLAT_8K);
     bench_register(&SC_DEEP_60);
     bench_register(&SC_MIXED);
+    bench_register(&SC_BLOCK_1K);
+    bench_register(&SC_INLINE_WRAP);
+    bench_register(&SC_FLOAT_GALLERY);
+    bench_register(&SC_SCROLL_CONTAINER);
 }
