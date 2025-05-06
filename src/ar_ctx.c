@@ -1449,18 +1449,61 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
     }
 }
 
-static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
+/*
+ * Every box's clip, settled before anything asks for it.
+ *
+ * One forward sweep is enough because boxes are appended in declaration order,
+ * so a parent always precedes its children -- the same property that lets both
+ * layout passes be plain loops with no stack and no recursion.
+ *
+ * This used to be built inside ar__paint as it walked the stacking tree, which
+ * meant nothing before painting could ask where a box was clipped. The region
+ * move needs exactly that, and had to climb the ancestor chain itself to get
+ * it. Now there is one answer, computed once, and both read it.
+ */
+static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+
+        if (n->parent < 0)
+        {
+            n->clip = viewport;
+        }
+        else
+        {
+            ar_node *p = &c->nodes[n->parent];
+
+            n->clip = p->clip;
+            if (p->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE)
+            {
+                n->clip = ar_rect_intersect(n->clip, p->rect);
+            }
+        }
+    }
+}
+
+/* What a box confines its children to: its own clip, narrowed by itself when it
+   clips at all. One line, where it used to be an ancestor walk. */
+static ar_rect ar__content_clip(const ar_node *n)
+{
+    if (n->style.v[AR_P_OVERFLOW] == AR_OVERFLOW_VISIBLE)
+    {
+        return n->clip;
+    }
+    return ar_rect_intersect(n->clip, n->rect);
+}
+
+/* `region` is what this pass is allowed to touch -- the damage, or one band of
+   it -- and is narrower than the viewport the clips were built against. */
+static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
 
-    /*
-     * Back to front, in stacking order rather than declaration order.
-     *
-     * The clip inherited from a parent still works, because a box always
-     * appears after its ancestors here: every bucket walk descends from the
-     * context root, and a context root is pushed before anything inside it.
-     */
     for (ord = 0; ord < painted; ++ord)
     {
         ar_i32   i = c->order ? c->order[ord] : ord;
@@ -1474,23 +1517,7 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect viewport)
             continue;
         }
 
-        /* Parents are painted before children, so by the time a box is
-           reached its parent has already narrowed the region. A clip is
-           therefore inherited, not recomputed from the ancestor chain. */
-        if (n->parent < 0)
-        {
-            clip = viewport;
-        }
-        else
-        {
-            ar_node *p = &c->nodes[n->parent];
-            clip = p->clip;
-            if (p->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE)
-            {
-                clip = ar_rect_intersect(clip, p->rect);
-            }
-        }
-        n->clip = clip;
+        clip = ar_rect_intersect(n->clip, region);
 
         bg = (ar_color)n->style.v[AR_P_BACKGROUND];
         if (AR_ALPHA_OF(bg) != 0)
@@ -1811,30 +1838,9 @@ typedef struct ar__move
 } ar__move;
 
 /*
- * The region a box confines its children to.
- *
- * Walked up from the ancestors because there is no clip stack yet: ar__paint
- * builds n->clip as it descends, and for this frame that has not happened at
- * the moment a region move has to decide. When the clip stack lands this
- * becomes a lookup.
+ * ar__content_clip is defined up beside the paint pass now, because the clips
+ * are built there and both readers should be looking at the same answer.
  */
-static ar_rect ar__content_clip(const ar_ctx *c, ar_i32 i, ar_rect viewport)
-{
-    ar_rect clip = viewport;
-    ar_i32  at = i;
-
-    while (at >= 0)
-    {
-        const ar_node *n = &c->nodes[at];
-
-        if (n->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE)
-        {
-            clip = ar_rect_intersect(clip, n->rect);
-        }
-        at = n->parent;
-    }
-    return clip;
-}
 
 static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root)
 {
@@ -1955,7 +1961,7 @@ static ar__move ar__region_move(ar_ctx *c, ar_surface *s, ar_rect viewport)
         return m;
     }
 
-    m.area = ar_rect_intersect(ar__content_clip(c, found, viewport), viewport);
+    m.area = ar_rect_intersect(ar__content_clip(&c->nodes[found]), viewport);
     keep = m.area.h - (dy < 0 ? -dy : dy);
     if (ar_rect_is_empty(m.area) || keep <= 0)
     {
@@ -2067,6 +2073,9 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        depends on nothing layout decides, but its subtree has to be walked and
        there is no reason to walk it twice. */
     c->order_count = c->order ? ar_stack_order(c->nodes, c->node_count, c->order, c->node_cap) : 0;
+
+    /* Clips, once the rectangles are final and before anything asks. */
+    ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
     /* A resize repaints everything: every box moved, and the surface behind
