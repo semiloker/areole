@@ -50,7 +50,14 @@ typedef enum ar_prop
     AR_P_BORDER_RADIUS,
 
     AR_P_FONT_SIZE,
+
+    /* AR_P_OVERFLOW is the block axis, which is the one that existed when
+       there was only one: the scroll range has always been vertical. The
+       shorthand `overflow` sets both, and ar_overflow_x/ar_overflow_y apply the
+       specification's rule that a `visible` paired with anything else becomes
+       `auto`. */
     AR_P_OVERFLOW,
+    AR_P_OVERFLOW_X,
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,

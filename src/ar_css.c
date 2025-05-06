@@ -61,6 +61,7 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_ALIGN] = AR_ALIGN_STRETCH;
     s->unit[AR_P_ALIGN] = AR_UNIT_KEYWORD;
     s->v[AR_P_OVERFLOW] = AR_OVERFLOW_VISIBLE;
+    s->v[AR_P_OVERFLOW_X] = AR_OVERFLOW_VISIBLE;
     s->unit[AR_P_OVERFLOW] = AR_UNIT_KEYWORD;
 
     /* A box with no stated size takes the size of its content. This is what
@@ -454,7 +455,8 @@ enum
 {
     AR_SH_PADDING = AR_P_COUNT + 1,
     AR_SH_MARGIN,
-    AR_SH_BORDER
+    AR_SH_BORDER,
+    AR_SH_OVERFLOW
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
@@ -486,7 +488,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
-                                          {"overflow", AR_P_OVERFLOW},
+                                          {"overflow", AR_SH_OVERFLOW},
+                                          {"overflow-x", AR_P_OVERFLOW_X},
+                                          {"overflow-y", AR_P_OVERFLOW},
                                           {"text-align", AR_P_TEXT_ALIGN},
                                           {"vertical-align", AR_P_VERTICAL_ALIGN},
                                           {"float", AR_P_FLOAT},
@@ -592,7 +596,12 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
                                      {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
                                      {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO}};
+                                     {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
+
+                                     {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
+                                     {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
+                                     {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
+                                     {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO}};
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))
 
@@ -881,6 +890,10 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             as = AR_P_BORDER_WIDTH;
         }
+        if (prop == AR_SH_OVERFLOW)
+        {
+            as = AR_P_OVERFLOW;
+        }
 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
@@ -943,6 +956,17 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         ar__set(rule, (ar_u8)(base + 1), right.v, right.unit);
         ar__set(rule, (ar_u8)(base + 2), bottom.v, bottom.unit);
         ar__set(rule, (ar_u8)(base + 3), left.v, left.unit);
+    }
+    else if (prop == AR_SH_OVERFLOW)
+    {
+        /* One value sets both axes. Two are the inline axis then the block
+           one -- x before y, which is the order the specification gives and
+           the opposite of the one most people guess. */
+        ar__value x = vals[0];
+        ar__value y = (n >= 2) ? vals[1] : vals[0];
+
+        ar__set(rule, AR_P_OVERFLOW_X, x.v, x.unit);
+        ar__set(rule, AR_P_OVERFLOW, y.v, y.unit);
     }
     else if (prop == AR_SH_BORDER)
     {
