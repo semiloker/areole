@@ -5350,6 +5350,42 @@ static void test_a_wide_child_scrolls_sideways(void)
     CHECK(ar_node_scroll(g_ui, 1) == 0, "overflow-x: without disturbing the other axis");
 }
 
+/*
+ * A device that reports pixels is believed over one that reports notches.
+ *
+ * A notch is a fixed distance, which is right for a wheel that clicks and
+ * wrong for a touchpad: rounding a fraction of a notch to a whole one is
+ * either jerky or, as it was here for a while, silently nothing at all. Seven
+ * pixels has to move seven pixels, not a notch and not zero.
+ */
+static void test_pixel_travel_beats_notches(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel_px = -7;
+    ar__scroll_scene(&s, &in);
+    in.wheel_px = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) == 7, "wheel: seven pixels of travel moves seven pixels");
+
+    /* Both set: the finer one wins, because it is strictly more information. */
+    in.wheel = -1;
+    in.wheel_px = -3;
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    in.wheel_px = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) == 10, "wheel: with both reported, the pixels are believed");
+}
+
 /* A notch outside the container does nothing to it. */
 static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 {
@@ -7840,6 +7876,7 @@ int main(void)
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();
     test_a_wide_child_scrolls_sideways();
+    test_pixel_travel_beats_notches();
     test_dragging_the_scrollbar_scrolls();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();

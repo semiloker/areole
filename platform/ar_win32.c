@@ -35,7 +35,28 @@ struct ar_win
        high-resolution device reports far less than WHEEL_DELTA per message, so
        the leftover has to survive to the next one or it is thrown away. */
     ar_i32 wheel_accum;
+
+    /* The same travel again, kept in pixel-units scaled by WHEEL_DELTA so the
+       remainder stays exact. Separate from the one above because the two feed
+       different fields and sharing an accumulator would spend the travel
+       twice. */
+    ar_i32 wheel_px_accum;
 };
+
+/*
+ * How far one wheel notch travels, in pixels.
+ *
+ * A platform decision rather than a layout one, which is why the core does not
+ * own this number: how much a click of the wheel should move is a property of
+ * the machine and the person using it. It matches what the core falls back to
+ * for a backend that reports only notches, so a mouse feels the same either
+ * way and only a touchpad notices the difference.
+ *
+ * ponytail: fixed, where Windows would tell us. SPI_GETWHEELSCROLLLINES is the
+ * user's setting and is in lines, so honouring it needs a line height this
+ * layer does not have. Worth wiring up when the core can be asked for one.
+ */
+#define AR_WHEEL_PX 30
 
 /* ponytail: one window per process, so the message procedure can find its
    window without a lookup. Multiple windows need this moved into a context;
@@ -281,6 +302,24 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             win->input.wheel -= 1;
             win->wheel_accum += WHEEL_DELTA;
         }
+
+        /*
+         * And the same travel in pixels, which is what a touchpad actually
+         * meant. One notch is AR_WHEEL_PX, so the conversion is a ratio, and
+         * the accumulator holds pixel-units scaled by WHEEL_DELTA so that the
+         * remainder is exact rather than rounded away a message at a time.
+         *
+         * Whole pixels come out, the rest stays for the next message: a slow
+         * two-finger drag therefore moves a few pixels per message instead of
+         * accumulating silently towards a notch it may never reach.
+         */
+        win->wheel_px_accum += (ar_i32)GET_WHEEL_DELTA_WPARAM(wp) * AR_WHEEL_PX;
+        {
+            ar_i32 whole = win->wheel_px_accum / WHEEL_DELTA;
+
+            win->input.wheel_px += whole;
+            win->wheel_px_accum -= whole * WHEEL_DELTA;
+        }
         return 0;
 
     case WM_CLOSE:
@@ -415,6 +454,7 @@ int ar_win_pump(ar_win *win)
     win->input.mouse_pressed = 0;
     win->input.mouse_released = 0;
     win->input.wheel = 0;
+    win->input.wheel_px = 0;
     win->resized = 0;
 
     /* With nothing pending and nothing animating, block instead of spinning.

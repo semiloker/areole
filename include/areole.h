@@ -195,7 +195,23 @@ typedef struct ar_input
     ar_u32 mouse_pressed;  /* went down since last pump */
     ar_u32 mouse_released; /* came up since last pump   */
     ar_i32 wheel;          /* notches, positive is away from the user */
-    int    mouse_inside;   /* the cursor is over the client area */
+
+    /*
+     * The same travel in pixels, for a device that has more to say than
+     * notches.
+     *
+     * A mouse wheel clicks: one notch, a fixed distance, and `wheel` describes
+     * it exactly. A precision touchpad or a free-spinning wheel reports a
+     * fraction of a notch at a time, and rounding that to whole notches is
+     * either jerky or -- as it was here until recently -- silently nothing.
+     *
+     * A backend that knows only notches leaves this zero and the core falls
+     * back to `wheel`, so nothing has to be updated to keep working. When both
+     * are set this one wins, because it is strictly more information.
+     */
+    ar_i32 wheel_px;
+
+    int mouse_inside; /* the cursor is over the client area */
 } ar_input;
 
 /* ------------------------------------------------------------------------
