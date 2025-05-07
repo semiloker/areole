@@ -375,12 +375,13 @@ toolkit breaks that circle.
 
 - **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
 - **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
-- **0.1.2** *It redraws less* — damage tracking, scroll by region move
+- **0.1.2** *It redraws less* — damage tracking, up to eight dirty regions, partial present ✅
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
-- **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
-- **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, selector lists, combinators, `!important`, structural selectors, `:not`/`:is`/`:where` ✅
+- **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
+- **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
+- **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
