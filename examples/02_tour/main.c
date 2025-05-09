@@ -13,6 +13,7 @@
  *   0.4.0  the cascade: inheritance, combinators, !important, structure
  *   0.5.0  block and inline: margin collapsing, floats, fragmented inlines
  *   0.6.0  position and scroll: absolute, sticky, z-index, a scrollable list
+ *   0.6.1  both axes, nested containers, and a scrollbar you can drag
  *
  * Every page is declared with ar_begin and ar_text and laid out from the
  * stylesheet below. There is one coordinate in this file, for the overlay,
@@ -199,6 +200,27 @@ static const char *SHEET_POS2 =
     ".srow { display:block; padding:3px 8px; font-size:12px; color:#4a453e; }"
     ".srow:nth-child(even) { background:#efe8d8; }";
 
+/*
+ * The 0.6.1 page: the axes, and the bar.
+ *
+ * `.strip` states only overflow-y, and the sideways scrolling it gets is the
+ * specification's doing rather than a convenience -- a lone `visible` on the
+ * other axis is used as `auto`, because content cannot escape sideways from a
+ * box that clips it vertically. The wide row inside it is what gives the strip
+ * something to travel over.
+ *
+ * `.outer` holds `.inner` so that two scroll containers are nested, which is
+ * what makes chaining visible: the inner list swallows the wheel until it runs
+ * out and then hands it upwards.
+ */
+static const char *SHEET_SCROLL2 =
+    ".strip { display:block; height:44px; overflow-y:hidden; background:#f7f3ea; }"
+    ".wide  { display:block; width:900px; height:28px; padding:6px 8px;"
+    "         font-size:12px; color:#4a453e; background:#e8dfcb; }"
+    ".outer { display:block; height:140px; overflow:scroll; background:#f4efe4;"
+    "         padding:6px; }"
+    ".inner { display:block; height:90px; overflow:scroll; background:#fdfaf3; }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -244,15 +266,16 @@ enum
     PAGE_CASCADE,
     PAGE_FLOW,
     PAGE_POSITION,
+    PAGE_SCROLL,
     PAGE_COUNT
 };
 
-static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0",
-                                           "0.3.0", "0.4.0", "0.5.0", "0.6.0"};
+static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
+                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {
-    "One block, one blit", "The counters",     "Damage tracking",    "Outlines", "Scripts",
-    "The cascade",         "Block and inline", "Position and scroll"};
+    "One block, one blit", "The counters",     "Damage tracking",     "Outlines", "Scripts",
+    "The cascade",         "Block and inline", "Position and scroll", "Both axes"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -262,7 +285,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "UAX #9, OpenType GSUB and GPOS, Arabic joining, Indic reordering.",
     "Inheritance, combinators, !important, and the structural selectors.",
     "Margin collapsing, floats, line boxes and fragmented inlines.",
-    "Absolute, fixed, sticky, z-index, and a list you can scroll."};
+    "Absolute, fixed, sticky, z-index, and a list you can scroll.",
+    "overflow-x and overflow-y, nested containers, and a bar you can drag."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -677,6 +701,51 @@ static void page_position(ar_ctx *ui, ar_i32 rows)
 
 /* The page dispatch, so the window loop and the self-check below run exactly
    the same declarations rather than two versions that can drift apart. */
+/*
+ * 0.6.1: both axes, nested containers, and a bar that can be dragged.
+ *
+ * The strip states only overflow-y and scrolls sideways anyway, which is the
+ * specification rather than a shortcut -- a lone `visible` on the other axis is
+ * used as `auto`. Nothing in areole binds the wheel to the inline axis yet, so
+ * the strip is driven from here, which is what an application would do for a
+ * keyboard or a swipe.
+ */
+static ar_i32 g_slide;
+
+static void page_scroll(ar_ctx *ui, ar_i32 slide)
+{
+    ar_i32 i;
+
+    ar_text(ui, "div.h2", "Sideways, from one declaration");
+    ar_text(ui, "div.dim",
+            "The strip below says overflow-y: hidden and nothing else. CSS "
+            "turns the other axis into a scroller, because content cannot "
+            "escape sideways from a box that clips it vertically.");
+    ar_begin(ui, "div.strip");
+    ar_text(ui, "div.wide",
+            "a row nine hundred pixels wide, in a strip that is not - drag the "
+            "slider under it and watch this travel");
+    ar_end(ui);
+    ar_text(ui, "div.dim", fmt("scrolled to %ld px", (long)slide));
+
+    ar_text(ui, "div.h2", "Two containers, one wheel");
+    ar_text(ui, "div.dim",
+            "Point at the inner list. It takes the wheel until it runs out, "
+            "then hands the notch outwards. Both bars can be dragged.");
+    ar_begin(ui, "div.outer");
+    ar_begin(ui, "div.inner");
+    for (i = 0; i < 14; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("inner row %ld", (long)(i + 1)));
+    }
+    ar_end(ui);
+    for (i = 0; i < 10; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("outer row %ld", (long)(i + 1)));
+    }
+    ar_end(ui);
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -702,6 +771,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_POSITION:
         page_position(ui, 10);
+        break;
+    case PAGE_SCROLL:
+        page_scroll(ui, g_slide);
         break;
     default:
         page_cascade(ui);
@@ -1253,6 +1325,7 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_FLOW);
     ar_stylesheet(ui, SHEET_POS);
     ar_stylesheet(ui, SHEET_POS2);
+    ar_stylesheet(ui, SHEET_SCROLL2);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */
@@ -1376,6 +1449,32 @@ int main(int argc, char **argv)
         ar_invalidate(ui, overlay);
 
         ar_frame_end(ui, s);
+
+        /*
+         * The inline axis, driven from here.
+         *
+         * Nothing in areole binds the wheel sideways yet, so this is what an
+         * application does for a keyboard, a swipe or a shift-wheel -- and it
+         * is the reason ar_node_scroll_to_x is public. The strip is found by
+         * asking which box has somewhere to go horizontally rather than by
+         * counting boxes, so adding a paragraph to the page cannot break it.
+         */
+        if (page == PAGE_SCROLL)
+        {
+            const ar_input *raw = ar_win_input(win);
+            ar_i32          by = raw->wheel_px ? raw->wheel_px : raw->wheel * 30;
+            ar_i32          k;
+
+            for (k = 0; by != 0 && k < ar_node_count(ui); ++k)
+            {
+                if (ar_node_scroll_range_x(ui, k) > 0 &&
+                    ar_rect_contains(ar_node_rect(ui, k), raw->mouse_x, raw->mouse_y))
+                {
+                    g_slide = ar_node_scroll_to_x(ui, k, g_slide - by);
+                    break;
+                }
+            }
+        }
 
         ar_perf_overlay(ar_perf_of(ui), s, ar_rect_make(0, 0, s->w, s->h), s->w - 296, 16, 1);
 

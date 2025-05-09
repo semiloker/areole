@@ -381,6 +381,7 @@ toolkit breaks that circle.
 - **0.4.0** *It has the cascade* — specificity, inheritance, selector lists, combinators, `!important`, structural selectors, `:not`/`:is`/`:where` ✅
 - **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
 - **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
+- **0.6.1** *It scrolls properly* — both axes, region move, a draggable bar, touchpad travel
 - **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
@@ -393,7 +394,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/ar_test               # 732 checks
 ./build/example_hello         # the dashboard on the front page
-./build/example_tour          # one page per release, 0.1.0 to 0.6.0
+./build/example_tour          # one page per release, 0.1.0 to 0.6.1
 ./build/example_block         # the block, inline and float corpus, drawn
 ./build/example_block --dump  # the same, as rectangles, for the comparison
 ./build/example_tour --selftest   # every page, no window; CI runs this
@@ -404,7 +405,7 @@ cmake --build build
 
 ## The tour
 
-`example_tour` is one page per release, 0.1.0 to 0.6.0, showing what each added while it runs:
+`example_tour` is one page per release, 0.1.0 to 0.6.1, showing what each added while it runs:
 
 | | |
 | --- | --- |
@@ -416,6 +417,7 @@ cmake --build build
 | 0.4.0 | inheritance, combinators, a compound selector, `!important`, striping by `:nth-child` |
 | 0.5.0 | margins collapsing, text wrapping around a float, an inline box cut across lines |
 | 0.6.0 | boxes overlapping by `z-index`, a pinned badge, a scrollable list with a sticky header |
+| 0.6.1 | a strip that scrolls sideways from one declaration, nested containers, a draggable bar |
 
 The toggles are not captions. Switching off antialiasing on the 0.2.0 page changes how the frame
 you are looking at is rasterized; switching off shaping on the 0.3.0 page drops the same strings
