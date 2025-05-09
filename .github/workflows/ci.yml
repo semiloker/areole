@@ -110,6 +110,13 @@ jobs:
       - name: Tour self-check
         run: ./build/example_tour.exe --selftest
 
+      # The showcase asserts what its page claims rather than that it drew
+      # something: that border-box and content-box really differ by the
+      # padding, that fit-content really lands between the other two, and that
+      # the highest z-index really is the pixel on top.
+      - name: Showcase self-check
+        run: ./build/example_showcase.exe --selftest
+
       # The margin-collapsing corpus. It only prints rectangles here; the
       # browser comparison needs Chromium and runs locally.
       - name: Block corpus renders
