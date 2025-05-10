@@ -231,8 +231,10 @@ ar_rect ar_path_bounds(const ar_path *p)
     {
         ar_i32 x0 = minx >= 0 ? minx / AR_ONE_PIXEL : -((-minx + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL);
         ar_i32 y0 = miny >= 0 ? miny / AR_ONE_PIXEL : -((-miny + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL);
-        ar_i32 x1 = maxx >= 0 ? (maxx + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL : -((-maxx) / AR_ONE_PIXEL);
-        ar_i32 y1 = maxy >= 0 ? (maxy + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL : -((-maxy) / AR_ONE_PIXEL);
+        ar_i32 x1 =
+            maxx >= 0 ? (maxx + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL : -((-maxx) / AR_ONE_PIXEL);
+        ar_i32 y1 =
+            maxy >= 0 ? (maxy + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL : -((-maxy) / AR_ONE_PIXEL);
         return ar_rect_make(x0, y0, x1 - x0, y1 - y0);
     }
 }
@@ -370,8 +372,8 @@ static void ar__line(ar_i32 *acc, ar_i32 w, ar_i32 h, ar_i32 accw, ar_i32 x0, ar
     cy = y0;
 
     y = y0 >= 0 ? y0 / AR_ONE_PIXEL : -((-y0 + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL);
-    ylast = (y1 - 1) >= 0 ? (y1 - 1) / AR_ONE_PIXEL
-                          : -((-(y1 - 1) + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL);
+    ylast =
+        (y1 - 1) >= 0 ? (y1 - 1) / AR_ONE_PIXEL : -((-(y1 - 1) + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL);
 
     for (; y <= ylast; ++y)
     {
