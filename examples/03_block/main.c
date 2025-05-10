@@ -40,7 +40,6 @@
 #define CASE_H 200
 #define WIN_W  860
 #define WIN_H  560
-#define RAIL_W 260
 
 static unsigned char g_memory[AR_MEM(128)];
 static unsigned char g_chrome_memory[AR_MEM(256)];
@@ -392,16 +391,16 @@ static const char *CHROME_SHEET2 =
     ".css   { font-size:11px; color:#8d8578; }"
     ".frame { width:300px; height:200px; border:1px solid #d8ccb4; }";
 
-/* Where the case surface sits inside the window, so the frame drawn by the
-   chrome and the pixels drawn by the case land in the same place. */
-#define CASE_X (RAIL_W + 20)
-#define CASE_Y 84
+/* The border on .frame, which the case surface sits inside. Has to match the
+   border-width in CHROME_SHEET2 -- there is no inspection API for a border. */
+#define FRAME_BORDER 1
 
 static int run_window(void)
 {
     ar_ctx *chrome;
     ar_ctx *ui = 0;
     ar_win *win;
+    ar_rect frame;
     ar_i32  shown = 0;
     ar_i32  built = -1;
     ar_i32  k;
@@ -479,7 +478,23 @@ static int run_window(void)
             built = shown;
         }
 
-        cs.pixels = s->pixels + (ar_i32)CASE_Y * s->stride + CASE_X;
+        /*
+         * Where the frame actually landed, asked of layout rather than
+         * predicted. .frame is declared last and boxes are numbered in
+         * declaration order, so it is the final node.
+         *
+         * This was two constants, CASE_X (RAIL_W + 20) and CASE_Y 84, and they
+         * stopped agreeing with layout the moment box-sizing began defaulting
+         * to content-box: .rail is width:260px with padding:14px, so it became
+         * 288 wide and carried .page 28 px to the right. The case pixels stayed
+         * where they were and every demo drew 29 px to the left of its own
+         * frame, and 23 px below it. An inspector that lies about geometry is
+         * worse than no inspector, and the only fix that cannot drift again is
+         * to stop keeping a second copy of what layout already knows.
+         */
+        frame = ar_node_rect(chrome, ar_node_count(chrome) - 1);
+
+        cs.pixels = s->pixels + (frame.y + FRAME_BORDER) * s->stride + frame.x + FRAME_BORDER;
         cs.w = CASE_W;
         cs.h = CASE_H;
         cs.stride = s->stride;
