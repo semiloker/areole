@@ -1,0 +1,25 @@
+name: Feature
+description: A capability areole does not have yet
+labels: ["type:feat"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not build today without this?
+    validations: { required: true }
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API or CSS
+      description: Show the code you want to be able to write.
+      render: c
+  - type: textarea
+    id: cost
+    attributes:
+      label: Cost
+      description: >
+        areole has two hard invariants: zero heap allocation after init, and no floating point
+        in the layout or raster hot path. Does this proposal respect both? What does it cost in
+        arena bytes and microseconds per frame?
+    validations: { required: true }

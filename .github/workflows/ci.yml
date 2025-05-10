@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The C89 claim is the whole premise of the library, so it is machine checked
+  # rather than asserted in the README. This job also enforces the split that
+  # makes the claim possible: <windows.h> does not compile with extensions
+  # disabled, so only platform/ may include it, and platform/ is not built here.
+  strict-c89:
+    name: strict C89 (core only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject platform headers in the core
+        run: |
+          if grep -rnE '#[[:space:]]*include[[:space:]]*[<"](windows|X11/|Cocoa/)' src/ include/; then
+            echo "::error::core sources must stay platform agnostic"
+            exit 1
+          fi
+          echo "core is platform agnostic"
+
+      - name: Reject C99 constructs in the core
+        run: |
+          if grep -rnE '(^|[^:"])//|#[[:space:]]*include[[:space:]]*<(stdint|stdbool|inttypes)\.h>' \
+                 src/ include/; then
+            echo "::error::// comments and C99 headers are not allowed in the core"
+            exit 1
+          fi
+          echo "no C99 constructs"
+
+      - name: Compile with gcc and clang
+        run: |
+          mkdir -p /tmp/objs
+          for cc in gcc clang; do
+            for f in src/*.c; do
+              echo "$cc $f"
+              "$cc" -std=c89 -pedantic-errors -Wall -Wextra -Werror \
+                    -Wshadow -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes \
+                    -Wwrite-strings -Wold-style-definition \
+                    -Iinclude -c "$f" -o "/tmp/objs/$cc-$(basename "$f").o"
+              # And again with the counters compiled in. Both builds ship, so
+              # both have to hold the standard.
+              "$cc" -std=c89 -pedantic-errors -Wall -Wextra -Werror -DAR_INSTRUMENT \
+                    -Iinclude -c "$f" -o "/tmp/objs/$cc-inst-$(basename "$f").o"
+            done
+          done
+
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "ubuntu / gcc",   os: ubuntu-latest,  cc: gcc,   generator: "Unix Makefiles" }
+          - { name: "ubuntu / clang", os: ubuntu-latest,  cc: clang, generator: "Unix Makefiles" }
+          - { name: "windows / msvc", os: windows-latest, cc: "",    generator: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.generator }}" ]; then
+            CC=${{ matrix.cc }} cmake -S . -B build -G "${{ matrix.generator }}" \
+              -DCMAKE_BUILD_TYPE=Release
+          else
+            cmake -S . -B build
+          fi
+
+      - name: Build
+        run: cmake --build build --config Release
+
+  build-mingw:
+    name: windows / mingw-w64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      # Every page of the tour, declared against a real surface with no window.
+      # A page that leaves the tree unbalanced or overruns the box budget fails
+      # here rather than when somebody clicks on it.
+      - name: Tour self-check
+        run: ./build/example_tour.exe --selftest
+
+      # The showcase asserts what its page claims rather than that it drew
+      # something: that border-box and content-box really differ by the
+      # padding, that fit-content really lands between the other two, and that
+      # the highest z-index really is the pixel on top.
+      - name: Showcase self-check
+        run: ./build/example_showcase.exe --selftest
+
+      # The margin-collapsing corpus. It only prints rectangles here; the
+      # browser comparison needs Chromium and runs locally.
+      - name: Block corpus renders
+        run: ./build/example_block.exe > /dev/null
+
+  tidy:
+    name: format and static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y cppcheck
+          # Pinned. clang-format reflows differently between major versions, and
+          # a gate that disagrees with the contributor's local copy is a gate
+          # that gets disabled.
+          pip install clang-format==22.1.8
+
+      - name: clang-format
+        run: |
+          set -e
+          dirs=""
+          for d in include src platform examples tests bench tools; do
+            [ -d "$d" ] && dirs="$dirs $d"
+          done
+          find $dirs \( -name '*.c' -o -name '*.h' \) -print0 |
+            xargs -0 -r clang-format --dry-run --Werror
+
+      - name: cppcheck
+        run: |
+          cppcheck --quiet --error-exitcode=1 --std=c89 --inline-suppr \
+                   --enable=warning,style,performance,portability \
+                   --suppress=missingIncludeSystem \
+                   --suppress=unusedFunction \
+                   --suppress=checkersReport \
+                   -Iinclude src

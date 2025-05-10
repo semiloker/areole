@@ -15,3 +15,6 @@ obj/
 .cache/
 compile_commands.json
 bench/results-*.json
+
+# Planning material, not repository documentation.
+docs/roadmap/
