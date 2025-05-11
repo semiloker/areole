@@ -538,9 +538,11 @@ void ar_frame_presented(ar_ctx *c);
 int ar_overflowed(const ar_ctx *c);
 int ar_unbalanced(const ar_ctx *c);
 
-/* Non-zero when the box under the cursor changed during the last frame. Hover
-   is resolved from the previous frame, so a caller whose pump blocks when idle
-   must draw one more frame to show the highlight. */
+/* Non-zero when the next frame will differ from the one just drawn: the box
+   under the cursor changed, or a wheel notch moved a scroll container. Both
+   settle after the paint, so a caller whose pump blocks when idle must draw one
+   more frame to show either. Ask this and nothing else; ar_scrolled is for a
+   caller that wants to know which of the two it was. */
 int ar_needs_redraw(const ar_ctx *c);
 
 /* ------------------------------------------------------------------------
