@@ -2429,8 +2429,13 @@ static void test_path_winding_direction_does_not_matter(void)
 static void test_path_fill_rules_differ_on_a_hole(void)
 {
     ar_path p;
-    ar_u8   nonzero_centre, evenodd_centre;
-    ar_i32  i;
+    /* Each initialised to the value that makes its own CHECK below fail, so
+       silencing MSVC's "potentially uninitialized" costs the test nothing: if
+       the loop ever stopped assigning one, the check still catches it. An
+       initialiser of 0 for evenodd_centre would have passed vacuously, which is
+       the trap this pair of values exists to avoid. */
+    ar_u8  nonzero_centre = 0, evenodd_centre = 255;
+    ar_i32 i;
 
     /* An outer square and an inner square wound the same way. Nonzero fills
        both; even-odd punches the inner one out. This is exactly how a glyph
@@ -3590,19 +3595,20 @@ static void test_break_always_terminates(void)
 {
     /* Every input, including malformed UTF-8 and empty strings, must reach the
        end. A line breaker that loops is a hang in the middle of a paint. */
-    static const char *const NASTY[] = {"",
-                                        " ",
-                                        "\n",
-                                        "\xFF",
-                                        "\xC2",
-                                        "\x80\x80",
-                                        "a\xFF"
-                                        "b",
-                                        "\r",
-                                        "\r\r\n",
-                                        "((((",
-                                        "))))",
-                                        "\xE2\x80"};
+    static const char *const NASTY[] = {"", " ", "\n", "\xFF", "\xC2", "\x80\x80",
+                                        /* Two literals on purpose, and the
+                                           parentheses on purpose too. "a\xFFb"
+                                           would not mean this: a hex escape is
+                                           maximal munch, so \xFFb is read as
+                                           one enormous escape rather than 0xFF
+                                           then 'b'. Splitting is the only way
+                                           to write a lone 0xFF between two
+                                           letters; the parentheses tell clang
+                                           the concatenation is deliberate and
+                                           not a comma someone forgot. */
+                                        ("a\xFF"
+                                         "b"),
+                                        "\r", "\r\r\n", "((((", "))))", "\xE2\x80"};
     ar_i32                   i;
     int                      ok = 1;
 
