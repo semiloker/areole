@@ -1561,6 +1561,63 @@ static void test_damage_an_unchanged_frame_paints_nothing(void)
     CHECK(d.w == 0 || d.h == 0, "damage: redeclaring the same tree damages nothing");
 }
 
+/*
+ * A wide tree that did not change damages nothing.
+ *
+ * Which is the same claim as the test above, on a tree big enough to have
+ * caught what that one could not. The slot table is indexed by the key's low
+ * bits and ar__mix does not reach them: for the children of one parent the
+ * mixed keys walk up by one, so a list's rows land in consecutive indices and
+ * the level below them collides into that block. Linear probing gives up after
+ * 32, and a box with no slot has nothing remembering that it did not change --
+ * so it is repainted every frame, for ever.
+ *
+ * Eighty rows was enough for five boxes to lose their slots with the table
+ * **31% full**, and doubling the table does not help because the run is a
+ * property of the hash rather than of the load. That is why this counts rows
+ * rather than filling the table.
+ *
+ * Found while working out why a scrolled container would not take the region
+ * move: one slotless row out of six hundred was reporting damage every frame.
+ */
+static unsigned char g_wide_mem[AR_MEM(1024)];
+
+static void test_damage_a_wide_tree_is_still_when_still(void)
+{
+    ar_surface s = ar__ui_surface(400, 700);
+    ar_rect    d;
+    int        pass;
+
+    /* Its own arena: six hundred boxes is more than the shared one holds, and
+       the two failures this pins only show on a list that long. */
+    g_ui = ar_init(g_wide_mem, (ar_u32)sizeof g_wide_mem);
+    ar_stylesheet(g_ui, "#root { display:block; } .row { display:block; height:2px; }"
+                        ".cell { display:block; }");
+
+    d = ar_rect_make(0, 0, 0, 0);
+    for (pass = 0; pass < 2; ++pass)
+    {
+        int i;
+
+        ar__ui_begin();
+        ar_begin(g_ui, "#root");
+        for (i = 0; i < 300; ++i)
+        {
+            ar_begin(g_ui, "div.row");
+            ar_begin(g_ui, "div.cell");
+            ar_end(g_ui);
+            ar_end(g_ui);
+        }
+        ar_end(g_ui);
+        d = ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(!ar_overflowed(g_ui),
+          "slots: the wide tree fits, so this measures slots and not the arena");
+    CHECK(d.w == 0 || d.h == 0,
+          "slots: every box in a wide tree keeps its slot, so a still frame is still");
+}
+
 static void test_damage_a_style_change_repaints_that_box(void)
 {
     ar_surface s = ar__dmg_surface(g_dmg_a);
@@ -7583,6 +7640,7 @@ int main(void)
 
     test_damage_first_frame_paints_everything();
     test_damage_an_unchanged_frame_paints_nothing();
+    test_damage_a_wide_tree_is_still_when_still();
     test_damage_a_style_change_repaints_that_box();
     test_damage_invalidate_is_honoured();
     test_damage_invalidate_all_repaints_everything();

@@ -37,9 +37,41 @@ typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule
  * its parent and its position among its siblings, so two buttons declared with
  * the same class in the same loop still get different keys.
  * ------------------------------------------------------------------------ */
+/*
+ * Combine, then avalanche.
+ *
+ * The combining step alone is the classic hash_combine, and it is not enough
+ * here. Two things went wrong with it, both measured on a three hundred row
+ * list, and the finalizer fixes both.
+ *
+ * **The low bits never moved.** The table is indexed by them, and for the
+ * children of one parent `a` is fixed while `b` walks up by one -- so the keys
+ * walked up by one too and three hundred rows landed in three hundred and
+ * seventy-five consecutive indices. Linear probing gives up after 32 and the
+ * longest unbroken run of occupied slots was **257**, with the table only
+ * **29% full**. Doubling the table changed nothing, because the run was a
+ * property of the hash and not of the load. A box that finds no slot is
+ * repainted every frame, since nothing remembers that it did not change.
+ *
+ * **And the keys themselves collided.** A row's child is mixed with a constant,
+ * so its key is a function of the row's key, and both sets lived in small
+ * structured subsets of the word that overlapped constantly. Across four
+ * hundred random trees of this shape, **186 of them had two boxes sharing a
+ * key** -- against the birthday bound of about four in a hundred thousand.
+ * Boxes sharing a key share a slot, which means sharing hover, active, scroll
+ * position and damage: the wrong row lights up under the cursor.
+ *
+ * Zero of the same four hundred collide with the finalizer, and the longest
+ * index run falls from 257 to 6. Two multiplies per box per frame buys that.
+ */
 static ar_u32 ar__mix(ar_u32 a, ar_u32 b)
 {
     a ^= b + 0x9E3779B9u + (a << 6) + (a >> 2);
+    a ^= a >> 16;
+    a *= 0x85EBCA6Bu;
+    a ^= a >> 13;
+    a *= 0xC2B2AE35u;
+    a ^= a >> 16;
     return a ? a : 1u;
 }
 
