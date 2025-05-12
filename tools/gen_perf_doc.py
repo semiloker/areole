@@ -152,13 +152,28 @@ def main():
             continue
         w("### %s" % group)
         w("")
-        w("| scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |")
-        w("| --- | --: | --: | --: | --: | --: | --: | --: |")
+        # fill_px and glyph_px are what a damage or region-move change actually
+        # moves; p50 can sit still while painting collapses, which is exactly
+        # what the region move did. Printed for the groups where drawing is
+        # driven by a tree, since for a primitive scene ns/px already says it.
+        painted = group in ("layout", "realistic")
+        if painted:
+            w("| scene | p50 | p95 | p99 | spread | fill px | glyph px | ns/px | ns/glyph | ns/node |")
+            w("| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: |")
+        else:
+            w("| scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |")
+            w("| --- | --: | --: | --: | --: | --: | --: | --: |")
         for s in by_group[group]:
-            w("| `%s` | %s µs | %s µs | %s µs | %.1f%% | %s | %s | %s |"
-              % (s["name"], us(s["p50_us"]), us(s["p95_us"]), us(s["p99_us"]),
-                 s["stability_pct"], rate(s["ns_per_px"]), rate(s["ns_per_glyph"], "%.1f"),
-                 rate(s["ns_per_node"], "%.1f")))
+            tail = ("%.1f%% | %s | %s | %s |"
+                    % (s["stability_pct"], rate(s["ns_per_px"]),
+                       rate(s["ns_per_glyph"], "%.1f"), rate(s["ns_per_node"], "%.1f")))
+            if painted:
+                tail = ("%.1f%% | %d | %d | %s | %s | %s |"
+                        % (s["stability_pct"], s["fill_px"], s["glyph_px"],
+                           rate(s["ns_per_px"]), rate(s["ns_per_glyph"], "%.1f"),
+                           rate(s["ns_per_node"], "%.1f")))
+            w("| `%s` | %s µs | %s µs | %s µs | %s"
+              % (s["name"], us(s["p50_us"]), us(s["p95_us"]), us(s["p99_us"]), tail))
         w("")
         for s in by_group[group]:
             w("- `%s` — %s" % (s["name"], s["stresses"]))
@@ -194,21 +209,103 @@ def main():
 
     t1, t2 = get("latin_paragraph"), get("latin_paragraph_2x")
     if t1 and t2 and t1["ns_per_glyph"] > 0:
-        w("**The glyph blitter costs per bit tested, not per pixel written.** At scale 2 it")
+        scale_ratio = t2["ns_per_glyph"] / t1["ns_per_glyph"]
+        # The scene exists to measure one thing: scale 2 draws four times the
+        # pixels, so a blitter paying per pixel written costs 4x and one paying
+        # per bit tested costs 1x. The original blitter measured 1.04x. Saying
+        # which of those the current number is nearer is the whole finding, and
+        # hardcoding either verdict is how this passage went stale before.
+        if scale_ratio < 2.0:
+            verdict = ("**The bitmap glyph blitter costs per bit tested, not per pixel written.**"
+                       " At scale 2 it")
+        elif scale_ratio < 3.5:
+            verdict = ("**The bitmap glyph blitter pays partly per pixel and partly per bit.**"
+                       " At scale 2 it")
+        else:
+            verdict = ("**The bitmap glyph blitter costs per pixel written, as it should.**"
+                       " At scale 2 it")
+        w(verdict)
         w("draws four times the pixels for %.2f times the money — %.0f against %.0f ns per"
-          % (t2["ns_per_glyph"] / t1["ns_per_glyph"], t2["ns_per_glyph"], t1["ns_per_glyph"]))
-        w("glyph. Every ink pixel goes through a function call performing two rectangle")
-        w("intersections. 0.2.0 replaces the whole path and inherits a tenfold improvement")
-        w("as its acceptance criterion.")
+          % (scale_ratio, t2["ns_per_glyph"], t1["ns_per_glyph"]))
+        w("glyph. Four is what a blitter paying per pixel written would cost and one is what")
+        w("the original per-set-pixel path did cost, so the distance between them is the")
+        w("finding. These two scenes measure the built-in 8x8 face, which is what")
+        w("`ar_draw_text` uses when no font is loaded; 0.2.0's outline path is measured")
+        w("separately under **Outline text** below.")
         w("")
 
     r10, r100, r250 = get("rules_10"), get("rules_100"), get("rules_250")
     if r10 and r100 and r250:
-        w("**Style resolution is linear in rule count.** %s, %s and %s µs for 13, 103 and 253"
-          % (us(r10["p50_us"]), us(r100["p50_us"]), us(r250["p50_us"])))
-        w("rules over the same 500 boxes: resolution scans every rule for every box. A")
-        w("browser user-agent stylesheet alone is around 400 rules, which is why 0.4.0")
-        w("builds a style cache and why the rule table has to stop being a fixed 256.")
+        # This passage asserted "linear in rule count" for long enough to
+        # outlive the style cache that flattened it, while printing the three
+        # numbers that refuted it. Decide from the data instead: the curve is
+        # flat when the 253-rule sheet costs no more than the 13-rule one by
+        # more than the noise the two were measured in.
+        noise = r10["stability_pct"] + r250["stability_pct"]
+        growth = (r250["p50_us"] / r10["p50_us"] - 1.0) * 100.0 if r10["p50_us"] else 0.0
+        if growth > noise:
+            w("**Style resolution still grows with rule count.** %s, %s and %s µs for 13, 103"
+              % (us(r10["p50_us"]), us(r100["p50_us"]), us(r250["p50_us"])))
+            w("and 253 rules over the same 500 boxes — %.0f%% for 19 times the rules, against"
+              % growth)
+            w("%.0f%% of measurement noise. The resolved-style cache is not covering this"
+              % noise)
+            w("sheet; the hit rate in the scene table says whether it is missing or thrashing.")
+        else:
+            w("**Style resolution no longer grows with rule count.** %s, %s and %s µs for 13,"
+              % (us(r10["p50_us"]), us(r100["p50_us"]), us(r250["p50_us"])))
+            w("103 and 253 rules over the same 500 boxes: %.0f%% apart across 19 times the"
+              % growth)
+            w("rules, inside the %.0f%% these were measured in. The resolved-style cache did"
+              % noise)
+            w("that — matching is keyed on `(tag, class, id, state)` and a repeat is a lookup")
+            w("rather than a scan.")
+        w("")
+        # What the cache did not fix, which is the number that matters next.
+        per_box = [(s["style_us"] * 1000.0 / s["nodes"], s)
+                   for s in (r10, r250, get("identical_siblings")) if s and s["nodes"]]
+        if len(per_box) == 3:
+            w("**What it did not fix is the per-box cost.** Style is %.0f ns a box on a %s"
+              % (per_box[0][0], "13 rule sheet"))
+            w("and %.0f ns a box on a 253 rule sheet, and %.0f ns a box across the thousand"
+              % (per_box[1][0], per_box[2][0]))
+            w("identically-classed boxes of `identical_siblings` — the case where every box")
+            w("after the first is a cache hit. A hit still copies the whole resolved `ar_style`")
+            w("into the box, so rule count stopped mattering and box count did not. That is")
+            w("what style sharing in 0.15.0 is for.")
+            w("")
+        w("A browser user-agent stylesheet alone is around 400 rules, and `AR_MAX_RULES` is")
+        w("still a fixed 256, so a sheet that size cannot be loaded at all yet.")
+        w("")
+
+    # A scroll is the case where "presented" and "painted" come apart, and the
+    # two columns disagreeing is the region move working rather than a fault.
+    # Printed from whichever scene shows the widest gap so this survives the
+    # scene list being renamed or added to.
+    moved = [s for s in scenes
+             if s["dirty_ratio"] > 0.5 and s["nodes"] > 0 and s["fill_px"] > 0]
+    if moved:
+        sc = max(moved, key=lambda s: s["dirty_ratio"] / max(s["fill_px"], 1))
+        w("**Presented and painted are different numbers, and scrolling is where they")
+        w("part.** `%s` reports a dirty ratio of %.3f — it presents essentially its"
+          % (sc["name"], sc["dirty_ratio"]))
+        w("whole surface every frame — while painting only %d pixels and rasterising %d"
+          % (sc["fill_px"], sc["glyph_px"]))
+        w("glyphs to do it. Both are true: a scroll really does change every pixel of the")
+        w("container on screen, because they *moved*, so every one of them has to be")
+        w("presented. The region move is what moves them without painting them, and")
+        w("`fill_px` is the column that shows it. An acceptance criterion written in terms")
+        w("of pixels \"touched\" is asking about `fill_px`; `dirty_ratio` cannot go below")
+        w("the container for a scroll and never will.")
+        w("")
+        w("It bought the painting and not the frame. Style is %d µs and layout %d µs against"
+          % (sc["style_us"], sc["layout_us"]))
+        w("a raster of %d, so the frame is owned by the two passes that still run over every"
+          % sc["raster_us"])
+        w("box in the tree whatever the surface does — %d of them here, %.0f%% of which are"
+          % (sc["nodes"], 100.0 * sc["clipped_out"] / sc["nodes"]))
+        w("clipped out before a pixel is drawn. The next scroll win is incremental layout,")
+        w("not painting.")
         w("")
 
     allocs = sum(s["allocations_after_init"] for s in scenes)
