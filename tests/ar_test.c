@@ -1916,6 +1916,106 @@ static void test_damage_output_is_identical_to_a_full_repaint(void)
     }
 }
 
+/*
+ * The same criterion for scrolling, which earns its own run.
+ *
+ * A scroll does not repaint the rows it keeps -- it moves their pixels inside
+ * the surface and paints only the band that came into view. Every other test
+ * here would pass on a build that moved them to the wrong place by a pixel, or
+ * dragged the scrollbar thumb along with the content, because they all check
+ * geometry rather than what is on the glass.
+ *
+ * So: two contexts, the same scroll positions, one moving pixels and one forced
+ * to repaint from scratch, compared after every frame. Both directions, because
+ * the row order the copy must use is opposite between them and getting that
+ * wrong smears the surface in one direction only.
+ */
+static const char *const SCROLL_DMG_CSS =
+    "#root { display:block; overflow:scroll; height:128px; background:#101010; }"
+    ".row { display:block; height:1px; margin:1px 0px; background:#3a4a5a; }";
+
+static void ar__scroll_dmg_declare(ar_ctx *c)
+{
+    int i;
+
+    ar_begin(c, "div#root");
+    for (i = 0; i < 120; ++i)
+    {
+        ar_begin(c, "div.row");
+        ar_end(c);
+    }
+    ar_end(c);
+}
+
+static void test_a_region_move_is_identical_to_a_full_repaint(void)
+{
+    ar_surface moved = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+
+    /* Down for a while, then back up, so both copy directions are exercised. */
+    static const ar_i32 WHERE[12] = {0, 7, 21, 40, 63, 90, 90, 61, 33, 12, 3, 0};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(SCROLL_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "scroll: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, SCROLL_DMG_CSS);
+
+    for (frame = 0; frame < 12 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+
+        ar_frame_begin(g_ui, &in);
+        ar__scroll_dmg_declare(g_ui);
+        ar_frame_end(g_ui, &moved);
+        ar_node_scroll_to(g_ui, 0, WHERE[frame]);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__scroll_dmg_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_node_scroll_to(ref, 0, WHERE[frame]);
+        ar_frame_presented(ref);
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(ar_node_scroll_range(g_ui, 0) > 0, "scroll: the list is long enough to scroll at all");
+    CHECK(bad_frame < 0,
+          "scroll: a moved region is pixel identical to a full repaint, every frame");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): moved %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
 /* ------------------------------------------------------------------------
  * The resolved style cache
  *
@@ -7649,6 +7749,7 @@ int main(void)
     test_damage_regions_never_exceed_the_cap();
     test_damage_collapses_when_tracking_stops_paying();
     test_damage_output_is_identical_to_a_full_repaint();
+    test_a_region_move_is_identical_to_a_full_repaint();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

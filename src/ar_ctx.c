@@ -980,9 +980,34 @@ ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i)
     return ar_scroll_range(&c->nodes[i]);
 }
 
+/*
+ * Records that a container's pixels are now behind its position by `dy`, so the
+ * next frame can move them rather than paint them again.
+ *
+ * Accumulated for the same container, because several notches can land before a
+ * frame gets the chance to render one. A second container moving before the
+ * first has been caught up gives up on both -- ordering two moves against each
+ * other is where a nested pair goes wrong, and repainting is always correct.
+ */
+static void ar__scroll_moved(ar_ctx *c, ar_u32 key, ar_i32 dy)
+{
+    if (dy == 0)
+    {
+        return;
+    }
+    if (c->move_dy != 0 && c->move_key != key)
+    {
+        c->move_many = 1;
+        return;
+    }
+    c->move_key = key;
+    c->move_dy += dy;
+}
+
 ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
 {
     ar_slot *slot;
+    ar_i32   was;
 
     if (!c || i < 0 || i >= c->node_count || !ar_is_scroll_container(&c->nodes[i]))
     {
@@ -993,7 +1018,9 @@ ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
     {
         return 0;
     }
+    was = slot->scroll;
     slot->scroll = ar_scroll_clamp(&c->nodes[i], y);
+    ar__scroll_moved(c, c->nodes[i].key, slot->scroll - was);
     ar_damage_add(&c->damage, c->nodes[i].rect);
     return slot->scroll;
 }
@@ -1608,6 +1635,7 @@ static void ar__apply_wheel(ar_ctx *c)
         {
             continue; /* nowhere to go here; the notch chains outwards */
         }
+        ar__scroll_moved(c, n->key, want - slot->scroll);
         slot->scroll = want;
         ar_damage_add(&c->damage, n->rect);
         c->scrolled = 1;
@@ -1658,12 +1686,243 @@ static void ar__update_hot(ar_ctx *c)
     c->hot_changed = (was != c->hot);
 }
 
+/* ------------------------------------------------------------------------
+ * Scroll by region move
+ *
+ * Scrolling defeats damage tracking, because every box inside the container
+ * moved and the walk in ar_frame_end faithfully reports every one of them: the
+ * container repaints whole, and scroll_container measured a dirty ratio of
+ * 1.000 against the under-25% both 0.1.2 and 0.6.0 asked for.
+ *
+ * Those pixels are not wrong, though. They are in the wrong place. So they get
+ * moved inside the surface and only the band that came into view is painted --
+ * the mechanism 0.1.2 deferred to 0.6.0 and 0.6.0 deferred again.
+ * ------------------------------------------------------------------------ */
+typedef struct ar__move
+{
+    ar_i32  container; /* -1 when no move was taken */
+    ar_i32  dy;
+    ar_rect area;  /* what the container confines its children to */
+    ar_rect strip; /* the band that came into view */
+    ar_rect bar;   /* the scrollbar track, whose thumb has moved */
+} ar__move;
+
+/*
+ * The region a box confines its children to.
+ *
+ * Walked up from the ancestors because there is no clip stack yet: ar__paint
+ * builds n->clip as it descends, and for this frame that has not happened at
+ * the moment a region move has to decide. When the clip stack lands this
+ * becomes a lookup.
+ */
+static ar_rect ar__content_clip(const ar_ctx *c, ar_i32 i, ar_rect viewport)
+{
+    ar_rect clip = viewport;
+    ar_i32  at = i;
+
+    while (at >= 0)
+    {
+        const ar_node *n = &c->nodes[at];
+
+        if (n->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE)
+        {
+            clip = ar_rect_intersect(clip, n->rect);
+        }
+        at = n->parent;
+    }
+    return clip;
+}
+
+static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root)
+{
+    ar_i32 at;
+
+    for (at = i; at >= 0; at = c->nodes[at].parent)
+    {
+        if (at == root)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Non-zero when nothing outside this container's subtree lands on `area`.
+ *
+ * Anything that does would have its pixels dragged along by the move and then
+ * never painted back: a fixed header over a list, a dropdown open across it, a
+ * status bar that happens to overlap. That is the failure 0.6.0's document
+ * named, and the reason the move is conditional rather than always taken.
+ *
+ * O(n), with an ancestor walk only for the boxes that actually overlap, once on
+ * a frame that scrolled -- against repainting the whole container, which is what
+ * it is competing with.
+ */
+static int ar__move_is_unobstructed(const ar_ctx *c, ar_i32 container, ar_rect area)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        const ar_node *n = &c->nodes[i];
+
+        if (i == container || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (ar_rect_is_empty(ar_rect_intersect(n->rect, area)))
+        {
+            continue;
+        }
+        if (!ar__is_within(c, i, container))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * Moves one scrolled container's pixels, and reports what still has to be
+ * painted.
+ *
+ * At most one container, deliberately. ar__apply_wheel returns after the first
+ * one it moves, so a wheel notch can only put one out of date; a caller driving
+ * ar_node_scroll_to could move several, and rather than order those moves
+ * against each other -- which is exactly where a nested pair would go wrong --
+ * such a frame gives up and repaints.
+ *
+ * The debt is marked settled either way, because the damage walk that follows
+ * repaints anything this declines to move.
+ */
+static ar__move ar__region_move(ar_ctx *c, ar_surface *s, ar_rect viewport)
+{
+    ar__move m;
+    ar_i32   i, found = -1, dy = c->move_dy;
+    ar_i32   mx, mw, keep, scroll = 0;
+    ar_rect  track, thumb;
+
+    m.container = -1;
+    m.dy = 0;
+    m.area = ar_rect_make(0, 0, 0, 0);
+    m.strip = ar_rect_make(0, 0, 0, 0);
+    m.bar = ar_rect_make(0, 0, 0, 0);
+
+    if (dy == 0 && !c->move_many)
+    {
+        return m;
+    }
+
+    /* Without a surface nothing can be moved and nothing was painted, so the
+       distance is still owed and the record has to stand. */
+    if (!s)
+    {
+        return m;
+    }
+
+    /* From here the debt is settled either by the move below or by the damage
+       walk that follows it, which repaints whatever this declines. */
+    c->move_dy = 0;
+    if (c->move_many)
+    {
+        c->move_many = 0;
+        return m;
+    }
+    if (c->damage.all)
+    {
+        return m;
+    }
+
+    /* The record carries a key rather than an index, because the tree it
+       referred to has been rebuilt since. */
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].key == c->move_key && ar_is_scroll_container(&c->nodes[i]))
+        {
+            ar_slot *sl = ar_ctx_slot(c, c->nodes[i].key);
+
+            found = i;
+            scroll = sl ? sl->scroll : 0;
+            break;
+        }
+    }
+    if (found < 0)
+    {
+        return m;
+    }
+
+    m.area = ar_rect_intersect(ar__content_clip(c, found, viewport), viewport);
+    keep = m.area.h - (dy < 0 ? -dy : dy);
+    if (ar_rect_is_empty(m.area) || keep <= 0)
+    {
+        return m;
+    }
+    if (!ar__move_is_unobstructed(c, found, m.area))
+    {
+        return m;
+    }
+
+    /*
+     * The scrollbar is drawn inside the right edge, so a blit across the whole
+     * width would drag the thumb along with the content. Its column is left out
+     * of the move and painted on its own.
+     *
+     * That is also why the strip stops where the track starts: ar__paint takes
+     * one region and is called once per rectangle, and two rectangles that
+     * overlapped would blend the overlap twice.
+     */
+    mx = m.area.x;
+    mw = m.area.w;
+    if (ar_scroll_bar_visible(&c->nodes[found]))
+    {
+        ar_scroll_bar(&c->nodes[found], scroll, &track, &thumb);
+        track = ar_rect_intersect(track, m.area);
+        if (!ar_rect_is_empty(track))
+        {
+            m.bar = track;
+            if (track.x > m.area.x)
+            {
+                mw = track.x - m.area.x;
+            }
+        }
+    }
+    if (mw <= 0)
+    {
+        return m;
+    }
+
+    if (dy > 0)
+    {
+        /* Scrolled down: the content rises, and the band appears at the foot. */
+        if (!ar_surface_move_rows(s, mx, mw, m.area.y + dy, m.area.y, keep))
+        {
+            return m;
+        }
+        m.strip = ar_rect_make(mx, m.area.y + keep, mw, dy);
+    }
+    else
+    {
+        if (!ar_surface_move_rows(s, mx, mw, m.area.y, m.area.y - dy, keep))
+        {
+            return m;
+        }
+        m.strip = ar_rect_make(mx, m.area.y, mw, -dy);
+    }
+
+    m.container = found;
+    m.dy = dy;
+    return m;
+}
+
 ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 {
-    ar_rect viewport;
-    ar_rect damage;
-    ar_i32  i;
-    ar_i32  survivors = 0; /* boxes present this frame that were present last */
+    ar_rect  viewport;
+    ar_rect  damage;
+    ar__move move;
+    ar_i32   i;
+    ar_i32   survivors = 0;    /* boxes present this frame that were present last */
+    int      other_damage = 0; /* something changed that the move does not explain */
 
     if (c->depth != 0)
     {
@@ -1716,6 +1975,20 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     c->last_viewport = viewport;
     ar_damage_set_viewport(&c->damage, viewport);
 
+    /*
+     * Before the walk below, because the walk is what would otherwise report
+     * every box in a scrolled container as having moved.
+     *
+     * The moved pixels still have to be presented -- they changed on screen even
+     * though nothing repainted them -- so the whole region goes into damage. It
+     * is only the painting that gets to skip it.
+     */
+    move = ar__region_move(c, s, viewport);
+    if (move.container >= 0)
+    {
+        ar_damage_add(&c->damage, move.area);
+    }
+
     /* Where every box ended up, remembered for next frame to hit test
        against. This is the whole cost of the one frame delay: one store per
        box.
@@ -1736,6 +2009,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
             /* No slot means no memory of this box, so no way to know it did
                not change. Repaint it. */
             ar_damage_add(&c->damage, n->rect);
+            other_damage = 1;
             continue;
         }
 
@@ -1747,12 +2021,30 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         if (slot->seen != c->frame - 1 || slot->digest != digest)
         {
             ar_damage_add(&c->damage, n->rect);
+            other_damage = 1;
         }
         else if (slot->rect.x != n->rect.x || slot->rect.y != n->rect.y ||
                  slot->rect.w != n->rect.w || slot->rect.h != n->rect.h)
         {
-            ar_damage_add(&c->damage, slot->rect);
-            ar_damage_add(&c->damage, n->rect);
+            /*
+             * A box inside a container whose pixels were just moved is already
+             * drawn in its new place -- but only if it moved by exactly the
+             * distance that move covered, and in no other way. A sticky header
+             * that stayed put, or anything the move did not explain, falls
+             * through and is repainted as usual.
+             */
+            if (move.container >= 0 && n->rect.x == slot->rect.x &&
+                n->rect.y == slot->rect.y - move.dy && n->rect.w == slot->rect.w &&
+                n->rect.h == slot->rect.h && ar__is_within(c, i, move.container))
+            {
+                /* Its pixels were moved, not repainted. */
+            }
+            else
+            {
+                ar_damage_add(&c->damage, slot->rect);
+                ar_damage_add(&c->damage, n->rect);
+                other_damage = 1;
+            }
         }
 
         slot->rect = n->rect;
@@ -1779,6 +2071,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
             if (slot->last_frame != 0 && slot->seen == c->frame - 1)
             {
                 ar_damage_add(&c->damage, slot->rect);
+                other_damage = 1;
             }
         }
     }
@@ -1786,7 +2079,46 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     damage = ar_damage_bounds(&c->damage, viewport);
 
-    if (s && damage.w > 0 && damage.h > 0)
+    /*
+     * Not gated on damage.all, and that is the whole subtlety.
+     *
+     * The moved region is added to damage above so the backend presents it --
+     * those pixels really did change on screen. On a full-window container that
+     * is more than half the surface, so ar_damage_add collapses it to "repaint
+     * everything", and gating on that flag here meant the damage added for
+     * presenting switched off the very painting saving it was recording. The
+     * measurement said so plainly: the move engaged on every frame and fill_px
+     * did not move at all.
+     *
+     * A caller that asked for a full repaint before the move is already handled,
+     * inside ar__region_move, which checks damage.all before it touches a pixel.
+     */
+    if (s && move.container >= 0 && !other_damage)
+    {
+        /*
+         * Two rectangles, painted one at a time and disjoint by construction.
+         *
+         * ar__paint takes a single region, so one call would have to be given
+         * the bounding box of the band and the scrollbar track -- and the
+         * bounding box of a horizontal band and a full-height track is very
+         * nearly the whole container, which is precisely the cost the move
+         * exists to avoid.
+         *
+         * Only when nothing else changed. Anything damaged outside the container
+         * would go unpainted here, so a frame that both scrolls and changes
+         * something else takes the ordinary path below and keeps the pixel move
+         * as a harmless waste.
+         */
+        if (!ar_rect_is_empty(move.strip))
+        {
+            ar__paint(c, s, move.strip);
+        }
+        if (!ar_rect_is_empty(move.bar))
+        {
+            ar__paint(c, s, move.bar);
+        }
+    }
+    else if (s && damage.w > 0 && damage.h > 0)
     {
         ar__paint(c, s, damage);
     }

@@ -247,6 +247,26 @@ struct ar_ctx
     ar_u32 clicked; /* key of the box released on this frame   */
     int    hot_changed;
 
+    /*
+     * A scroll that the surface has not caught up with yet, so the next frame
+     * can move those pixels instead of painting them again.
+     *
+     * On the context rather than in the slot table because at most one container
+     * can be behind at a time and this way it costs eight bytes rather than
+     * eight bytes per box -- ar_slot sat at exactly the byte budget AR_MEM
+     * promises, and the static assertion in ar_ctx.c said so before the arena
+     * ever had a chance to run out in front of somebody.
+     *
+     * The key, not the index, because indices are rebuilt with the tree every
+     * frame and the record has to survive into the next one. `move_many` is set
+     * when a second container moves before the first has been caught up with:
+     * ordering two moves against each other is where a nested pair would go
+     * wrong, so that frame gives up and repaints instead.
+     */
+    ar_u32 move_key;
+    ar_i32 move_dy;
+    int    move_many;
+
     /* The core owns no clock. The backend lends it one so the frame can time
        its own phases without src/ ever learning what a platform is. */
     ar_u32 (*clock)(void);
