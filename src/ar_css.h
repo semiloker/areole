@@ -40,13 +40,8 @@ typedef enum ar_prop
     AR_P_HEIGHT,
     AR_P_MIN_WIDTH,
     AR_P_MIN_HEIGHT,
-    AR_P_MAX_WIDTH,
-    AR_P_MAX_HEIGHT,
 
-    AR_P_BACKGROUND,
-    AR_P_COLOR,
     AR_P_BORDER_WIDTH,
-    AR_P_BORDER_COLOR,
     AR_P_BORDER_RADIUS,
 
     AR_P_FONT_SIZE,
@@ -58,6 +53,14 @@ typedef enum ar_prop
        `auto`. */
     AR_P_OVERFLOW,
     AR_P_OVERFLOW_X,
+
+    /* Same axis convention as the overflow pair above: the unsuffixed one is
+       the block axis. Only a scroll container reads these, so they cost every
+       box a slot in ar_style for something few boxes use -- which is the trade
+       the whole flat-style design makes, and is why AR_PSET_WORDS is worth
+       watching as the property count climbs. */
+    AR_P_OVERSCROLL,
+    AR_P_OVERSCROLL_X,
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -71,8 +74,46 @@ typedef enum ar_prop
     AR_P_Z_INDEX,
     AR_P_BOX_SIZING,
 
+    /*
+     * Everything above is stored in sixteen bits and everything below in
+     * thirty-two, so this marker is load bearing rather than decorative: it is
+     * the length of ar_style.v.
+     *
+     * A keyword needs three bits and a length needs a screen's worth of
+     * pixels, so almost everything fits in sixteen. One wide array for all of
+     * them spent 160 bytes a box to hold five properties' worth of range.
+     *
+     * The five below are the ones that genuinely need thirty-two:
+     *
+     *   the three colours   0xRRGGBB is twenty-four bits
+     *   max-width/height    they default to a sentinel meaning "no maximum",
+     *                       and ar__clamp applies them to *computed* rects.
+     *                       A ten thousand row list is 240000 px of content,
+     *                       so a 32767 sentinel would not mean unbounded, it
+     *                       would mean a clamp -- which is a rendering bug
+     *                       rather than a smaller struct.
+     *
+     * Putting them past the end of v[] rather than inside it is the part that
+     * makes this safe: v[AR_P_COLOR] is now an out-of-bounds index on a
+     * compile-time constant, which -Warray-bounds reports, where an in-range
+     * index would have quietly returned a neighbouring property.
+     */
+    AR_P_NARROW_COUNT,
+
+    AR_P_MAX_WIDTH = AR_P_NARROW_COUNT,
+    AR_P_MAX_HEIGHT,
+    AR_P_BACKGROUND,
+    AR_P_COLOR,
+    AR_P_BORDER_COLOR,
+
     AR_P_COUNT
 } ar_prop;
+
+/* The wide properties are indexed off the end of the narrow block. Reach them
+   with this rather than with v[], which has no room for them.
+   Not called AR_RGB: areole.h already has one, and this block is no longer
+   only colours. */
+#define AR_WIDE(style, prop) ((style)->wide[(prop) - AR_P_NARROW_COUNT])
 
 /*
  * Which properties a style or a rule has something to say about.
@@ -281,10 +322,35 @@ enum
     AR_OVERFLOW_AUTO
 };
 
+enum
+{
+    /* A notch this container cannot use is offered to its ancestors. */
+    AR_OVERSCROLL_AUTO = 0,
+
+    /* It is not. The scroll stops at this boundary, which is what keeps a
+       modal's wheel from scrolling the page behind it -- the single most
+       common scrolling bug in any interface.
+
+       `none` additionally suppresses the platform's overscroll affordance,
+       the bounce or the glow. areole draws neither, so the two behave
+       identically here and are kept apart anyway: a stylesheet saying `none`
+       means it, and the day a backend grows a bounce this is where it looks. */
+    AR_OVERSCROLL_CONTAIN,
+    AR_OVERSCROLL_NONE
+};
+
 typedef struct ar_style
 {
-    ar_i32 v[AR_P_COUNT];
-    ar_u8  unit[AR_P_COUNT];
+    /* Sixteen bits, and the ceiling that implies is real: a stated length
+       above 32767 px is clamped when it is parsed rather than wrapping here.
+       The largest thing anyone lays out is a scroll container's content, and
+       that is computed rather than stated. */
+    ar_i16 v[AR_P_NARROW_COUNT];
+
+    /* The five that need the range. AR_WIDE indexes this. */
+    ar_i32 wide[AR_P_COUNT - AR_P_NARROW_COUNT];
+
+    ar_u8 unit[AR_P_COUNT];
 
     /* Which properties a stylesheet actually stated for this box, as opposed
        to which have a value -- every property always has a value. Inheritance
@@ -507,6 +573,20 @@ typedef struct ar_sheet
 } ar_sheet;
 
 ar_u32 ar_hash(const char *s, ar_u32 len);
+
+/*
+ * The value of any property, whichever array it lives in.
+ *
+ * Every pass that walks properties by index -- defaults, merge, inheritance --
+ * goes through these, so exactly one place knows that colours are stored
+ * apart. Code that names a property outright still uses v[] or AR_RGB
+ * directly, because there the compiler checks the choice.
+ */
+ar_i32 ar_style_get(const ar_style *s, ar_i32 prop);
+void   ar_style_put(ar_style *s, ar_i32 prop, ar_i32 v);
+
+/* A stated length wider than v[] can hold, clamped rather than wrapped. */
+ar_i32 ar_style_clamp_narrow(ar_i32 v);
 
 void ar_style_defaults(ar_style *s);
 
