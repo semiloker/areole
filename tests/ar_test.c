@@ -5138,6 +5138,64 @@ static void test_a_scroll_asks_for_the_next_frame(void)
     CHECK(!ar_scrolled(g_ui), "redraw: the scroll reason does not latch");
 }
 
+/*
+ * Dragging the scrollbar thumb scrolls, and letting go stops it.
+ *
+ * The bar is painted by the container rather than declared, so none of the
+ * hot/active machinery touches it and none of the other tests here would
+ * notice it was inert -- which it was until this landed.
+ *
+ * The last two checks are the ones worth having. A drag has to keep following
+ * the cursor after it leaves the container, because a scrollbar that lets go
+ * when you stray sideways is unusable; and it has to stop dead on release,
+ * because a drag that keeps tracking is worse than one that never started.
+ */
+static void test_dragging_the_scrollbar_scrolls(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     first, after_move, after_release;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    CHECK(ar_node_scroll_range(g_ui, 1) > 0, "drag: the container has somewhere to go");
+
+    /* Press on the thumb, which sits at the top while the scroll is zero. The
+       bar is AR_SCROLLBAR_W wide at the container's right edge. */
+    in.mouse_x = ar__box(1).x + ar__box(1).w - 2;
+    in.mouse_y = ar__box(1).y + 4;
+    in.mouse_down = AR_MOUSE_LEFT;
+    in.mouse_pressed = AR_MOUSE_LEFT;
+    ar__scroll_scene(&s, &in);
+    first = ar_node_scroll(g_ui, 1);
+
+    /* Drag down the track, and off the side of the container on the way. */
+    in.mouse_pressed = 0;
+    in.mouse_x = ar__box(1).x + ar__box(1).w + 40;
+    in.mouse_y = ar__box(1).y + 40;
+    ar__scroll_scene(&s, &in);
+    after_move = ar_node_scroll(g_ui, 1);
+
+    /* Let go, then keep moving. Nothing more may happen. */
+    in.mouse_down = 0;
+    in.mouse_released = AR_MOUSE_LEFT;
+    ar__scroll_scene(&s, &in);
+    in.mouse_released = 0;
+    in.mouse_y = ar__box(1).y + 90;
+    ar__scroll_scene(&s, &in);
+    ar__scroll_scene(&s, &in);
+    after_release = ar_node_scroll(g_ui, 1);
+
+    CHECK(first == 0, "drag: pressing the thumb where it already is moves nothing");
+    CHECK(after_move > 0, "drag: and dragging it down scrolls, even off the side of the container");
+    CHECK(after_release == after_move, "drag: letting go stops it following the cursor");
+}
+
 /* A notch outside the container does nothing to it. */
 static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 {
@@ -7624,6 +7682,7 @@ int main(void)
     test_scroll_survives_the_frame();
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
+    test_dragging_the_scrollbar_scrolls();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();
     test_a_scroll_container_clips();
