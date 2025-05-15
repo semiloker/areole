@@ -254,8 +254,11 @@ def main():
         else:
             w("**Style resolution no longer grows with rule count.** %s, %s and %s µs for 13,"
               % (us(r10["p50_us"]), us(r100["p50_us"]), us(r250["p50_us"])))
+            # abs(): a curve that came out slightly *cheaper* at 253 rules than at
+            # 13 is still flat, and "-0% apart" reads like a typo in a published
+            # document rather than the noise it is.
             w("103 and 253 rules over the same 500 boxes: %.0f%% apart across 19 times the"
-              % growth)
+              % abs(growth))
             w("rules, inside the %.0f%% these were measured in. The resolved-style cache did"
               % noise)
             w("that — matching is keyed on `(tag, class, id, state)` and a repeat is a lookup")

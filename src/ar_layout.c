@@ -454,8 +454,7 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
         break;
     }
 
-    return ar__clamp(v, ch->style.v[ar__min_prop(axis)],
-                     AR_WIDE(&ch->style, ar__max_prop(axis)));
+    return ar__clamp(v, ch->style.v[ar__min_prop(axis)], AR_WIDE(&ch->style, ar__max_prop(axis)));
 }
 
 /* ------------------------------------------------------------------------
