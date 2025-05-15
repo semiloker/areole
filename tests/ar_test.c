@@ -3587,6 +3587,22 @@ static void test_break_mandatory(void)
     CHECK(at == 3 && kind == AR_BREAK_MANDATORY, "break: CRLF is one break");
 }
 
+/*
+ * A null string is a return, not a crash.
+ *
+ * ar_break_next tested for null and then dereferenced in the same branch, so
+ * the one path that knew text could be null was the path that walked off it.
+ * The library takes text from an application, and an application with nothing
+ * to draw hands over nothing.
+ */
+static void test_break_survives_a_null_string(void)
+{
+    ar_i32 kind = AR_BREAK_MANDATORY;
+    ar_i32 at = ar_break_next(0, 0, &kind);
+
+    CHECK(at == 0 && kind == AR_BREAK_NONE, "break: a null string ends where it began");
+}
+
 static void test_break_between_ideographs(void)
 {
     /* Japanese has no spaces, so a line breaks between characters. Failing to
@@ -7900,6 +7916,7 @@ int main(void)
     test_break_hyphens_and_dashes();
     test_break_honours_joiners();
     test_break_mandatory();
+    test_break_survives_a_null_string();
     test_break_between_ideographs();
     test_break_always_terminates();
     test_wrap_fits_the_width();
