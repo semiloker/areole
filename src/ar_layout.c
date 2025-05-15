@@ -429,8 +429,8 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
 
     if (axis == 0 && ar__intrinsic_width(ch, inner, &v))
     {
-        return ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
-                         ar_style_get(&ch->style, ar__max_prop(axis)));
+        return ar__clamp(v, ch->style.v[ar__min_prop(axis)],
+                         AR_WIDE(&ch->style, ar__max_prop(axis)));
     }
 
     switch (ch->style.unit[p])
@@ -454,8 +454,8 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
         break;
     }
 
-    return ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
-                     ar_style_get(&ch->style, ar__max_prop(axis)));
+    return ar__clamp(v, ch->style.v[ar__min_prop(axis)],
+                     AR_WIDE(&ch->style, ar__max_prop(axis)));
 }
 
 /* ------------------------------------------------------------------------
@@ -954,8 +954,8 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                     v++;
                     remainder--;
                 }
-                v = ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
-                              ar_style_get(&ch->style, ar__max_prop(axis)));
+                v = ar__clamp(v, ch->style.v[ar__min_prop(axis)],
+                              AR_WIDE(&ch->style, ar__max_prop(axis)));
                 *ar__size(&ch->rect, axis) = v;
 
                 /* A box growing along a horizontal main axis only learns its
