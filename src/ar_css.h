@@ -61,6 +61,12 @@ typedef enum ar_prop
        watching as the property count climbs. */
     AR_P_OVERSCROLL,
     AR_P_OVERSCROLL_X,
+
+    /* The bar areole draws for itself. It is drawn rather than asked for, so
+       these are honoured on every platform and look the same on all of them,
+       which is the one thing a native scrollbar can never promise. */
+    AR_P_SCROLLBAR_WIDTH,
+    AR_P_SCROLLBAR_GUTTER,
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -105,6 +111,11 @@ typedef enum ar_prop
     AR_P_BACKGROUND,
     AR_P_COLOR,
     AR_P_BORDER_COLOR,
+
+    /* `scrollbar-color` is two colours in one declaration, thumb then track,
+       and they cascade as one. Two slots because a colour is a colour. */
+    AR_P_SCROLLBAR_THUMB,
+    AR_P_SCROLLBAR_TRACK,
 
     AR_P_COUNT
 } ar_prop;
@@ -337,6 +348,33 @@ enum
        means it, and the day a backend grows a bounce this is where it looks. */
     AR_OVERSCROLL_CONTAIN,
     AR_OVERSCROLL_NONE
+};
+
+enum
+{
+    /* The widths are the drawn widths, not a request to the platform: areole
+       has no platform scrollbar to ask. `none` still scrolls -- it hides the
+       bar, it does not stop the wheel, which is what every implementation of
+       this property has to get right or a list becomes unreachable. */
+    AR_SCROLLBAR_AUTO = 0,
+    AR_SCROLLBAR_THIN,
+    AR_SCROLLBAR_HIDDEN
+};
+
+enum
+{
+    /*
+     * areole's bar is an overlay, drawn inside the right edge rather than
+     * taken out of the width, so a bar appearing never reflows anything and
+     * the layout shift `stable` exists to prevent cannot happen here.
+     *
+     * What `stable` still buys is the overlap: an overlay bar is drawn on top
+     * of the content beside it. `stable` reserves its width at the inline end
+     * so the text stops before the bar instead of running under it.
+     */
+    AR_GUTTER_AUTO = 0,
+    AR_GUTTER_STABLE,
+    AR_GUTTER_BOTH_EDGES
 };
 
 typedef struct ar_style

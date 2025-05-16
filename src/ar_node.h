@@ -419,8 +419,9 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
    what every toolkit settled on and what the hand expects. */
 #define AR_SCROLL_STEP 30
 
-#define AR_SCROLLBAR_W   8
-#define AR_SCROLLBAR_MIN 16
+#define AR_SCROLLBAR_W      8
+#define AR_SCROLLBAR_W_THIN 4
+#define AR_SCROLLBAR_MIN    16
 
 int    ar_is_scroll_container(const ar_node *n);
 int    ar_scrolls_x(const ar_node *n);
@@ -433,6 +434,13 @@ ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want);
 ar_i32 ar_scroll_range_x(const ar_node *n);
 ar_i32 ar_scroll_clamp_x(const ar_node *n, ar_i32 want);
 int    ar_scroll_bar_visible(const ar_node *n);
+
+/* How wide this container's bar is drawn: 0 when scrollbar-width is `none`.
+   Also what scrollbar-gutter reserves, which is why it is not a constant. */
+ar_i32 ar_scroll_bar_width(const ar_node *n);
+
+/* What the gutter takes out of the inline end, 0 unless `stable`. */
+ar_i32 ar_scroll_gutter(const ar_node *n);
 void   ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thumb);
 
 /* Shifts every scroll container's contents by its offset. */
