@@ -5353,6 +5353,157 @@ static void test_scrollbar_color_is_read(void)
           "scrollbar-color: a lone colour is the thumb");
 }
 
+/* ------------------------------------------------------------------------
+ * Scroll snapping
+ *
+ * A container 100 tall holding five rows of 40. The rows declare
+ * scroll-snap-align: start, so the settled positions are multiples of 40.
+ * A notch is AR_SCROLL_STEP, 30 px, which lands between two of them on
+ * purpose -- a step that happened to equal the pitch would pass whether or
+ * not any snapping code ran.
+ * ------------------------------------------------------------------------ */
+static const char *AR_SNAP_CSS = "#root { display:block; }"
+                                 ".list { display:block; height:100px; overflow:scroll;"
+                                 "        scroll-snap-type: y mandatory; }"
+                                 ".row  { display:block; height:40px;"
+                                 "        scroll-snap-align: start; }";
+
+static const char *AR_SNAP_CSS_PROX = "#root { display:block; }"
+                                      ".list { display:block; height:100px; overflow:scroll;"
+                                      "        scroll-snap-type: y proximity; }"
+                                      ".row  { display:block; height:40px;"
+                                      "        scroll-snap-align: start; }";
+
+static const char *AR_SNAP_CSS_PAD = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        scroll-snap-type: y mandatory;"
+                                     "        scroll-padding-top: 5px; }"
+                                     ".row  { display:block; height:40px;"
+                                     "        scroll-snap-align: start; }";
+
+static ar_i32 ar__snap_after_one_notch(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -1; /* AR_SCROLL_STEP, 30 px, which is not a multiple of 40 */
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_snap_lands_on_a_snap_point(void)
+{
+    ar_i32 snapped = ar__snap_after_one_notch(AR_SNAP_CSS);
+    ar_i32 loose = ar__snap_after_one_notch(AR_SCROLL_CSS);
+
+    /* Without snapping a notch travels its full 30 px. With it, the nearest
+       row start is 40, and mandatory takes it. */
+    CHECK(loose == 30, "snap: an unsnapped notch travels its own distance");
+    CHECK(snapped == 40, "snap: mandatory lands on the nearest row start");
+}
+
+static void test_snap_proximity_leaves_a_distant_point_alone(void)
+{
+    /* The nearest point to 30 is 40, ten pixels away, and the scrollport is
+       100 -- well inside the proximity window, so proximity agrees with
+       mandatory here. The case that separates them needs a point further away
+       than half the viewport, which five forty pixel rows cannot produce; what
+       this pins is that `proximity` parses and still snaps rather than being
+       silently read as `none`. */
+    CHECK(ar__snap_after_one_notch(AR_SNAP_CSS_PROX) == 40,
+          "snap: proximity still snaps when a point is near");
+}
+
+static void test_snap_honours_scroll_padding(void)
+{
+    /*
+     * scroll-padding-top moves the top of the scrollport down by 5, so
+     * aligning the second row's start to it needs 5 px less scroll: 35 rather
+     * than 40.
+     *
+     * Five and not ten, and that is the whole point of this test. With ten the
+     * answer is 30, which is also what an unsnapped notch gives -- so the test
+     * would have passed against a build where scroll-padding did nothing at
+     * all, or where snapping did. 35 is reachable no other way.
+     */
+    CHECK(ar__snap_after_one_notch(AR_SNAP_CSS_PAD) == 35,
+          "snap: scroll-padding moves the port the points are measured against");
+}
+
+/*
+ * scroll-snap-stop: always
+ *
+ * A hard flick -- five notches, 150 px, clamped to the 100 px range -- against
+ * rows that each forbid being passed. Mandatory alone would settle at 100, the
+ * point nearest where the gesture was heading. `always` must stop it at the
+ * first row it would have crossed instead, which is 40.
+ *
+ * That is the difference between a good carousel and an infuriating one, and
+ * the two expected values are far apart so the test cannot pass by accident.
+ */
+static const char *AR_SNAP_CSS_STOP = "#root { display:block; }"
+                                      ".list { display:block; height:100px; overflow:scroll;"
+                                      "        scroll-snap-type: y mandatory; }"
+                                      ".row  { display:block; height:40px;"
+                                      "        scroll-snap-align: start;"
+                                      "        scroll-snap-stop: always; }";
+
+static ar_i32 ar__snap_after_a_flick(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -5; /* 150 px, past every row in the list */
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_snap_stop_always_refuses_to_be_passed(void)
+{
+    CHECK(ar__snap_after_a_flick(AR_SNAP_CSS) == 100,
+          "snap-stop: normal lets a flick run to the end");
+    CHECK(ar__snap_after_a_flick(AR_SNAP_CSS_STOP) == 40,
+          "snap-stop: always catches the flick at the first row it would pass");
+}
+
+static void test_snap_type_parses_both_words(void)
+{
+    ar__sheet(".a { overflow:scroll; scroll-snap-type: y mandatory; }"
+              ".b { overflow:scroll; scroll-snap-type: y; }"
+              ".c { overflow:scroll; scroll-snap-type: both proximity; }");
+
+    CHECK(ar__css_value(".a", 0, AR_P_SCROLL_SNAP_TYPE) == (AR_SNAP_AXIS_Y | AR_SNAP_MANDATORY),
+          "snap-type: an axis and a strictness are both kept");
+
+    /* CSS says an omitted strictness is `proximity`, not `mandatory`. Getting
+       this backwards makes every container with one snap declaration
+       impossible to scroll off a slide. */
+    CHECK(ar__css_value(".b", 0, AR_P_SCROLL_SNAP_TYPE) == AR_SNAP_AXIS_Y,
+          "snap-type: an axis alone is proximity");
+    CHECK(ar__css_value(".c", 0, AR_P_SCROLL_SNAP_TYPE) == AR_SNAP_AXIS_BOTH,
+          "snap-type: both axes, proximity stated");
+}
+
 /*
  * Dragging the scrollbar thumb scrolls, and letting go stops it.
  *
@@ -8093,6 +8244,11 @@ int main(void)
     test_scrollbar_width_changes_the_bar();
     test_scrollbar_gutter_reserves_its_width();
     test_scrollbar_color_is_read();
+    test_snap_lands_on_a_snap_point();
+    test_snap_proximity_leaves_a_distant_point_alone();
+    test_snap_honours_scroll_padding();
+    test_snap_type_parses_both_words();
+    test_snap_stop_always_refuses_to_be_passed();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();
