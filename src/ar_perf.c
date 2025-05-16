@@ -115,10 +115,14 @@ ar_u32 ar_perf_percentile(const ar_perf *p, ar_phase phase, ar_u32 pct)
     {
         idx = p->count - 1u;
     }
-    /* cppcheck-suppress uninitvar
-       False positive. The count == 0 case returned at the top, and the fill
-       loop above writes sorted[0 .. count-1] while idx is clamped below count.
-       cppcheck cannot connect the early return to the loop bound. */
+    /* False positive below. The count == 0 case returned at the top, and the
+       fill loop above writes sorted[0 .. count-1] while idx is clamped below
+       count; cppcheck cannot connect the early return to the loop bound.
+
+       The suppression is on its own line with nothing after the id, because
+       cppcheck parses the rest of that line as suppression attributes and
+       rejects prose there. */
+    /* cppcheck-suppress uninitvar */
     return sorted[idx];
 }
 
