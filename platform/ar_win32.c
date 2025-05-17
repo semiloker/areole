@@ -238,6 +238,58 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
 
+    /*
+     * The keys that scroll, and only those.
+     *
+     * WM_KEYDOWN repeats while a key is held, which is exactly what is wanted:
+     * the repeat rate is a thing the user configured and the platform already
+     * honours, so holding Page Down pages at their speed rather than at one
+     * this code invented.
+     *
+     * Shift-space pages up in every browser. There is no modifier tracking in
+     * the core, so the mapping is done here where GetKeyState exists -- which
+     * is the honest split rather than a shortcut.
+     */
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        switch (wp)
+        {
+        case VK_UP:
+            win->input.keys_pressed |= AR_KEY_UP;
+            break;
+        case VK_DOWN:
+            win->input.keys_pressed |= AR_KEY_DOWN;
+            break;
+        case VK_LEFT:
+            win->input.keys_pressed |= AR_KEY_LEFT;
+            break;
+        case VK_RIGHT:
+            win->input.keys_pressed |= AR_KEY_RIGHT;
+            break;
+        case VK_PRIOR:
+            win->input.keys_pressed |= AR_KEY_PAGE_UP;
+            break;
+        case VK_NEXT:
+            win->input.keys_pressed |= AR_KEY_PAGE_DOWN;
+            break;
+        case VK_HOME:
+            win->input.keys_pressed |= AR_KEY_HOME;
+            break;
+        case VK_END:
+            win->input.keys_pressed |= AR_KEY_END;
+            break;
+        case VK_SPACE:
+            win->input.keys_pressed |=
+                (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_PAGE_UP : AR_KEY_SPACE;
+            break;
+        default:
+            /* Every other key is somebody else's, and swallowing it would stop
+               Alt+F4 working. Fall through to DefWindowProc. */
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+        ar_win_wake(win);
+        return 0;
+
     case WM_MOUSEMOVE:
         win->input.mouse_x = (ar_i32)(short)LOWORD(lp);
         win->input.mouse_y = (ar_i32)(short)HIWORD(lp);
@@ -455,6 +507,7 @@ int ar_win_pump(ar_win *win)
     win->input.mouse_released = 0;
     win->input.wheel = 0;
     win->input.wheel_px = 0;
+    win->input.keys_pressed = 0;
     win->resized = 0;
 
     /* With nothing pending and nothing animating, block instead of spinning.
