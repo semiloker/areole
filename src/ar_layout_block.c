@@ -79,7 +79,7 @@ int ar_establishes_bfc(const ar_node *n)
     {
         return 1; /* a flex container is one, and so is anything else */
     }
-    return n->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE;
+    return ar_clips(n);
 }
 
 /* Nothing between the box's top edge and its first child's. */

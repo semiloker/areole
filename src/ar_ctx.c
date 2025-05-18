@@ -909,6 +909,19 @@ static ar_i32 ar__scroll_of(void *ud, ar_i32 index)
     return slot ? slot->scroll : 0;
 }
 
+static ar_i32 ar__scroll_x_of(void *ud, ar_i32 index)
+{
+    ar_ctx  *c = (ar_ctx *)ud;
+    ar_slot *slot;
+
+    if (index < 0 || index >= c->node_count)
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot(c, c->nodes[index].key);
+    return slot ? slot->scroll_x : 0;
+}
+
 /* What ar_layout_solve is handed. */
 static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
 {
@@ -980,6 +993,46 @@ ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i)
     return ar_scroll_range(&c->nodes[i]);
 }
 
+ar_i32 ar_node_scroll_range_x(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return ar_scroll_range_x(&c->nodes[i]);
+}
+
+ar_i32 ar_node_scroll_x(const ar_ctx *c, ar_i32 i)
+{
+    const ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot_find(c, c->nodes[i].key);
+    return slot ? slot->scroll_x : 0;
+}
+
+ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x)
+{
+    ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count || !ar_scrolls_x(&c->nodes[i]))
+    {
+        return 0;
+    }
+    slot = ar_ctx_slot(c, c->nodes[i].key);
+    if (!slot)
+    {
+        return 0;
+    }
+    slot->scroll_x = (ar_scroll_pos)ar_scroll_clamp_x(&c->nodes[i], x);
+    ar_damage_add(&c->damage, c->nodes[i].rect);
+    c->scrolled = 1;
+    return slot->scroll_x;
+}
+
 /*
  * Records that a container's pixels are now behind its position by `dy`, so the
  * next frame can move them rather than paint them again.
@@ -1019,7 +1072,7 @@ ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
         return 0;
     }
     was = slot->scroll;
-    slot->scroll = ar_scroll_clamp(&c->nodes[i], y);
+    slot->scroll = (ar_scroll_pos)ar_scroll_clamp(&c->nodes[i], y);
     ar__scroll_moved(c, c->nodes[i].key, slot->scroll - was);
     ar_damage_add(&c->damage, c->nodes[i].rect);
     return slot->scroll;
@@ -1461,6 +1514,62 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
  * move needs exactly that, and had to climb the ancestor chain itself to get
  * it. Now there is one answer, computed once, and both read it.
  */
+/*
+ * How wide each box's contents came to.
+ *
+ * The vertical twin falls out of block layout for free, because stacking down
+ * the page is what block layout does. Nothing ever asks how far right the
+ * contents went, so this is a sweep of its own.
+ *
+ * Backward, because a child always sits after its parent: by the time a box is
+ * reached, every descendant has already folded its reach into it. A box that
+ * clips contributes only its own rectangle -- whatever spills out of it is not
+ * the grandparent's problem -- and one that does not contributes whichever of
+ * its box and its contents reaches further, which is what carries a wide table
+ * up through the plain divs around it to the scroll container that has to hold
+ * it.
+ */
+static void ar__content_widths(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+
+        n->content_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    }
+
+    for (i = c->node_count - 1; i > 0; --i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_node *p;
+        ar_i32   outer, reach;
+
+        if (n->parent < 0 || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        p = &c->nodes[n->parent];
+
+        outer = n->rect.w;
+        if (!ar_clips(n))
+        {
+            ar_i32 spill = n->content_w + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
+
+            if (spill > outer)
+            {
+                outer = spill;
+            }
+        }
+        reach = n->rect.x + outer - (p->rect.x + p->style.v[AR_P_PAD_LEFT]);
+        if (reach > p->content_w)
+        {
+            p->content_w = reach;
+        }
+    }
+}
+
 static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
 {
     ar_i32 i;
@@ -1478,7 +1587,7 @@ static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
             ar_node *p = &c->nodes[n->parent];
 
             n->clip = p->clip;
-            if (p->style.v[AR_P_OVERFLOW] != AR_OVERFLOW_VISIBLE)
+            if (ar_clips(p))
             {
                 n->clip = ar_rect_intersect(n->clip, p->rect);
             }
@@ -1490,7 +1599,7 @@ static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
    clips at all. One line, where it used to be an ancestor walk. */
 static ar_rect ar__content_clip(const ar_node *n)
 {
-    if (n->style.v[AR_P_OVERFLOW] == AR_OVERFLOW_VISIBLE)
+    if (!ar_clips(n))
     {
         return n->clip;
     }
@@ -1683,7 +1792,7 @@ static void ar__apply_drag(ar_ctx *c)
             if (want != slot->scroll)
             {
                 ar__scroll_moved(c, n->key, want - slot->scroll);
-                slot->scroll = want;
+                slot->scroll = (ar_scroll_pos)want;
                 ar_damage_add(&c->damage, n->rect);
                 c->scrolled = 1;
             }
@@ -1766,7 +1875,7 @@ static void ar__apply_wheel(ar_ctx *c)
             continue; /* nowhere to go here; the notch chains outwards */
         }
         ar__scroll_moved(c, n->key, want - slot->scroll);
-        slot->scroll = want;
+        slot->scroll = (ar_scroll_pos)want;
         ar_damage_add(&c->damage, n->rect);
         c->scrolled = 1;
         return;
@@ -2061,6 +2170,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         env.measure = ar__range_px;
         env.ud = c;
         env.scroll_of = ar__scroll_of;
+        env.scroll_x_of = ar__scroll_x_of;
         env.frags = c->frags;
         env.frag_cap = c->frag_cap;
         env.frag_used = 0;
@@ -2074,7 +2184,9 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        there is no reason to walk it twice. */
     c->order_count = c->order ? ar_stack_order(c->nodes, c->node_count, c->order, c->node_cap) : 0;
 
-    /* Clips, once the rectangles are final and before anything asks. */
+    /* Content widths, then clips: both once the rectangles are final and
+       before anything asks for either. */
+    ar__content_widths(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 

@@ -205,12 +205,12 @@ ar_u32 ar_paint_digest(const ar_node *n)
     /* Exactly what ar__paint reads, and nothing else. If a property is added
        to the paint pass it must be added here, or boxes will stop repainting
        when only that property changes. */
-    static const int PAINTED[] = {AR_P_DISPLAY,      AR_P_OVERFLOW, AR_P_BACKGROUND,
-                                  AR_P_BORDER_WIDTH, AR_P_BORDER_COLOR, AR_P_PAD_LEFT,
-                                  AR_P_PAD_TOP,      AR_P_COLOR};
-    ar_u32     h = 2166136261u;
-    ar_u32     i;
-    ar_u32     count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
+    static const int PAINTED[] = {AR_P_DISPLAY,    AR_P_OVERFLOW,     AR_P_OVERFLOW_X,
+                                  AR_P_BACKGROUND, AR_P_BORDER_WIDTH, AR_P_BORDER_COLOR,
+                                  AR_P_PAD_LEFT,   AR_P_PAD_TOP,      AR_P_COLOR};
+    ar_u32           h = 2166136261u;
+    ar_u32           i;
+    ar_u32           count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
 
     for (i = 0; i < count; ++i)
     {

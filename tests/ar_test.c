@@ -5196,6 +5196,160 @@ static void test_dragging_the_scrollbar_scrolls(void)
     CHECK(after_release == after_move, "drag: letting go stops it following the cursor");
 }
 
+/*
+ * overflow-x clips on its own, and the shorthand still sets both.
+ *
+ * Before the axis split there was one property and `overflow-x` was an unknown
+ * declaration, so a stylesheet that used it got no clipping at all and no
+ * complaint either.
+ */
+static void test_overflow_x_clips_by_itself(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:50px; height:20px; overflow-x:hidden; }"
+                 ".wide { display:block; width:180px; height:20px; background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__pixel_at(10, 10) == 0x00FF00, "overflow-x: inside the box the child is drawn");
+    CHECK(ar__pixel_at(100, 10) != 0x00FF00, "overflow-x: and past its edge it is cut off");
+}
+
+/*
+ * The rule that makes a horizontal scroller possible.
+ *
+ * CSS says a `visible` beside anything else computes to `auto`, because
+ * content cannot escape sideways from a box that clips it vertically -- there
+ * is nowhere for it to go. `overflow-y: hidden` alone therefore makes the
+ * other axis auto, which is exactly what somebody writing a horizontally
+ * scrolling strip relies on, and exactly the clause a naive implementation
+ * leaves out.
+ */
+static void test_a_lone_visible_becomes_auto(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:50px; height:20px; overflow:visible hidden; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_OVERFLOW_X] == AR_OVERFLOW_VISIBLE,
+          "overflow: the cascade still says what the author wrote");
+    CHECK(ar_overflow_x(&g_ui->nodes[1]) == AR_OVERFLOW_AUTO,
+          "overflow: but a lone visible is used as auto");
+    CHECK(ar_overflow_y(&g_ui->nodes[1]) == AR_OVERFLOW_HIDDEN,
+          "overflow: and the axis that was stated is left alone");
+    CHECK(ar_clips(&g_ui->nodes[1]), "overflow: so the box clips");
+}
+
+/*
+ * A stored scroll position survives being read back, however long the list.
+ *
+ * The point of this one is the AR_SCROLL_COMPACT build, where a position is
+ * sixteen bits: a list taller than 32,767 pixels has a range that does not fit,
+ * and writing it anyway brings it back negative -- the list jumps to the top on
+ * its way to the bottom. ar_scroll_clamp caps at what the type holds, so the
+ * limit is a visible stop rather than a wrap.
+ *
+ * It is worth running in the default build too, where it asserts the ordinary
+ * thing: asking to scroll past the end lands exactly on the end.
+ */
+static void test_a_scroll_position_survives_the_round_trip(void)
+{
+    ar_surface s = ar__ui_surface(120, 120);
+    ar_i32     range, asked, read;
+    int        i;
+
+    g_ui = ar_init(g_wide_mem, (ar_u32)sizeof g_wide_mem);
+    ar_stylesheet(g_ui, "#root { display:block; overflow:scroll; height:100px; }"
+                        ".row { display:block; height:200px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "div#root");
+    for (i = 0; i < 200; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(!ar_overflowed(g_ui), "limit: the tall list fits the arena");
+
+    range = ar_node_scroll_range(g_ui, 0);
+    asked = ar_node_scroll_to(g_ui, 0, 39000);
+    read = ar_node_scroll(g_ui, 0);
+
+    CHECK(range > 0, "limit: a forty thousand pixel list has somewhere to go");
+    CHECK(asked >= 0, "limit: clamping never returns a negative position");
+    CHECK(asked == read, "limit: and what was stored is what comes back");
+    CHECK(read <= range, "limit: never past the end of the content");
+    CHECK(read <= AR_SCROLL_LIMIT, "limit: never past what the stored type holds");
+}
+
+/*
+ * Sideways: a child wider than its container gives it a horizontal range, and
+ * moving the position slides the child.
+ *
+ * The width the contents came to is the piece that had to be added for this.
+ * Block layout stacks downwards and hands every child the container's width, so
+ * nothing in it ever asked how far right anything reached -- which meant every
+ * container looked exactly as wide as its content and no horizontal range could
+ * ever exist.
+ */
+static void test_a_wide_child_scrolls_sideways(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+    ar_i32     range, at, before, after;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:50px; height:20px; overflow-x:scroll; }"
+                 ".wide { display:block; width:180px; height:20px; background:#00FF00; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    range = ar_node_scroll_range_x(g_ui, 1);
+    before = ar__box(2).x;
+    at = ar_node_scroll_to_x(g_ui, 1, 40);
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    after = ar__box(2).x;
+
+    CHECK(range == 130, "overflow-x: a 180 px child in a 50 px box has 130 px to travel");
+    CHECK(at == 40, "overflow-x: and the position it was asked for is the one it took");
+    CHECK(after == before - 40, "overflow-x: the child slides left by exactly that much");
+    CHECK(ar_node_scroll(g_ui, 1) == 0, "overflow-x: without disturbing the other axis");
+}
+
 /* A notch outside the container does nothing to it. */
 static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 {
@@ -7682,6 +7836,10 @@ int main(void)
     test_scroll_survives_the_frame();
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
+    test_overflow_x_clips_by_itself();
+    test_a_lone_visible_becomes_auto();
+    test_a_scroll_position_survives_the_round_trip();
+    test_a_wide_child_scrolls_sideways();
     test_dragging_the_scrollbar_scrolls();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();

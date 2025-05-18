@@ -33,10 +33,70 @@
  * ------------------------------------------------------------------------ */
 #include "ar_node.h"
 
+/*
+ * The used value of each axis, which is not always the one that was written.
+ *
+ * CSS says a `visible` paired with anything else on the other axis computes to
+ * `auto`, and it has to: `visible` means content escapes the box, and content
+ * cannot escape sideways out of something that clips vertically -- there is
+ * nowhere for it to go. So `overflow-x: visible; overflow-y: hidden` is a
+ * horizontal scroller, which is exactly the declaration people write when they
+ * mean one and is the rule a naive implementation drops.
+ *
+ * Applied on the way out rather than folded into the resolved style, so the
+ * cascade keeps saying what the author wrote and only the reader sees the
+ * coercion.
+ */
+static ar_i32 ar__used_overflow(ar_i32 mine, ar_i32 other)
+{
+    if (mine == AR_OVERFLOW_VISIBLE && other != AR_OVERFLOW_VISIBLE)
+    {
+        return AR_OVERFLOW_AUTO;
+    }
+    return mine;
+}
+
+ar_i32 ar_overflow_x(const ar_node *n)
+{
+    return ar__used_overflow(n->style.v[AR_P_OVERFLOW_X], n->style.v[AR_P_OVERFLOW]);
+}
+
+ar_i32 ar_overflow_y(const ar_node *n)
+{
+    return ar__used_overflow(n->style.v[AR_P_OVERFLOW], n->style.v[AR_P_OVERFLOW_X]);
+}
+
+/*
+ * Does this box confine its children?
+ *
+ * One axis is enough to ask, because the coercion above leaves them agreeing
+ * on whether they are visible at all: a lone "visible" has already become
+ * "auto". So there is no such thing here as a box that clips sideways and not
+ * vertically, and a clip stays a plain rectangle.
+ */
+int ar_clips(const ar_node *n)
+{
+    return ar_overflow_y(n) != AR_OVERFLOW_VISIBLE;
+}
+
+static int ar__scrollable(ar_i32 used)
+{
+    return used == AR_OVERFLOW_SCROLL || used == AR_OVERFLOW_AUTO;
+}
+
 int ar_is_scroll_container(const ar_node *n)
 {
-    return n->style.v[AR_P_OVERFLOW] == AR_OVERFLOW_SCROLL ||
-           n->style.v[AR_P_OVERFLOW] == AR_OVERFLOW_AUTO;
+    return ar__scrollable(ar_overflow_y(n)) || ar__scrollable(ar_overflow_x(n));
+}
+
+int ar_scrolls_y(const ar_node *n)
+{
+    return ar__scrollable(ar_overflow_y(n));
+}
+
+int ar_scrolls_x(const ar_node *n)
+{
+    return ar__scrollable(ar_overflow_x(n));
 }
 
 /* How far this container can be scrolled: nothing, if it all fits. */
@@ -48,10 +108,32 @@ ar_i32 ar_scroll_range(const ar_node *n)
     return over > 0 ? over : 0;
 }
 
+/* The same question on the inline axis. */
+ar_i32 ar_scroll_range_x(const ar_node *n)
+{
+    ar_i32 inner = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    ar_i32 over = n->content_w - inner;
+
+    return over > 0 ? over : 0;
+}
+
 ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want)
 {
     ar_i32 max = ar_scroll_range(n);
 
+    /*
+     * Also to what a stored position can hold.
+     *
+     * Without this an AR_SCROLL_COMPACT build writes a range past 32,767 into
+     * sixteen bits and it comes back negative -- the list would jump to the top
+     * on the way to the bottom. The limit is a visible stop instead: content
+     * past it still lays out and paints, it just cannot be scrolled to. See
+     * AR_SCROLL_COMPACT in areole.h for what that costs and buys.
+     */
+    if (max > AR_SCROLL_LIMIT)
+    {
+        max = AR_SCROLL_LIMIT;
+    }
     if (want < 0)
     {
         return 0;
@@ -72,7 +154,7 @@ int ar_scroll_bar_visible(const ar_node *n)
     {
         return 0;
     }
-    if (n->style.v[AR_P_OVERFLOW] == AR_OVERFLOW_SCROLL)
+    if (ar_overflow_y(n) == AR_OVERFLOW_SCROLL)
     {
         return 1;
     }
@@ -89,6 +171,21 @@ int ar_scroll_bar_visible(const ar_node *n)
  * The offset comes from the caller, because the scroll position lives in the
  * per-box slot table and this file has no business knowing that table exists.
  */
+ar_i32 ar_scroll_clamp_x(const ar_node *n, ar_i32 want)
+{
+    ar_i32 max = ar_scroll_range_x(n);
+
+    if (max > AR_SCROLL_LIMIT)
+    {
+        max = AR_SCROLL_LIMIT;
+    }
+    if (want < 0)
+    {
+        return 0;
+    }
+    return want > max ? max : want;
+}
+
 void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env)
 {
     ar_i32 i;
@@ -100,15 +197,18 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env)
     for (i = 0; i < count; ++i)
     {
         ar_node *n = &nodes[i];
-        ar_i32   dy;
+        ar_i32   dy, dx;
         ar_i32   j;
 
         if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
             continue;
         }
-        dy = ar_scroll_clamp(n, env->scroll_of(env->ud, i));
-        if (dy == 0)
+        dy = ar_scrolls_y(n) ? ar_scroll_clamp(n, env->scroll_of(env->ud, i)) : 0;
+        dx = (ar_scrolls_x(n) && env->scroll_x_of)
+                 ? ar_scroll_clamp_x(n, env->scroll_x_of(env->ud, i))
+                 : 0;
+        if (dy == 0 && dx == 0)
         {
             continue;
         }
@@ -123,6 +223,7 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             if (at == i)
             {
                 nodes[j].rect.y -= dy;
+                nodes[j].rect.x -= dx;
             }
         }
     }

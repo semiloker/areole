@@ -122,6 +122,12 @@ typedef struct ar_node
      */
     ar_i32 content_h;
 
+    /* And how wide, for the same reason on the other axis. Kept beside its
+       twin rather than derived when asked, because deriving it means walking
+       the subtree for the furthest right edge and a scroll container would pay
+       that on every frame it is queried. */
+    ar_i32 content_w;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
@@ -142,9 +148,15 @@ typedef struct ar_slot
 {
     ar_u32  key;
     ar_rect rect; /* where this box was last frame */
-    ar_i32  scroll;
-    ar_u32  last_frame; /* for eviction; 0 means the slot is free */
-    ar_u32  digest;     /* of the resolved style; 0 means never recorded */
+
+    /* Where this container is scrolled to, on each axis. Their width is the
+       AR_SCROLL_COMPACT switch in areole.h: every box carries a slot, so eight
+       bytes here is eight bytes per box in the interface. */
+    ar_scroll_pos scroll;
+    ar_scroll_pos scroll_x;
+
+    ar_u32 last_frame; /* for eviction; 0 means the slot is free */
+    ar_u32 digest;     /* of the resolved style; 0 means never recorded */
 
     /* The last measured width of this box's text and what it was measured
        from. Text is measured once per node per frame, and with an outline face
@@ -329,6 +341,7 @@ typedef struct ar_layout_env
     /* Where a scroll container currently is. Null means nothing scrolls,
        which is what every caller before scrolling got. */
     ar_i32 (*scroll_of)(void *ud, ar_i32 index);
+    ar_i32 (*scroll_x_of)(void *ud, ar_i32 index);
 
     /* Somewhere to put fragments. May be null, in which case inline boxes are
        not split -- which is what every caller before fragmentation got. */
@@ -409,8 +422,15 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
 #define AR_SCROLLBAR_MIN 16
 
 int    ar_is_scroll_container(const ar_node *n);
+int    ar_scrolls_x(const ar_node *n);
+int    ar_scrolls_y(const ar_node *n);
+int    ar_clips(const ar_node *n);
+ar_i32 ar_overflow_x(const ar_node *n);
+ar_i32 ar_overflow_y(const ar_node *n);
 ar_i32 ar_scroll_range(const ar_node *n);
 ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want);
+ar_i32 ar_scroll_range_x(const ar_node *n);
+ar_i32 ar_scroll_clamp_x(const ar_node *n, ar_i32 want);
 int    ar_scroll_bar_visible(const ar_node *n);
 void   ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thumb);
 

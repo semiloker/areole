@@ -276,6 +276,40 @@ void ar_perf_overlay(ar_perf *p, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y
  * ------------------------------------------------------------------------ */
 typedef struct ar_ctx ar_ctx;
 
+/* ------------------------------------------------------------------------
+ * How far a container may be scrolled, and what that costs
+ *
+ * A scroll container remembers a position on each axis, and those two numbers
+ * live in the per-box state table -- so their width is paid by every box in the
+ * interface, scrollable or not, because the table has one slot per box.
+ *
+ * Define AR_SCROLL_COMPACT as 1 to keep them in sixteen bits. That caps a
+ * scroll at 32,767 pixels and gives eight bytes per box back. Whether that
+ * matters is a property of the machine and not of the library, which is why it
+ * is a switch rather than a decision made here:
+ *
+ *   - 32 bit, the default. Nothing is capped. A million-row table scrolls to
+ *     the end.
+ *   - 16 bit. 32,767 pixels is about seven hundred rows of a list at 46 px, or
+ *     a page forty times the height of a 800x600 screen. Past that the
+ *     container simply stops, which is a visible limit rather than a wrong
+ *     rendering -- ar_scroll_clamp enforces it, so nothing wraps or corrupts.
+ *
+ * The cap is on the scroll *offset*, not on document height: content below it
+ * still lays out and paints, it just cannot be reached by scrolling.
+ * ------------------------------------------------------------------------ */
+#ifndef AR_SCROLL_COMPACT
+#define AR_SCROLL_COMPACT 0
+#endif
+
+#if AR_SCROLL_COMPACT
+typedef ar_i16 ar_scroll_pos;
+#define AR_SCROLL_LIMIT 32767
+#else
+typedef ar_i32 ar_scroll_pos;
+#define AR_SCROLL_LIMIT 1073741823
+#endif
+
 /* 320 -> 336 when block formatting gave every box two collapsed margins, and
    336 -> 352 when float and clear were added, 352 -> 368 when a box gained the
    two indices that say where its fragments are, and 368 -> 400 to reserve one
@@ -285,8 +319,18 @@ typedef struct ar_ctx ar_ctx;
    the paint order, one index per box. A property costs every box
    and every rule five bytes, in ar_style. The assertions in ar_ctx.c are what
    noticed each time; they are there so this number cannot quietly stop being
-   true. */
+   true.
+
+   408 -> 416 for the second scroll axis, and only in the default build. The
+   width a box's contents came to fitted in padding the node already had, so
+   the whole cost is the horizontal scroll position in the slot -- which
+   AR_SCROLL_COMPACT removes by halving both positions. Compact builds still
+   fit 408, so on that setting horizontal scrolling costs nothing per box. */
+#if AR_SCROLL_COMPACT
 #define AR_BYTES_PER_BOX 408u
+#else
+#define AR_BYTES_PER_BOX 416u
+#endif
 
 /*
  * The part of the block that does not scale with the box count: the context
@@ -558,6 +602,15 @@ int ar_needs_redraw(const ar_ctx *c);
  * ------------------------------------------------------------------------ */
 ar_i32 ar_node_scroll(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i);
+
+/* The same three on the inline axis. A container scrolls sideways when
+   overflow-x resolves to scroll or auto -- which includes the case where only
+   overflow-y was stated, since a lone visible on the other axis becomes auto.
+   There is no horizontal scrollbar and no wheel binding yet: drive it from the
+   application, the way a keyboard or a swipe would. */
+ar_i32 ar_node_scroll_x(const ar_ctx *c, ar_i32 i);
+ar_i32 ar_node_scroll_range_x(const ar_ctx *c, ar_i32 i);
+ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);
 
 /* Moves a container, clamped to its range. For a keyboard, a scrollbar drag,
    or scrolling something into view. Returns where it ended up. */
