@@ -5614,6 +5614,86 @@ static void test_scroll_into_view_honours_scroll_margin(void)
     CHECK(ar_node_scroll(g_ui, 1) == 72, "into-view: scroll-margin comes along with the box");
 }
 
+/* ------------------------------------------------------------------------
+ * overflow-anchor
+ *
+ * A list scrolled down, and then a row above the fold grows. Without
+ * anchoring, everything below slides by that much and the reader loses their
+ * place. With it, the scroll takes up the difference and nothing appears to
+ * move.
+ *
+ * The scene declares the first row taller on demand, which is what "content
+ * loaded above the viewport" looks like from the layout's point of view.
+ * ------------------------------------------------------------------------ */
+static const char *AR_ANCHOR_CSS = "#root { display:block; }"
+                                   ".list { display:block; height:100px; overflow:scroll; }"
+                                   ".row  { display:block; height:40px; }"
+                                   ".tall { display:block; height:70px; }";
+
+static const char *AR_ANCHOR_CSS_OFF = "#root { display:block; }"
+                                       ".list { display:block; height:100px; overflow:scroll;"
+                                       "        overflow-anchor: none; }"
+                                       ".row  { display:block; height:40px; }"
+                                       ".tall { display:block; height:70px; }";
+
+/* The first row is `.tall` once `grown` is set: 40 becomes 70, so everything
+   below it moves down by 30. */
+static void ar__anchor_scene(ar_surface *s, const ar_input *in, int grown)
+{
+    ar_i32 i;
+
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, (i == 0 && grown) ? "div.tall" : "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static ar_i32 ar__anchor_run(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__anchor_scene(&s, &in, 0);
+    ar_node_scroll_to(g_ui, 1, 80);
+    ar__anchor_scene(&s, &in, 0);
+
+    /* Settle, so the anchor is recorded at a position nothing is about to
+       change for its own reasons. */
+    ar__anchor_scene(&s, &in, 0);
+
+    /* Now the row above the fold grows by 30. */
+    ar__anchor_scene(&s, &in, 1);
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_overflow_anchor_keeps_the_reading_position(void)
+{
+    /*
+     * Anchored: the scroll absorbs the 30 px the first row gained, so what was
+     * under the eye stays there. Range grows with the content, so 110 is
+     * reachable.
+     *
+     * Unanchored: the offset does not move and everything below slides down,
+     * which is the behaviour this property exists to stop.
+     */
+    CHECK(ar__anchor_run(AR_ANCHOR_CSS) == 110,
+          "overflow-anchor: growth above the fold is taken up by the scroll");
+    CHECK(ar__anchor_run(AR_ANCHOR_CSS_OFF) == 80,
+          "overflow-anchor: none leaves the reader to lose their place");
+}
+
 /*
  * Dragging the scrollbar thumb scrolls, and letting go stops it.
  *
@@ -8363,6 +8443,7 @@ int main(void)
     test_keys_home_and_end_do_not_snap();
     test_scroll_into_view_moves_the_minimum();
     test_scroll_into_view_honours_scroll_margin();
+    test_overflow_anchor_keeps_the_reading_position();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();

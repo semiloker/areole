@@ -2256,6 +2256,171 @@ static int ar__move_is_unobstructed(const ar_ctx *c, ar_i32 container, ar_rect a
     return 1;
 }
 
+/* ------------------------------------------------------------------------
+ * Scroll anchoring
+ *
+ * Something above the fold grows, and everything below it slides down under a
+ * reader who did not ask for that. overflow-anchor is the fix: pick a box that
+ * is currently visible, remember where it sits, and when the next layout puts
+ * it somewhere else, move the scroll by exactly that much so it does not
+ * appear to move at all.
+ *
+ * It runs after layout, because the whole question is what layout just did,
+ * and so it has to shift the subtree itself: the rectangles are already final
+ * by then, and changing the offset without moving them would leave the frame
+ * drawn a scroll behind.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__find_key(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (key == 0)
+    {
+        return -1;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].key == key)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static ar_i32 ar__port_top(const ar_node *n)
+{
+    return n->rect.y + n->style.v[AR_P_SCROLL_PAD_TOP];
+}
+
+/* Moves a container's descendants, which is what changing its offset after
+   layout has to do by hand. */
+static void ar__shift_subtree(ar_ctx *c, ar_i32 root, ar_i32 dy)
+{
+    ar_i32 j;
+
+    if (dy == 0)
+    {
+        return;
+    }
+    for (j = root + 1; j < c->node_count; ++j)
+    {
+        if (ar__is_within(c, c->nodes[j].parent, root))
+        {
+            c->nodes[j].rect.y -= dy;
+        }
+    }
+}
+
+/*
+ * Chooses the box to hold still: the first descendant starting at or below the
+ * top of the scrollport.
+ *
+ * The first one visible rather than the nearest to the middle, because it is
+ * the one whose movement a reader notices -- an eye sits at the top of what it
+ * can see, not the centre of it.
+ */
+static void ar__record_anchor(ar_ctx *c, ar_i32 container)
+{
+    ar_i32 top = ar__port_top(&c->nodes[container]);
+    ar_i32 j;
+
+    c->anchor_container = 0;
+    c->anchor_node = 0;
+    c->anchor_y = 0;
+
+    for (j = container + 1; j < c->node_count; ++j)
+    {
+        ar_node *ch = &c->nodes[j];
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (!ar__is_within(c, ch->parent, container))
+        {
+            continue;
+        }
+        if (ch->rect.y >= top)
+        {
+            ar_slot *sl = ar_ctx_slot(c, c->nodes[container].key);
+
+            c->anchor_container = c->nodes[container].key;
+            c->anchor_node = ch->key;
+            c->anchor_y = ch->rect.y - top;
+            c->anchor_scroll = sl ? sl->scroll : 0;
+            return;
+        }
+    }
+}
+
+static void ar__anchor(ar_ctx *c)
+{
+    ar_i32   container, node, i;
+    ar_slot *slot;
+    ar_i32   now, delta, want;
+
+    /* Correct against what was recorded last frame, then record afresh from
+       the corrected positions. */
+    container = ar__find_key(c, c->anchor_container);
+    node = ar__find_key(c, c->anchor_node);
+
+    if (container >= 0 && node >= 0 && ar_is_scroll_container(&c->nodes[container]) &&
+        c->nodes[container].style.v[AR_P_OVERFLOW_ANCHOR] == AR_ANCHOR_AUTO)
+    {
+        slot = ar_ctx_slot(c, c->nodes[container].key);
+        now = c->nodes[node].rect.y - ar__port_top(&c->nodes[container]);
+        delta = now - c->anchor_y;
+
+        /*
+         * Only when the reader did not ask for the movement, which is decided
+         * by comparing the offset against the one the anchor was taken at. A
+         * scroll moves the anchor on purpose, and compensating for it would
+         * cancel the scroll -- the container would refuse to move at all,
+         * which is a far more visible bug than the one being fixed.
+         *
+         * c->scrolled cannot answer this and was the first attempt: it is
+         * cleared by ar_frame_begin, so by the time this pass runs on the next
+         * frame it is always zero, and the scroll it was meant to exclude has
+         * already happened. The test for the wheel caught it.
+         */
+        if (slot && delta != 0 && slot->scroll == c->anchor_scroll)
+        {
+            want = ar_scroll_clamp(&c->nodes[container], slot->scroll + delta);
+            if (want != slot->scroll)
+            {
+                ar__shift_subtree(c, container, want - slot->scroll);
+                slot->scroll = (ar_scroll_pos)want;
+                ar_damage_add(&c->damage, c->nodes[container].rect);
+            }
+        }
+    }
+
+    /* One container: the first scrollable one that is scrolled away from its
+       top, since at the top there is nothing above the fold to compensate. */
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_slot *sl;
+
+        if (!ar_is_scroll_container(&c->nodes[i]) || !ar_scrolls_y(&c->nodes[i]))
+        {
+            continue;
+        }
+        if (c->nodes[i].style.v[AR_P_OVERFLOW_ANCHOR] != AR_ANCHOR_AUTO)
+        {
+            continue;
+        }
+        sl = ar_ctx_slot(c, c->nodes[i].key);
+        if (sl && sl->scroll > 0)
+        {
+            ar__record_anchor(c, i);
+            return;
+        }
+    }
+    c->anchor_container = 0;
+    c->anchor_node = 0;
+}
+
 /*
  * Moves one scrolled container's pixels, and reports what still has to be
  * painted.
@@ -2433,6 +2598,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar_layout_solve(c->nodes, c->node_count, viewport, &env);
         c->frag_count = env.frag_used;
     }
+
+    /* Scroll anchoring, before paint order and the clips, because it can still
+       move a subtree and both of those read the final rectangles. */
+    ar__anchor(c);
 
     /* Paint order, once the rectangles are final: a stacking context's bucket
        depends on nothing layout decides, but its subtree has to be walked and

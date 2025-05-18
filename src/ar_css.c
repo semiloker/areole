@@ -109,6 +109,8 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
     s->unit[AR_P_OVERSCROLL_X] = AR_UNIT_KEYWORD;
 
+    s->v[AR_P_OVERFLOW_ANCHOR] = AR_ANCHOR_AUTO;
+    s->unit[AR_P_OVERFLOW_ANCHOR] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
     s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
@@ -561,6 +563,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
+                                          {"overflow-anchor", AR_P_OVERFLOW_ANCHOR},
                                           {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
                                           {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
                                           {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
@@ -699,6 +702,9 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
                                      {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
                                      {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+
+                                     {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
+                                     {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
 
                                      {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
                                      {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},
