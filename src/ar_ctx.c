@@ -1172,6 +1172,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->mouse_released = in ? in->mouse_released : 0;
     c->mouse_inside = in ? in->mouse_inside : 0;
     c->wheel = in ? in->wheel : 0;
+    c->wheel_px = in ? in->wheel_px : 0;
     c->scrolled = 0;
 
     /* A press latches whichever box the cursor was over, and a release only
@@ -1843,9 +1844,15 @@ static void ar__apply_wheel(ar_ctx *c)
 {
     ar_i32 i;
 
+    /* Pixels when the device reported them, notches otherwise. A wheel that
+       clicks describes itself exactly in notches; a touchpad has more to say
+       than that, and rounding it to whole notches is how it came to do nothing
+       at all for a while. */
+    ar_i32 travel = c->wheel_px ? c->wheel_px : c->wheel * AR_SCROLL_STEP;
+
     /* A drag owns its container for as long as it lasts, and a notch arriving
        mid-drag would fight it for the same position. */
-    if (!c->wheel || !c->mouse_inside || c->drag_key)
+    if (travel == 0 || !c->mouse_inside || c->drag_key)
     {
         return;
     }
@@ -1869,7 +1876,7 @@ static void ar__apply_wheel(ar_ctx *c)
         {
             continue;
         }
-        want = ar_scroll_clamp(n, slot->scroll - c->wheel * AR_SCROLL_STEP);
+        want = ar_scroll_clamp(n, slot->scroll - travel);
         if (want == slot->scroll)
         {
             continue; /* nowhere to go here; the notch chains outwards */

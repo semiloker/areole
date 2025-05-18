@@ -224,6 +224,7 @@ struct ar_ctx
     ar_i32  order_count;
 
     ar_i32 wheel;    /* notches this frame */
+    ar_i32 wheel_px; /* the same travel in pixels, when the device knows it */
     int    scrolled; /* something moved, so the next frame differs */
 
     ar_i32 stack[AR_MAX_DEPTH];
