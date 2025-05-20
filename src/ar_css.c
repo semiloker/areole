@@ -835,7 +835,27 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             return out;
         }
 
-        if (ar__same(name, len, "auto"))
+        /*
+         * `auto` is two different things depending on who was asked.
+         *
+         * For width, height, the margins and the insets it is a length that
+         * layout resolves, and AR_UNIT_AUTO is how that is carried. For
+         * overflow it is a keyword with a value of its own, and the keyword
+         * table has always had the entry.
+         *
+         * The length reading used to win unconditionally, because it is tested
+         * here and the table is not consulted until further down. So
+         * `overflow: auto` -- the most common scroll declaration anyone
+         * writes -- parsed as a length, the keyword was never reached, and the
+         * box kept its initial `visible`: no clip, no scrolling, no scrollbar
+         * and no complaint. It cost nothing to spot because a dropped
+         * declaration looks exactly like one that was never written.
+         *
+         * Asking the table first is the whole fix. A property with nothing to
+         * say about `auto` still falls through to the length sentinel, which
+         * is every property that wants one.
+         */
+        if (ar__same(name, len, "auto") && !ar__lookup_keyword(prop, name, len, &kw))
         {
             out.unit = AR_UNIT_AUTO;
             out.ok = 1;
