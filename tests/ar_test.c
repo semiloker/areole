@@ -1951,6 +1951,203 @@ static void ar__scroll_dmg_declare(ar_ctx *c)
     ar_end(c);
 }
 
+/*
+ * Only the scrollbar's colour changes, and the bar has to notice.
+ *
+ * ar__paint_bars reads scrollbar-color and scrollbar-width; ar_paint_digest is
+ * the list of exactly what the paint pass reads, and when the overlay bar
+ * landed none of them were added to it. A frame in which one of them is the
+ * only thing that changed then produces no damage at all, so the bar keeps the
+ * colour it had. Geometry stays right, which is why every other scroll test
+ * here is blind to it.
+ *
+ * Hover is the driver because a stylesheet is fixed for the life of a context:
+ * a state change is the only way one of these properties differs between two
+ * frames of the same interface.
+ */
+static const char *const SCROLL_BAR_DMG_CSS =
+    "#root { display:block; overflow:scroll; height:128px; background:#101010;"
+    "        scrollbar-color: #808080 #202020; }"
+    "#root:hover { scrollbar-color: #ff0000 #202020; }"
+    ".row { display:block; height:1px; margin:1px 0px; background:#3a4a5a; }";
+
+static void test_the_bar_repaints_when_only_its_colour_changed(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+
+    /* Off the container, onto it, held there, off again. The hover edges are
+       the frames that matter; the held frame catches a digest that only ever
+       reports a change once. */
+    static const int INSIDE[4] = {0, 1, 1, 0};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(SCROLL_BAR_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "scrollbar: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, SCROLL_BAR_DMG_CSS);
+
+    for (frame = 0; frame < 4 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = INSIDE[frame] ? AR_DMG_W / 2 : -1;
+        in.mouse_y = INSIDE[frame] ? AR_DMG_H / 2 : -1;
+        in.mouse_inside = INSIDE[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__scroll_dmg_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__scroll_dmg_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(ar_node_scroll_range(g_ui, 0) > 0, "scrollbar: the list is long enough to show a bar");
+    CHECK(bad_frame < 0, "scrollbar: a colour change on its own still repaints the bar");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
+/*
+ * The bar appears because the content grew, not because anything was styled.
+ *
+ * `overflow: auto` shows a bar only once there is somewhere to go, so a list
+ * that grows past its box gains one with no style change and no change to the
+ * container's own rectangle. ar_paint_digest cannot see that -- it hashes
+ * style, and ar_scroll_bar_visible's answer turns on content_h -- so the box
+ * that has to paint the bar is not the box the frame knows is dirty.
+ */
+static const char *const SCROLL_GROW_DMG_CSS =
+    "#root { display:block; overflow:auto; height:128px; background:#101010; }"
+    ".row { display:block; height:1px; margin:1px 0px; background:#3a4a5a; }";
+
+static int g_grow_rows = 8;
+
+static void ar__scroll_grow_declare(ar_ctx *c)
+{
+    int i;
+
+    ar_begin(c, "div#root");
+    for (i = 0; i < g_grow_rows; ++i)
+    {
+        ar_begin(c, "div.row");
+        ar_end(c);
+    }
+    ar_end(c);
+}
+
+static void test_a_bar_that_appears_because_content_grew(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+    ar_i32     range_before = -1, range_after = -1;
+
+    /* One row either side of the threshold, so the bar appears without the new
+       content covering the column the bar is drawn in. Growing by a screenful
+       instead would repaint that column as a side effect and prove nothing. */
+    static const int ROWS[4] = {63, 63, 64, 64};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(SCROLL_GROW_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "scrollbar: the growing reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, SCROLL_GROW_DMG_CSS);
+
+    for (frame = 0; frame < 4 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        g_grow_rows = ROWS[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__scroll_grow_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__scroll_grow_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        if (frame == 1)
+        {
+            range_before = ar_node_scroll_range(ref, 0);
+        }
+        if (frame == 2)
+        {
+            range_after = ar_node_scroll_range(ref, 0);
+        }
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(range_before == 0 && range_after > 0,
+          "scrollbar: the probe really does cross the threshold that shows a bar");
+    CHECK(bad_frame < 0, "scrollbar: a bar that appears because content grew is painted whole");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
 static void test_a_region_move_is_identical_to_a_full_repaint(void)
 {
     ar_surface moved = ar__dmg_surface(g_dmg_a);
@@ -8716,6 +8913,8 @@ int main(void)
     test_damage_collapses_when_tracking_stops_paying();
     test_damage_output_is_identical_to_a_full_repaint();
     test_a_region_move_is_identical_to_a_full_repaint();
+    test_the_bar_repaints_when_only_its_colour_changed();
+    test_a_bar_that_appears_because_content_grew();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
