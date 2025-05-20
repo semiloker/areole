@@ -73,6 +73,10 @@ if(WIN32)
     add_executable(example_block examples/03_block/main.c)
     target_link_libraries(example_block PRIVATE areole_win32)
     areole_set_warnings(example_block)
+
+    add_executable(example_showcase examples/04_showcase/main.c)
+    target_link_libraries(example_showcase PRIVATE areole_win32)
+    areole_set_warnings(example_showcase)
 endif()
 
 # --- benchmark ----------------------------------------------------------------

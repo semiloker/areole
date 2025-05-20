@@ -395,6 +395,7 @@ cmake --build build
 ./build/ar_test               # 732 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.6.1
+./build/example_showcase      # one long page using the whole CSS subset at once
 ./build/example_block         # the block, inline and float corpus, drawn
 ./build/example_block --dump  # the same, as rectangles, for the comparison
 ./build/example_tour --selftest   # every page, no window; CI runs this
