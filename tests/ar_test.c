@@ -5728,6 +5728,51 @@ static ar_i32 ar__snap_after_one_notch(const char *css)
     return ar_node_scroll(g_ui, 1);
 }
 
+/*
+ * A programmatic scroll snaps, the same way a notch does.
+ *
+ * CSS applies snapping after any scrolling operation, not only the ones a hand
+ * drove -- a mandatory container rests on a snap point however it got there,
+ * which is why a browser re-snaps when a script assigns scrollTop. areole used
+ * to snap the wheel and the keys and not this call, so where a container came
+ * to rest depended on which of the three moved it.
+ *
+ * The rows are 40 tall in a 100 tall box, so the snap points are multiples of
+ * 40 up to the range of 100. Asking for 50 is deliberately between two of
+ * them, and nearer to 40.
+ */
+static void test_a_programmatic_scroll_snaps(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     snapped, loose;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_SNAP_CSS);
+    ar__scroll_scene(&s, &in);
+    snapped = ar_node_scroll_to(g_ui, 1, 50);
+
+    /* The control: the same request on the same geometry with no snap
+       declaration, which must land exactly where it was asked to. Without it
+       this passes against a call that quietly clamps to something else. */
+    ar__ui_reset(AR_SCROLL_CSS);
+    ar__scroll_scene(&s, &in);
+    loose = ar_node_scroll_to(g_ui, 1, 50);
+
+    CHECK(loose == 50, "scroll: without snapping a programmatic scroll goes where it is sent");
+    CHECK(snapped == 40, "scroll: with mandatory snapping it settles on the nearest snap point");
+
+    /* And the end of the range is still reachable, which is the case a naive
+       snap breaks: the last snap point is 40 short of the end, and a container
+       that cannot be scrolled to its bottom is the bug people notice. */
+    ar__ui_reset(AR_SNAP_CSS);
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll_to(g_ui, 1, 9999) == 100, "scroll: and the end of the range is reachable");
+}
+
 static void test_snap_lands_on_a_snap_point(void)
 {
     ar_i32 snapped = ar__snap_after_one_notch(AR_SNAP_CSS);
@@ -8901,6 +8946,7 @@ int main(void)
     test_scrollbar_gutter_stable_shifts_nothing_when_content_grows();
     test_scrollbar_color_is_read();
     test_snap_lands_on_a_snap_point();
+    test_a_programmatic_scroll_snaps();
     test_snap_proximity_leaves_a_distant_point_alone();
     test_snap_honours_scroll_padding();
     test_snap_type_parses_both_words();
