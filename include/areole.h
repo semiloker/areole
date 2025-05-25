@@ -699,6 +699,42 @@ int ar_node_scroll_into_view(ar_ctx *c, ar_i32 i);
    blocks knows to ask for the frame that shows it. */
 int ar_scrolled(const ar_ctx *c);
 
+/* ------------------------------------------------------------------------
+ * The display the backend is drawing on
+ *
+ * Two things the core cannot work out for itself and will not guess: how much
+ * of the display is covered by something the window does not control, and
+ * where the titlebar sits when the backend draws its own. A stylesheet reaches
+ * them through `env()`.
+ *
+ * A backend that says nothing leaves them unknown, and every `env()` naming
+ * one takes its fallback. That is not the same as reporting zero: a windowed
+ * desktop has real insets of zero, so `env(safe-area-inset-top, 20px)` must
+ * resolve to 0 there and to 20 on a backend that has never heard of the idea.
+ * ------------------------------------------------------------------------ */
+
+/* The four safe-area insets, in pixels. Calling this at all marks them known,
+   so a backend that means "zero on every side" should call it with zeroes
+   rather than not call it. */
+void ar_set_safe_area(ar_ctx *c, ar_i32 top, ar_i32 right, ar_i32 bottom, ar_i32 left);
+
+/* Where a backend drawing its own window controls has put them. */
+void ar_set_titlebar_area(ar_ctx *c, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h);
+
+/*
+ * `viewport-fit`. Zero is `auto`, which is the initial value.
+ *
+ * With `auto` the layout viewport is the safe rectangle -- the surface with
+ * the insets already taken off -- and `env(safe-area-inset-*)` reports zero,
+ * because there is nothing left for the stylesheet to avoid. With `cover` the
+ * layout viewport is the whole surface and the real insets are reported.
+ *
+ * The two always move together. A viewport inset by the safe area *and* an
+ * env() reporting that inset would take it off twice, which is the bug this
+ * pairing exists to make impossible.
+ */
+void ar_set_viewport_fit_cover(ar_ctx *c, int cover);
+
 ar_perf *ar_perf_of(ar_ctx *c);
 
 /* Where the arena stands. Every figure is bytes.
