@@ -5391,6 +5391,85 @@ static void test_env_with_an_unknown_name_takes_its_fallback(void)
           "env: a failed env() does not swallow the declaration after it");
 }
 
+/*
+ * Criterion 2: a sticky box that cannot stick because of an overflow:hidden
+ * ancestor is reported through the diagnostic API.
+ *
+ * The three cases together are the test. Reporting the blocked one is easy;
+ * what makes the report worth having is that it stays quiet for a sticky box
+ * that is fine, and for one whose clipping ancestor does scroll. A diagnostic
+ * that fires on everything is noise, and noise is ignored.
+ */
+static ar_i32 ar__diag_run(const char *css, ar_i32 *out_node)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.stick");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    if (out_node)
+    {
+        *out_node = -1;
+    }
+    if (ar_diag_count(g_ui) > 0)
+    {
+        return ar_diag_at(g_ui, 0, out_node);
+    }
+    return 0;
+}
+
+static void test_a_sticky_box_that_can_never_stick_is_reported(void)
+{
+    ar_i32 node = -1;
+    ar_i32 blocked, scrolls, unclipped;
+
+    blocked = ar__diag_run("#root { display:block; }"
+                           ".box  { display:block; height:100px; overflow:hidden; }"
+                           ".tall { display:block; height:200px; }"
+                           ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                           &node);
+
+    CHECK(blocked == AR_DIAG_STICKY_NEVER_STICKS && node == 3,
+          "diag: sticky under overflow:hidden is reported, and names the box");
+
+    /* The same tree with a scrollport that does scroll. Nothing to report:
+       this one sticks. */
+    scrolls = ar__diag_run("#root { display:block; }"
+                           ".box  { display:block; height:100px; overflow:scroll; }"
+                           ".tall { display:block; height:200px; }"
+                           ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                           &node);
+    CHECK(scrolls == 0, "diag: sticky under a real scrollport is not reported");
+
+    /* And with no clipping ancestor at all, where the viewport is the
+       scrollport. Also nothing to report. */
+    unclipped = ar__diag_run("#root { display:block; }"
+                             ".box  { display:block; height:100px; }"
+                             ".tall { display:block; height:200px; }"
+                             ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                             &node);
+    CHECK(unclipped == 0, "diag: sticky with no clipping ancestor is not reported");
+
+    CHECK(ar_diag_text(AR_DIAG_STICKY_NEVER_STICKS)[0] != 0 && ar_diag_text(0)[0] == 0,
+          "diag: a code has a sentence, and an unknown code has an empty one");
+}
+
 static void test_a_sticky_box_too_big_to_move_does_not(void)
 {
     ar_surface s = ar__ui_surface(300, 300);
@@ -9146,6 +9225,7 @@ int main(void)
     test_sticky_against_the_viewport();
     test_sticky_with_no_offsets_never_moves();
     test_a_sticky_box_too_big_to_move_does_not();
+    test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();
     test_titlebar_area_is_not_gated_on_viewport_fit();
