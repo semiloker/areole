@@ -96,6 +96,11 @@ if(WIN32)
     target_link_libraries(example_sticky PRIVATE areole_win32)
     areole_set_warnings(example_sticky)
 
+    # The safe-area corpus. Same shape again.
+    add_executable(example_env examples/07_env/main.c)
+    target_link_libraries(example_env PRIVATE areole_win32)
+    areole_set_warnings(example_env)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
