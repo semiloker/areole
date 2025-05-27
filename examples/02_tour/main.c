@@ -244,6 +244,39 @@ static const char *SHEET_SNAP =
     "         color:#4a453e; scroll-snap-align: start; }"
     ".slide:nth-child(even) { background:#efe8d8; }";
 
+/*
+ * The 0.6.2 page.
+ *
+ * One scroller with a header pinned to its top and a footer pinned to its
+ * bottom, which is the pair the release completed: the same box obeys `top`
+ * and `bottom` against the same scrollport, and both clamp to the containing
+ * block rather than escaping it.
+ */
+static const char *SHEET_SAFE =
+    ".sscroll { display:block; height:120px; overflow:scroll; background:#f7f3ea; }"
+    ".shead { display:block; position:sticky; top:0px; padding:3px 8px;"
+    "         font-size:11px; color:#fdfaf3; background:#2f5d3f; }"
+    ".sfoot { display:block; position:sticky; bottom:0px; padding:3px 8px;"
+    "         font-size:11px; color:#fdfaf3; background:#7a4a2a; }";
+
+/*
+ * env(), reading two names that resolve by different routes.
+ *
+ * The titlebar rectangle was reported by this file below, so it resolves to
+ * what was reported. Nothing ever reports a safe-area inset on a desktop
+ * window, so that one falls back -- and the two boxes are the same declaration
+ * apart from the name, which is what makes the difference visible rather than
+ * asserted.
+ *
+ * A separate literal because C89 guarantees only 509 characters after
+ * concatenation, and the sheet above is most of one already.
+ */
+static const char *SHEET_ENV =
+    ".envbar { display:block; height:15px; font-size:11px; color:#4a453e;"
+    "          background:#e8dfcb; padding-left: env(titlebar-area-width, 40px); }"
+    ".envfb  { display:block; height:15px; font-size:11px; color:#4a453e;"
+    "          background:#efe8d8; padding-left: env(safe-area-inset-left, 40px); }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -290,15 +323,23 @@ enum
     PAGE_FLOW,
     PAGE_POSITION,
     PAGE_SCROLL,
+    PAGE_SAFE,
     PAGE_COUNT
 };
 
 static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
-                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1"};
+                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2"};
 
-static const char *PAGE_NAME[PAGE_COUNT] = {
-    "One block, one blit", "The counters",     "Damage tracking",     "Outlines", "Scripts",
-    "The cascade",         "Block and inline", "Position and scroll", "Scrolling"};
+static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
+                                            "The counters",
+                                            "Damage tracking",
+                                            "Outlines",
+                                            "Scripts",
+                                            "The cascade",
+                                            "Block and inline",
+                                            "Position and scroll",
+                                            "Scrolling",
+                                            "Sticky and safe areas"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -309,7 +350,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Inheritance, combinators, !important, and the structural selectors.",
     "Margin collapsing, floats, line boxes and fragmented inlines.",
     "Absolute, fixed, sticky, z-index, and a list you can scroll.",
-    "Both axes, snapping, a styled bar, and the arrow keys."};
+    "Both axes, snapping, a styled bar, and the arrow keys.",
+    "Pinned from either edge, and the display the backend described."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -783,6 +825,54 @@ static void page_scroll(ar_ctx *ui, ar_i32 slide)
     ar_end(ui);
 }
 
+/*
+ * 0.6.2: pinned from either edge, and what the backend said about the display.
+ *
+ * The scroller holds a sticky header and a sticky footer at once. Scroll it and
+ * both stay put while the rows pass between them; scroll to either end and the
+ * one at that end lets go, because a sticky box may not leave its containing
+ * block. That clamp is what separates sticky from fixed, and it is where the
+ * bug this release fixed was living.
+ *
+ * The two env() bars underneath are the same declaration with a different name
+ * in it. The titlebar rectangle was reported, so it resolves to 120. Nothing
+ * reports a safe-area inset on a desktop window, so that one takes its 40 px
+ * fallback. A reported zero would resolve to zero rather than to the fallback,
+ * which is the distinction the whole design turns on and is not visible here
+ * because a window has no notch to report.
+ */
+static void page_safe(ar_ctx *ui)
+{
+    ar_i32 i;
+
+    ar_text(ui, "div.h2", "Pinned from both edges at once");
+    ar_text(ui, "div.dim",
+            "The green header holds at the top and the brown footer at the "
+            "bottom, both against the same scrollport. Scroll to either end "
+            "and that one lets go: a sticky box may not leave the box it "
+            "belongs to, which is the whole difference between sticky and "
+            "fixed.");
+    ar_begin(ui, "div.sscroll");
+    ar_text(ui, "div.shead", "pinned to the top");
+    for (i = 0; i < 16; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("row %ld", (long)(i + 1)));
+    }
+    ar_text(ui, "div.sfoot", "pinned to the bottom");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "env(), and whether anyone answered");
+    ar_text(ui, "div.dim",
+            "Both bars are indented by env() with a 40 px fallback. The first "
+            "asks for the titlebar width, which this program reported as 120. "
+            "The second asks for a safe-area inset, which nothing on a desktop "
+            "window reports, so it falls back. A backend answering zero would "
+            "give zero, not the fallback -- silence and zero are different "
+            "answers.");
+    ar_text(ui, "div.envbar", "titlebar-area-width, reported: indented 120");
+    ar_text(ui, "div.envfb", "safe-area-inset-left, unreported: indented 40");
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -808,6 +898,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_POSITION:
         page_position(ui, 10);
+        break;
+    case PAGE_SAFE:
+        page_safe(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1364,6 +1457,8 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_POS2);
     ar_stylesheet(ui, SHEET_SCROLL2);
     ar_stylesheet(ui, SHEET_SNAP);
+    ar_stylesheet(ui, SHEET_SAFE);
+    ar_stylesheet(ui, SHEET_ENV);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */
@@ -1376,6 +1471,24 @@ int main(int argc, char **argv)
         printf("stylesheet has %lu problem(s)\n", (unsigned long)ar_stylesheet_errors(ui));
         return 1;
     }
+
+    /*
+     * What this backend knows about the display, for the 0.6.2 page.
+     *
+     * The titlebar rectangle is reported, so `env(titlebar-area-*)` resolves to
+     * it. The safe-area insets deliberately are not: a windowed desktop has
+     * nothing covering its edges, and leaving them unreported is what makes the
+     * fallback path visible beside the reported one.
+     *
+     * `cover` rather than the default `auto`, and it changes nothing here. Under
+     * `auto` the layout viewport is the safe rectangle and `env(safe-area-*)`
+     * reports zero whatever the backend knows, because the stylesheet has
+     * already been kept clear of the insets -- so the page would have nothing to
+     * show. A real window's insets are zero either way, so asking for the whole
+     * display costs this tour no pixels and buys the demonstration.
+     */
+    ar_set_titlebar_area(ui, 0, 0, 120, 28);
+    ar_set_viewport_fit_cover(ui, 1);
 
     /* The font, before the first frame: a frame reserves the whole box budget
        from the other end of the arena and does not give it back until the
