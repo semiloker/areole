@@ -271,9 +271,16 @@ struct ar_ctx
     ar_rect   last_damage;   /* what ar_frame_end returned, for the backend */
     ar_i32    seen_last;     /* boxes in the tree last frame, to spot removals */
 
-    ar_u32 hot;     /* key of the box under the cursor         */
-    ar_u32 active;  /* key of the box the press started on     */
-    ar_u32 clicked; /* key of the box released on this frame   */
+    ar_u32 hot;
+
+    /* The same box as `hot`, by index rather than key. Anything asking
+       "is the cursor inside this subtree" -- light dismiss, and
+       inertness -- needs to walk parents, and a key would have to be
+       looked up first. Rebuilt every frame beside `hot`, so it is only
+       ever read in the frame that set it. */
+    ar_i32 hot_index; /* key of the box under the cursor         */
+    ar_u32 active;    /* key of the box the press started on     */
+    ar_u32 clicked;   /* key of the box released on this frame   */
     int    hot_changed;
 
     /*
