@@ -593,6 +593,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"bottom", AR_P_BOTTOM},
                                           {"left", AR_P_LEFT},
                                           {"z-index", AR_P_Z_INDEX},
+                                          {"overlay", AR_P_OVERLAY},
                                           {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
@@ -702,6 +703,9 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
                                      {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
                                      {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+
+                                     {"none", AR_P_OVERLAY, AR_OVERLAY_NONE},
+                                     {"auto", AR_P_OVERLAY, AR_OVERLAY_AUTO},
 
                                      {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
                                      {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},

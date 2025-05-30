@@ -1843,8 +1843,18 @@ static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
     {
         ar_node *n = &c->nodes[i];
 
-        if (n->parent < 0)
+        if (n->parent < 0 || ar_in_top_layer(n))
         {
+            /*
+             * The top layer starts a fresh clip at the viewport.
+             *
+             * Without this the concept does not work at all: `clip` is a strict
+             * intersection down the parent chain with no escape, so a modal
+             * declared inside anything with `overflow: hidden` would paint
+             * above everything and be clipped to a box it has no relationship
+             * with. Painting order and clipping have to agree that it left its
+             * ancestors behind.
+             */
             n->clip = viewport;
         }
         else

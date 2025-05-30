@@ -519,6 +519,10 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
 
+/* Whether this box is in the top layer, which paints above every stacking
+   context rather than merely above its siblings. */
+int ar_in_top_layer(const ar_node *n);
+
 /* Fills `order` with every visible box, back to front. Returns the count. */
 ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap);
 
