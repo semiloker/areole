@@ -133,6 +133,16 @@ typedef enum ar_prop
     AR_P_OVERLAY,
 
     /*
+     * `inert`: this box and its subtree take no pointer input.
+     *
+     * An HTML attribute rather than a CSS property, and areole has no
+     * attributes -- there is no parser and no element type. A property stands
+     * in until 0.9.0, on the same terms as `overlay` above: when the parser
+     * lands, `inert` on an element sets this and nothing here changes.
+     */
+    AR_P_INERT,
+
+    /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
      * the length of ar_style.v.
@@ -547,6 +557,17 @@ enum
     AR_OVERLAY_NONE = 0,
     AR_OVERLAY_AUTO = 1,
 
+    /*
+     * `modal` is areole's stand-in for what showModal() does: the top layer,
+     * *and* everything outside it made inert. CSS has no such value -- the
+     * modality comes from the element and its method, neither of which exists
+     * here yet. Named as a deviation rather than presented as CSS.
+     */
+    AR_OVERLAY_MODAL = 2,
+
+    AR_INERT_NONE = 0,
+    AR_INERT_AUTO = 1,
+
     AR_ANCHOR_AUTO = 0,
     AR_ANCHOR_NONE
 };
@@ -615,6 +636,14 @@ enum
     AR_STATE_LAST = 1 << 7,
     AR_STATE_ONLY = 1 << 8,
     AR_STATE_EMPTY = 1 << 9,
+
+    /*
+     * Not a selector state: nothing parses `:inert`, and this is written after
+     * the styles are resolved rather than before. It lives in the same word
+     * because the word had six spare bits and a per-box byte would have cost
+     * every box in the interface one.
+     */
+    AR_STATE_INERT = 1 << 10,
 
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)

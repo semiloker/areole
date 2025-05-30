@@ -566,6 +566,68 @@ void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
  * a scrolling ancestor further out is not this box's scrollport and cannot
  * rescue it.
  */
+/*
+ * Which boxes the pointer is not allowed to reach.
+ *
+ * Two sources, and the second is the interesting one. A box can say `inert`
+ * about itself and its subtree; and a modal in the top layer makes everything
+ * *outside* it inert, which is what stops a click landing on the page behind a
+ * dialog. That second rule depends on a box that may be declared after the one
+ * being asked about, so it cannot be answered while the tree is being built --
+ * the same shape as :last-child, and settled the same way, in a pass once the
+ * tree is closed.
+ *
+ * The topmost modal wins when there are several, because a stack of dialogs is
+ * a stack: the one opened last is the one you are talking to. Tree order is
+ * open order, so that is the last one found.
+ *
+ * Written into `state` after the styles are resolved, so nothing can select on
+ * it and the style cache never sees it. That is deliberate: `:inert` is not a
+ * selector areole parses, and putting a post-resolution value into the cache
+ * key's word is only safe because nothing reads it back.
+ */
+/* Defined further down, beside the other tree walks. Declared here because
+   inertness is settled long before that point in the file. */
+static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root);
+
+static void ar__mark_inert(ar_ctx *c)
+{
+    ar_i32 modal = -1;
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].style.v[AR_P_OVERLAY] == AR_OVERLAY_MODAL &&
+            c->nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            modal = i;
+        }
+    }
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   at;
+        int      inert = 0;
+
+        if (modal >= 0 && !ar__is_within(c, i, modal))
+        {
+            inert = 1;
+        }
+        for (at = i; at >= 0 && !inert; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_INERT] == AR_INERT_AUTO)
+            {
+                inert = 1;
+            }
+        }
+        if (inert)
+        {
+            n->state = (ar_u16)(n->state | AR_STATE_INERT);
+        }
+    }
+}
+
 static void ar__diagnose(ar_ctx *c)
 {
     ar_i32 i;
@@ -2106,6 +2168,10 @@ static int ar__reachable(const ar_node *n, ar_i32 x, ar_i32 y)
     {
         return 0;
     }
+    if (n->state & AR_STATE_INERT)
+    {
+        return 0;
+    }
     if (!ar_rect_contains(n->rect, x, y))
     {
         return 0;
@@ -2900,6 +2966,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Content widths, then clips: both once the rectangles are final and
        before anything asks for either. */
     ar__content_widths(c);
+    ar__mark_inert(c);
     ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
