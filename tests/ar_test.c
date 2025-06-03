@@ -5717,6 +5717,92 @@ static void test_a_non_modal_top_layer_box_makes_nothing_inert(void)
           "inert: a non-modal box in the top layer leaves the page reachable");
 }
 
+/* ------------------------------------------------------------------------
+ * ::backdrop
+ *
+ * The one pseudo-element areole has, and it matches no box: it is the sheet
+ * painted under a modal and over everything else. So it has to be checked on
+ * the pixels -- there is no rectangle to compare.
+ * ------------------------------------------------------------------------ */
+static ar_u32 ar__backdrop_px(const char *css, ar_i32 x, ar_i32 y)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_input   in;
+    ar_i32     i;
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+    }
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dlg");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    ar_frame_presented(g_ui);
+
+    return g_dmg_a[y * AR_DMG_W + x];
+}
+
+/* The page fills the surface in one colour; the dialog is a small box in the
+   corner. Everything interesting happens at a point the page covers and the
+   dialog does not. */
+static const char *AR_BD_CSS = "#root { display:block; }"
+                               ".page { display:block; position:absolute; top:0px; left:0px;"
+                               "        width:256px; height:128px; background:#3050a0; }"
+                               ".dlg  { display:block; position:absolute; top:0px; left:0px;"
+                               "        width:20px; height:20px; background:#ffffff; }";
+
+static void test_a_backdrop_paints_under_the_modal_and_over_the_page(void)
+{
+    ar_u32 plain, opaque, nonmodal;
+    char   css[900];
+
+    /* No modal, no backdrop: the page's own colour. */
+    plain = ar__backdrop_px(AR_BD_CSS, 128, 64);
+    CHECK((plain & 0xFFFFFFu) == 0x3050A0u, "backdrop: without one the page is what shows");
+
+    /* A modal with an opaque backdrop covers the page entirely. */
+    strcpy(css, AR_BD_CSS);
+    strcat(css, ".dlg { overlay: modal; } .dlg::backdrop { background:#101010; }");
+    opaque = ar__backdrop_px(css, 128, 64);
+    CHECK((opaque & 0xFFFFFFu) == 0x101010u, "backdrop: a modal's backdrop covers the page");
+
+    /* The same declaration on a box that is in the top layer but not modal
+       paints nothing: a popover has no backdrop, and that is the difference. */
+    strcpy(css, AR_BD_CSS);
+    strcat(css, ".dlg { overlay: auto; } .dlg::backdrop { background:#101010; }");
+    nonmodal = ar__backdrop_px(css, 128, 64);
+    CHECK((nonmodal & 0xFFFFFFu) == 0x3050A0u,
+          "backdrop: a non-modal box in the top layer has none");
+}
+
+static void test_a_backdrop_rule_styles_nothing_else(void)
+{
+    /* `.dlg::backdrop` must say nothing about `.dlg`, or every dialog would
+       take its backdrop's colour. The two passes are separate for this. */
+    ar__sheet(".dlg { display:block; background:#ffffff; }"
+              ".dlg::backdrop { background:#101010; }");
+    CHECK((ar__css_value(".dlg", 0, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFFFFFF,
+          "backdrop: a ::backdrop rule does not style the element it hangs off");
+
+    /* And an unknown pseudo-element is refused rather than silently matching
+       the element, which is how `::before` would otherwise start working. */
+    ar__sheet(".x { display:block; background:#ffffff; }"
+              ".x::before { background:#101010; }");
+    CHECK((ar__css_value(".x", 0, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFFFFFF,
+          "backdrop: a pseudo-element areole cannot paint is refused, not applied");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9526,6 +9612,8 @@ int main(void)
     test_a_modal_makes_everything_outside_it_unreachable();
     test_inert_marks_a_subtree_without_any_modal();
     test_a_non_modal_top_layer_box_makes_nothing_inert();
+    test_a_backdrop_paints_under_the_modal_and_over_the_page();
+    test_a_backdrop_rule_styles_nothing_else();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();

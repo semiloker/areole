@@ -760,6 +760,18 @@ typedef struct ar_rule
        against everything and the other does not. */
     ar_pset  important;
     ar_style style;
+
+    /*
+     * This rule was written `::backdrop`, so it styles the sheet painted
+     * behind a modal rather than any box in the tree.
+     *
+     * A flag on the rule rather than a pseudo-element in the selector engine,
+     * because there is exactly one pseudo-element and it matches no box: the
+     * backdrop is not in the tree, has no rectangle of its own until a modal
+     * gives it one, and would take a node slot and change every corpus's tree
+     * paths if it were a real box.
+     */
+    ar_u8 backdrop;
 } ar_rule;
 
 /* ------------------------------------------------------------------------
@@ -876,6 +888,18 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
+/*
+ * The style of the backdrop behind one modal.
+ *
+ * Deliberately not cached. The cache key is tag, class, id and state, and
+ * "is this the backdrop" is none of those -- so it would have to join the key
+ * or stay out, and this file says which of those to prefer. There is at most
+ * one backdrop per modal and modals are counted on one hand, so staying out
+ * costs a linear pass nobody will measure.
+ */
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out);
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out);
 

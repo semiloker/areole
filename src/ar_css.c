@@ -1585,7 +1585,7 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
                               ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
-                              ar_sel_simple *alt, ar_i32 *nalt)
+                              ar_sel_simple *alt, ar_i32 *nalt, ar_u8 *backdrop)
 {
     int any = 0;
 
@@ -1608,6 +1608,29 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
         {
             char mark = *z->p++;
+
+            /*
+             * A second colon is a pseudo-element, and `::backdrop` is the only
+             * one areole has. It is not part of the compound -- it selects
+             * something that is not a box -- so it sets a flag on the rule and
+             * the compound carries on being about the element.
+             */
+            if (mark == ':' && z->p < z->end && *z->p == ':')
+            {
+                z->p++;
+                len = ar__ident(z, &name);
+                if (len == 0 || !ar__same(name, len, "backdrop"))
+                {
+                    return 0; /* a pseudo-element nothing here can paint */
+                }
+                if (backdrop)
+                {
+                    *backdrop = 1;
+                }
+                any = 1;
+                continue;
+            }
+
             len = ar__ident(z, &name);
             if (len == 0)
             {
@@ -1775,7 +1798,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
             return 0; /* deeper than this holds; refused rather than truncated */
         }
         got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity, neg, &nneg,
-                                 alt, &nalt);
+                                 alt, &nalt, &rule->backdrop);
         if (!got)
         {
             return 0; /* a dangling combinator is malformed */
@@ -2196,7 +2219,7 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out)
+                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
 {
     ar_i32 i;
 
@@ -2218,6 +2241,13 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * which is exactly the shape of bug that survives a test suite.
          */
         if (r->nctx > 0)
+        {
+            continue;
+        }
+
+        /* `.dlg::backdrop` says nothing about `.dlg`, and `.dlg` says nothing
+           about its backdrop. One pass answers one of those questions. */
+        if ((int)r->backdrop != want_backdrop)
         {
             continue;
         }
@@ -2421,6 +2451,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     }
 }
 
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out)
+{
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1);
+}
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out)
 {
@@ -2428,7 +2464,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
     if (!sheet->cache_cap)
     {
-        ar__resolve_uncached(sheet, tag, klass, id, state, out);
+        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
         return;
     }
 
@@ -2443,7 +2479,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
         if (!e->used)
         {
-            ar__resolve_uncached(sheet, tag, klass, id, state, out);
+            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
             e->tag = tag;
             e->klass = klass->combined;
             e->id = id;
@@ -2466,6 +2502,6 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
        is slower than evicting something, and simpler than deciding what; an
        interface with that many colliding selectors has not been seen, and if
        one appears the counters say so. */
-    ar__resolve_uncached(sheet, tag, klass, id, state, out);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
     ++sheet->cache_misses;
 }
