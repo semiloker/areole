@@ -143,6 +143,21 @@ typedef enum ar_prop
     AR_P_INERT,
 
     /*
+     * `position-try`, cut down to the part that has stopped moving.
+     *
+     * The full property takes a list of fallback position sets, and
+     * `position-try-fallbacks` is named in tracked-unstable.md as still
+     * changing -- which the 0.6.3 plan schedules anyway, contradicting itself.
+     * The mechanism is what matters and it is stable: if the box would leave
+     * the viewport on an axis, flip it to the anchor's other side. That is
+     * what a popover near an edge needs and it is expressible in one keyword.
+     *
+     * The list grammar stays out until its trigger fires, which is the promise
+     * this project made about moving specifications.
+     */
+    AR_P_POSITION_TRY,
+
+    /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
      * the length of ar_style.v.
@@ -178,6 +193,17 @@ typedef enum ar_prop
        and they cascade as one. Two slots because a colour is a colour. */
     AR_P_SCROLLBAR_THUMB,
     AR_P_SCROLLBAR_TRACK,
+
+    /*
+     * `anchor-name` and `position-anchor`, as hashes of the ident.
+     *
+     * Wide because a hash is thirty-two bits and narrowing one would make two
+     * different names collide silently -- the worst kind of bug this struct
+     * can produce. Nothing ever needs the text back: an anchor is found by
+     * comparing a name to a name, which a hash answers exactly.
+     */
+    AR_P_ANCHOR_NAME,
+    AR_P_POSITION_ANCHOR,
 
     AR_P_COUNT
 } ar_prop;
@@ -267,6 +293,15 @@ typedef enum ar_unit
      * They must stay in AR_ENV_* order: the slot is the offset from
      * AR_UNIT_ENV_FIRST, which is what lets resolution be a table lookup.
      */
+    /*
+     * anchor(side) and anchor-size(dimension).
+     *
+     * A unit for the same reason env() is one: it says where the number comes
+     * from, and the number is not known until the anchor has been laid out.
+     * The value slot carries which edge, so one unit covers all of them.
+     */
+    AR_UNIT_ANCHOR,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -567,6 +602,21 @@ enum
 
     AR_INERT_NONE = 0,
     AR_INERT_AUTO = 1,
+
+    /* `position-try`. Flip on the axis that would leave the viewport. */
+    AR_TRY_NONE = 0,
+    AR_TRY_FLIP_BLOCK = 1,
+    AR_TRY_FLIP_INLINE = 2,
+    AR_TRY_FLIP_BOTH = 3,
+
+    /* Which edge of the anchor an anchor() refers to. */
+    AR_ANCHOR_SIDE_TOP = 0,
+    AR_ANCHOR_SIDE_RIGHT = 1,
+    AR_ANCHOR_SIDE_BOTTOM = 2,
+    AR_ANCHOR_SIDE_LEFT = 3,
+    AR_ANCHOR_SIDE_CENTER = 4,
+    AR_ANCHOR_SIZE_WIDTH = 5,
+    AR_ANCHOR_SIZE_HEIGHT = 6,
 
     AR_ANCHOR_AUTO = 0,
     AR_ANCHOR_NONE

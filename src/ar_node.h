@@ -536,6 +536,15 @@ int ar_is_out_of_flow(const ar_node *n);
    nearest positioned ancestor, or the viewport. */
 ar_rect ar_containing_block(const ar_node *nodes, ar_i32 i, ar_rect viewport);
 
+/* Rewrites every anchor() and anchor-size() into a plain length, against the
+   box each one names. Before placement, so nothing downstream knows about
+   anchors. */
+void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
+/* Flips an anchored box to the anchor's other side when it left the viewport.
+   After placement, because it is a reaction to where the box ended up. */
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
 void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
 

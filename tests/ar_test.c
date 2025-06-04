@@ -5803,6 +5803,131 @@ static void test_a_backdrop_rule_styles_nothing_else(void)
           "backdrop: a pseudo-element areole cannot paint is refused, not applied");
 }
 
+/* ------------------------------------------------------------------------
+ * Anchor positioning
+ *
+ * A positioned box measures its edges against a box it names, rather than
+ * against coordinates somebody worked out by hand. The anchor is 60 wide and
+ * 20 tall at (40, 50) in every case below, so the expected numbers are
+ * arithmetic on those four values and can be read without running anything.
+ * ------------------------------------------------------------------------ */
+static void ar__posanchor_scene(ar_surface *s, const char *extra)
+{
+    char     css[1000];
+    ar_input in;
+
+    strcpy(css, "#root { display:block; }"
+                ".anc { display:block; position:absolute; top:50px; left:40px;"
+                "       width:60px; height:20px; anchor-name: --a; }"
+                ".pop { display:block; position:absolute; position-anchor: --a; }");
+    strcat(css, extra);
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.anc");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.pop");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_anchor_places_a_box_against_the_box_it_names(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* Directly below: my top edge at the anchor's bottom, my left at its left.
+       The anchor is at y 50 and 20 tall, so 70; and at x 40. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).y == 70 && ar__box(2).x == 40,
+          "anchor: anchor(bottom) and anchor(left) attach the box to the anchor");
+
+    /* The trailing edges, which are measured from the other side of the
+       containing block and are where an off-by-one would show. Right edge at
+       the anchor's left edge, 40, so with a width of 30 the box starts at 10. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(top); right: anchor(left);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).x == 10 && ar__box(2).y == 50,
+          "anchor: a trailing inset measures from the far edge and still lands");
+
+    /* The centre of a 60 wide anchor starting at 40 is 70. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(center);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).x == 70, "anchor: anchor(center) is the middle of the anchor");
+}
+
+static void test_anchor_size_takes_the_anchors_measurements(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width: anchor-size(width); height: anchor-size(height); }");
+    CHECK(ar__box(2).w == 60 && ar__box(2).h == 20,
+          "anchor: anchor-size() gives the box the anchor's measurements");
+
+    /* Crossed on purpose: a width taking the anchor's height proves the two
+       are read separately rather than both falling back to one of them. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width: anchor-size(height); height:10px; }");
+    CHECK(ar__box(2).w == 20, "anchor: anchor-size(height) on a width is the anchor's height");
+}
+
+static void test_position_try_flips_a_box_that_left_the_viewport(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* A box 400 tall hung below an anchor at y 70 runs off a 300 tall
+       viewport. Flipped, its bottom sits on the anchor's top edge at 50, so it
+       starts at 50 - 400. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:400px; position-try: flip-block; }");
+    CHECK(ar__box(2).y == 50 - 400, "anchor: position-try flips a box that ran off the bottom");
+
+    /* The control, and the reason it is here: without the property the box
+       stays where it was put and runs off the edge. A flip that happens
+       anyway would pass the check above for the wrong reason. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:400px; }");
+    CHECK(ar__box(2).y == 70, "anchor: without position-try it stays put and overflows");
+
+    /* And a box that fits is not flipped, which is the other way to get this
+       wrong. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:10px; position-try: flip-block; }");
+    CHECK(ar__box(2).y == 70, "anchor: a box that fits is left alone");
+}
+
+static void test_an_anchor_nobody_declared_changes_nothing(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* Naming an anchor that does not exist must leave the box where the
+       ordinary rules put it rather than at some resolved-against-nothing
+       coordinate. */
+    ar__ui_reset("#root { display:block; }"
+                 ".pop { display:block; position:absolute; position-anchor: --missing;"
+                 "       top: anchor(bottom); left:15px; width:30px; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.pop");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+    CHECK(ar__box(1).x == 15, "anchor: an unresolved anchor leaves the other insets working");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9614,6 +9739,10 @@ int main(void)
     test_a_non_modal_top_layer_box_makes_nothing_inert();
     test_a_backdrop_paints_under_the_modal_and_over_the_page();
     test_a_backdrop_rule_styles_nothing_else();
+    test_anchor_places_a_box_against_the_box_it_names();
+    test_anchor_size_takes_the_anchors_measurements();
+    test_position_try_flips_a_box_that_left_the_viewport();
+    test_an_anchor_nobody_declared_changes_nothing();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();
