@@ -101,6 +101,11 @@ if(WIN32)
     target_link_libraries(example_env PRIVATE areole_win32)
     areole_set_warnings(example_env)
 
+    # The anchor corpus. A real comparison: Edge implements anchor positioning.
+    add_executable(example_anchor examples/08_anchor/main.c)
+    target_link_libraries(example_anchor PRIVATE areole_win32)
+    areole_set_warnings(example_anchor)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
