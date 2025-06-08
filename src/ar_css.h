@@ -157,6 +157,21 @@ typedef enum ar_prop
      */
     AR_P_POSITION_TRY,
 
+    /* ------------------------------------------------------------------
+     * Tables
+     *
+     * `colspan` and `rowspan` are HTML attributes rather than CSS, and there
+     * are no attributes here until the parser lands at 0.9.0. They are
+     * properties on the same terms `inert` and `overlay` are: the mechanism
+     * has to exist for the parser to drive, and this is the only way to say
+     * it today. Named as a deviation rather than presented as CSS.
+     * ------------------------------------------------------------------ */
+    AR_P_TABLE_LAYOUT,
+    AR_P_BORDER_COLLAPSE,
+    AR_P_BORDER_SPACING,
+    AR_P_COLSPAN,
+    AR_P_ROWSPAN,
+
     /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
@@ -224,7 +239,12 @@ typedef enum ar_prop
  * Passing it by value keeps every call site reading the way it did when it was
  * an integer, which is most of why this is a struct rather than an array.
  */
-#define AR_PSET_WORDS 2
+/* Two words held sixty-four properties and tables needed a sixty-fifth.
+   Three words is twelve bytes per style, and a style is carried by every
+   box and every rule -- so this is one of the more expensive constants in
+   the file, and the assertion below is what makes the cost visible rather
+   than letting a property silently fall off the end of the mask. */
+#define AR_PSET_WORDS 3
 
 typedef struct ar_pset
 {
@@ -389,7 +409,40 @@ enum
      * a paragraph is one box and may be two rectangles, or five, and the ones
      * in the middle get no borders or padding on the sides where they were cut.
      */
-    AR_DISPLAY_INLINE
+    AR_DISPLAY_INLINE,
+
+    /* ------------------------------------------------------------------
+     * The table display values.
+     *
+     * Kept contiguous and in this order so a range test can ask "is this
+     * table-internal" in one comparison rather than nine. AR_DISPLAY_TABLE
+     * itself is deliberately outside that range: a table box is a block-level
+     * box that happens to lay its children out differently, and it is the one
+     * value that appears in ordinary flow.
+     * ------------------------------------------------------------------ */
+    AR_DISPLAY_TABLE,
+
+    AR_DISPLAY_TABLE_ROW_GROUP,
+    AR_DISPLAY_TABLE_HEADER_GROUP,
+    AR_DISPLAY_TABLE_FOOTER_GROUP,
+    AR_DISPLAY_TABLE_ROW,
+    AR_DISPLAY_TABLE_CELL,
+    AR_DISPLAY_TABLE_COLUMN_GROUP,
+    AR_DISPLAY_TABLE_COLUMN,
+    AR_DISPLAY_TABLE_CAPTION,
+
+    AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
+    AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
+};
+
+/* Table keyword values. */
+enum
+{
+    AR_TABLE_LAYOUT_AUTO = 0,
+    AR_TABLE_LAYOUT_FIXED = 1,
+
+    AR_BORDER_SEPARATE = 0,
+    AR_BORDER_COLLAPSE = 1
 };
 
 enum
@@ -695,6 +748,16 @@ enum
      */
     AR_STATE_INERT = 1 << 10,
 
+    /*
+     * This box was generated to hold something, not declared.
+     *
+     * Not a selector state either: it exists so a combinator can climb past
+     * it. `tr > td` has to keep matching when the row between them is one
+     * areole invented, or fixing up malformed markup would silently break the
+     * stylesheet written against the markup it was fixing.
+     */
+    AR_STATE_ANON = 1 << 11,
+
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
@@ -876,6 +939,12 @@ typedef struct ar_sheet
        with the same payoff as the flag below: a sheet without one skips it. */
     int has_late_state;
 
+    /* Whether any rule in this sheet says `display` is a table value. A sheet
+       without one skips the anonymous-box check on every ar_begin entirely,
+       which is the overwhelming majority of interfaces -- the same bargain
+       has_combinator makes below. */
+    int has_table;
+
     /* Whether any rule in this sheet carries a combinator. A sheet without
        one skips the contextual pass entirely, which is most sheets. */
     int has_contextual;
@@ -947,6 +1016,10 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
  * one backdrop per modal and modals are counted on one hand, so staying out
  * costs a linear pass nobody will measure.
  */
+/* Sets sheet->has_table if any rule declares a table display. Called once
+   per ar_stylesheet, never per box. */
+void ar_sheet_note_tables(ar_sheet *sheet);
+
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                ar_u32 id, ar_u16 state, ar_style *out);
 

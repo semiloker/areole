@@ -244,6 +244,14 @@ struct ar_ctx
     int    scrolled; /* something moved, so the next frame differs */
 
     ar_i32 stack[AR_MAX_DEPTH];
+
+    /* Which entries of `stack` are anonymous table boxes this frame generated
+       rather than boxes the caller declared. They close when the box holding
+       them closes, or when something arrives that cannot live inside them --
+       not when the box that caused them closes, or two bare cells would get a
+       row each instead of sharing one. Declaration state, dead once the frame
+       is built, so it lives here rather than costing every box a byte. */
+    ar_u8  is_anon[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
 

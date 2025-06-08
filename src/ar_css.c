@@ -104,6 +104,22 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_OVERFLOW] = AR_OVERFLOW_VISIBLE;
     s->v[AR_P_OVERFLOW_X] = AR_OVERFLOW_VISIBLE;
     s->unit[AR_P_OVERFLOW] = AR_UNIT_KEYWORD;
+    /*
+     * A cell spans one column and one row, not zero.
+     *
+     * The loop above zeroes every property, which is right for a length and
+     * wrong for a count: a cell that spans nothing occupies no column, so the
+     * grid pass would assign every cell to column zero and the table would
+     * collapse into a single stack. Worth stating because the failure looks
+     * like a layout bug and is a default.
+     */
+    s->v[AR_P_COLSPAN] = 1;
+    s->v[AR_P_ROWSPAN] = 1;
+    s->v[AR_P_TABLE_LAYOUT] = AR_TABLE_LAYOUT_AUTO;
+    s->unit[AR_P_TABLE_LAYOUT] = AR_UNIT_KEYWORD;
+    s->v[AR_P_BORDER_COLLAPSE] = AR_BORDER_SEPARATE;
+    s->unit[AR_P_BORDER_COLLAPSE] = AR_UNIT_KEYWORD;
+
     s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
     s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
     s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
@@ -598,6 +614,11 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"anchor-name", AR_P_ANCHOR_NAME},
                                           {"position-anchor", AR_P_POSITION_ANCHOR},
                                           {"position-try", AR_P_POSITION_TRY},
+                                          {"table-layout", AR_P_TABLE_LAYOUT},
+                                          {"border-collapse", AR_P_BORDER_COLLAPSE},
+                                          {"border-spacing", AR_P_BORDER_SPACING},
+                                          {"colspan", AR_P_COLSPAN},
+                                          {"rowspan", AR_P_ROWSPAN},
                                           {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
@@ -643,108 +664,125 @@ typedef struct ar__kw
     ar_i32      value;
 } ar__kw;
 
-static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
-                                     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
-                                     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
-                                     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
-                                     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
+static const ar__kw AR_KEYWORDS[] = {
+    {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
+    {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
+    {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
+    {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+    {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
 
-                                     {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
-                                     {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
-                                     {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+    {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
+    {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
+    {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
 
-                                     {"content-box", AR_P_BOX_SIZING, AR_BOX_CONTENT},
-                                     {"border-box", AR_P_BOX_SIZING, AR_BOX_BORDER},
+    {"content-box", AR_P_BOX_SIZING, AR_BOX_CONTENT},
+    {"border-box", AR_P_BOX_SIZING, AR_BOX_BORDER},
 
-                                     {"static", AR_P_POSITION, AR_POS_STATIC},
-                                     {"relative", AR_P_POSITION, AR_POS_RELATIVE},
-                                     {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
-                                     {"fixed", AR_P_POSITION, AR_POS_FIXED},
-                                     {"sticky", AR_P_POSITION, AR_POS_STICKY},
+    {"static", AR_P_POSITION, AR_POS_STATIC},
+    {"relative", AR_P_POSITION, AR_POS_RELATIVE},
+    {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
+    {"fixed", AR_P_POSITION, AR_POS_FIXED},
+    {"sticky", AR_P_POSITION, AR_POS_STICKY},
 
-                                     {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
-                                     {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
-                                     {"left", AR_P_CLEAR, AR_CLEAR_LEFT},
-                                     {"right", AR_P_CLEAR, AR_CLEAR_RIGHT},
-                                     {"both", AR_P_CLEAR, AR_CLEAR_BOTH},
+    {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
+    {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
+    {"left", AR_P_CLEAR, AR_CLEAR_LEFT},
+    {"right", AR_P_CLEAR, AR_CLEAR_RIGHT},
+    {"both", AR_P_CLEAR, AR_CLEAR_BOTH},
 
-                                     {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
-                                     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
-                                     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
-                                     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
+    {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
+    {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
+    {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
+    {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
 
-                                     {"row", AR_P_DIRECTION, AR_DIR_ROW},
-                                     {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
+    {"row", AR_P_DIRECTION, AR_DIR_ROW},
+    {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
 
-                                     {"flex-start", AR_P_JUSTIFY, AR_JUSTIFY_START},
-                                     {"start", AR_P_JUSTIFY, AR_JUSTIFY_START},
-                                     {"center", AR_P_JUSTIFY, AR_JUSTIFY_CENTER},
-                                     {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
-                                     {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
-                                     {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
+    {"flex-start", AR_P_JUSTIFY, AR_JUSTIFY_START},
+    {"start", AR_P_JUSTIFY, AR_JUSTIFY_START},
+    {"center", AR_P_JUSTIFY, AR_JUSTIFY_CENTER},
+    {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
+    {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
+    {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
 
-                                     {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
-                                     {"start", AR_P_ALIGN, AR_ALIGN_START},
-                                     {"center", AR_P_ALIGN, AR_ALIGN_CENTER},
-                                     {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
-                                     {"end", AR_P_ALIGN, AR_ALIGN_END},
-                                     {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
+    {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
+    {"start", AR_P_ALIGN, AR_ALIGN_START},
+    {"center", AR_P_ALIGN, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
+    {"end", AR_P_ALIGN, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
 
-                                     {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
-                                     {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
-                                     {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
+    {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
+    {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
+    {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
+    {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
 
-                                     {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
-                                     {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
-                                     {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO},
+    {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
+    {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
+    {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
+    {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO},
 
-                                     {"auto", AR_P_OVERSCROLL, AR_OVERSCROLL_AUTO},
-                                     {"contain", AR_P_OVERSCROLL, AR_OVERSCROLL_CONTAIN},
-                                     {"none", AR_P_OVERSCROLL, AR_OVERSCROLL_NONE},
+    {"auto", AR_P_OVERSCROLL, AR_OVERSCROLL_AUTO},
+    {"contain", AR_P_OVERSCROLL, AR_OVERSCROLL_CONTAIN},
+    {"none", AR_P_OVERSCROLL, AR_OVERSCROLL_NONE},
 
-                                     {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
-                                     {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
-                                     {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+    {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
+    {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
+    {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
 
-                                     {"none", AR_P_OVERLAY, AR_OVERLAY_NONE},
-                                     {"auto", AR_P_OVERLAY, AR_OVERLAY_AUTO},
-                                     {"modal", AR_P_OVERLAY, AR_OVERLAY_MODAL},
+    {"none", AR_P_OVERLAY, AR_OVERLAY_NONE},
+    {"auto", AR_P_OVERLAY, AR_OVERLAY_AUTO},
+    {"modal", AR_P_OVERLAY, AR_OVERLAY_MODAL},
 
-                                     {"none", AR_P_INERT, AR_INERT_NONE},
-                                     {"auto", AR_P_INERT, AR_INERT_AUTO},
+    {"none", AR_P_INERT, AR_INERT_NONE},
+    {"auto", AR_P_INERT, AR_INERT_AUTO},
 
-                                     {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
-                                     {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
-                                     {"flip-inline", AR_P_POSITION_TRY, AR_TRY_FLIP_INLINE},
-                                     {"flip-both", AR_P_POSITION_TRY, AR_TRY_FLIP_BOTH},
+    {"table", AR_P_DISPLAY, AR_DISPLAY_TABLE},
+    {"table-row-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_ROW_GROUP},
+    {"table-header-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_HEADER_GROUP},
+    {"table-footer-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_FOOTER_GROUP},
+    {"table-row", AR_P_DISPLAY, AR_DISPLAY_TABLE_ROW},
+    {"table-cell", AR_P_DISPLAY, AR_DISPLAY_TABLE_CELL},
+    {"table-column-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_COLUMN_GROUP},
+    {"table-column", AR_P_DISPLAY, AR_DISPLAY_TABLE_COLUMN},
+    {"table-caption", AR_P_DISPLAY, AR_DISPLAY_TABLE_CAPTION},
 
-                                     {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
-                                     {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
+    {"auto", AR_P_TABLE_LAYOUT, AR_TABLE_LAYOUT_AUTO},
+    {"fixed", AR_P_TABLE_LAYOUT, AR_TABLE_LAYOUT_FIXED},
 
-                                     {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
-                                     {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},
-                                     {"y", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_Y},
-                                     {"both", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_BOTH},
-                                     {"mandatory", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_MANDATORY},
-                                     {"proximity", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_PROXIMITY},
+    {"separate", AR_P_BORDER_COLLAPSE, AR_BORDER_SEPARATE},
+    {"collapse", AR_P_BORDER_COLLAPSE, AR_BORDER_COLLAPSE},
 
-                                     {"none", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_NONE},
-                                     {"start", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_START},
-                                     {"center", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_CENTER},
-                                     {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
+    {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
+    {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
+    {"flip-inline", AR_P_POSITION_TRY, AR_TRY_FLIP_INLINE},
+    {"flip-both", AR_P_POSITION_TRY, AR_TRY_FLIP_BOTH},
 
-                                     {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
-                                     {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
+    {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
+    {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
 
-                                     {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
-                                     {"thin", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_THIN},
-                                     {"none", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_HIDDEN},
+    {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
+    {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},
+    {"y", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_Y},
+    {"both", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_BOTH},
+    {"mandatory", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_MANDATORY},
+    {"proximity", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_PROXIMITY},
 
-                                     {"auto", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_AUTO},
-                                     {"stable", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_STABLE},
-                                     {"both-edges", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_BOTH_EDGES}};
+    {"none", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_NONE},
+    {"start", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_START},
+    {"center", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_CENTER},
+    {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
+
+    {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
+    {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
+
+    {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
+    {"thin", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_THIN},
+    {"none", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_HIDDEN},
+
+    {"auto", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_AUTO},
+    {"stable", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_STABLE},
+    {"both-edges", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_BOTH_EDGES}};
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))
 
@@ -760,6 +798,29 @@ static const char *const AR_ENV_NAMES[AR_ENV_COUNT] = {
     "safe-area-inset-top",  "safe-area-inset-right", "safe-area-inset-bottom",
     "safe-area-inset-left", "titlebar-area-x",       "titlebar-area-y",
     "titlebar-area-width",  "titlebar-area-height"};
+
+/*
+ * Does this sheet mention a table display anywhere?
+ *
+ * Asked once when a stylesheet is added, not per box. A sheet that never says
+ * `display: table-*` cannot produce a box that needs an anonymous parent, so
+ * ar_begin can skip the whole question -- which is what keeps tables from
+ * costing anything to an interface that has none.
+ */
+void ar_sheet_note_tables(ar_sheet *sheet)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        if (ar_pset_has(sheet->rules[i].set, AR_P_DISPLAY) &&
+            sheet->rules[i].style.v[AR_P_DISPLAY] >= AR_DISPLAY_TABLE)
+        {
+            sheet->has_table = 1;
+            return;
+        }
+    }
+}
 
 ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback)
 {
