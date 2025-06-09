@@ -360,6 +360,21 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         ar_block_margins(n, nodes);
         ar__min_content(nodes, i);
 
+        if (ar_is_table(n))
+        {
+            /* Every cell beneath this box has been visited, so its column
+               constraints are answerable -- and nothing else here is, because
+               the table has no width yet. */
+            ar_table_measure(nodes, i);
+            continue;
+        }
+        if (ar_is_table_internal(n) || ar_is_table_cell(n))
+        {
+            /* Both stack their contents vertically rather than laying them out
+               along an axis, which is what block measurement already means. */
+            ar__measure_block(nodes, i);
+            continue;
+        }
         if (ar_is_block(n))
         {
             ar__measure_block(nodes, i);
@@ -473,10 +488,29 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
  * stretched by align-items has already been told how tall to be, and text that
  * does not fit that is the caller's decision to make.
  */
-static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
+static void ar__wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch,
+                            ar_layout_env *env)
 {
+    /*
+     * A table answers this question too, and answering it *here* is what lets
+     * a table stack like any other box.
+     *
+     * Its parent fixes its y-position while stacking its children, which
+     * happens before the forward sweep ever reaches the table node -- so a
+     * height corrected any later would leave every following sibling where the
+     * wrong height had put it. This is the one place that already means "the
+     * width is settled, now fix the height", and it has five callers between
+     * them covering block flow, flex flow and shrink-to-fit. A table gets all
+     * five for free.
+     */
     ar_i32 inner_w;
     ar_i32 h;
+
+    if (nodes && ar_is_table(n))
+    {
+        n->rect.h = ar_table_height(nodes, (ar_i32)(n - nodes), env);
+        return;
+    }
 
     if (!env->wrap || !n->text)
     {
@@ -522,7 +556,7 @@ typedef struct ar__stack_ud
 
 /* Gives an out-of-flow or inline-level box its size, which for both is
    shrink-to-fit rather than "fill the container". */
-static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *env)
+static void ar__size_shrink_to_fit(ar_node *nodes, ar_node *ch, ar_i32 inner_w, ar_layout_env *env)
 {
     /*
      * A box whose text will be cut into fragments is one line tall, and the
@@ -577,7 +611,7 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
     ch->rect.h =
         ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
 
-    ar__wrap_height(ch, 1, 0, env);
+    ar__wrap_height(nodes, ch, 1, 0, env);
 }
 
 static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
@@ -607,7 +641,7 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
         {
             continue;
         }
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
     }
 
     return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align,
@@ -624,7 +658,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
        handed to the float list to be pushed to its side. */
     if (real == -1)
     {
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
         return;
     }
@@ -634,7 +668,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
        resolves whichever of those its offsets override. */
     if (real == -2)
     {
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ch->rect.x = su->left;
         ch->rect.y = su->top + y;
         return;
@@ -782,7 +816,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
-        ar__wrap_height(ch, 1, 0, env);
+        ar__wrap_height(nodes, ch, 1, 0, env);
     }
 
     /* The stack, by the same walk the measure pass used. */
@@ -864,6 +898,23 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             continue;
         }
 
+        if (ar_is_table(n))
+        {
+            ar_table_place(nodes, i, env);
+            continue;
+        }
+        if (ar_is_table_internal(n))
+        {
+            /* The table already placed every cell in this row. Falling through
+               would hand them to the flex algorithm, which would place them
+               again and undo the columns. */
+            continue;
+        }
+        if (ar_is_table_cell(n))
+        {
+            ar__place_block(nodes, i, env);
+            continue;
+        }
         if (ar_is_block(n))
         {
             ar__place_block(nodes, i, env);
@@ -921,7 +972,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                produces is the one that feeds `used`. */
             if (!(axis == 0 && ch->style.unit[AR_P_WIDTH] == AR_UNIT_GROW))
             {
-                ar__wrap_height(ch, axis, stretch, env);
+                ar__wrap_height(nodes, ch, axis, stretch, env);
             }
 
             used += *ar__size(&ch->rect, axis) + ar__margin_lead(&ch->style, axis) +
@@ -970,7 +1021,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                    main-axis arithmetic above, so doing it late costs nothing. */
                 if (axis == 0)
                 {
-                    ar__wrap_height(ch, axis, stretch, env);
+                    ar__wrap_height(nodes, ch, axis, stretch, env);
                 }
             }
             leftover = 0; /* absorbed, so justify-content has nothing to place */

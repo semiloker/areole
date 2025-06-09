@@ -527,6 +527,30 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
 
+/* ------------------------------------------------------------------------
+ * Tables -- ar_layout_table.c
+ * ------------------------------------------------------------------------ */
+
+int ar_is_table(const ar_node *n);
+
+/* Rows and row groups: the table placed their children, so the ordinary
+   sweep must not lay them out again. */
+int ar_is_table_internal(const ar_node *n);
+
+/* A cell, which is a block for whatever is inside it. */
+int ar_is_table_cell(const ar_node *n);
+
+/* The backward sweep's share: column constraints, and the two intrinsic widths
+   they give the table box. No width exists yet, so nothing is placed. */
+void ar_table_measure(ar_node *nodes, ar_i32 table);
+
+/* How tall the table comes to at the width it now has. Called from the same
+   place a paragraph's height is corrected. */
+ar_i32 ar_table_height(ar_node *nodes, ar_i32 table, ar_layout_env *env);
+
+/* The forward sweep's share: rectangles, from a grid already decided. */
+void ar_table_place(ar_node *nodes, ar_i32 table, ar_layout_env *env);
+
 /* Whether this box is in the top layer, which paints above every stacking
    context rather than merely above its siblings. */
 int ar_in_top_layer(const ar_node *n);
