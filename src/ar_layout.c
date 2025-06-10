@@ -508,7 +508,17 @@ static void ar__wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch
 
     if (nodes && ar_is_table(n))
     {
-        n->rect.h = ar_table_height(nodes, (ar_i32)(n - nodes), env);
+        ar_i32 th = ar_table_height(nodes, (ar_i32)(n - nodes), env);
+
+        /* A table is still a box: a stated height is a floor and min/max still
+           clamp it. Returning the solved height raw skipped both, so
+           `display:table; height:400px` computed a height and threw it away --
+           every other box in this function gets clamped and a table did not. */
+        if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_PX && n->style.v[AR_P_HEIGHT] > th)
+        {
+            th = n->style.v[AR_P_HEIGHT];
+        }
+        n->rect.h = ar__clamp(th, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
         return;
     }
 

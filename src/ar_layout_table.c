@@ -53,6 +53,13 @@ typedef struct ar__col
     ar_i32 min, max;  /* content constraints, accumulated over the column */
     ar_i32 w, x;      /* what it got, and where it starts */
     ar_i32 span_left; /* rows still covered by a rowspan from above */
+
+    /* The cell doing the covering, so its height can be settled on the last
+       row it reaches rather than guessed on the first. */
+    ar_i32 span_node;
+    ar_i32 span_y;
+    ar_i32 span_h;
+    ar_i32 span_rows;
 } ar__col;
 
 static int ar__is_row(const ar_node *n)
@@ -186,19 +193,59 @@ static ar_i32 ar__cell_span(const ar_node *n, ar_i32 prop)
     return v < 1 ? 1 : v;
 }
 
-/* The horizontal chrome a cell adds to its content: its own padding and
-   border. Uniform borders for now -- collapsed borders arrive with their own
-   commit and change this. */
-static ar_i32 ar__cell_chrome_x(const ar_node *n)
+/*
+ * What a cell adds around the numbers the measure sweep already produced.
+ *
+ * Only the border, and that is the whole point: `min_w` and `fit[0]` are built
+ * by ar__measure_block as `widest + pad_left + pad_right`, so the padding is
+ * already in them. Adding it again here made every column that much too wide,
+ * and the tests missed it because none of them gave a cell any padding.
+ */
+static ar_i32 ar__cell_border_x(const ar_node *n)
 {
-    return n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT] +
-           2 * n->style.v[AR_P_BORDER_WIDTH];
+    return 2 * n->style.v[AR_P_BORDER_WIDTH];
 }
 
-static ar_i32 ar__cell_chrome_y(const ar_node *n)
+static ar_i32 ar__cell_border_y(const ar_node *n)
 {
-    return n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM] +
-           2 * n->style.v[AR_P_BORDER_WIDTH];
+    return 2 * n->style.v[AR_P_BORDER_WIDTH];
+}
+
+/* A stated height is a content height, so it needs the padding the intrinsic
+   one already carries before the two can be compared. */
+static ar_i32 ar__cell_stated_h(const ar_node *n)
+{
+    if (n->style.unit[AR_P_HEIGHT] != AR_UNIT_PX)
+    {
+        return 0;
+    }
+    return n->style.v[AR_P_HEIGHT] + n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM] +
+           ar__cell_border_y(n);
+}
+
+/*
+ * a * b / d without overflowing, for numbers that are not as small as they
+ * look.
+ *
+ * The obvious form carried a comment saying both factors were under the
+ * sixteen-bit style ceiling. That was false: a column's maximum comes from
+ * fit[0], which ar_style_clamp_narrow explicitly does not touch -- its own
+ * comment says "nothing computed passes through here" -- so one long unbroken
+ * string gives a column a max in the tens of thousands and the product leaves
+ * ar_i32. Dividing first when it would costs a pixel of precision and is
+ * always right, which is the better trade for a layout nobody can see.
+ */
+static ar_i32 ar__scale(ar_i32 a, ar_i32 b, ar_i32 d)
+{
+    if (a <= 0 || b <= 0 || d <= 0)
+    {
+        return 0;
+    }
+    if (a <= 2147483647 / b)
+    {
+        return a * b / d;
+    }
+    return (a / d) * b;
 }
 
 /*
@@ -222,6 +269,10 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
         col[i].w = 0;
         col[i].x = 0;
         col[i].span_left = 0;
+        col[i].span_node = -1;
+        col[i].span_y = 0;
+        col[i].span_h = 0;
+        col[i].span_rows = 1;
     }
 
     while ((row = ar__next_row(nodes, table, row)) >= 0)
@@ -254,7 +305,7 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
                 cs = AR_MAX_COLUMNS - at;
             }
 
-            chrome = ar__cell_chrome_x(&nodes[c]);
+            chrome = ar__cell_border_x(&nodes[c]);
 
             if (cs == 1)
             {
@@ -292,9 +343,21 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
              * its way out, so the next row's first cell slid straight under a
              * cell that was still there.
              */
+            /*
+             * The longest claim wins.
+             *
+             * Assigning here released a column early: a cell spanning two
+             * columns, one of which a three-row cell was still holding, wrote
+             * its own single row over that three and the row below slid
+             * underneath a cell that was still there. The same failure the
+             * countdown was added to prevent, arriving from the other axis.
+             */
             for (j = at; j < at + cs && j < AR_MAX_COLUMNS; ++j)
             {
-                col[j].span_left = rs;
+                if (rs > col[j].span_left)
+                {
+                    col[j].span_left = rs;
+                }
             }
             at += cs;
             if (at > ncol)
@@ -345,6 +408,12 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
 static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 ncol)
 {
     ar_i32 row = -1;
+    ar_i32 i;
+
+    for (i = 0; i < ncol; ++i)
+    {
+        col[i].span_left = 0;
+    }
 
     while ((row = ar__next_row(nodes, table, row)) >= 0)
     {
@@ -353,26 +422,67 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
 
         for (; c >= 0; c = nodes[c].next_sibling)
         {
-            ar_i32 cs, j, have_min = 0, have_max = 0, want_min, want_max, chrome;
+            ar_i32 cs, rs, j, have_min = 0, have_max = 0, want_min, want_max, chrome;
 
             if (!ar__is_cell(&nodes[c]) || nodes[c].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
             {
                 continue;
             }
+
+            /*
+             * This pass has to walk the grid the same way the other two do.
+             *
+             * It did not track the rowspan countdown at all, so in any table
+             * with both a rowspan and a spanning cell it folded that cell's
+             * width demand into the columns to the left of the ones it
+             * actually occupies -- widening a column nobody asked to widen and
+             * leaving the spanning cell too narrow.
+             */
+            while (at < ncol && col[at].span_left > 0)
+            {
+                ++at;
+            }
+            if (at >= ncol)
+            {
+                break;
+            }
+
             cs = ar__cell_span(&nodes[c], AR_P_COLSPAN);
+            rs = ar__cell_span(&nodes[c], AR_P_ROWSPAN);
             if (at + cs > ncol)
             {
                 cs = ncol - at;
             }
-            if (cs <= 1 || at >= ncol)
+            if (cs <= 1)
             {
-                at += cs < 1 ? 1 : cs;
+                if (rs > col[at].span_left)
+                {
+                    col[at].span_left = rs;
+                }
+                at += 1;
                 continue;
             }
 
-            chrome = ar__cell_chrome_x(&nodes[c]);
+            chrome = ar__cell_border_x(&nodes[c]);
             want_min = nodes[c].min_w + chrome;
             want_max = nodes[c].fit[0] + chrome;
+
+            /* A stated width counts for a spanning cell too. Only the
+               single-column pass honoured it, so `colspan:2; width:300px` on
+               an empty cell widened nothing at all. */
+            if (nodes[c].style.unit[AR_P_WIDTH] == AR_UNIT_PX)
+            {
+                ar_i32 stated = nodes[c].style.v[AR_P_WIDTH] + chrome;
+
+                if (stated > want_min)
+                {
+                    want_min = stated;
+                }
+                if (stated > want_max)
+                {
+                    want_max = stated;
+                }
+            }
 
             for (j = at; j < at + cs; ++j)
             {
@@ -418,8 +528,20 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
                 {
                     col[j].max = col[j].min;
                 }
+                if (rs > col[j].span_left)
+                {
+                    col[j].span_left = rs;
+                }
             }
             at += cs;
+        }
+
+        for (at = 0; at < ncol; ++at)
+        {
+            if (col[at].span_left > 0)
+            {
+                --col[at].span_left;
+            }
         }
     }
 }
@@ -505,9 +627,9 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
             }
             else
             {
-                ar_i32 span = col[i].max - col[i].min; /* both <= 32767 */
+                ar_i32 span = col[i].max - col[i].min;
 
-                give = span > 0 ? span * slack / room : 0;
+                give = ar__scale(span, slack, room);
             }
             col[i].w = col[i].min + give;
             given += give;
@@ -535,24 +657,26 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
  */
 static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
 {
-    ar_i32 h = n->fit[1];
-
     /*
-     * A stated height is a floor, and it is not in fit[1].
+     * A border box, from whichever of the two answers is larger.
      *
-     * fit[1] is what the *content* comes to; `height: 20px` on an empty cell
-     * leaves it zero, so a table of empty cells came out with rows of no
-     * height at all. The two are different questions and the row wants the
-     * larger answer.
+     * fit[1] is what the *content* comes to, padding included and border not;
+     * a stated height is content only. `height: 20px` on an empty cell leaves
+     * fit[1] at zero, so a table of empty cells came out with rows of no
+     * height at all -- two different questions, and the row wants the larger
+     * answer expressed in the same units.
      */
-    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_PX && n->style.v[AR_P_HEIGHT] > h)
+    ar_i32 stated = ar__cell_stated_h(n);
+    ar_i32 h = n->fit[1] + ar__cell_border_y(n);
+
+    if (stated > h)
     {
-        h = n->style.v[AR_P_HEIGHT] + ar__cell_chrome_y(n);
+        h = stated;
     }
 
     if (n->text && env && env->wrap)
     {
-        ar_i32 wrapped = env->wrap(env->ud, n, inner_w) + ar__cell_chrome_y(n);
+        ar_i32 wrapped = env->wrap(env->ud, n, inner_w) + ar__cell_border_y(n);
 
         if (wrapped > h)
         {
@@ -585,6 +709,36 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     ncol = ar__grid(nodes, table, col);
     if (ncol <= 0)
     {
+        /*
+         * A table with rows but no cells still has rows in the tree.
+         *
+         * Returning here without touching them leaves each one at the surface
+         * origin -- a fresh node's rect is zeroed, so it is not stale, but
+         * (0, 0) is not where an empty row is either, and hit testing and
+         * ar_node_rect both read it. They collapse where the table's content
+         * would have started.
+         */
+        if (assign)
+        {
+            ar_i32 e = nodes[table].first_child;
+
+            for (; e >= 0; e = nodes[e].next_sibling)
+            {
+                if (ar__is_row(&nodes[e]) || ar__is_group(&nodes[e]))
+                {
+                    ar_i32 r;
+
+                    nodes[e].rect.x = t->rect.x + pad_l;
+                    nodes[e].rect.y = t->rect.y + pad_t;
+                    nodes[e].rect.w = t->rect.w - pad_l - t->style.v[AR_P_PAD_RIGHT];
+                    nodes[e].rect.h = 0;
+                    for (r = nodes[e].first_child; r >= 0; r = nodes[r].next_sibling)
+                    {
+                        nodes[r].rect = nodes[e].rect;
+                    }
+                }
+            }
+        }
         return t->style.v[AR_P_PAD_TOP] + t->style.v[AR_P_PAD_BOTTOM];
     }
     if (!fixed_layout)
@@ -614,6 +768,10 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     for (row = 0; row < ncol; ++row)
     {
         col[row].span_left = 0;
+        col[row].span_node = -1;
+        col[row].span_y = 0;
+        col[row].span_h = 0;
+        col[row].span_rows = 1;
     }
 
     y = pad_t + spacing;
@@ -624,6 +782,11 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         ar_i32 at = 0;
         ar_i32 rh = 0;
         ar_i32 k;
+
+        /* `rowspan: 9` on the second row of a two-row table covers the rows
+           that exist and no more, so the last row is a settling point for
+           every span still open, whatever its countdown says. */
+        int last = ar__next_row(nodes, table, row) < 0;
 
         for (; c >= 0; c = nodes[c].next_sibling)
         {
@@ -655,7 +818,10 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             }
             for (j = at; j < at + cs && j < ncol; ++j)
             {
-                col[j].span_left = rs;
+                if (rs > col[j].span_left)
+                {
+                    col[j].span_left = rs;
+                }
             }
 
             w = 0;
@@ -672,12 +838,73 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 nodes[c].rect.w = w;
             }
 
-            h = ar__cell_height(&nodes[c], w - ar__cell_chrome_x(&nodes[c]), env);
-            if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1 && h > rh)
             {
-                rh = h;
+                /* Padding and border can exceed a narrow column, and a
+                   negative content width is not a question the text measurer
+                   has an answer to. Every other caller of the wrap callback
+                   guards this; this one did not. */
+                ar_i32 inner = w - ar__cell_border_x(&nodes[c]) - nodes[c].style.v[AR_P_PAD_LEFT] -
+                               nodes[c].style.v[AR_P_PAD_RIGHT];
+
+                h = ar__cell_height(&nodes[c], inner < 0 ? 0 : inner, env);
+            }
+
+            if (rs == 1)
+            {
+                if (h > rh)
+                {
+                    rh = h;
+                }
+            }
+            else if (at < ncol)
+            {
+                /*
+                 * A cell that spans rows is settled on the last one it
+                 * reaches, not the first.
+                 *
+                 * It used to be excluded from the row height and then handed
+                 * its own row's height anyway, so a table whose first row was
+                 * one `rowspan:2` cell came out as tall as the *second* row
+                 * and the spanning cell had no height at all. Its share is
+                 * spread over the rows it covers so the table is tall enough,
+                 * and its rectangle is closed when the countdown runs out.
+                 */
+                ar_i32 share = h / rs;
+
+                if (share > rh)
+                {
+                    rh = share;
+                }
+                col[at].span_node = c;
+                col[at].span_y = y;
+                col[at].span_h = h;
+                col[at].span_rows = rs;
             }
             at += cs;
+        }
+
+        /*
+         * A span that ends on this row takes what it is still owed.
+         *
+         * Spreading a spanning cell's height evenly over the rows it covers
+         * gets the table close, but the rows below have content of their own
+         * and may each come out taller or shorter than their share -- so the
+         * total can still fall short, and a forward pass cannot go back and
+         * grow the first row. The last row it reaches absorbs the difference
+         * instead, which is one of the two things browsers do here and the
+         * only one a single pass can do at all.
+         */
+        for (k = 0; k < ncol; ++k)
+        {
+            if ((col[k].span_left == 1 || last) && col[k].span_node >= 0)
+            {
+                ar_i32 covered = (y + rh) - col[k].span_y;
+
+                if (covered < col[k].span_h)
+                {
+                    rh += col[k].span_h - covered;
+                }
+            }
         }
 
         if (assign)
@@ -690,9 +917,16 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             c = nodes[row].first_child;
             for (; c >= 0; c = nodes[c].next_sibling)
             {
-                if (ar__is_cell(&nodes[c]))
+                if (!ar__is_cell(&nodes[c]))
                 {
-                    nodes[c].rect.y = t->rect.y + y;
+                    continue;
+                }
+                nodes[c].rect.y = t->rect.y + y;
+
+                /* A spanning cell's height is settled when its countdown ends,
+                   so writing the row's height over it here would undo that. */
+                if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1)
+                {
                     nodes[c].rect.h = rh;
                 }
             }
@@ -702,6 +936,14 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             if (col[k].span_left > 0)
             {
                 --col[k].span_left;
+            }
+            if ((col[k].span_left == 0 || last) && col[k].span_node >= 0)
+            {
+                if (assign)
+                {
+                    nodes[col[k].span_node].rect.h = (y + rh) - col[k].span_y;
+                }
+                col[k].span_node = -1;
             }
         }
         y += rh + spacing;
@@ -806,11 +1048,10 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
                 {
                     continue;
                 }
-                ch = nodes[c].fit[1];
-                if (nodes[c].style.unit[AR_P_HEIGHT] == AR_UNIT_PX &&
-                    nodes[c].style.v[AR_P_HEIGHT] + ar__cell_chrome_y(&nodes[c]) > ch)
+                ch = nodes[c].fit[1] + ar__cell_border_y(&nodes[c]);
+                if (ar__cell_stated_h(&nodes[c]) > ch)
                 {
-                    ch = nodes[c].style.v[AR_P_HEIGHT] + ar__cell_chrome_y(&nodes[c]);
+                    ch = ar__cell_stated_h(&nodes[c]);
                 }
                 if (ch > rh)
                 {
