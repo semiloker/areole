@@ -632,6 +632,60 @@ static void ar__mark_inert(ar_ctx *c)
     }
 }
 
+/*
+ * Which boxes belong to a table whose borders are collapsed.
+ *
+ * Written before layout rather than after it, unlike inertness, because the
+ * whole geometry of a collapsed table depends on the answer: the cells sit
+ * half a grid line closer together, the table's own border is folded into the
+ * outer lines and stops being drawn, and the intrinsic widths must not count
+ * a border that no longer belongs to the cell.
+ *
+ * The alternative was threading a flag through five helpers and three passes.
+ * A bit on the box says the same thing once, and every one of them can read
+ * it -- including the paint pass, which is on the other side of layout and has
+ * no table in scope at all.
+ *
+ * The walk is short: it only runs for table boxes, and a cell is two or three
+ * levels beneath its table. A stylesheet with no table in it never runs it.
+ */
+static void ar__mark_collapsed(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (!c->sheet.has_collapse)
+    {
+        return;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   d = n->style.v[AR_P_DISPLAY];
+        ar_i32   at;
+
+        /* A caption is deliberately not in this list. It is a table-level box
+           that is in no row and no column, so no grid line runs through it and
+           its own border is its own. */
+        if (d != AR_DISPLAY_TABLE && d != AR_DISPLAY_TABLE_ROW && d != AR_DISPLAY_TABLE_ROW_GROUP &&
+            d != AR_DISPLAY_TABLE_HEADER_GROUP && d != AR_DISPLAY_TABLE_FOOTER_GROUP &&
+            d != AR_DISPLAY_TABLE_CELL)
+        {
+            continue;
+        }
+        for (at = i; at >= 0; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE)
+            {
+                if (c->nodes[at].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
+                {
+                    n->state = (ar_u16)(n->state | AR_STATE_COLLAPSED);
+                }
+                break;
+            }
+        }
+    }
+}
+
 static void ar__diagnose(ar_ctx *c)
 {
     ar_i32 i;
@@ -1688,6 +1742,13 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->frag_first = 0;
     n->frag_count = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
+    /* A node is reused frame to frame, and a collapsed edge is written only by
+       a table. Without this, a cell that was in a collapsed table one frame
+       kept its four widths into a frame where it was not in one at all. */
+    n->edge[0] = 0;
+    n->edge[1] = 0;
+    n->edge[2] = 0;
+    n->edge[3] = 0;
 
     ar__resolve(c, c->node_count - 1);
 
@@ -2277,7 +2338,40 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
         bw = n->style.v[AR_P_BORDER_WIDTH];
         border = (ar_color)AR_WIDE(&n->style, AR_P_BORDER_COLOR);
-        if (bw > 0 && AR_ALPHA_OF(border) != 0)
+        if (n->state & AR_STATE_COLLAPSED)
+        {
+            /*
+             * A collapsed grid line is one line with two neighbours, and each
+             * of them owns a share of it that the solve worked out -- so the
+             * four sides are four different widths here and none of them is
+             * this box's `border-width`. A collapsed table's own box and its
+             * rows come through with all four at zero, which is how their
+             * borders come to be drawn by the cells instead of twice.
+             */
+            if (AR_ALPHA_OF(border) != 0)
+            {
+                ar_rect r = n->rect;
+                ar_i32  t = n->edge[0], ri = n->edge[1], b = n->edge[2], l = n->edge[3];
+
+                if (t > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
+                }
+                if (b > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
+                }
+                if (l > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
+                }
+                if (ri > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
+                }
+            }
+        }
+        else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
             ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
@@ -3186,6 +3280,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* :last-child, :only-child and :empty could not be answered while the tree
        was being built. This is the first moment they can be. */
     ar__resolve_late(c);
+    ar__mark_collapsed(c);
 
     /* Style resolution happened during tree building, between frame_begin and
        here, so closing that phase now attributes it correctly. */

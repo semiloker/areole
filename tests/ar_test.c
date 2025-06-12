@@ -7077,6 +7077,220 @@ static void test_a_column_box_takes_up_no_space(void)
     CHECK(ar__box(4).y == ar__box(1).y, "table: a column box does not push the first row down");
 }
 
+/* ------------------------------------------------------------------------
+ * Collapsed borders
+ *
+ * The separate model gives every cell its own border and puts border-spacing
+ * between them. The collapsed model gives the *boundary* a border, as wide as
+ * the widest thing that meets there, sitting half in each of the two cells it
+ * separates -- which changes the geometry of every cell in the table.
+ * ------------------------------------------------------------------------ */
+static void ar__collapse_scene(ar_surface *s, const char *extra)
+{
+    char     css[900];
+    ar_input in;
+
+    strcpy(css, "#root { display:block; }"
+                ".t { display:table; width:300px; border-collapse:collapse; }"
+                ".r { display:table-row; }"
+                ".c { display:table-cell; height:10px; border:2px #f00; }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c.d");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.e");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_two_cells_share_one_border(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    ar__collapse_scene(&s, "");
+
+    /*
+     * 1=table, 2=row, 3=a, 4=b, 5=row, 6=d, 7=e. Every border is 2, so every
+     * line is 2 -- one line between the two columns, not two borders of 2 with
+     * a gap. The cells therefore touch: b starts exactly where a ends.
+     */
+    CHECK(ar__box(4).x == ar__box(3).x + ar__box(3).w,
+          "collapse: the cell to the right starts where the one to its left ends");
+    CHECK(ar__box(6).y == ar__box(3).y + ar__box(3).h,
+          "collapse: and the row below starts where the row above ends");
+    CHECK(ar__box(3).w + ar__box(4).w == 300,
+          "collapse: the two cells and their shared lines fill the table exactly");
+    CHECK(g_ui->nodes[3].edge[1] + g_ui->nodes[4].edge[3] == 2,
+          "collapse: the shared line is drawn once, between them");
+    CHECK(g_ui->nodes[3].edge[3] == 2 && g_ui->nodes[4].edge[1] == 2,
+          "collapse: an outer line has one owner, because nothing is outside it");
+}
+
+static void test_the_widest_border_wins_the_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The conflict rules resolve a line to the widest border that meets it.
+     * Style precedence comes first in CSS and has nothing to resolve here:
+     * this engine has one uniform border-width per box and no border-style, so
+     * width and then origin is the whole of the order it can express.
+     */
+    ar__collapse_scene(&s, ".b { border:6px #00f; }");
+
+    CHECK(g_ui->nodes[3].edge[1] + g_ui->nodes[4].edge[3] == 6,
+          "collapse: a line is as wide as the widest border that meets it");
+    CHECK(ar__box(4).x == ar__box(3).x + ar__box(3).w,
+          "collapse: and the two cells still meet on it exactly");
+}
+
+static void test_a_collapsed_table_draws_no_border_of_its_own(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The table's border is folded into the outermost lines, which the cells
+     * at the ends draw. If the table drew it as well the outer edge would be
+     * twice as thick as it asked for.
+     */
+    ar__collapse_scene(&s, ".t { border:4px #0f0; }");
+
+    CHECK((g_ui->nodes[1].state & AR_STATE_COLLAPSED) != 0,
+          "collapse: the table knows its borders are collapsed");
+    CHECK(g_ui->nodes[1].edge[0] == 0 && g_ui->nodes[1].edge[3] == 0,
+          "collapse: and draws no border of its own");
+    CHECK((g_ui->nodes[2].state & AR_STATE_COLLAPSED) != 0 && g_ui->nodes[2].edge[3] == 0,
+          "collapse: nor does a row");
+    CHECK(g_ui->nodes[3].edge[3] == 4,
+          "collapse: the outer line is the table's 4, drawn in full by the end cell");
+}
+
+static void test_border_spacing_means_nothing_when_collapsed(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* border-spacing is the separate model's entire mechanism. In the
+       collapsed model the gap between two cells is the shared line and there
+       is nowhere for spacing to go. */
+    ar__collapse_scene(&s, ".t { border-spacing:20px; }");
+
+    CHECK(ar__box(4).x == ar__box(3).x + ar__box(3).w,
+          "collapse: border-spacing does not push collapsed cells apart");
+    CHECK(ar__box(3).w + ar__box(4).w == 300, "collapse: and the table is no wider for it");
+}
+
+static void test_a_separate_table_is_untouched_by_any_of_this(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* The control. Everything above changes geometry, and none of it may
+       change a table that did not ask for it. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-spacing:10px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; border:2px #f00; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK((g_ui->nodes[3].state & AR_STATE_COLLAPSED) == 0,
+          "collapse: a table that did not ask for it is not marked");
+    CHECK(g_ui->nodes[3].edge[0] == 0 && g_ui->nodes[3].edge[1] == 0,
+          "collapse: and its cells carry no collapsed edge");
+    CHECK(ar__box(4).x == ar__box(3).x + ar__box(3).w + 10,
+          "collapse: border-spacing still separates a separate table's cells");
+}
+
+static void test_a_collapsed_edge_is_in_the_paint_digest(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_u32     before, after;
+
+    /*
+     * A collapsed line's width comes from a *neighbour's* border, and no
+     * property on this cell records it. Every entry in the digest's property
+     * list would say the cell is untouched while the pixels it draws change,
+     * which is exactly the failure the scrollbar properties were added to stop.
+     */
+    ar__collapse_scene(&s, "");
+    before = ar_paint_digest(&g_ui->nodes[3]);
+
+    ar__collapse_scene(&s, ".b { border:8px #00f; }");
+    after = ar_paint_digest(&g_ui->nodes[3]);
+
+    CHECK(g_ui->nodes[3].style.v[AR_P_BORDER_WIDTH] == 2,
+          "collapse: the cell's own border-width did not change");
+    CHECK(before != after, "collapse: but its digest did, because its neighbour's border did");
+}
+
+static void test_a_collapsed_line_is_drawn_once(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Every other check here is geometry, and geometry is blind to this one.
+     *
+     * If the paint pass ignored edge[] and drew each cell's own border-width
+     * the way it does everywhere else, every rectangle in this table would
+     * still be exactly where it is and the boundary between two cells would be
+     * four pixels of border instead of two. That is the failure the scrollbar
+     * properties were added to the digest to stop, in a different place.
+     *
+     * The two cells are given different colours so the line's two pixels can
+     * be told apart: the left cell owns the pixel on the left of the boundary
+     * and the right cell the one on the right, and nothing is drawn either
+     * side of them.
+     */
+    ar__collapse_scene(&s, "#root { background:#ffffff; } .b { border:2px #0000ff; }");
+
+    /* 3=a at x 0..149, 4=b at x 150..299, both 2px wide at the outer edges and
+       sharing one 2px line down the middle. */
+    CHECK(ar__box(3).x == 0 && ar__box(3).w == 150 && ar__box(4).x == 150,
+          "collapse: the pixel test's cells are where it thinks they are");
+
+    CHECK(ar__pixel_at(0, 6) == 0xFF0000u && ar__pixel_at(1, 6) == 0xFF0000u,
+          "collapse: the outer line is two pixels of the end cell's colour");
+    CHECK(ar__pixel_at(2, 6) == 0xFFFFFFu, "collapse: and stops there");
+
+    CHECK(ar__pixel_at(148, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
+    CHECK(ar__pixel_at(149, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
+    CHECK(ar__pixel_at(150, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
+    CHECK(ar__pixel_at(151, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -10904,6 +11118,13 @@ int main(void)
     test_a_footer_is_drawn_last_wherever_it_is_written();
     test_a_caption_sits_above_the_grid();
     test_a_column_box_takes_up_no_space();
+    test_two_cells_share_one_border();
+    test_the_widest_border_wins_the_line();
+    test_a_collapsed_table_draws_no_border_of_its_own();
+    test_border_spacing_means_nothing_when_collapsed();
+    test_a_separate_table_is_untouched_by_any_of_this();
+    test_a_collapsed_edge_is_in_the_paint_digest();
+    test_a_collapsed_line_is_drawn_once();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

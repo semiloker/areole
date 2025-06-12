@@ -256,6 +256,21 @@ ar_u32 ar_paint_digest(const ar_node *n)
         h = ar__mix(h, (ar_u32)n->content_h);
     }
 
+    /*
+     * The one thing the paint pass reads that no property on this box records.
+     *
+     * A collapsed grid line's width is the widest of everything that meets
+     * there, so it is a *neighbour's* border-width -- and a cell whose own
+     * style did not change from one frame to the next still has to repaint
+     * when the cell beside it is given a thicker border. Every entry in
+     * PAINTED above would say the box is untouched.
+     */
+    if (n->state & AR_STATE_COLLAPSED)
+    {
+        h = ar__mix(h, ((ar_u32)n->edge[0] << 24) | ((ar_u32)n->edge[1] << 16) |
+                           ((ar_u32)n->edge[2] << 8) | (ar_u32)n->edge[3]);
+    }
+
     if (n->text)
     {
         const char *t = n->text;

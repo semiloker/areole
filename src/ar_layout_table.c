@@ -188,6 +188,38 @@ static ar_i32 ar__scan_rows(const ar_node *nodes, ar_i32 at, ar_i32 p)
 }
 
 /*
+ * The widest border anything in this row brings to the lines above and below.
+ *
+ * A horizontal grid line is shared by the row above it and the row below, so
+ * it cannot be settled from one row alone. The row after this one is peeked at
+ * instead of the answer being deferred a row -- two scans of each row's cells
+ * over the whole table, which is linear, and it means a row's four edges are
+ * all known inside its own iteration. A rowspan cell settling on this row then
+ * gets its bottom edge exactly rather than approximately, which is where the
+ * corner cases in collapsed borders were always going to be.
+ */
+static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
+{
+    ar_i32 c = nodes[row].first_child;
+    ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
+
+    if (nodes[row].parent >= 0 && ar__is_group(&nodes[nodes[row].parent]) &&
+        nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH] > m)
+    {
+        m = nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH];
+    }
+    for (; c >= 0; c = nodes[c].next_sibling)
+    {
+        if (ar__is_cell(&nodes[c]) && nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
+            nodes[c].style.v[AR_P_BORDER_WIDTH] > m)
+        {
+            m = nodes[c].style.v[AR_P_BORDER_WIDTH];
+        }
+    }
+    return m;
+}
+
+/*
  * The rows of a table, in the order they are drawn.
  *
  * No list is built: the whole solve runs off this, and materialising the rows
@@ -268,12 +300,45 @@ static ar_i32 ar__cell_span(const ar_node *n, ar_i32 prop)
  */
 static ar_i32 ar__cell_border_x(const ar_node *n)
 {
+    /*
+     * A cell in a collapsed table has no border of its own to make room for.
+     *
+     * Its border became a grid line shared with the cell beside it, and the
+     * lines are subtracted from the table's width once, all together, before
+     * the columns are distributed. Counting the border here as well would
+     * charge for it twice and make every column too wide by exactly the
+     * borders that were supposed to have been collapsed away.
+     */
+    if (n->state & AR_STATE_COLLAPSED)
+    {
+        return 0;
+    }
     return 2 * n->style.v[AR_P_BORDER_WIDTH];
 }
 
 static ar_i32 ar__cell_border_y(const ar_node *n)
 {
+    if (n->state & AR_STATE_COLLAPSED)
+    {
+        return 0;
+    }
     return 2 * n->style.v[AR_P_BORDER_WIDTH];
+}
+
+/* The two halves a grid line of width `v` is split into. The box above or to
+   the left takes the larger one, so a one-pixel line -- which is nearly every
+   line anyone writes -- is drawn once, by one box, in one colour. */
+static ar_i32 ar__half_near(ar_i32 v)
+{
+    return (v + 1) / 2;
+}
+static ar_i32 ar__half_far(ar_i32 v)
+{
+    return v / 2;
+}
+static int ar__collapsed(const ar_node *t)
+{
+    return (t->state & AR_STATE_COLLAPSED) != 0;
 }
 
 /* A stated height is a content height, so it needs the padding the intrinsic
@@ -321,11 +386,28 @@ static ar_i32 ar__scale(ar_i32 a, ar_i32 b, ar_i32 d)
  * spans three rows leaves its columns claimed for the two rows below it, which
  * is what stops the next row's first cell sliding underneath it.
  */
-static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
+static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 *vline)
 {
     ar_i32 row = -1;
     ar_i32 ncol = 0;
     ar_i32 i;
+    ar_i32 outer = 0;
+    int    collapse = ar__collapsed(&nodes[table]);
+
+    if (vline)
+    {
+        for (i = 0; i <= AR_MAX_COLUMNS; ++i)
+        {
+            vline[i] = 0;
+        }
+        if (collapse)
+        {
+            /* The table's own border is the outermost line's opening bid. It
+               is never drawn as a border after this -- it was collapsed into
+               the line, and the cells at the ends draw their share of it. */
+            vline[0] = nodes[table].style.v[AR_P_BORDER_WIDTH];
+        }
+    }
 
     for (i = 0; i < AR_MAX_COLUMNS; ++i)
     {
@@ -371,6 +453,36 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
             }
 
             chrome = ar__cell_border_x(&nodes[c]);
+
+            if (vline && collapse)
+            {
+                /*
+                 * A cell meets the vertical line at each of its ends, and the
+                 * line is as wide as the widest thing that meets it. A cell
+                 * spanning columns meets only its two ends: the lines it
+                 * covers are still there, drawn by the rows above and below
+                 * where nothing spans them.
+                 */
+                ar_i32 bw = nodes[c].style.v[AR_P_BORDER_WIDTH];
+                ar_i32 rb = nodes[row].style.v[AR_P_BORDER_WIDTH];
+
+                if (bw > vline[at])
+                {
+                    vline[at] = bw;
+                }
+                if (bw > vline[at + cs])
+                {
+                    vline[at + cs] = bw;
+                }
+                /* A row's border is its outline, so it bids for the two lines
+                   at the ends of the grid rather than for any line inside --
+                   and the right-hand end is not known until every row has been
+                   walked, so it is held here and applied below. */
+                if (rb > outer)
+                {
+                    outer = rb;
+                }
+            }
 
             if (cs == 1)
             {
@@ -454,6 +566,21 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
         if (col[i].max < col[i].min)
         {
             col[i].max = col[i].min;
+        }
+    }
+    if (vline && collapse)
+    {
+        if (nodes[table].style.v[AR_P_BORDER_WIDTH] > outer)
+        {
+            outer = nodes[table].style.v[AR_P_BORDER_WIDTH];
+        }
+        if (outer > vline[0])
+        {
+            vline[0] = outer;
+        }
+        if (outer > vline[ncol])
+        {
+            vline[ncol] = outer;
         }
     }
     return ncol;
@@ -764,14 +891,20 @@ static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
 static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, int assign)
 {
     ar__col  col[AR_MAX_COLUMNS];
+    ar_i32   vline[AR_MAX_COLUMNS + 1];
     ar_i32   ncol, row, y, inner_w, avail;
     ar_node *t = &nodes[table];
     int      fixed_layout = t->style.v[AR_P_TABLE_LAYOUT] == AR_TABLE_LAYOUT_FIXED;
+    int      collapse = ar__collapsed(t);
     ar_i32   pad_l = t->style.v[AR_P_PAD_LEFT];
     ar_i32   pad_t = t->style.v[AR_P_PAD_TOP];
-    ar_i32   spacing = t->style.v[AR_P_BORDER_SPACING];
+    /* `border-spacing` is the separate model's whole mechanism and has no
+       meaning in the collapsed one, where the gap between two cells is the
+       shared line and nothing else. */
+    ar_i32 spacing = collapse ? 0 : t->style.v[AR_P_BORDER_SPACING];
+    ar_i32 prev_row = -1, prev_bot = 0, lines = 0;
 
-    ncol = ar__grid(nodes, table, col);
+    ncol = ar__grid(nodes, table, col, vline);
     if (ncol <= 0)
     {
         /*
@@ -812,12 +945,39 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     }
 
     inner_w = t->rect.w - pad_l - t->style.v[AR_P_PAD_RIGHT];
-    avail = inner_w - spacing * (ncol + 1);
+    if (collapse)
+    {
+        ar_i32 k;
+
+        for (k = 0; k <= ncol; ++k)
+        {
+            lines += vline[k];
+        }
+    }
+    avail = inner_w - spacing * (ncol + 1) - lines;
     if (avail < 0)
     {
         avail = 0;
     }
     ar__distribute(col, ncol, avail, fixed_layout);
+    if (collapse)
+    {
+        /*
+         * Fold the vertical lines into the column offsets.
+         *
+         * col[k].x is "how much width comes before this column", and in the
+         * collapsed model the lines are part of that width. Adding them here
+         * once means the placement below reads exactly as it does for the
+         * separate model, and there is no second array to keep in step.
+         */
+        ar_i32 k, acc = 0;
+
+        for (k = 0; k < ncol; ++k)
+        {
+            acc += vline[k];
+            col[k].x += acc;
+        }
+    }
 
     /*
      * The placement walk has to assign columns exactly the way the grid pass
@@ -889,18 +1049,45 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     }
 
     y += spacing;
-    row = -1;
-    while ((row = ar__next_row(nodes, table, row)) >= 0)
+
+    /*
+     * The row after this one is wanted twice -- once to know whether this is
+     * the last row, and once for the border it brings to the line between them
+     * -- and it is the next row anyway. Asking ar__next_row for it a second
+     * time doubled the cost of walking a ten-thousand-row table for an answer
+     * already in hand, so it is carried instead.
+     */
+    row = ar__next_row(nodes, table, -1);
+    while (row >= 0)
     {
         ar_i32 c = nodes[row].first_child;
         ar_i32 at = 0;
         ar_i32 rh = 0;
         ar_i32 k;
 
+        ar_i32 nxt = ar__next_row(nodes, table, row);
+        ar_i32 mine = 0, hl = 0, hb = 0;
+
         /* `rowspan: 9` on the second row of a two-row table covers the rows
            that exist and no more, so the last row is a settling point for
            every span still open, whatever its countdown says. */
-        int last = ar__next_row(nodes, table, row) < 0;
+        int last = nxt < 0;
+
+        if (collapse)
+        {
+            mine = ar__row_border_max(nodes, row);
+            hl = mine > prev_bot ? mine : prev_bot;
+            hb = last ? t->style.v[AR_P_BORDER_WIDTH] : ar__row_border_max(nodes, nxt);
+            if (mine > hb)
+            {
+                hb = mine;
+            }
+            if (prev_row < 0 && t->style.v[AR_P_BORDER_WIDTH] > hl)
+            {
+                hl = t->style.v[AR_P_BORDER_WIDTH];
+            }
+            y += hl;
+        }
 
         for (; c >= 0; c = nodes[c].next_sibling)
         {
@@ -945,7 +1132,42 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             }
             w += spacing * (cs - 1);
 
-            if (assign)
+            if (collapse)
+            {
+                /*
+                 * A cell that spans columns covers the lines between them, so
+                 * it is as wide as those lines too -- and it owns a share of
+                 * the line at each of its ends: the far half on the left, the
+                 * near half on the right, so a one-pixel line between two
+                 * cells is drawn once rather than half each and in one colour.
+                 */
+                /*
+                 * An outer line has nothing on its far side to share with, so
+                 * the cell at the end takes all of it. Splitting it would
+                 * leave half the table's own border drawn by nobody: the table
+                 * no longer draws one, and outside the end cell there is
+                 * nothing else in the table at all.
+                 */
+                ar_i32 rk = at + cs <= ncol ? at + cs : ncol;
+                ar_i32 el = at == 0 ? vline[0] : ar__half_far(vline[at]);
+                ar_i32 er = rk >= ncol ? vline[ncol] : ar__half_near(vline[rk]);
+
+                for (j = at + 1; j < at + cs && j < ncol; ++j)
+                {
+                    w += vline[j];
+                }
+                w += el + er;
+                if (assign)
+                {
+                    nodes[c].rect.x = t->rect.x + pad_l + col[at < ncol ? at : ncol - 1].x - el;
+                    nodes[c].rect.w = w;
+                    nodes[c].edge[3] = (ar_u8)el;
+                    nodes[c].edge[1] = (ar_u8)er;
+                    nodes[c].edge[0] = (ar_u8)(prev_row < 0 ? hl : ar__half_far(hl));
+                    nodes[c].edge[2] = (ar_u8)(last ? hb : ar__half_near(hb));
+                }
+            }
+            else if (assign)
             {
                 nodes[c].rect.x = t->rect.x + pad_l + spacing + col[at < ncol ? at : ncol - 1].x +
                                   spacing * (at < ncol ? at : ncol - 1);
@@ -990,7 +1212,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     rh = share;
                 }
                 col[at].span_node = c;
-                col[at].span_y = y;
+                col[at].span_y = y - (prev_row < 0 ? hl : ar__half_far(hl));
                 col[at].span_h = h;
                 col[at].span_rows = rs;
             }
@@ -1023,6 +1245,9 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         if (assign)
         {
+            ar_i32 top = prev_row < 0 ? hl : ar__half_far(hl);
+            ar_i32 bot = last ? hb : ar__half_near(hb);
+
             nodes[row].rect.x = t->rect.x + pad_l;
             nodes[row].rect.y = t->rect.y + y;
             nodes[row].rect.w = inner_w;
@@ -1035,13 +1260,17 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 {
                     continue;
                 }
-                nodes[c].rect.y = t->rect.y + y;
+
+                /* The band is what the row's content occupies; a collapsed
+                   cell starts half a line above it and ends half a line below,
+                   which is the whole difference between the two models. */
+                nodes[c].rect.y = t->rect.y + y - top;
 
                 /* A spanning cell's height is settled when its countdown ends,
                    so writing the row's height over it here would undo that. */
                 if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1)
                 {
-                    nodes[c].rect.h = rh;
+                    nodes[c].rect.h = rh + top + bot;
                 }
             }
         }
@@ -1055,12 +1284,30 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 if (assign)
                 {
-                    nodes[col[k].span_node].rect.h = (y + rh) - col[k].span_y;
+                    /* The band's bottom, plus this row's share of the line
+                       under it -- the span started half a line above its own
+                       first band, so both ends have to be paid for. */
+                    ar_i32 sb = last ? hb : ar__half_near(hb);
+
+                    nodes[col[k].span_node].rect.h = (y + rh + sb) - col[k].span_y;
+                    nodes[col[k].span_node].edge[2] = (ar_u8)sb;
                 }
                 col[k].span_node = -1;
             }
         }
         y += rh + spacing;
+        if (collapse)
+        {
+            prev_bot = mine;
+            prev_row = row;
+            if (last)
+            {
+                /* Nothing follows to open the last line, so the table closes
+                   it here. */
+                y += hb;
+            }
+        }
+        row = nxt;
     }
 
     if (assign)
@@ -1141,7 +1388,7 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
         }
     }
 
-    ncol = ar__grid(nodes, table, col);
+    ncol = ar__grid(nodes, table, col, 0);
     if (ncol > 0 && t->style.v[AR_P_TABLE_LAYOUT] != AR_TABLE_LAYOUT_FIXED)
     {
         ar__fold_spans(nodes, table, col, ncol);

@@ -817,6 +817,14 @@ void ar_sheet_note_tables(ar_sheet *sheet)
             sheet->rules[i].style.v[AR_P_DISPLAY] >= AR_DISPLAY_TABLE)
         {
             sheet->has_table = 1;
+        }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_BORDER_COLLAPSE) &&
+            sheet->rules[i].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
+        {
+            sheet->has_collapse = 1;
+        }
+        if (sheet->has_table && sheet->has_collapse)
+        {
             return;
         }
     }
