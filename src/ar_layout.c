@@ -368,7 +368,7 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
             ar_table_measure(nodes, i);
             continue;
         }
-        if (ar_is_table_internal(n) || ar_is_table_cell(n))
+        if (ar_is_table_internal(n) || ar_is_table_block(n))
         {
             /* Both stack their contents vertically rather than laying them out
                along an axis, which is what block measurement already means. */
@@ -920,7 +920,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                again and undo the columns. */
             continue;
         }
-        if (ar_is_table_cell(n))
+        if (ar_is_table_block(n))
         {
             ar__place_block(nodes, i, env);
             continue;

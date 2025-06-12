@@ -67,6 +67,16 @@ static int ar__is_row(const ar_node *n)
     return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_ROW;
 }
 
+static int ar__is_caption(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_CAPTION;
+}
+static int ar__is_column(const ar_node *n)
+{
+    ar_i32 d = n->style.v[AR_P_DISPLAY];
+
+    return d == AR_DISPLAY_TABLE_COLUMN || d == AR_DISPLAY_TABLE_COLUMN_GROUP;
+}
 static int ar__is_group(const ar_node *n)
 {
     ar_i32 d = n->style.v[AR_P_DISPLAY];
@@ -100,7 +110,23 @@ int ar_is_table_internal(const ar_node *n)
     ar_i32 d = n->style.v[AR_P_DISPLAY];
 
     return d == AR_DISPLAY_TABLE_ROW || d == AR_DISPLAY_TABLE_ROW_GROUP ||
-           d == AR_DISPLAY_TABLE_HEADER_GROUP || d == AR_DISPLAY_TABLE_FOOTER_GROUP;
+           d == AR_DISPLAY_TABLE_HEADER_GROUP || d == AR_DISPLAY_TABLE_FOOTER_GROUP ||
+           d == AR_DISPLAY_TABLE_COLUMN || d == AR_DISPLAY_TABLE_COLUMN_GROUP;
+}
+
+/*
+ * The table boxes that lay their contents out as a block.
+ *
+ * A cell and a caption are the same shape to everything above them: a
+ * rectangle the table settles, holding a normal block flow. The rest of the
+ * table -- rows, groups, columns -- has its geometry written by the solve and
+ * must not be laid out again, which is what the predicate above is for.
+ */
+int ar_is_table_block(const ar_node *n)
+{
+    ar_i32 d = n->style.v[AR_P_DISPLAY];
+
+    return d == AR_DISPLAY_TABLE_CELL || d == AR_DISPLAY_TABLE_CAPTION;
 }
 
 /* A cell is a block for everything inside it: the table gives it a rectangle
@@ -111,65 +137,40 @@ int ar_is_table_cell(const ar_node *n)
 }
 
 /*
- * The rows of a table, in order, across row groups.
+ * Which pass a table-level child's rows belong to.
  *
- * A row may sit straight inside the table or inside a group, and a table may
- * mix the two. This hands back the next row after `prev` without building a
- * list, because building one would need somewhere to put it.
+ * A footer is written where it reads best and drawn where it belongs, which is
+ * last -- so document order is not row order and cannot be, and an iterator
+ * that walks siblings has to know it. Three passes over the table's children
+ * settle it: headers, then everything else in the order it was written, then
+ * footers. Bare rows are in the middle pass, so a `tfoot` declared before them
+ * still ends up beneath them.
  */
-static ar_i32 ar__next_row(const ar_node *nodes, ar_i32 table, ar_i32 prev)
+static ar_i32 ar__phase_of(const ar_node *n)
 {
-    ar_i32 at, up;
+    ar_i32 d = n->style.v[AR_P_DISPLAY];
 
-    if (prev < 0)
+    if (d == AR_DISPLAY_TABLE_HEADER_GROUP)
     {
-        at = nodes[table].first_child;
-        while (at >= 0)
-        {
-            if (ar__is_row(&nodes[at]))
-            {
-                return at;
-            }
-            if (ar__is_group(&nodes[at]) && nodes[at].first_child >= 0)
-            {
-                ar_i32 r = nodes[at].first_child;
-
-                while (r >= 0 && !ar__is_row(&nodes[r]))
-                {
-                    r = nodes[r].next_sibling;
-                }
-                if (r >= 0)
-                {
-                    return r;
-                }
-            }
-            at = nodes[at].next_sibling;
-        }
-        return -1;
+        return 0;
     }
-
-    /* Another row in the same parent. */
-    for (at = nodes[prev].next_sibling; at >= 0; at = nodes[at].next_sibling)
+    if (d == AR_DISPLAY_TABLE_FOOTER_GROUP)
     {
-        if (ar__is_row(&nodes[at]))
+        return 2;
+    }
+    return 1;
+}
+
+/* The first row at or after table-level child `at` that belongs to pass `p`. */
+static ar_i32 ar__scan_rows(const ar_node *nodes, ar_i32 at, ar_i32 p)
+{
+    for (; at >= 0; at = nodes[at].next_sibling)
+    {
+        if (p == 1 && ar__is_row(&nodes[at]))
         {
             return at;
         }
-    }
-
-    /* Otherwise out of this group and on to the next thing in the table. */
-    up = nodes[prev].parent;
-    if (up < 0 || up == table)
-    {
-        return -1;
-    }
-    for (at = nodes[up].next_sibling; at >= 0; at = nodes[at].next_sibling)
-    {
-        if (ar__is_row(&nodes[at]))
-        {
-            return at;
-        }
-        if (ar__is_group(&nodes[at]))
+        if (ar__is_group(&nodes[at]) && ar__phase_of(&nodes[at]) == p)
         {
             ar_i32 r = nodes[at].first_child;
 
@@ -181,6 +182,70 @@ static ar_i32 ar__next_row(const ar_node *nodes, ar_i32 table, ar_i32 prev)
             {
                 return r;
             }
+        }
+    }
+    return -1;
+}
+
+/*
+ * The rows of a table, in the order they are drawn.
+ *
+ * No list is built: the whole solve runs off this, and materialising the rows
+ * of a ten-thousand-row table into an array would be the one allocation the
+ * engine does not have.
+ */
+static ar_i32 ar__next_row(const ar_node *nodes, ar_i32 table, ar_i32 prev)
+{
+    ar_i32 p, r, up;
+
+    if (prev < 0)
+    {
+        for (p = 0; p < 3; ++p)
+        {
+            r = ar__scan_rows(nodes, nodes[table].first_child, p);
+            if (r >= 0)
+            {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    up = nodes[prev].parent;
+    if (up == table)
+    {
+        /* A bare row: the table's own children carry on in document order,
+           and a group among them contributes its rows where it stands. */
+        p = 1;
+        r = ar__scan_rows(nodes, nodes[prev].next_sibling, p);
+        if (r >= 0)
+        {
+            return r;
+        }
+    }
+    else
+    {
+        p = ar__phase_of(&nodes[up]);
+        for (r = nodes[prev].next_sibling; r >= 0; r = nodes[r].next_sibling)
+        {
+            if (ar__is_row(&nodes[r]))
+            {
+                return r;
+            }
+        }
+        r = ar__scan_rows(nodes, nodes[up].next_sibling, p);
+        if (r >= 0)
+        {
+            return r;
+        }
+    }
+
+    for (++p; p < 3; ++p)
+    {
+        r = ar__scan_rows(nodes, nodes[table].first_child, p);
+        if (r >= 0)
+        {
+            return r;
         }
     }
     return -1;
@@ -724,7 +789,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
             for (; e >= 0; e = nodes[e].next_sibling)
             {
-                if (ar__is_row(&nodes[e]) || ar__is_group(&nodes[e]))
+                if (ar__is_row(&nodes[e]) || ar__is_group(&nodes[e]) || ar__is_column(&nodes[e]))
                 {
                     ar_i32 r;
 
@@ -774,7 +839,56 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         col[row].span_rows = 1;
     }
 
-    y = pad_t + spacing;
+    y = pad_t;
+
+    /*
+     * The caption sits above the grid and is as wide as the table.
+     *
+     * It is a table-level box that is not part of the grid at all: it takes no
+     * column, contributes to no row, and the rows simply start beneath it. Its
+     * own contents are laid out by the block pass afterwards, exactly as a
+     * cell's are, which is why ar_is_table_block covers both.
+     *
+     * A column or a column group is the opposite case -- a real node carrying
+     * real style that occupies no space. Left alone it would keep the zero rect
+     * a fresh node is born with, at the surface origin rather than the table's;
+     * collapsed here it reports the table's content corner, which is where a
+     * thing with no size that belongs to the table should say it is.
+     */
+    {
+        ar_i32 e;
+
+        for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+        {
+            if (ar__is_caption(&nodes[e]))
+            {
+                ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
+                            nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
+                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+
+                if (assign)
+                {
+                    nodes[e].rect.x = t->rect.x + pad_l;
+                    nodes[e].rect.y = t->rect.y + y;
+                    nodes[e].rect.w = inner_w;
+                    nodes[e].rect.h = ch;
+                }
+                y += ch;
+            }
+            else if (ar__is_column(&nodes[e]) && assign)
+            {
+                ar_i32 k2;
+
+                nodes[e].rect = ar_rect_make(t->rect.x + pad_l, t->rect.y + pad_t, 0, 0);
+                for (k2 = nodes[e].first_child; k2 >= 0; k2 = nodes[k2].next_sibling)
+                {
+                    nodes[k2].rect = nodes[e].rect;
+                }
+            }
+        }
+    }
+
+    y += spacing;
     row = -1;
     while ((row = ar__next_row(nodes, table, row)) >= 0)
     {
@@ -1006,6 +1120,27 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
     ar_i32   spacing = t->style.v[AR_P_BORDER_SPACING];
     ar_i32   chrome = t->style.v[AR_P_PAD_LEFT] + t->style.v[AR_P_PAD_RIGHT];
 
+    ar_i32 cap_min = 0, cap_max = 0;
+    ar_i32 e;
+
+    /* A caption is not in the grid, but the table has to be wide enough to
+       hold it -- so its two widths join the column sums rather than being
+       distributed among them. */
+    for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+    {
+        if (ar__is_caption(&nodes[e]))
+        {
+            if (nodes[e].min_w > cap_min)
+            {
+                cap_min = nodes[e].min_w;
+            }
+            if (nodes[e].fit[0] > cap_max)
+            {
+                cap_max = nodes[e].fit[0];
+            }
+        }
+    }
+
     ncol = ar__grid(nodes, table, col);
     if (ncol > 0 && t->style.v[AR_P_TABLE_LAYOUT] != AR_TABLE_LAYOUT_FIXED)
     {
@@ -1020,6 +1155,14 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
 
     t->min_w = sum_min + chrome;
     t->fit[0] = sum_max + chrome;
+    if (cap_min + chrome > t->min_w)
+    {
+        t->min_w = cap_min + chrome;
+    }
+    if (cap_max + chrome > t->fit[0])
+    {
+        t->fit[0] = cap_max + chrome;
+    }
 
     /*
      * The intrinsic height, without running the whole solve to get it.
@@ -1034,6 +1177,14 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
     {
         ar_i32 row = -1;
         ar_i32 h = t->style.v[AR_P_PAD_TOP] + t->style.v[AR_P_PAD_BOTTOM] + spacing;
+
+        for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+        {
+            if (ar__is_caption(&nodes[e]))
+            {
+                h += nodes[e].fit[1];
+            }
+        }
 
         while ((row = ar__next_row(nodes, table, row)) >= 0)
         {

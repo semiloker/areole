@@ -1763,10 +1763,15 @@ static int ar__parent_ok(ar_i32 disp, ar_i32 pd)
     case AR_DISPLAY_TABLE_ROW:
         return pd == AR_DISPLAY_TABLE_ROW_GROUP || pd == AR_DISPLAY_TABLE_HEADER_GROUP ||
                pd == AR_DISPLAY_TABLE_FOOTER_GROUP || pd == AR_DISPLAY_TABLE;
+    case AR_DISPLAY_TABLE_COLUMN:
+        /* A column group is a column's home as much as the table is, and this
+           read only the table -- so `col` inside `colgroup`, which is how
+           almost every table that has columns at all is written, had an
+           anonymous *table* generated around it. */
+        return pd == AR_DISPLAY_TABLE || pd == AR_DISPLAY_TABLE_COLUMN_GROUP;
     case AR_DISPLAY_TABLE_ROW_GROUP:
     case AR_DISPLAY_TABLE_HEADER_GROUP:
     case AR_DISPLAY_TABLE_FOOTER_GROUP:
-    case AR_DISPLAY_TABLE_COLUMN:
     case AR_DISPLAY_TABLE_COLUMN_GROUP:
     case AR_DISPLAY_TABLE_CAPTION:
         return pd == AR_DISPLAY_TABLE;
