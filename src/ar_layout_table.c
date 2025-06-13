@@ -786,19 +786,37 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
         /*
          * Everything fits, and there is room over.
          *
-         * The surplus is shared equally rather than left on the floor. The
-         * first version stopped at the maximums and gave three empty columns
-         * nothing at all -- every cell in a table of empty cells came out zero
-         * wide, because a column that wants nothing had nothing to be
-         * proportional to. `sum_max <= sum_min` used to be folded into the
-         * clause above, which is how it hid: an empty table satisfies it.
+         * The surplus goes to the columns in proportion to what they wanted,
+         * so a column holding a paragraph takes more of it than a column
+         * holding a date. Sharing it equally was the first version and is what
+         * the specification's wording permits, but it is not what any browser
+         * does, and this table is compared against one -- a wide column and a
+         * narrow one in a roomy table came out nearly the same width.
+         *
+         * Equal shares survive as the fallback for the case that produced them:
+         * a table of empty cells has nothing to be proportional to, and
+         * stopping at the maximums there gave every column zero width.
+         * `sum_max <= sum_min` used to be folded into the clause above, which
+         * is how that hid -- an empty table satisfies it.
          */
         ar_i32 surplus = avail - sum_max;
 
         for (i = 0; i < ncol; ++i)
         {
-            ar_i32 share = (i == ncol - 1) ? surplus - given : surplus / ncol;
+            ar_i32 share;
 
+            if (i == ncol - 1)
+            {
+                share = surplus - given;
+            }
+            else if (sum_max > 0)
+            {
+                share = ar__scale(col[i].max, surplus, sum_max);
+            }
+            else
+            {
+                share = surplus / ncol;
+            }
             col[i].w = col[i].max + share;
             given += share;
         }
