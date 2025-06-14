@@ -839,6 +839,19 @@ ar_i32  ar_node_parent(const ar_ctx *c, ar_i32 i);
 /* Which child of its parent this box is, counting from zero. The root is 0. */
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i);
 
+/*
+ * Whether areole made this box up.
+ *
+ * A cell declared straight inside a table needs a row to live in, and the
+ * table model needs a rectangular grid before it can solve anything, so the
+ * missing boxes are generated. They are real boxes with real rectangles and
+ * they are not in the tree the caller described -- which matters to anything
+ * comparing the two, including the layout corpora: a browser's generated boxes
+ * are not elements and never appear in a walk of the DOM, so a comparison that
+ * counted areole's would disagree on every case that has one.
+ */
+int ar_node_generated(const ar_ctx *c, ar_i32 i);
+
 /* The text this box was given, or a pointer to "" if it was given none. The
    caller's own string, not a copy -- areole never copied it. */
 const char *ar_node_text(const ar_ctx *c, ar_i32 i);

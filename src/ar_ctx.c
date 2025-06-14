@@ -1522,6 +1522,15 @@ ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i
     return f->rect;
 }
 
+int ar_node_generated(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return (c->nodes[i].state & AR_STATE_ANON) != 0;
+}
+
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
 {
     ar_i32 parent;
