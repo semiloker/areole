@@ -7026,10 +7026,13 @@ static void test_a_column_box_takes_up_no_space(void)
     ar_surface s = ar__ui_surface(400, 400);
 
     /*
-     * `col` and `colgroup` are real nodes carrying real style and no geometry
-     * of their own. Left alone they would keep the zero rect a fresh node is
-     * born with, at the surface origin rather than the table's, and hit
-     * testing would report a box at the top left of the window.
+     * `col` and `colgroup` draw nothing and hold nothing, and they are still
+     * the shape of the columns they describe -- which is where a background
+     * for a whole column is written, and the one place in a table where a
+     * box's geometry comes from neither its parent nor its children.
+     *
+     * They were collapsed to a point at first. A browser disagreed on all
+     * three of the corpus's column cases, and it was right.
      */
     ar__ui_reset("#root { display:block; padding:40px; }"
                  ".t { display:table; width:200px; }"
@@ -7067,8 +7070,10 @@ static void test_a_column_box_takes_up_no_space(void)
      */
     CHECK(g_ui->nodes[3].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_COLUMN,
           "table: a column inside a column group is left where it was put");
-    CHECK(ar__box(2).w == 0 && ar__box(2).h == 0, "table: a column group has no size");
-    CHECK(ar__box(3).w == 0 && ar__box(3).h == 0, "table: nor a column");
+    CHECK(ar__box(3).w == ar__box(5).w && ar__box(3).x == ar__box(5).x,
+          "table: a column box is as wide as the column it describes, and over it");
+    CHECK(ar__box(2).w == ar__box(3).w, "table: a column group covers the columns it holds");
+    CHECK(ar__box(2).h == ar__box(4).h, "table: and is as tall as the grid");
     CHECK(ar__box(2).x == ar__box(1).x && ar__box(2).y == ar__box(1).y,
           "table: and it reports the table's corner, not the window's");
     CHECK(ar__box(4).y == ar__box(1).y, "table: a column box does not push the first row down");

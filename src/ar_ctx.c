@@ -1919,9 +1919,63 @@ static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
 }
 
 /* Closes anonymous boxes that cannot hold what is about to be declared. */
+/* The display of the box one level above the one that is open, or -1. */
+static ar_i32 ar__outer_display(const ar_ctx *c)
+{
+    if (c->depth <= 1 || c->stack[c->depth - 2] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 2]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * How many boxes would have to be invented to put `disp` inside `pd`.
+ *
+ * Four is the whole ladder -- cell, row, row group, table -- and the chain
+ * cycles if it is followed past that, so the count is bounded rather than
+ * trusted to terminate.
+ */
+static int ar__anon_cost(ar_i32 disp, ar_i32 pd)
+{
+    ar_i32 d = disp;
+    int    n = 0;
+
+    if (pd < 0)
+    {
+        return 99;
+    }
+    while (n <= 4)
+    {
+        if (ar__parent_ok(d, pd))
+        {
+            return n;
+        }
+        d = ar__anon_parent_of(d);
+        ++n;
+    }
+    return 99;
+}
+
+/*
+ * Close the anonymous boxes this one does not belong in.
+ *
+ * The old test was whether `disp` fits directly, which closed too much: a
+ * block written straight after a cell needs a cell of its own, and a cell
+ * belongs in the row the first cell was given -- but a block does not fit in a
+ * row, so the row was closed and a second one opened, putting two boxes that
+ * belong side by side on separate lines.
+ *
+ * The question is not whether `disp` fits here, but whether closing this box
+ * would mean inventing fewer. A row written after a bare cell fits the table
+ * directly, so the generated row closes and it becomes its sibling; a block
+ * written after a bare cell needs a cell either way, and needs a row as well
+ * if the generated one is closed, so the generated one stays open.
+ */
 static void ar__close_anon_for(ar_ctx *c, ar_i32 disp)
 {
-    while (c->depth > 0 && c->is_anon[c->depth - 1] && !ar__parent_ok(disp, ar__open_display(c)))
+    while (c->depth > 0 && c->is_anon[c->depth - 1] &&
+           ar__anon_cost(disp, ar__outer_display(c)) < ar__anon_cost(disp, ar__open_display(c)))
     {
         c->is_anon[c->depth - 1] = 0;
         c->depth--;

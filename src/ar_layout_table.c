@@ -50,8 +50,12 @@
 
 typedef struct ar__col
 {
-    ar_i32 min, max;  /* content constraints, accumulated over the column */
-    ar_i32 w, x;      /* what it got, and where it starts */
+    ar_i32 min, max; /* content constraints, accumulated over the column */
+    ar_i32 w, x;     /* what it got, and where it starts */
+    /* Whether any cell in this column stated a width. A column that did keeps
+       what it asked for when there is room to spare; the surplus goes to the
+       columns that did not, which is where a browser puts it. */
+    ar_i32 fixed;
     ar_i32 span_left; /* rows still covered by a rowspan from above */
 
     /* The cell doing the covering, so its height can be settled on the last
@@ -508,6 +512,7 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
         col[i].max = 0;
         col[i].w = 0;
         col[i].x = 0;
+        col[i].fixed = 0;
         col[i].span_left = 0;
         col[i].span_node = -1;
         col[i].span_y = 0;
@@ -581,6 +586,7 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
                     {
                         mx = stated;
                     }
+                    col[at].fixed = 1;
                 }
                 if (mn > col[at].min)
                 {
@@ -883,23 +889,63 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
          * `sum_max <= sum_min` used to be folded into the clause above, which
          * is how that hid -- an empty table satisfies it.
          */
+        /*
+         * A column that stated a width keeps it while any column did not.
+         *
+         * A cell holding a paragraph beside a cell holding a date is the case
+         * this is for: the date said 40 pixels and meant it, and every pixel
+         * over the total belongs to the paragraph. Only when every column has
+         * stated a width is the surplus shared out among them, in proportion
+         * to what each asked for -- a wide column taking more of it than a
+         * narrow one, which sharing it equally got wrong.
+         */
         ar_i32 surplus = avail - sum_max;
+        ar_i32 pool = 0, last = -1;
+        int    any_auto = 0;
 
         for (i = 0; i < ncol; ++i)
         {
-            ar_i32 share;
+            if (!col[i].fixed)
+            {
+                any_auto = 1;
+                pool += col[i].max;
+                last = i;
+            }
+        }
+        if (!any_auto)
+        {
+            pool = sum_max;
+            last = ncol - 1;
+        }
 
-            if (i == ncol - 1)
+        for (i = 0; i < ncol; ++i)
+        {
+            ar_i32 share = 0;
+
+            if (any_auto && col[i].fixed)
+            {
+                share = 0;
+            }
+            else if (i == last)
             {
                 share = surplus - given;
             }
-            else if (sum_max > 0)
+            else if (pool > 0)
             {
-                share = ar__scale(col[i].max, surplus, sum_max);
+                share = ar__scale(col[i].max, surplus, pool);
             }
             else
             {
-                share = surplus / ncol;
+                ar_i32 n = 0, k;
+
+                for (k = 0; k < ncol; ++k)
+                {
+                    if (!any_auto || !col[k].fixed)
+                    {
+                        ++n;
+                    }
+                }
+                share = n > 0 ? surplus / n : 0;
             }
             col[i].w = col[i].max + share;
             given += share;
@@ -1093,11 +1139,8 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
      * own contents are laid out by the block pass afterwards, exactly as a
      * cell's are, which is why ar_is_table_block covers both.
      *
-     * A column or a column group is the opposite case -- a real node carrying
-     * real style that occupies no space. Left alone it would keep the zero rect
-     * a fresh node is born with, at the surface origin rather than the table's;
-     * collapsed here it reports the table's content corner, which is where a
-     * thing with no size that belongs to the table should say it is.
+     * A column or a column group is dealt with after the rows, because what it
+     * covers is not known until they have been placed.
      */
     {
         ar_i32 e;
@@ -1118,16 +1161,6 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     nodes[e].rect.h = ch;
                 }
                 y += ch;
-            }
-            else if (ar__is_column(&nodes[e]) && assign)
-            {
-                ar_i32 k2;
-
-                nodes[e].rect = ar_rect_make(t->rect.x + pad_l, t->rect.y + pad_t, 0, 0);
-                for (k2 = nodes[e].first_child; k2 >= 0; k2 = nodes[k2].next_sibling)
-                {
-                    nodes[k2].rect = nodes[e].rect;
-                }
             }
         }
     }
@@ -1323,9 +1356,12 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             ar_i32 top = ar__half_far(hl);
             ar_i32 bot = ar__half_near(hb);
 
-            nodes[row].rect.x = t->rect.x + pad_l;
+            /* A row's box spans its cells, not the table -- so in the
+               separate model it starts one border-spacing in and is two
+               narrower, which is where a browser puts it. */
+            nodes[row].rect.x = t->rect.x + pad_l + spacing;
             nodes[row].rect.y = t->rect.y + y;
-            nodes[row].rect.w = inner_w;
+            nodes[row].rect.w = inner_w - 2 * spacing;
             nodes[row].rect.h = rh;
 
             c = nodes[row].first_child;
@@ -1387,6 +1423,75 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
     if (assign)
     {
+        /*
+         * A column box covers the column it describes.
+         *
+         * It draws no border and holds nothing, but it is where a background
+         * for a whole column is written, so it has to be the shape of that
+         * column -- and it is the one box in a table whose geometry comes from
+         * neither its parent nor its children. Columns are counted across the
+         * table's children in order: a `col` takes the next one, a `colgroup`
+         * takes the span of the `col`s inside it, or the next one if it has
+         * none.
+         */
+        ar_i32 e, k = 0;
+        ar_i32 gtop = t->rect.y + pad_t;
+        ar_i32 gbot = t->rect.y + y;
+
+        for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+        {
+            ar_i32 from, span, c2;
+
+            if (!ar__is_column(&nodes[e]))
+            {
+                continue;
+            }
+            from = k;
+            span = 0;
+            for (c2 = nodes[e].first_child; c2 >= 0; c2 = nodes[c2].next_sibling)
+            {
+                if (ar__is_column(&nodes[c2]))
+                {
+                    if (k < ncol)
+                    {
+                        nodes[c2].rect =
+                            ar_rect_make(t->rect.x + pad_l + col[k].x, gtop, col[k].w, gbot - gtop);
+                    }
+                    else
+                    {
+                        nodes[c2].rect = ar_rect_make(t->rect.x + pad_l, gtop, 0, 0);
+                    }
+                    ++k;
+                    ++span;
+                }
+            }
+            if (span == 0)
+            {
+                ++k;
+                span = 1;
+            }
+            if (from < ncol)
+            {
+                ar_i32 to = from + span - 1;
+                ar_i32 right;
+
+                if (to >= ncol)
+                {
+                    to = ncol - 1;
+                }
+                right = col[to].x + col[to].w;
+                nodes[e].rect = ar_rect_make(t->rect.x + pad_l + col[from].x, gtop,
+                                             right - col[from].x, gbot - gtop);
+            }
+            else
+            {
+                nodes[e].rect = ar_rect_make(t->rect.x + pad_l, gtop, 0, 0);
+            }
+        }
+    }
+
+    if (assign)
+    {
         /* Row groups wrap their rows, so give each one the span of the rows it
            holds. A group with no rows collapses rather than floating. */
         ar_i32 g;
@@ -1415,8 +1520,8 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     }
                     any = 1;
                 }
-                nodes[g].rect.x = t->rect.x + pad_l;
-                nodes[g].rect.w = inner_w;
+                nodes[g].rect.x = t->rect.x + pad_l + spacing;
+                nodes[g].rect.w = inner_w - 2 * spacing;
                 nodes[g].rect.y = any ? top : t->rect.y + pad_t;
                 nodes[g].rect.h = any ? bot - top : 0;
             }
