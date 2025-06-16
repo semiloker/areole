@@ -7136,8 +7136,15 @@ static void test_two_cells_share_one_border(void)
           "collapse: the two cells and their shared lines fill the table exactly");
     CHECK(g_ui->nodes[3].edge[1] + g_ui->nodes[4].edge[3] == 2,
           "collapse: the shared line is drawn once, between them");
-    CHECK(g_ui->nodes[3].edge[3] == 2 && g_ui->nodes[4].edge[1] == 2,
-          "collapse: an outer line has one owner, because nothing is outside it");
+    /*
+     * An outer line is split like any other, and the far half lies outside the
+     * table's content box -- which is where a browser draws it and where
+     * areole does not draw it at all, because a border in this engine reserves
+     * no space (see ar_used_size). So the end cell draws one of the two
+     * pixels and the other is the table's, which has no box to put it in.
+     */
+    CHECK(g_ui->nodes[3].edge[3] == 1 && g_ui->nodes[4].edge[1] == 1,
+          "collapse: an outer line is split like any other");
 }
 
 static void test_the_widest_border_wins_the_line(void)
@@ -7175,8 +7182,8 @@ static void test_a_collapsed_table_draws_no_border_of_its_own(void)
           "collapse: and draws no border of its own");
     CHECK((g_ui->nodes[2].state & AR_STATE_COLLAPSED) != 0 && g_ui->nodes[2].edge[3] == 0,
           "collapse: nor does a row");
-    CHECK(g_ui->nodes[3].edge[3] == 4,
-          "collapse: the outer line is the table's 4, drawn in full by the end cell");
+    CHECK(g_ui->nodes[3].edge[3] == 2,
+          "collapse: the outer line is the table's 4, and the end cell draws its half");
 }
 
 static void test_border_spacing_means_nothing_when_collapsed(void)
@@ -7278,9 +7285,9 @@ static void test_a_collapsed_line_is_drawn_once(void)
     CHECK(ar__box(3).x == 0 && ar__box(3).w == 150 && ar__box(4).x == 150,
           "collapse: the pixel test's cells are where it thinks they are");
 
-    CHECK(ar__pixel_at(0, 6) == 0xFF0000u && ar__pixel_at(1, 6) == 0xFF0000u,
-          "collapse: the outer line is two pixels of the end cell's colour");
-    CHECK(ar__pixel_at(2, 6) == 0xFFFFFFu, "collapse: and stops there");
+    CHECK(ar__pixel_at(0, 6) == 0xFF0000u,
+          "collapse: the end cell draws its half of the outer line");
+    CHECK(ar__pixel_at(1, 6) == 0xFFFFFFu, "collapse: and stops there");
 
     CHECK(ar__pixel_at(148, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
     CHECK(ar__pixel_at(149, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
