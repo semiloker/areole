@@ -56,6 +56,11 @@ typedef struct ar__col
        what it asked for when there is room to spare; the surplus goes to the
        columns that did not, which is where a browser puts it. */
     ar_i32 fixed;
+    /* A `col` box asked for this width, and one that says `visibility:
+       collapse` closes its column without any of the cells in it being
+       touched. */
+    ar_i32 stated;
+    ar_i32 gone;
     ar_i32 span_left; /* rows still covered by a rowspan from above */
 
     /* The cell doing the covering, so its height can be settled on the last
@@ -81,6 +86,13 @@ static int ar__is_column(const ar_node *n)
 
     return d == AR_DISPLAY_TABLE_COLUMN || d == AR_DISPLAY_TABLE_COLUMN_GROUP;
 }
+/* A row or a cell that `visibility: collapse` has closed. Not the same as
+   `display: none`: the track goes and the column widths do not move. */
+static int ar__collapsed_out(const ar_node *n)
+{
+    return n->style.v[AR_P_VISIBILITY] == AR_VIS_COLLAPSE;
+}
+
 static int ar__is_group(const ar_node *n)
 {
     ar_i32 d = n->style.v[AR_P_DISPLAY];
@@ -490,6 +502,74 @@ static ar_i32 ar__lines(const ar_node *nodes, ar_i32 table, ar_i32 *vline)
     return ncol;
 }
 
+/*
+ * What the `col` boxes say about the columns, before any cell is read.
+ *
+ * A `col` is the one place a column can be spoken about directly -- its width
+ * settles the column whatever the cells in it want, and `visibility: collapse`
+ * on it closes the column without any cell being named. Columns are counted
+ * across the table's children in order: a `col` takes the next one, a
+ * `colgroup` covers the `col`s inside it, or the next one if it has none.
+ *
+ * Returns how many columns the col boxes describe, which is not the table's
+ * column count -- a table may have more columns than it has `col` elements,
+ * and usually does.
+ */
+static ar_i32 ar__read_columns(const ar_node *nodes, ar_i32 table, ar__col *col)
+{
+    ar_i32 e, k = 0;
+
+    for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+    {
+        ar_i32 c2, span = 0;
+
+        if (!ar__is_column(&nodes[e]))
+        {
+            continue;
+        }
+        for (c2 = nodes[e].first_child; c2 >= 0; c2 = nodes[c2].next_sibling)
+        {
+            if (!ar__is_column(&nodes[c2]))
+            {
+                continue;
+            }
+            if (k < AR_MAX_COLUMNS)
+            {
+                if (nodes[c2].style.unit[AR_P_WIDTH] == AR_UNIT_PX)
+                {
+                    col[k].stated = nodes[c2].style.v[AR_P_WIDTH];
+                }
+                else if (nodes[e].style.unit[AR_P_WIDTH] == AR_UNIT_PX)
+                {
+                    col[k].stated = nodes[e].style.v[AR_P_WIDTH];
+                }
+                if (ar__collapsed_out(&nodes[c2]) || ar__collapsed_out(&nodes[e]))
+                {
+                    col[k].gone = 1;
+                }
+            }
+            ++k;
+            ++span;
+        }
+        if (span == 0)
+        {
+            if (k < AR_MAX_COLUMNS)
+            {
+                if (nodes[e].style.unit[AR_P_WIDTH] == AR_UNIT_PX)
+                {
+                    col[k].stated = nodes[e].style.v[AR_P_WIDTH];
+                }
+                if (ar__collapsed_out(&nodes[e]))
+                {
+                    col[k].gone = 1;
+                }
+            }
+            ++k;
+        }
+    }
+    return k;
+}
+
 static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 *vline)
 {
     ar_i32 row = -1;
@@ -513,6 +593,8 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
         col[i].w = 0;
         col[i].x = 0;
         col[i].fixed = 0;
+        col[i].stated = 0;
+        col[i].gone = 0;
         col[i].span_left = 0;
         col[i].span_node = -1;
         col[i].span_y = 0;
@@ -647,11 +729,33 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
         }
     }
 
+    ar__read_columns(nodes, table, col);
+
     for (i = 0; i < ncol; ++i)
     {
         if (col[i].max < col[i].min)
         {
             col[i].max = col[i].min;
+        }
+        /*
+         * A `col` that stated a width has said what its column wants.
+         *
+         * A bid rather than a settlement: a cell in that column that asked for
+         * more still gets it, which is what a browser does and what the
+         * cascade would lead anyone to expect -- the column speaks for the
+         * cells that said nothing, not over the ones that did.
+         */
+        if (col[i].stated > col[i].min)
+        {
+            col[i].min = col[i].stated;
+        }
+        if (col[i].stated > col[i].max)
+        {
+            col[i].max = col[i].stated;
+        }
+        if (col[i].stated > 0)
+        {
+            col[i].fixed = 1;
         }
     }
     return ncol;
@@ -864,11 +968,55 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
     }
     else if (avail <= sum_min)
     {
-        /* Not even the minimums fit. Every column takes its minimum and the
-           table overflows, which is what a scroll container is for. */
+        /*
+         * The minimums do not fit, and what happens next depends on where they
+         * came from.
+         *
+         * A minimum that is a *stated* width is a request, and when the
+         * requests come to more than the table has, they are scaled down in
+         * proportion rather than granted and left to overflow -- four columns
+         * asking for ninety in a table of three hundred and sixty come out
+         * proportional, not overflowing by sixty.
+         *
+         * A minimum that is content -- a word that cannot be broken -- is not
+         * a request and does not scale. So the scaling applies only to the
+         * slack above the content minimums, and a table narrower than its own
+         * text still overflows, which is what a scroll container is for.
+         */
+        ar_i32 hard = 0, soft = 0;
+
         for (i = 0; i < ncol; ++i)
         {
-            col[i].w = col[i].min;
+            if (col[i].fixed)
+            {
+                soft += col[i].min;
+            }
+            else
+            {
+                hard += col[i].min;
+            }
+        }
+        if (soft > 0 && avail > hard)
+        {
+            /*
+             * The stated widths share what is left of the table between them,
+             * in proportion to what each asked for. The sum is deliberately
+             * not forced back to `avail` afterwards: rounding four columns
+             * down leaves a pixel or two unused, and that is what a browser
+             * does -- forcing it would hand the whole remainder to the last
+             * column and make it visibly wider than its neighbours.
+             */
+            for (i = 0; i < ncol; ++i)
+            {
+                col[i].w = col[i].fixed ? ar__scale(col[i].min, avail - hard, soft) : col[i].min;
+            }
+        }
+        else
+        {
+            for (i = 0; i < ncol; ++i)
+            {
+                col[i].w = col[i].min;
+            }
         }
     }
     else if (avail >= sum_max)
@@ -1051,6 +1199,9 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
        shared line and nothing else. */
     ar_i32 spacing = collapse ? 0 : t->style.v[AR_P_BORDER_SPACING];
     ar_i32 prev_row = -1, prev_bot = 0;
+    /* Where the grid itself begins and ends, which is not where the table
+       does: a caption is a table-level box above or below every column. */
+    ar_i32 grid_top = 0, grid_bot = 0;
 
     ncol = ar__grid(nodes, table, col, vline);
     if (ncol <= 0)
@@ -1108,6 +1259,47 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         avail = 0;
     }
     ar__distribute(col, ncol, avail, fixed_layout);
+    {
+        /*
+         * A closed column takes no width, and nothing else moves to take it.
+         *
+         * That is the whole of `visibility: collapse` on a column: the widths
+         * were solved with the column in place and are left exactly as they
+         * were, so the table gets narrower by that column and every other one
+         * stays where it was. Recomputing would make the remaining columns
+         * jump, which is what the value exists to avoid.
+         */
+        ar_i32 k, acc = 0, lost = 0;
+
+        for (k = 0; k < ncol; ++k)
+        {
+            if (col[k].gone)
+            {
+                lost += col[k].w;
+                col[k].w = 0;
+            }
+            col[k].x = acc;
+            acc += col[k].w;
+        }
+
+        /*
+         * And the table is narrower by exactly what was closed.
+         *
+         * Even when its width was stated: `width: 360px` on a table with a
+         * closed column means 360 for the columns that are left plus one that
+         * is not there, and a browser drops it. The remaining columns keep the
+         * widths they were given, which is the point -- the table gets smaller
+         * rather than the columns getting bigger.
+         */
+        if (lost > 0)
+        {
+            inner_w -= lost;
+            if (assign)
+            {
+                t->rect.w -= lost;
+            }
+        }
+    }
 
     /*
      * The placement walk has to assign columns exactly the way the grid pass
@@ -1147,7 +1339,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
         {
-            if (ar__is_caption(&nodes[e]))
+            if (ar__is_caption(&nodes[e]) && nodes[e].style.v[AR_P_CAPTION_SIDE] == AR_CAPTION_TOP)
             {
                 ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
                             nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
@@ -1166,6 +1358,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     }
 
     y += spacing;
+    grid_top = y;
 
     /*
      * The row after this one is wanted twice -- once to know whether this is
@@ -1184,11 +1377,24 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         ar_i32 nxt = ar__next_row(nodes, table, row);
         ar_i32 mine = 0, hl = 0, hb = 0;
+        int    closed;
 
         /* `rowspan: 9` on the second row of a two-row table covers the rows
            that exist and no more, so the last row is a settling point for
            every span still open, whatever its countdown says. */
         int last = nxt < 0;
+
+        /*
+         * A closed row takes no height and the rows below it close up.
+         *
+         * Its cells are placed exactly as any other row's -- same column, same
+         * width -- and given no height. They were read by the grid pass and are
+         * still in the column constraints, which is the whole difference from
+         * `display: none`: a filter that hides half a table's rows leaves every
+         * column exactly where it was, and the reader's eye does not have to
+         * find them again.
+         */
+        closed = ar__collapsed_out(&nodes[row]);
 
         if (collapse)
         {
@@ -1293,7 +1499,11 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 h = ar__cell_height(&nodes[c], inner < 0 ? 0 : inner, env);
             }
 
-            if (rs == 1)
+            if (closed)
+            {
+                /* Placed, measured, and contributing nothing. */
+            }
+            else if (rs == 1)
             {
                 if (h > rh)
                 {
@@ -1381,7 +1591,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                    so writing the row's height over it here would undo that. */
                 if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1)
                 {
-                    nodes[c].rect.h = rh + top + bot;
+                    nodes[c].rect.h = closed ? 0 : rh + top + bot;
                 }
             }
         }
@@ -1421,6 +1631,33 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         row = nxt;
     }
 
+    grid_bot = y;
+
+    {
+        /* And the ones that asked to go underneath, after the last row. */
+        ar_i32 e;
+
+        for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
+        {
+            if (ar__is_caption(&nodes[e]) &&
+                nodes[e].style.v[AR_P_CAPTION_SIDE] == AR_CAPTION_BOTTOM)
+            {
+                ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
+                            nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
+                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+
+                if (assign)
+                {
+                    nodes[e].rect.x = t->rect.x + pad_l;
+                    nodes[e].rect.y = t->rect.y + y;
+                    nodes[e].rect.w = inner_w;
+                    nodes[e].rect.h = ch;
+                }
+                y += ch;
+            }
+        }
+    }
+
     if (assign)
     {
         /*
@@ -1435,8 +1672,8 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
          * none.
          */
         ar_i32 e, k = 0;
-        ar_i32 gtop = t->rect.y + pad_t;
-        ar_i32 gbot = t->rect.y + y;
+        ar_i32 gtop = t->rect.y + grid_top;
+        ar_i32 gbot = t->rect.y + grid_bot;
 
         for (e = nodes[table].first_child; e >= 0; e = nodes[e].next_sibling)
         {
@@ -1454,8 +1691,10 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 {
                     if (k < ncol)
                     {
-                        nodes[c2].rect =
-                            ar_rect_make(t->rect.x + pad_l + col[k].x, gtop, col[k].w, gbot - gtop);
+                        /* A closed column has no box either: it is not a thin
+                           column, it is a column that is not there. */
+                        nodes[c2].rect = ar_rect_make(t->rect.x + pad_l + col[k].x, gtop, col[k].w,
+                                                      col[k].gone ? 0 : gbot - gtop);
                     }
                     else
                     {
@@ -1480,12 +1719,35 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     to = ncol - 1;
                 }
                 right = col[to].x + col[to].w;
-                nodes[e].rect = ar_rect_make(t->rect.x + pad_l + col[from].x, gtop,
-                                             right - col[from].x, gbot - gtop);
+                nodes[e].rect = ar_rect_make(
+                    t->rect.x + pad_l + col[from].x, right > col[from].x ? gtop : t->rect.y + pad_t,
+                    right - col[from].x, right > col[from].x ? gbot - gtop : 0);
             }
             else
             {
                 nodes[e].rect = ar_rect_make(t->rect.x + pad_l, gtop, 0, 0);
+            }
+
+            /*
+             * And the columns inside it take its vertical extent.
+             *
+             * A group whose every column is closed has none, so its columns
+             * report the table's corner rather than the grid's -- which is
+             * where a browser puts them, and the only place a box with no size
+             * inside a group with no size can sensibly say it is. A single
+             * closed column inside a group that still has extent keeps the
+             * grid's top, because the group it belongs to still does.
+             */
+            for (c2 = nodes[e].first_child; c2 >= 0; c2 = nodes[c2].next_sibling)
+            {
+                if (ar__is_column(&nodes[c2]))
+                {
+                    nodes[c2].rect.y = nodes[e].rect.y;
+                    if (nodes[e].rect.h == 0)
+                    {
+                        nodes[c2].rect.h = 0;
+                    }
+                }
             }
         }
     }
@@ -1529,6 +1791,34 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     }
 
     return y + t->style.v[AR_P_PAD_BOTTOM];
+}
+
+/*
+ * Whether a box paints itself at all.
+ *
+ * Two reasons it might not. `visibility: hidden` is the plain one, and it
+ * covers this box only -- the property inherits, so the children arrive at the
+ * same answer on their own, and a child that says `visible` comes back, which
+ * is the difference from `display: none`.
+ *
+ * `empty-cells: hide` is the table one: a cell with nothing in it shows
+ * neither background nor border, so a sparse table reads as a grid with holes
+ * rather than a grid of empty boxes. Only in the separate model -- a collapsed
+ * grid line belongs to the boundary and not to either cell, so there is no
+ * such thing as one cell withholding it.
+ */
+int ar_box_paints(const ar_node *n)
+{
+    if (n->style.v[AR_P_VISIBILITY] != AR_VIS_VISIBLE)
+    {
+        return 0;
+    }
+    if (n->style.v[AR_P_EMPTY_CELLS] == AR_EMPTY_HIDE && ar_is_table_cell(n) &&
+        !(n->state & AR_STATE_COLLAPSED) && n->first_child < 0 && !n->text)
+    {
+        return 0;
+    }
+    return 1;
 }
 
 /* Every box under this one moves with it. Walked through the child links

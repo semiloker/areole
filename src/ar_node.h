@@ -554,7 +554,12 @@ int ar_is_table(const ar_node *n);
 int ar_is_table_internal(const ar_node *n);
 
 /* A cell, which is a block for whatever is inside it. */
-int  ar_is_table_block(const ar_node *n);
+int ar_is_table_block(const ar_node *n);
+
+/* Whether this box paints itself -- its background, its border and its text.
+   Its children are asked the same question separately, because `visibility`
+   inherits and a child may say `visible` and come back. */
+int  ar_box_paints(const ar_node *n);
 void ar_table_align_cell(ar_node *nodes, ar_i32 i);
 int  ar_is_table_cell(const ar_node *n);
 

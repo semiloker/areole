@@ -412,12 +412,23 @@ typedef ar_i32 ar_scroll_pos;
    style per box, 8 more per rule across 256 rules, and the whole 8 KB of
    AR_MEM_FIXED below. It was paid so that a stylesheet can set a span.
 
+   456 -> 464, for `visibility`, `caption-side` and `empty-cells` at 0.7.1.
+   Measured, not guessed: ar_node went 400 -> 408 bytes and the assertion
+   below fired at 460 against 456. Three narrow properties are six bytes of
+   value and three of unit, which alignment rounds to eight.
+
+   `visibility` is the one that had to be a property. It inherits, and that is
+   the whole of what makes `collapse` on a row useful -- the row goes and every
+   cell in it goes too, without any of them being named -- so it cannot be a
+   call into the context the way a span could have been. The other two ride
+   along in the same eight bytes: the alignment had already been paid.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 448u
-#else
 #define AR_BYTES_PER_BOX 456u
+#else
+#define AR_BYTES_PER_BOX 464u
 #endif
 
 /*
