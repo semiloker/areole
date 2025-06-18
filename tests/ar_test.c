@@ -7345,6 +7345,64 @@ static void test_a_roomy_table_gives_the_surplus_to_the_wide_column(void)
     CHECK(ar__box(3).w + ar__box(4).w == 360, "table: and the two of them still fill the table");
 }
 
+static void test_vertical_align_puts_a_cells_contents_where_it_says(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A row is as tall as its tallest cell, so every other cell in it has room
+     * to spare. The tall cell is 60 and the three short ones hold a 10-pixel
+     * block each: at the top, in the middle, and at the bottom of the 60.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:400px; }"
+                 ".r { display:table-row; }"
+                 ".tall { display:table-cell; height:60px; }"
+                 ".c { display:table-cell; }"
+                 ".mid { vertical-align:middle; }"
+                 ".bot { vertical-align:bottom; }"
+                 ".in { display:block; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.tall");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c"); /* 4: default, which is top */
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c.mid"); /* 6 */
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c.bot"); /* 8 */
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(3).h == 60, "table: the tall cell sets the row's height");
+    CHECK(ar__box(4).h == 60 && ar__box(6).h == 60 && ar__box(8).h == 60,
+          "table: and every cell in the row is that tall, contents or not");
+    CHECK(ar__box(5).y == ar__box(4).y, "table: a cell's contents start at its top by default");
+    CHECK(ar__box(7).y == ar__box(6).y + 25,
+          "table: vertical-align middle centres them in the room");
+    CHECK(ar__box(9).y == ar__box(8).y + 50, "table: and bottom puts them at the bottom of it");
+    CHECK(ar__box(5).h == 10 && ar__box(7).h == 10 && ar__box(9).h == 10,
+          "table: none of which changes how tall they are");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -11180,6 +11238,7 @@ int main(void)
     test_a_collapsed_edge_is_in_the_paint_digest();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
+    test_vertical_align_puts_a_cells_contents_where_it_says();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

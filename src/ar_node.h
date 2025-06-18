@@ -554,8 +554,9 @@ int ar_is_table(const ar_node *n);
 int ar_is_table_internal(const ar_node *n);
 
 /* A cell, which is a block for whatever is inside it. */
-int ar_is_table_block(const ar_node *n);
-int ar_is_table_cell(const ar_node *n);
+int  ar_is_table_block(const ar_node *n);
+void ar_table_align_cell(ar_node *nodes, ar_i32 i);
+int  ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
    they give the table box. No width exists yet, so nothing is placed. */

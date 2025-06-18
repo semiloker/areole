@@ -1531,6 +1531,63 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     return y + t->style.v[AR_P_PAD_BOTTOM];
 }
 
+/* Every box under this one moves with it. Walked through the child links
+   rather than the node array, so a cell costs its own subtree and not the
+   whole tree after it -- which on a ten-thousand-row table is the difference
+   between linear and not. */
+static void ar__shift_kids(ar_node *nodes, ar_i32 i, ar_i32 dy)
+{
+    ar_i32 c;
+
+    for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        nodes[c].rect.y += dy;
+        ar__shift_kids(nodes, c, dy);
+    }
+}
+
+/*
+ * Where a cell's contents sit in a cell that is taller than they are.
+ *
+ * A row is as tall as its tallest cell, so every other cell in it has room to
+ * spare, and `vertical-align` is what says where in that room the contents go.
+ * Run after the block pass has laid them out, because the answer needs the
+ * height they came to and that is what the block pass produces.
+ *
+ * `baseline` -- the initial value -- is treated as `top`. Aligning the first
+ * lines of adjacent cells needs each cell's own baseline and the tallest of
+ * them across the row, which is a second pass over the row after its height is
+ * settled; where every cell has the same font and the same padding the two
+ * answers are identical, which is most tables. Named here so its absence is a
+ * decision.
+ */
+void ar_table_align_cell(ar_node *nodes, ar_i32 i)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   va = n->style.v[AR_P_VERTICAL_ALIGN];
+    ar_i32   inner, slack;
+
+    if (va != AR_VALIGN_MIDDLE && va != AR_VALIGN_BOTTOM)
+    {
+        return;
+    }
+    inner = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
+    if (n->state & AR_STATE_COLLAPSED)
+    {
+        inner -= n->edge[0] + n->edge[2];
+    }
+    else
+    {
+        inner -= ar__cell_border_y(n);
+    }
+    slack = inner - n->content_h;
+    if (slack <= 0)
+    {
+        return;
+    }
+    ar__shift_kids(nodes, i, va == AR_VALIGN_MIDDLE ? slack / 2 : slack);
+}
+
 /*
  * The backward sweep's share: what this table needs, and what it would like.
  *
