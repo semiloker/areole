@@ -7857,6 +7857,263 @@ static void test_a_frozen_column_stays_while_the_columns_go_past(void)
     CHECK(ar__box(4).w == 100, "sticky: and the frozen cell is no wider for staying");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.8.0: the rest of flexbox
+ *
+ * Every one of these is a case the old subset -- one division of the leftover
+ * among the boxes that said `grow` -- got wrong or could not express.
+ * ------------------------------------------------------------------------ */
+static void ar__flex_scene(ar_surface *s, const char *extra, ar_i32 items)
+{
+    char     css[900];
+    ar_input in;
+    ar_i32   k;
+
+    /* The container is a box inside the root, not the root itself: the root
+       takes the viewport and ignores anything it says about its own size, so
+       a stated width there would be quietly the wrong number. */
+    strcpy(css, "#root { display:block; }"
+                ".box { display:flex; flex-direction:row; width:300px; height:100px; }"
+                ".i { height:20px; }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    for (k = 0; k < items; ++k)
+    {
+        char sel[24];
+
+        sprintf(sel, "div.i.n%ld", (long)k);
+        ar_begin(g_ui, sel);
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_flex_factors_are_a_ratio_not_a_count(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /*
+     * Two items, `flex-grow: 3` and `flex-grow: 1`, sharing 300.
+     *
+     * The old subset divided the leftover by the *number* of growers, so these
+     * came out 150 and 150 -- the factors were read as a flag. They are a
+     * ratio: 225 and 75.
+     */
+    ar__flex_scene(&s, ".i { flex-basis:0px; } .n0 { flex-grow:3; } .n1 { flex-grow:1; }", 2);
+
+    CHECK(ar__box(2).w == 225, "flex: a grow factor of three takes three shares");
+    CHECK(ar__box(3).w == 75, "flex: and a factor of one takes one");
+    CHECK(ar__box(2).w + ar__box(3).w == 300, "flex: and together they meet the far edge");
+}
+
+static void test_a_fractional_factor_is_kept(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /* `flex-grow: 0.5` beside `flex-grow: 1.5` is two to six, not zero to one.
+       areole has no floating point, so the factors are carried in thousandths
+       -- 500 and 1500 -- and this is the check that says the fraction survived
+       the parser rather than being floored the way every other number is. */
+    ar__flex_scene(&s, ".i { flex-basis:0px; } .n0 { flex-grow:0.5; } .n1 { flex-grow:1.5; }", 2);
+
+    CHECK(ar__box(2).w == 75, "flex: a fractional grow factor is not floored to zero");
+    CHECK(ar__box(3).w == 225, "flex: and the ratio between two of them is kept");
+}
+
+static void test_shrinking_is_weighted_by_the_base(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /*
+     * Two items wanting 300 and 100 in a container of 300: 100 too much.
+     *
+     * Shrinking is weighted by the base size as well as the factor, so the wide
+     * one gives up three times what the narrow one does -- 75 against 25 --
+     * rather than 50 each. That is what stops a narrow item vanishing while a
+     * wide one beside it barely moves, and the subset could not do it at all
+     * because it had no shrink.
+     */
+    ar__flex_scene(&s, ".n0 { flex-basis:300px; } .n1 { flex-basis:100px; }", 2);
+
+    CHECK(ar__box(2).w == 225, "flex: the wide item gives up three quarters of the overflow");
+    CHECK(ar__box(3).w == 75, "flex: and the narrow one a quarter");
+    CHECK(ar__box(2).w + ar__box(3).w == 300, "flex: and the line fits exactly");
+}
+
+static void test_a_maximum_freezes_an_item_and_the_rest_take_its_share(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /*
+     * This is the whole reason section 9.7 is a loop rather than a division.
+     *
+     * Three items share 300 equally: 100 each. One of them says `max-width:
+     * 40px`, so it cannot take its hundred -- and the sixty it gives back has
+     * to go to the other two, which a single division never revisits. 40, 130,
+     * 130.
+     */
+    ar__flex_scene(&s,
+                   ".i { flex-basis:0px; flex-grow:1; }"
+                   ".n0 { max-width:40px; }",
+                   3);
+
+    CHECK(ar__box(2).w == 40, "flex: an item at its maximum stops there");
+    CHECK(ar__box(3).w == 130, "flex: and what it could not take goes to the others");
+    CHECK(ar__box(4).w == 130, "flex: to all of them, not just the next one");
+    CHECK(ar__box(2).w + ar__box(3).w + ar__box(4).w == 300,
+          "flex: and the line still meets the far edge");
+}
+
+static void test_a_minimum_freezes_an_item_the_other_way(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /* The same loop in the shrinking direction: three items wanting 200 each
+       in a container of 300, and one with a `min-width` it cannot go under.
+       The other two make up the difference. */
+    ar__flex_scene(&s, ".i { flex-basis:200px; } .n0 { min-width:150px; }", 3);
+
+    CHECK(ar__box(2).w == 150, "flex: an item at its minimum stops there");
+    CHECK(ar__box(3).w == 75 && ar__box(4).w == 75,
+          "flex: and the others give up what it would not");
+    CHECK(ar__box(2).w + ar__box(3).w + ar__box(4).w == 300, "flex: and the line fits");
+}
+
+static void test_the_flex_shorthand_writes_a_zero_basis(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     a, b;
+
+    /*
+     * `flex: 1` and `flex-grow: 1` are not the same declaration, and the
+     * difference is the most common flexbox mistake there is.
+     *
+     * The shorthand writes a *zero* basis, so three boxes come out equal
+     * whatever is in them. The longhand leaves the basis `auto`, so each keeps
+     * its content's width and only the surplus is shared. Two items with
+     * different stated widths tell them apart.
+     */
+    ar__flex_scene(&s, ".n0 { width:200px; flex-grow:1; } .n1 { width:40px; flex-grow:1; }", 2);
+    a = ar__box(2).w;
+    b = ar__box(3).w;
+    CHECK(a == 230 && b == 70, "flex: flex-grow alone shares only the surplus");
+
+    ar__flex_scene(&s, ".n0 { width:200px; flex:1; } .n1 { width:40px; flex:1; }", 2);
+    CHECK(ar__box(2).w == 150 && ar__box(3).w == 150,
+          "flex: the flex shorthand writes a zero basis, so they come out equal");
+}
+
+static void test_items_wrap_onto_lines(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* Four items of 100 in a container of 300: three on the first line and one
+       on the second, and the second line starts below the first. */
+    ar__flex_scene(&s, ".box { flex-wrap:wrap; } .i { flex-basis:100px; flex-shrink:0; }", 4);
+
+    CHECK(ar__box(2).x == 0 && ar__box(4).x == 200, "flex: three of them fit on the first line");
+    CHECK(ar__box(5).x == 0, "flex: and the fourth starts a new one");
+    CHECK(ar__box(5).y > ar__box(2).y, "flex: below the first");
+    CHECK(ar__box(2).y == 0, "flex: which is where the first line still is");
+}
+
+static void test_align_self_overrides_the_container(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    ar__flex_scene(&s,
+                   ".box { align-items:flex-start; }"
+                   ".n1 { align-self:center; } .n2 { align-self:flex-end; }",
+                   3);
+
+    CHECK(ar__box(2).y == 0, "flex: the container's align-items still holds");
+    CHECK(ar__box(3).y == 40, "flex: an item can centre itself against it");
+    CHECK(ar__box(4).y == 80, "flex: or put itself at the end");
+}
+
+static void test_space_around_and_evenly_differ_at_the_edges(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     around_first, evenly_first;
+
+    /*
+     * Two items of 50 in a container of 300: 200 to distribute.
+     *
+     * `around` gives each item a half share at each end, so the edge gap is
+     * half the inner one: 50 at the edges, 100 between. `evenly` makes them
+     * all equal: 66 everywhere. They look alike in a mock-up and differ by
+     * exactly one half-share at each edge.
+     */
+    ar__flex_scene(&s, ".box { justify-content:space-around; } .i { flex-basis:50px; }", 2);
+    around_first = ar__box(2).x;
+
+    ar__flex_scene(&s, ".box { justify-content:space-evenly; } .i { flex-basis:50px; }", 2);
+    evenly_first = ar__box(2).x;
+
+    CHECK(around_first == 50, "flex: space-around puts half a share at the edge");
+    CHECK(evenly_first == 66, "flex: space-evenly puts a whole one");
+    CHECK(evenly_first > around_first, "flex: which is the difference between them");
+}
+
+static void test_order_moves_an_item_without_moving_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /* `order: -1` puts the last box first without touching the markup, which
+       is the whole reason the property exists. Ties keep document order. */
+    ar__flex_scene(&s, ".i { flex-basis:100px; flex-shrink:0; } .n2 { order:-1; }", 3);
+
+    CHECK(ar__box(4).x == 0, "flex: order -1 puts the last box first");
+    CHECK(ar__box(2).x == 100, "flex: and the others follow in the order they were written");
+    CHECK(ar__box(3).x == 200, "flex: all of them");
+}
+
+static void test_min_width_auto_stops_an_item_shrinking(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+
+    /*
+     * The rule behind almost every "why will my flex item not shrink"
+     * question. Nothing in this stylesheet says a minimum: the item's own
+     * min-content width is one, and it is what stops the text being crushed.
+     *
+     * `min-width: 0` is the way out, and it has to be told apart from the
+     * default -- which in this engine is also zero.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:flex; flex-direction:row; width:60px; height:60px; }"
+                 ".i { flex-basis:200px; }"
+                 ".free { min-width:0px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.box");
+        ar_text(g_ui, "div.i", "unbreakable");
+        ar_text(g_ui, "div.i.free", "unbreakable");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).w >= g_ui->nodes[2].min_w,
+          "flex: an item will not shrink past its own min-content width");
+    CHECK(ar__box(3).w < ar__box(2).w, "flex: and min-width: 0 is how you say it may");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -11701,6 +11958,17 @@ int main(void)
     test_a_col_speaks_for_the_cells_that_said_nothing();
     test_a_sticky_header_stays_while_the_rows_go_under_it();
     test_a_frozen_column_stays_while_the_columns_go_past();
+    test_flex_factors_are_a_ratio_not_a_count();
+    test_a_fractional_factor_is_kept();
+    test_shrinking_is_weighted_by_the_base();
+    test_a_maximum_freezes_an_item_and_the_rest_take_its_share();
+    test_a_minimum_freezes_an_item_the_other_way();
+    test_the_flex_shorthand_writes_a_zero_basis();
+    test_items_wrap_onto_lines();
+    test_align_self_overrides_the_container();
+    test_space_around_and_evenly_differ_at_the_edges();
+    test_order_moves_an_item_without_moving_it();
+    test_min_width_auto_stops_an_item_shrinking();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

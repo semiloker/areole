@@ -126,6 +126,26 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_EMPTY_CELLS] = AR_EMPTY_SHOW;
     s->unit[AR_P_EMPTY_CELLS] = AR_UNIT_KEYWORD;
 
+    s->v[AR_P_FLEX_WRAP] = AR_WRAP_NOWRAP;
+    s->unit[AR_P_FLEX_WRAP] = AR_UNIT_KEYWORD;
+    /*
+     * `flex-basis: auto`, `flex-grow: 0`, `flex-shrink: 1` -- the initial
+     * values CSS specifies, and the reason a flex item that says nothing keeps
+     * its own width and gives ground when the container is too small.
+     */
+    s->v[AR_P_FLEX_BASIS] = 0;
+    s->unit[AR_P_FLEX_BASIS] = AR_UNIT_AUTO;
+    s->v[AR_P_FLEX_GROW] = 0;
+    s->unit[AR_P_FLEX_GROW] = AR_UNIT_NUMBER;
+    s->v[AR_P_FLEX_SHRINK] = 1000;
+    s->unit[AR_P_FLEX_SHRINK] = AR_UNIT_NUMBER;
+    s->v[AR_P_ALIGN_SELF] = AR_ALIGN_AUTO;
+    s->unit[AR_P_ALIGN_SELF] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ALIGN_CONTENT] = AR_ALIGN_STRETCH;
+    s->unit[AR_P_ALIGN_CONTENT] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ORDER] = 0;
+    s->unit[AR_P_ORDER] = AR_UNIT_PX;
+
     s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
     s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
     s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
@@ -561,7 +581,11 @@ enum
     AR_SH_OVERSCROLL,
     AR_SH_SCROLLBAR_COLOR,
     AR_SH_SCROLL_PADDING,
-    AR_SH_SCROLL_MARGIN
+    AR_SH_SCROLL_MARGIN,
+    AR_SH_FLEX,
+    AR_SH_PLACE_ITEMS,
+    AR_SH_PLACE_CONTENT,
+    AR_SH_PLACE_SELF
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
@@ -569,6 +593,13 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"justify-content", AR_P_JUSTIFY},
                                           {"align-items", AR_P_ALIGN},
                                           {"gap", AR_P_GAP},
+                                          {"flex-wrap", AR_P_FLEX_WRAP},
+                                          {"flex-basis", AR_P_FLEX_BASIS},
+                                          {"flex-grow", AR_P_FLEX_GROW},
+                                          {"flex-shrink", AR_P_FLEX_SHRINK},
+                                          {"align-self", AR_P_ALIGN_SELF},
+                                          {"align-content", AR_P_ALIGN_CONTENT},
+                                          {"order", AR_P_ORDER},
                                           {"padding", AR_SH_PADDING},
                                           {"padding-top", AR_P_PAD_TOP},
                                           {"padding-right", AR_P_PAD_RIGHT},
@@ -614,6 +645,10 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"scrollbar-gutter", AR_P_SCROLLBAR_GUTTER},
                                           {"scrollbar-color", AR_SH_SCROLLBAR_COLOR},
                                           {"overscroll-behavior", AR_SH_OVERSCROLL},
+                                          {"flex", AR_SH_FLEX},
+                                          {"place-items", AR_SH_PLACE_ITEMS},
+                                          {"place-content", AR_SH_PLACE_CONTENT},
+                                          {"place-self", AR_SH_PLACE_SELF},
                                           {"overscroll-behavior-x", AR_P_OVERSCROLL_X},
                                           {"overscroll-behavior-y", AR_P_OVERSCROLL},
                                           {"text-align", AR_P_TEXT_ALIGN},
@@ -724,6 +759,31 @@ static const ar__kw AR_KEYWORDS[] = {
     {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
     {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
     {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
+    {"space-around", AR_P_JUSTIFY, AR_JUSTIFY_AROUND},
+    {"space-evenly", AR_P_JUSTIFY, AR_JUSTIFY_EVENLY},
+
+    {"nowrap", AR_P_FLEX_WRAP, AR_WRAP_NOWRAP},
+    {"wrap", AR_P_FLEX_WRAP, AR_WRAP_WRAP},
+    {"wrap-reverse", AR_P_FLEX_WRAP, AR_WRAP_WRAP_REVERSE},
+
+    {"auto", AR_P_ALIGN_SELF, AR_ALIGN_AUTO},
+    {"flex-start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_SELF, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_SELF, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN_SELF, AR_ALIGN_BASELINE},
+
+    {"flex-start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_CONTENT, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_CONTENT, AR_ALIGN_STRETCH},
+    {"space-between", AR_P_ALIGN_CONTENT, AR_ALIGN_BETWEEN},
+    {"space-around", AR_P_ALIGN_CONTENT, AR_ALIGN_AROUND},
+    {"space-evenly", AR_P_ALIGN_CONTENT, AR_ALIGN_EVENLY},
 
     {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
     {"start", AR_P_ALIGN, AR_ALIGN_START},
@@ -731,6 +791,7 @@ static const ar__kw AR_KEYWORDS[] = {
     {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
     {"end", AR_P_ALIGN, AR_ALIGN_END},
     {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN, AR_ALIGN_BASELINE},
 
     {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
     {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
@@ -952,14 +1013,45 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             n = n * 10 + (*z->p - '0');
             z->p++;
         }
-        /* A fractional part is accepted and floored. Sub-pixel sizes are not
-           a thing here: the layout is integer end to end. */
-        if (z->p < z->end && *z->p == '.')
+        /*
+         * A fractional part is accepted and floored -- except for the two flex
+         * factors, which keep it.
+         *
+         * Sub-pixel *sizes* are not a thing here: the layout is integer end to
+         * end. A flex factor is not a size, it is a ratio, and `flex-grow: 0.5`
+         * beside `flex-grow: 1` is a declaration people write and mean. Three
+         * digits are kept, so 0.5 is carried as 500 and the resolution loop
+         * divides by the sum of the factors without losing the ratio.
+         */
         {
-            z->p++;
-            while (z->p < z->end && ar__is_digit(*z->p))
+            ar_i32 milli = 0;
+            ar_i32 digits = 0;
+
+            if (z->p < z->end && *z->p == '.')
             {
                 z->p++;
+                while (z->p < z->end && ar__is_digit(*z->p))
+                {
+                    if (digits < 3)
+                    {
+                        milli = milli * 10 + (*z->p - '0');
+                        ++digits;
+                    }
+                    z->p++;
+                }
+                while (digits < 3)
+                {
+                    milli *= 10;
+                    ++digits;
+                }
+            }
+
+            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK)
+            {
+                out.v = sign * (n * 1000 + milli);
+                out.ok = 1;
+                out.unit = AR_UNIT_NUMBER;
+                return out;
             }
         }
 
@@ -1359,6 +1451,31 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             as = AR_P_SCROLLBAR_THUMB;
         }
+        if (prop == AR_SH_FLEX)
+        {
+            /*
+             * Every value of `flex` is read as a factor first.
+             *
+             * `flex: 1` and `flex: 1 1 auto` and `flex: 0 0 200px` all start
+             * with numbers, and the basis -- when there is one -- is a length
+             * or `auto`, which the factor read rejects and the caller retries.
+             * Reading them as lengths instead would turn `flex: 1` into a
+             * one-pixel basis, which is the wrong half of the declaration.
+             */
+            as = AR_P_FLEX_GROW;
+        }
+        if (prop == AR_SH_PLACE_ITEMS)
+        {
+            as = AR_P_ALIGN;
+        }
+        if (prop == AR_SH_PLACE_CONTENT)
+        {
+            as = AR_P_ALIGN_CONTENT;
+        }
+        if (prop == AR_SH_PLACE_SELF)
+        {
+            as = AR_P_ALIGN_SELF;
+        }
 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
@@ -1486,6 +1603,65 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
             bits |= vals[i].v;
         }
         ar__set(rule, (ar_u8)prop, bits, AR_UNIT_KEYWORD);
+    }
+    else if (prop == AR_SH_FLEX)
+    {
+        /*
+         * `flex: <grow> <shrink> <basis>`, and the two short forms.
+         *
+         * A single number means `<grow> 1 0` -- and the zero basis is the part
+         * that matters: `flex: 1` on three boxes makes them equal whatever is
+         * in them, while `flex-grow: 1` alone leaves each one its content's
+         * width and shares only the surplus. Writing one and meaning the other
+         * is the most common flexbox mistake there is, and the shorthand is
+         * where CSS chose to make the difference.
+         *
+         * A single length means `1 1 <basis>`.
+         */
+        ar_i32 i, factors = 0;
+
+        for (i = 0; i < n; ++i)
+        {
+            if (vals[i].unit == AR_UNIT_NUMBER)
+            {
+                ar__set(rule, (ar_u8)(factors == 0 ? AR_P_FLEX_GROW : AR_P_FLEX_SHRINK), vals[i].v,
+                        AR_UNIT_NUMBER);
+                ++factors;
+            }
+            else
+            {
+                ar__set(rule, AR_P_FLEX_BASIS, vals[i].v, vals[i].unit);
+            }
+        }
+        if (factors == 1)
+        {
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+        if (factors > 0 && !ar_pset_has(rule->set, AR_P_FLEX_BASIS))
+        {
+            ar__set(rule, AR_P_FLEX_BASIS, 0, AR_UNIT_PX);
+        }
+        if (factors == 0 && n > 0)
+        {
+            ar__set(rule, AR_P_FLEX_GROW, 1000, AR_UNIT_NUMBER);
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+    }
+    else if (prop == AR_SH_PLACE_ITEMS || prop == AR_SH_PLACE_CONTENT || prop == AR_SH_PLACE_SELF)
+    {
+        /* `place-*` is `<align> <justify>`, align first, and one value means
+           both. areole has no separate justify-self yet, so the second value
+           lands on the container's justify where there is one to land on. */
+        ar_u8 a = (ar_u8)(prop == AR_SH_PLACE_ITEMS     ? AR_P_ALIGN
+                          : prop == AR_SH_PLACE_CONTENT ? AR_P_ALIGN_CONTENT
+                                                        : AR_P_ALIGN_SELF);
+
+        ar__set(rule, a, vals[0].v, vals[0].unit);
+        if (prop != AR_SH_PLACE_SELF)
+        {
+            ar__set(rule, AR_P_JUSTIFY, n > 1 ? vals[1].v : vals[0].v,
+                    n > 1 ? vals[1].unit : vals[0].unit);
+        }
     }
     else
     {
