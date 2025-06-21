@@ -8114,6 +8114,216 @@ static void test_min_width_auto_stops_an_item_shrinking(void)
     CHECK(ar__box(3).w < ar__box(2).w, "flex: and min-width: 0 is how you say it may");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.8.0: grid
+ *
+ * Two-dimensional layout, where the tracks line up across the whole container
+ * rather than inside one row of it.
+ * ------------------------------------------------------------------------ */
+static void ar__grid_scene(ar_surface *s, const char *extra, ar_i32 items)
+{
+    char     css[900];
+    ar_input in;
+    ar_i32   k;
+
+    strcpy(css, "#root { display:block; }"
+                ".g { display:grid; width:300px; height:200px; }"
+                ".c { }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.g");
+    for (k = 0; k < items; ++k)
+    {
+        char sel[24];
+
+        sprintf(sel, "div.c.m%ld", (long)k);
+        ar_begin(g_ui, sel);
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_a_template_gives_the_columns_their_widths(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* Three stated columns in a 300 container. Nothing here is flexible, so
+       the widths are exactly what was written and the third one starts where
+       the first two end. */
+    ar__grid_scene(&s, ".g { grid-template-columns: 100px 50px 120px; }", 3);
+
+    CHECK(ar__box(2).w == 100 && ar__box(2).x == 0, "grid: the first column is where it says");
+    CHECK(ar__box(3).w == 50 && ar__box(3).x == 100, "grid: and the second follows it");
+    CHECK(ar__box(4).w == 120 && ar__box(4).x == 150, "grid: and the third follows that");
+}
+
+static void test_fr_shares_what_is_left_after_the_fixed_tracks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `100px 1fr 2fr` in 300: the fixed track takes its hundred and the other
+     * two share the remaining two hundred in the ratio their factors name --
+     * not a third each, and not a hundred each.
+     */
+    ar__grid_scene(&s, ".g { grid-template-columns: 100px 1fr 2fr; }", 3);
+
+    CHECK(ar__box(2).w == 100, "grid: a fixed track takes what it asked for");
+    CHECK(ar__box(3).w == 66, "grid: and one fr takes a third of the rest");
+    CHECK(ar__box(4).w == 133, "grid: and two fr take two thirds");
+}
+
+static void test_repeat_expands_to_real_tracks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* `repeat(3, 1fr)` is three columns of a hundred, not one column of three
+       hundred and not a parse error. */
+    ar__grid_scene(&s, ".g { grid-template-columns: repeat(3, 1fr); }", 3);
+
+    CHECK(ar__box(2).w == 100 && ar__box(2).x == 0, "grid: repeat makes the first track");
+    CHECK(ar__box(3).w == 100 && ar__box(3).x == 100, "grid: and the second");
+    CHECK(ar__box(4).w == 100 && ar__box(4).x == 200, "grid: and the third");
+}
+
+static void test_items_wrap_onto_the_next_row(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* Two columns and four items: two rows, and the third item starts the
+       second one. Nothing said where any of them go. */
+    ar__grid_scene(&s, ".g { grid-template-columns: 150px 150px; } .c { height:40px; }", 4);
+
+    CHECK(ar__box(2).x == 0 && ar__box(3).x == 150, "grid: the first two items fill the row");
+    CHECK(ar__box(4).x == 0, "grid: and the third goes back to the first column");
+    CHECK(ar__box(4).y > ar__box(2).y, "grid: on the next row");
+    CHECK(ar__box(5).x == 150 && ar__box(5).y == ar__box(4).y, "grid: with the fourth beside it");
+}
+
+static void test_column_flow_fills_downwards_first(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `grid-auto-flow: column` fills a column before moving right, which is
+     * the transpose of the default and the whole of what the property does.
+     *
+     * The items state a width because the columns here are implicit and an
+     * implicit track is sized by its contents -- four empty boxes make four
+     * columns of nothing, and every one of them is at x = 0, which is correct
+     * and says nothing about the flow.
+     */
+    ar__grid_scene(&s,
+                   ".g { grid-template-rows: 50px 50px; grid-auto-flow: column; }"
+                   ".c { height:40px; width:60px; }",
+                   4);
+
+    CHECK(ar__box(2).y == 0 && ar__box(3).y == 50, "grid: the first two go down the column");
+    CHECK(ar__box(4).y == 0, "grid: and the third starts a new one");
+    CHECK(ar__box(4).x > ar__box(2).x, "grid: to the right of the first");
+}
+
+static void test_a_named_line_puts_an_item_where_it_says(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* `grid-column: 3` is the third column, whatever came before it -- and the
+       automatic items pack around it rather than through it. */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 100px 100px 100px; }"
+                   ".c { height:30px; }"
+                   ".m0 { grid-column: 3; }",
+                   3);
+
+    CHECK(ar__box(2).x == 200, "grid: an item that names a line gets it");
+    CHECK(ar__box(3).x == 0, "grid: and the automatic ones pack around it");
+    CHECK(ar__box(4).x == 100, "grid: in order");
+}
+
+static void test_a_span_covers_the_tracks_it_names(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* `grid-column: span 2` is as wide as two tracks and the gap between
+       them, and the item after it goes to the third. */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 100px 100px 100px; }"
+                   ".c { height:30px; }"
+                   ".m0 { grid-column: span 2; }",
+                   2);
+
+    CHECK(ar__box(2).w == 200 && ar__box(2).x == 0, "grid: a span covers two tracks");
+    CHECK(ar__box(3).x == 200, "grid: and the next item takes the third");
+}
+
+static void test_the_two_gaps_are_separate(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * A grid has two axes to put space between, which is why flex only ever
+     * needed one number.
+     *
+     * The longhands, and deliberately not the shorthand: `gap: 10px 20px` sets
+     * the single `gap` slot as well, so a solver that read only that slot
+     * would still get the row right and this check would say nothing.
+     */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 100px 100px;"
+                   "     row-gap: 10px; column-gap: 20px; }"
+                   ".c { height:40px; }",
+                   4);
+
+    CHECK(ar__box(3).x == 120, "grid: the column gap goes between the columns");
+    CHECK(ar__box(4).y == 50, "grid: and the row gap between the rows");
+
+    /* And the shorthand says the same thing, row first. */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 100px 100px; gap: 10px 20px; }"
+                   ".c { height:40px; }",
+                   4);
+
+    CHECK(ar__box(3).x == 120 && ar__box(4).y == 50,
+          "grid: and the gap shorthand is row then column");
+}
+
+static void test_an_item_stretches_to_its_cell_and_can_refuse(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* Stretch is the initial value on both axes, so an item with no size of
+       its own fills its cell. `justify-self: start` takes its own width back
+       and puts it at the near edge. */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 200px 100px; grid-template-rows: 80px; }"
+                   ".m1 { justify-self:start; width:30px; }",
+                   2);
+
+    CHECK(ar__box(2).w == 200 && ar__box(2).h == 80, "grid: an item fills its cell by default");
+    CHECK(ar__box(3).w == 30 && ar__box(3).x == 200,
+          "grid: and justify-self: start gives it its own width at the near edge");
+}
+
+static void test_minmax_holds_a_track_between_two_ends(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* `minmax(50px, 1fr)` beside a fixed track: the flexible one takes what is
+       left, and never less than fifty however little that is. */
+    ar__grid_scene(&s, ".g { grid-template-columns: minmax(50px, 1fr) 250px; }", 2);
+
+    CHECK(ar__box(2).w == 50, "grid: a minmax track will not go below its minimum");
+    CHECK(ar__box(3).w == 250, "grid: and the fixed one beside it is untouched");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -11969,6 +12179,16 @@ int main(void)
     test_space_around_and_evenly_differ_at_the_edges();
     test_order_moves_an_item_without_moving_it();
     test_min_width_auto_stops_an_item_shrinking();
+    test_a_template_gives_the_columns_their_widths();
+    test_fr_shares_what_is_left_after_the_fixed_tracks();
+    test_repeat_expands_to_real_tracks();
+    test_items_wrap_onto_the_next_row();
+    test_column_flow_fills_downwards_first();
+    test_a_named_line_puts_an_item_where_it_says();
+    test_a_span_covers_the_tracks_it_names();
+    test_the_two_gaps_are_separate();
+    test_an_item_stretches_to_its_cell_and_can_refuse();
+    test_minmax_holds_a_track_between_two_ends();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

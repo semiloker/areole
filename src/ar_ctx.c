@@ -24,7 +24,8 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 1 : -1];
 
 typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) +
-                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) + 1024 <=
+                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) +
+                                      AR_TRACK_POOL * sizeof(ar_track) + 1024 <=
                                   AR_MEM_FIXED)
                                      ? 1
                                      : -1];
@@ -212,6 +213,19 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
             return 0;
         }
         ar_sheet_set_cache(&c->sheet, cache, AR_STYLE_CACHE);
+    }
+
+    {
+        /* The pool every grid template in every stylesheet is parsed into.
+           Persistent, because a track list is read every frame and parsed
+           once; bounded, because nothing here allocates twice. */
+        ar_track *tracks =
+            (ar_track *)ar_arena_persist(&c->arena, AR_TRACK_POOL * (ar_u32)sizeof(ar_track));
+        if (!tracks)
+        {
+            return 0;
+        }
+        ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
     }
 
     boxes = (size - AR_MEM_FIXED) / AR_BYTES_PER_BOX;
@@ -3363,6 +3377,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         env.wrap = ar__wrap_cb;
         env.measure = ar__range_px;
         env.ud = c;
+        env.sheet = &c->sheet;
         env.scroll_of = ar__scroll_of;
         env.scroll_x_of = ar__scroll_x_of;
         env.frags = c->frags;

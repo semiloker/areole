@@ -767,6 +767,70 @@ static const bench_scene SC_FLEX_500_WRAP = {
     "flex_500_wrap", "layout",          "the same 500 wrapped over many lines", 1000, 600, 1,
     init_flex_500,   frame_flex_wrapped};
 
+/*
+ * Grid, at two sizes, for the track-sizing gate.
+ *
+ * The criterion asks for 100 x 100 against 50 x 50, and 100 columns is past
+ * AR_GRID_MAX -- the track arrays are bounded and on the stack, the same
+ * bargain the table's columns and the float list make. 20 x 20 against 40 x 40
+ * is the same question inside the bound: four times the items and four times
+ * the cells, so anything quadratic in track count shows up as sixteen.
+ *
+ * Every row is `1fr` so the flexible distribution runs rather than being
+ * skipped, which is the part of the algorithm worth timing.
+ */
+static const char *SHEET_GRID = "#root { display:block; background:#ffffff; }"
+                                ".gr { display:grid; width:800px;"
+                                "      grid-template-columns: repeat(20, 1fr); }"
+                                ".gr40 { grid-template-columns: repeat(40, 1fr); }"
+                                ".gc { height:12px; }";
+
+static ar_i32 g_grid_side = 20;
+
+static void init_grid(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_GRID);
+}
+
+static void frame_grid(bench_env *e)
+{
+    ar_i32 k, n = g_grid_side * g_grid_side;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    ar_begin(e->ui, g_grid_side == 20 ? "div.gr" : "div.gr.gr40");
+    for (k = 0; k < n; ++k)
+    {
+        ar_begin(e->ui, "div.gc");
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static void frame_grid_20(bench_env *e)
+{
+    g_grid_side = 20;
+    frame_grid(e);
+}
+
+static void frame_grid_40(bench_env *e)
+{
+    g_grid_side = 40;
+    frame_grid(e);
+}
+
+static const bench_scene SC_GRID_20 = {
+    "grid_20x20", "layout",     "400 items in a 20 column grid of fr tracks", 900, 700, 1,
+    init_grid,    frame_grid_20};
+
+static const bench_scene SC_GRID_40 = {
+    "grid_40x40", "layout",     "1600 items in a 40 column grid -- four times the cells",
+    900,          700,          1,
+    init_grid,    frame_grid_40};
+
 static const bench_scene SC_TABLE_FIXED_1K = {"table_fixed_1k",
                                               "layout",
                                               "1000 rows x 4 cells, table-layout:fixed, to compare",
@@ -799,4 +863,6 @@ void bench_register_layout(void)
     bench_register(&SC_TABLE_FIXED_1K);
     bench_register(&SC_FLEX_500);
     bench_register(&SC_FLEX_500_WRAP);
+    bench_register(&SC_GRID_20);
+    bench_register(&SC_GRID_40);
 }
