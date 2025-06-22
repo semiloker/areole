@@ -8310,6 +8310,21 @@ static void test_an_item_stretches_to_its_cell_and_can_refuse(void)
     CHECK(ar__box(2).w == 200 && ar__box(2).h == 80, "grid: an item fills its cell by default");
     CHECK(ar__box(3).w == 30 && ar__box(3).x == 200,
           "grid: and justify-self: start gives it its own width at the near edge");
+
+    /*
+     * And an item that stated a height gets it.
+     *
+     * Only the stretch case was handled at first, so every cell in a grid of
+     * `height: 24px` boxes came out zero tall. Nothing above catches that --
+     * they all stretch -- and the tour page found it the moment it drew one.
+     */
+    ar__grid_scene(&s,
+                   ".g { grid-template-columns: 100px 100px; }"
+                   ".c { height:24px; }",
+                   2);
+
+    CHECK(ar__box(2).h == 24 && ar__box(3).h == 24,
+          "grid: an item that states a height is given it, not stretched past it");
 }
 
 static void test_minmax_holds_a_track_between_two_ends(void)
