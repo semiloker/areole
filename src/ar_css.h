@@ -256,6 +256,19 @@ typedef enum ar_prop
     AR_P_COL_GAP,
 
     /*
+     * 0.8.1: `aspect-ratio`, as width over height in thousandths.
+     *
+     * `16 / 9` is 1777. A ratio is not a length and there is no floating
+     * point here, so it is carried the way the flex factors are -- and for the
+     * same reason: `4 / 3` and `1.33` are the same declaration and both have
+     * to survive the parser.
+     *
+     * Zero means the property said nothing, which is safe because a ratio of
+     * zero is not a ratio anybody can write.
+     */
+    AR_P_ASPECT_RATIO,
+
+    /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
      * the length of ar_style.v.
@@ -536,6 +549,19 @@ enum
        contiguous -- that range is compared as a range in three places. */
     AR_DISPLAY_GRID,
 
+    /*
+     * `display: contents`: the box generates none, and its children become
+     * its parent's for layout.
+     *
+     * Small to describe and awkward to mean, because it breaks the assumption
+     * every layout pass makes -- that the box tree and the layout tree are the
+     * same tree. It is worth it because it is the only way to put a semantic
+     * wrapper around grid items without breaking the grid: three cards in a
+     * `<section>` inside a grid are three items only if the section generates
+     * no box.
+     */
+    AR_DISPLAY_CONTENTS,
+
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };
@@ -698,7 +724,24 @@ enum
        container and therefore has the justify vocabulary as well. */
     AR_ALIGN_BETWEEN,
     AR_ALIGN_AROUND,
-    AR_ALIGN_EVENLY
+    AR_ALIGN_EVENLY,
+
+    /*
+     * `safe` and `unsafe`, as a bit rather than a value.
+     *
+     * `align-items: safe center` is two words meaning one thing, so they
+     * cannot be alternatives in the same slot. The bit sits above every value
+     * and readers mask it off.
+     *
+     * What it buys: centring a box larger than its container puts half the
+     * overflow *before* the start edge, where it cannot be scrolled to and
+     * cannot be read. `safe` says to fall back to start alignment when that
+     * would happen, which is the whole of the feature -- and it is why nobody
+     * should have to know the difference to write centred content that stays
+     * reachable.
+     */
+    AR_ALIGN_SAFE = 16,
+    AR_ALIGN_MODE_MASK = 15
 };
 
 enum
