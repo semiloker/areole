@@ -995,6 +995,11 @@ void ar_sheet_note_tables(ar_sheet *sheet)
         {
             sheet->has_grid = 1;
         }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_GRID_COLS) ||
+            ar_pset_has(sheet->rules[i].set, AR_P_GRID_ROWS))
+        {
+            sheet->has_grid = 1;
+        }
         if (sheet->has_table && sheet->has_collapse && sheet->has_grid)
         {
             return;
@@ -2028,7 +2033,41 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
     if (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS || prop == AR_P_GRID_AUTO_COLS ||
         prop == AR_P_GRID_AUTO_ROWS)
     {
-        ar_i32 header = sheet ? ar__parse_track_list(z, sheet) : 0;
+        ar_i32 header;
+
+        /* `subgrid` is a whole template rather than a track in one, so it is
+           read before the list parser rather than inside it. */
+        {
+            const char *save = z->p;
+            const char *word;
+            ar_u32      wlen;
+
+            ar__skip_ws(z);
+            wlen = ar__ident(z, &word);
+            if (wlen && ar__same(word, wlen, "subgrid") &&
+                (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS))
+            {
+                before_set = rule->set;
+                ar__set(rule, (ar_u8)prop, AR_TRACKS_SUBGRID, AR_UNIT_PX);
+                if (ar__take_important(z))
+                {
+                    rule->important =
+                        ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
+                }
+                while (z->p < z->end && *z->p != ';' && *z->p != '}')
+                {
+                    z->p++;
+                }
+                if (z->p < z->end && *z->p == ';')
+                {
+                    z->p++;
+                }
+                return;
+            }
+            z->p = save;
+        }
+
+        header = sheet ? ar__parse_track_list(z, sheet) : 0;
 
         before_set = rule->set;
         if (header > 0)

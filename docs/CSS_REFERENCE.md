@@ -128,7 +128,7 @@ main axis, because stylesheets use it. It is areole-specific and not CSS.
 
 | Property | Values |
 | --- | --- |
-| `grid-template-columns` `grid-template-rows` | a track list |
+| `grid-template-columns` `grid-template-rows` | a track list, or `subgrid` |
 | `grid-auto-columns` `grid-auto-rows` | one track |
 | `grid-auto-flow` | `row`, `column`, and `dense` beside either |
 | `grid-column` `grid-row` | `<start> [/ <end>]` |
@@ -149,7 +149,25 @@ shrink to its share and dividing the rest again.
 Columns are solved before rows, because an item's height depends on the width
 it ends up with.
 
-Two bounds, and they are real: a grid has at most **64 tracks** on an axis and
+**`subgrid` takes the parent's tracks instead of having its own.** It inverts
+the direction of track sizing: an ordinary grid sizes its tracks from its own
+contents, and a subgrid's contents size its *parent's*. That is what makes a
+row of cards line their sections up — three cards whose titles, bodies and
+footers share rows however long the bodies are — and every other way of doing
+that is a workaround for not having it.
+
+areole gets the upward contribution without a second pass by putting a
+subgrid's children into the parent's item list, with their line numbers offset
+by where the subgrid starts. The contribution flows up because the items are
+simply there. On an axis the subgrid did *not* subgrid, its children are
+bounded by its own content box rather than by a parent track.
+
+Two limits. **Subgrid does not nest**: a subgrid inside a subgrid is laid out
+as an ordinary grid, because flattening the flattened boxes is a cost unbounded
+in nesting depth and this release's budget says outright it will not pay one.
+And **line names are not inherited**, because there are no line names.
+
+Three bounds, and they are real: a grid has at most **64 tracks** on an axis and
 **1024 items**. The arrays are on the stack, which is the same bargain the
 table's columns and the float list make; beyond the bounds the extra tracks and
 items are dropped rather than placed wrongly.
@@ -502,7 +520,8 @@ Named so that their absence is a decision rather than an oversight:
 - `repeat(auto-fill)` and `repeat(auto-fit)` — the count cannot be known until
   the container has a width, and a track list is parsed when the stylesheet is
   handed over. Refused at parse time rather than guessed
-- subgrid — 0.8.2
+- named grid lines on a subgrid declaration, and subgrids nested inside
+  subgrids
 - `box-shadow`, gradients, `opacity` on a whole subtree
 - media queries, container queries, `@` rules of any kind
 - custom properties, `var()`, `calc()`
