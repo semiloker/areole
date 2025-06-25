@@ -16,8 +16,8 @@ extern "C" {
 #endif
 
 #define AR_VERSION_MAJOR 0
-#define AR_VERSION_MINOR 6
-#define AR_VERSION_PATCH 1
+#define AR_VERSION_MINOR 8
+#define AR_VERSION_PATCH 2
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -29,8 +29,21 @@ extern "C" {
    It then did it a third time, saying 0.6.0-dev while 0.6.1 was landing, so the
    discipline is no longer relied on: CMakeLists.txt parses this line rather
    than carrying its own copy, which had drifted all the way back to 0.1.0.
-   One place to edit is the only version of this that has ever held. */
-#define AR_VERSION_STRING "0.6.1-dev"
+   One place to edit is the only version of this that has ever held.
+
+   One place to edit is still one place somebody has to remember, and nobody
+   did: this said 0.6.1-dev through 0.6.2, 0.6.3, 0.7.0, 0.7.1, 0.8.0, 0.8.1
+   and 0.8.2 -- five releases, and further than any of the drifts above. It
+   reached bench/baseline.json and from there the machine block of the
+   generated docs/PERFORMANCE.md, so every published number in this project
+   was labelled with an engine four minor releases old.
+
+   So it is checked now rather than remembered. ar_test asserts this string
+   against the three macros above, and tools/gen_perf_doc.py --check asserts it
+   against the version stamped into the baseline -- which is the half a test
+   cannot see, because the macros and the string can be stale together and
+   agree with each other perfectly. */
+#define AR_VERSION_STRING "0.8.2-dev"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
