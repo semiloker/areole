@@ -19,82 +19,13 @@
  * it a few hundred lines instead of a thousand, and stops the two copies from
  * quietly disagreeing.
  *
- * These used to be static in ar_layout.c. They moved here when flexbox got a
- * file of its own and needed every one of them.
+ * The axis helpers that used to live here are in ar_node.h now, as inline
+ * functions. They are one line each and are called from every layout file,
+ * and a call across a translation unit cannot be inlined -- which cost 2.2x
+ * of the layout phase for the whole of 0.8.0. The comment beside them says
+ * so; do not move them back.
  */
 #include "ar_node.h"
-
-ar_i32 ar_axis_main(const ar_node *n)
-{
-    return n->style.v[AR_P_DIRECTION] == AR_DIR_COLUMN ? 1 : 0;
-}
-
-ar_i32 ar_axis_pad_lead(const ar_style *s, ar_i32 axis)
-{
-    return axis ? s->v[AR_P_PAD_TOP] : s->v[AR_P_PAD_LEFT];
-}
-
-ar_i32 ar_axis_pad_trail(const ar_style *s, ar_i32 axis)
-{
-    return axis ? s->v[AR_P_PAD_BOTTOM] : s->v[AR_P_PAD_RIGHT];
-}
-
-ar_i32 ar_axis_margin_lead(const ar_style *s, ar_i32 axis)
-{
-    return axis ? s->v[AR_P_MARGIN_TOP] : s->v[AR_P_MARGIN_LEFT];
-}
-
-ar_i32 ar_axis_margin_trail(const ar_style *s, ar_i32 axis)
-{
-    return axis ? s->v[AR_P_MARGIN_BOTTOM] : s->v[AR_P_MARGIN_RIGHT];
-}
-
-ar_i32 ar_axis_size_prop(ar_i32 axis)
-{
-    return axis ? AR_P_HEIGHT : AR_P_WIDTH;
-}
-
-ar_i32 ar_axis_min_prop(ar_i32 axis)
-{
-    return axis ? AR_P_MIN_HEIGHT : AR_P_MIN_WIDTH;
-}
-
-/*
- * Unlike the size and min pair above, these two are *wide* properties: they
- * default to a sentinel meaning "no maximum", which does not fit in v[]. So a
- * caller holding this result must read it with ar_style_get, never with v[].
- *
- * That is not a style preference. v[] would be indexed here by a value rather
- * than a constant, so -Warray-bounds cannot catch the mistake, and the result
- * would be whichever bytes follow the array.
- */
-ar_i32 ar_axis_max_prop(ar_i32 axis)
-{
-    return axis ? AR_P_MAX_HEIGHT : AR_P_MAX_WIDTH;
-}
-
-ar_i32 *ar_axis_pos(ar_rect *r, ar_i32 axis)
-{
-    return axis ? &r->y : &r->x;
-}
-
-ar_i32 *ar_axis_size(ar_rect *r, ar_i32 axis)
-{
-    return axis ? &r->h : &r->w;
-}
-
-ar_i32 ar_clamp(ar_i32 v, ar_i32 lo, ar_i32 hi)
-{
-    if (v < lo)
-    {
-        v = lo;
-    }
-    if (v > hi)
-    {
-        v = hi;
-    }
-    return v < 0 ? 0 : v;
-}
 
 /*
  * Distributing free space along an axis.
