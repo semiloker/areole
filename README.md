@@ -374,7 +374,7 @@ toolkit breaks that circle.
 **Pre-alpha.** Built in the open, one issue at a time.
 
 - **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
-- **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
+- **0.1.1** *It measures* — 47 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, up to eight dirty regions, partial present ✅
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
@@ -384,11 +384,11 @@ toolkit breaks that circle.
 - **0.6.1** *It scrolls properly* — both axes, region move, a draggable bar, touchpad travel ✅
 - **0.6.2** *It knows where the screen is* — scroll snap, sticky containing blocks, `env()` and the safe area ✅
 - **0.6.3** *It puts a dialog on top* — the top layer, `::backdrop`, `inert`, anchor positioning ✅
-- **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
-- **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`, `caption-side`, `empty-cells`, `col` widths
-- **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid
-- **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment
-- **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for
+- **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse ✅
+- **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`, `caption-side`, `empty-cells`, `col` widths ✅
+- **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid ✅
+- **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment ✅
+- **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
@@ -398,9 +398,9 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 1089 checks
+./build/ar_test               # 1091 checks
 ./build/example_hello         # the dashboard on the front page
-./build/example_tour          # one page per release, 0.1.0 to 0.6.1
+./build/example_tour          # one page per release, 0.1.0 to 0.8.0
 ./build/example_showcase      # one long page using the whole CSS subset at once
 ./build/example_block         # the block, inline and float corpus, drawn
 ./build/example_block --dump  # the same, as rectangles, for the comparison
@@ -412,7 +412,8 @@ cmake --build build
 
 ## The tour
 
-`example_tour` is one page per release, 0.1.0 to 0.6.1, showing what each added while it runs:
+`example_tour` is one page per release, 0.1.0 to 0.8.0 — fourteen of them — showing what each
+added while it runs:
 
 | | |
 | --- | --- |
@@ -425,6 +426,11 @@ cmake --build build
 | 0.5.0 | margins collapsing, text wrapping around a float, an inline box cut across lines |
 | 0.6.0 | boxes overlapping by `z-index`, a pinned badge, a scrollable list with a sticky header |
 | 0.6.1 | a strip that scrolls sideways from one declaration, nested containers, a draggable bar |
+| 0.6.2 | a header and a footer pinned to the same scrollport at once, and two `env()` bars |
+| 0.6.3 | a box that escapes both a clip and a `z-index` of 9999, a tooltip placed by its anchor |
+| 0.7.0 | anonymous boxes generated around a stray cell, both border models, a `colspan` at width |
+| 0.7.1 | a header that stays while its rows scroll under it, a frozen first column |
+| 0.8.0 | a flex row that is three-to-one because a factor is a ratio, and a `120px / 1fr / 2fr` grid |
 
 The toggles are not captions. Switching off antialiasing on the 0.2.0 page changes how the frame
 you are looking at is rasterized; switching off shaping on the 0.3.0 page drops the same strings
@@ -442,10 +448,22 @@ can be asked to lay out the same thing:
 python tools/compare_layout.py --run ./build/example_tour.exe
 ```
 
-**215 of 215 boxes match, across every release from 0.1.0 to 0.6.0. Two disagree on geometry, both
-one line of text: a paragraph beside a float fits in three lines here and four in Chromium, because
-two rasterizers measure the same words about a pixel apart. Everything else lands on the same
-rectangle exactly.**
+**Six corpora are checked against a browser, box by box, and five of them agree exactly:**
+
+| corpus | what it checks | result |
+| --- | --- | --- |
+| `03_block` | block, inline, floats, intrinsic sizing, positioning | **168 / 168** |
+| `05_snap` | scroll snapping, 120 pages | **960 / 960** |
+| `06_sticky` | `position: sticky` against its containing block | **355 / 355** |
+| `07_env` | `env()` and the safe area | **28 / 28** |
+| `08_anchor` | anchor positioning and the flip | **168 / 168** |
+| `09_table` | tables: anonymous boxes, collapse, spans | 416 / 624 |
+
+The table corpus is the honest exception and is not gated: **208 of its 624 boxes still land
+somewhere a browser does not**, and the disagreements are listed rather than compensated for.
+
+**Flex, grid and subgrid have no corpus at all.** Every layout release since 0.5.0 got one; 0.8.x
+did not, and that is the next thing being built rather than a claim being made.
 
 The first run needed six compensating rules to get there, and two of the six were bugs worth
 fixing rather than documenting: **text never wrapped** — `ar_text_wrap` had implemented UAX #14
