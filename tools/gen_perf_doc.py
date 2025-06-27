@@ -14,6 +14,7 @@ matches what this produces, so the two cannot disagree.
 import glob
 import json
 import os
+import re
 import sys
 import textwrap
 
@@ -24,6 +25,76 @@ OUT = os.path.join(ROOT, "docs", "PERFORMANCE.md")
 def load(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def registered_scenes():
+    """Every scene name in bench/scenes/, read from the source rather than run.
+
+    The CI job that calls --check does not build anything, so this cannot ask
+    ar_bench --list. It reads the initialisers instead, which is enough: a
+    scene is a `bench_scene` whose first member is its name.
+
+    sc_outline.c is excluded on purpose. Those four scenes only register when
+    --font names a face, so a baseline taken without one is complete without
+    them and demanding them would make this gate unpassable.
+    """
+    names = set()
+    pattern = re.compile(r"bench_scene\s+(?:SC_[A-Z0-9_]+)\s*=\s*\{")
+    for path in sorted(glob.glob(os.path.join(ROOT, "bench", "scenes", "*.c"))):
+        if os.path.basename(path) == "sc_outline.c":
+            continue
+        with open(path, encoding="utf-8", errors="replace") as f:
+            src = f.read()
+        for m in pattern.finditer(src):
+            first = re.search(r'"([a-z0-9_]+)"', src[m.end():m.end() + 400])
+            if first:
+                names.add(first.group(1))
+    return names
+
+
+def header_version():
+    """AR_VERSION_STRING, straight out of include/areole.h."""
+    path = os.path.join(ROOT, "include", "areole.h")
+    with open(path, encoding="utf-8") as f:
+        m = re.search(r'#\s*define\s+AR_VERSION_STRING\s+"([^"]+)"', f.read())
+    return m.group(1) if m else None
+
+
+def check_baseline_is_complete(baseline):
+    """The two ways a baseline lies without being wrong.
+
+    Both of these were true for four releases and no gate noticed, because the
+    only gate here compared the document against the baseline and never asked
+    whether the baseline described the engine.
+
+    A scene missing from the baseline is published nowhere and cannot regress:
+    bench/baseline.json held 33 of 47, so tables, grid, flex, sticky, the top
+    layer and anchor positioning were measured by ar_bench on every run and
+    absent from docs/PERFORMANCE.md entirely.
+
+    A baseline stamped with a stale version mislabels every number in it.
+    AR_VERSION_STRING sat at 0.6.1-dev through five releases and the machine
+    block of the generated document repeated it each time.
+    """
+    problems = []
+
+    measured = set(s["name"] for s in baseline["scenes"])
+    missing = sorted(registered_scenes() - measured)
+    if missing:
+        problems.append(
+            "bench/baseline.json is missing %d registered scene(s): %s"
+            % (len(missing), ", ".join(missing))
+        )
+
+    want = header_version()
+    got = baseline.get("areole_version")
+    if want and got and want != got:
+        problems.append(
+            "bench/baseline.json was measured by areole %s, but include/areole.h says %s"
+            % (got, want)
+        )
+
+    return problems
 
 
 def find_reference_profile():
@@ -462,7 +533,17 @@ def main():
 
     text = "\n".join(out) + "\n"
 
+    # Whether the baseline is complete is asked on both paths, not just under
+    # --check. Regenerating from a baseline that is missing scenes republishes
+    # the gap, and that is exactly how it lasted four releases.
+    problems = check_baseline_is_complete(results)
+    for p in problems:
+        print("FAIL: %s" % p)
+
     if "--check" in sys.argv:
+        if problems:
+            print("Run: ./build/ar_bench --all --iters 150 --repeat 3 --json > bench/baseline.json")
+            return 1
         if not os.path.exists(OUT):
             print("PERFORMANCE.md does not exist; run without --check")
             return 1
@@ -471,8 +552,13 @@ def main():
                 print("PERFORMANCE.md is out of date with bench/baseline.json.")
                 print("Run: python tools/gen_perf_doc.py")
                 return 1
-        print("PERFORMANCE.md matches the measured baseline")
+        print("PERFORMANCE.md matches the measured baseline, %d scenes, areole %s"
+              % (len(scenes), results.get("areole_version")))
         return 0
+
+    if problems:
+        print("Refusing to write a document from an incomplete baseline.")
+        return 1
 
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
