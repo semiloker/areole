@@ -8311,8 +8311,31 @@ static void test_the_two_gaps_are_separate(void)
                    ".c { height:40px; }",
                    4);
 
+    /*
+     * The second row starts at 105, not at 50, and the difference is not the
+     * gap.
+     *
+     * This check said 50 -- 40 for the first row and 10 for the gap -- from
+     * the day it was written, and it was pinning a bug. `.g` is `height:200px`
+     * with two `auto` rows, and `align-content` defaults to `stretch` for a
+     * grid: the rows take the container's height between them. 200 less the
+     * 10px gap is 190, which is 95 a row, so the second row opens at 105.
+     *
+     * areole left the rows at their content height and the remaining 110px at
+     * the bottom, so this check agreed with the engine and both were wrong.
+     * The grid corpus found it against a browser, and Edge was asked this
+     * exact scene before the number here was touched:
+     *
+     *     i0 x=0   y=0    w=100 h=40
+     *     i1 x=120 y=0    w=100 h=40
+     *     i2 x=0   y=105  w=100 h=40
+     *     i3 x=120 y=105  w=100 h=40
+     *
+     * areole now returns those four rectangles exactly. The items stay 40 tall
+     * because they said so; it is the rows underneath them that grew.
+     */
     CHECK(ar__box(3).x == 120, "grid: the column gap goes between the columns");
-    CHECK(ar__box(4).y == 50, "grid: and the row gap between the rows");
+    CHECK(ar__box(4).y == 105, "grid: and the row gap between the stretched rows");
 
     /* And the shorthand says the same thing, row first. */
     ar__grid_scene(&s,
@@ -8320,7 +8343,7 @@ static void test_the_two_gaps_are_separate(void)
                    ".c { height:40px; }",
                    4);
 
-    CHECK(ar__box(3).x == 120 && ar__box(4).y == 50,
+    CHECK(ar__box(3).x == 120 && ar__box(4).y == 105,
           "grid: and the gap shorthand is row then column");
 }
 

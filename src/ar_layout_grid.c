@@ -865,6 +865,7 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
     ar_track        fallback;
     ar_i32          t;
     ar_i32          used = 0;
+    ar_i32          lead = 0, between = 0;
 
     /* An implicit track with nothing said about it is `auto`. */
     fallback.min_v = 0;
@@ -895,10 +896,95 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
 
     ar__grow_fr(tr, count, definite ? avail - gap * (count > 0 ? count - 1 : 0) : 0);
 
+    /*
+     * §12.8, and it was missing entirely: what happens to the space the tracks
+     * did not take.
+     *
+     * The tracks were sized and then laid end to end from zero, so a grid with
+     * a stated size and no flexible track simply left the remainder at the far
+     * end. That is one bug wearing two faces, and the grid corpus found both:
+     *
+     *   - `align-content` and `justify-content` did nothing at all on a grid,
+     *     though they work on a flex container. `justify-content: center` over
+     *     120px of tracks in 280px left them at x=0 rather than x=80.
+     *
+     *   - and the *default* did nothing, which is the larger half. For a grid,
+     *     `align-content: normal` behaves as `stretch`: an `auto` row in a
+     *     container with a stated height takes that height. Without it, every
+     *     item in a `height: 60px` grid with no row template came out **zero
+     *     pixels tall**, because its row was sized to content and the content
+     *     was nothing. Twenty-nine of the corpus's fifty disagreements were
+     *     this one line.
+     */
+    if (definite && count > 0)
+    {
+        ar_i32 inner = avail - gap * (count - 1);
+        ar_i32 total = 0;
+
+        for (t = 0; t < count; ++t)
+        {
+            total += tr[t].size;
+        }
+
+        if (total < inner)
+        {
+            ar_i32 mode = axis == 0 ? n->style.v[AR_P_JUSTIFY] : n->style.v[AR_P_ALIGN_CONTENT];
+            ar_i32 leftover = inner - total;
+
+            if ((mode & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH)
+            {
+                /*
+                 * Stretch hands the remainder to the tracks whose maximum is
+                 * content-derived and which are not already flexible -- an
+                 * `fr` track has taken its share above, and a track with a
+                 * stated maximum asked not to grow past it.
+                 *
+                 * The remainder after the division goes to the first such
+                 * track rather than being dropped, for the reason the flex
+                 * solver states at length: three tracks sharing a hundred come
+                 * to 33 each and leave the grid one pixel short of its own
+                 * edge, which nobody can explain and everybody notices.
+                 */
+                ar_i32 stretchy = 0;
+
+                for (t = 0; t < count; ++t)
+                {
+                    if (tr[t].intrinsic_max && tr[t].fr <= 0)
+                    {
+                        ++stretchy;
+                    }
+                }
+                if (stretchy > 0)
+                {
+                    ar_i32 each = leftover / stretchy;
+                    ar_i32 rest = leftover - each * stretchy;
+
+                    for (t = 0; t < count; ++t)
+                    {
+                        if (tr[t].intrinsic_max && tr[t].fr <= 0)
+                        {
+                            tr[t].size += each;
+                            if (rest > 0)
+                            {
+                                tr[t].size += 1;
+                                --rest;
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ar_align_distribute(mode, leftover, count, &lead, &between);
+            }
+        }
+    }
+
+    used = lead;
     for (t = 0; t < count; ++t)
     {
         tr[t].pos = used;
-        used += tr[t].size + (t + 1 < count ? gap : 0);
+        used += tr[t].size + (t + 1 < count ? gap + between : 0);
     }
 }
 
