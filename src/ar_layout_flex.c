@@ -545,6 +545,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
     ar_i32   align_items = n->style.v[AR_P_ALIGN];
     ar_i32   pass;
     ar_i32   line_lead = 0, line_between = 0;
+    ar_i32   line_grow = 0, line_grow_rest = 0;
 
     inner_main = *ar_axis_size(&n->rect, axis) - ar_axis_pad_lead(&n->style, axis) -
                  ar_axis_pad_trail(&n->style, axis);
@@ -591,10 +592,37 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             {
                 break;
             }
+            line_grow = 0;
             if (wrap == AR_WRAP_NOWRAP || line_count <= 0)
             {
                 line_lead = 0;
                 line_between = 0;
+            }
+            else if ((n->style.v[AR_P_ALIGN_CONTENT] & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH)
+            {
+                /*
+                 * §9.6: stretch shares the leftover between the *lines*, so
+                 * each one grows rather than the whole block being pushed
+                 * around. It is the initial value of `align-content`, and
+                 * ar_align_distribute has no case for it -- it answers with a
+                 * lead and a gap, and stretch changes neither -- so a wrapped
+                 * container simply packed its lines at their content height
+                 * and left the remainder at the bottom.
+                 *
+                 * Two lines of 30px items in a 120px container put the second
+                 * line at 30 where a browser puts it at 60.
+                 *
+                 * The remainder after the division goes to the earlier lines,
+                 * one pixel each, for the same reason the main axis hands out
+                 * its leftover pixel.
+                 */
+                line_lead = 0;
+                line_between = 0;
+                if (free_cross > 0)
+                {
+                    line_grow = free_cross / line_count;
+                    line_grow_rest = free_cross - line_grow * line_count;
+                }
             }
             else
             {
@@ -695,6 +723,20 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             if (wrap == AR_WRAP_NOWRAP && inner_cross > line_cross)
             {
                 line_cross = inner_cross;
+            }
+
+            /* And a wrapped line takes its share of the leftover, worked out
+               above once the line count was known. Applied before the items
+               are placed, because a stretched item's cross size is measured
+               against the line it is in. */
+            if (pass == 1 && line_grow > 0)
+            {
+                line_cross += line_grow;
+                if (line_grow_rest > 0)
+                {
+                    line_cross += 1;
+                    --line_grow_rest;
+                }
             }
 
             if (pass == 1)

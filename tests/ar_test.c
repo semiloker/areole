@@ -8202,12 +8202,28 @@ static void test_fr_shares_what_is_left_after_the_fixed_tracks(void)
      * `100px 1fr 2fr` in 300: the fixed track takes its hundred and the other
      * two share the remaining two hundred in the ratio their factors name --
      * not a third each, and not a hundred each.
+     *
+     * 66 and 133, and the third one starts at 166: that was this check, and
+     * the two tracks came to 199 of the 200 they were handed, so the grid
+     * ended a pixel inside its own right edge. The share is 66.67 and 133.33,
+     * and the pixel belongs to whichever track lost more of one -- the 1fr, at
+     * .67 against .33.
+     *
+     * Edge was asked this exact grid before the numbers here were touched, and
+     * reports its own subpixel widths alongside:
+     *
+     *     i0 x=0    w=100   exact 100.00
+     *     i1 x=100  w=67    exact  66.66
+     *     i2 x=167  w=133   exact 133.34
+     *
+     * So 67, 133, and the third track opening at 167. areole returns those.
      */
     ar__grid_scene(&s, ".g { grid-template-columns: 100px 1fr 2fr; }", 3);
 
     CHECK(ar__box(2).w == 100, "grid: a fixed track takes what it asked for");
-    CHECK(ar__box(3).w == 66, "grid: and one fr takes a third of the rest");
-    CHECK(ar__box(4).w == 133, "grid: and two fr take two thirds");
+    CHECK(ar__box(3).w == 67, "grid: and one fr takes a third of the rest, rounded up");
+    CHECK(ar__box(4).w == 133 && ar__box(4).x == 167,
+          "grid: and two fr take two thirds, meeting the far edge exactly");
 }
 
 static void test_repeat_expands_to_real_tracks(void)

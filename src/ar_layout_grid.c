@@ -830,6 +830,103 @@ static void ar__grow_fr(ar__gtrack *tr, ar_i32 count, ar_i32 space)
                     tr[t].size = share;
                 }
             }
+
+            /*
+             * The pixel the division dropped.
+             *
+             * 160 split one-to-two is 53.33 and 106.67, and integer division
+             * gives 53 and 106 -- one pixel short of the 160 the tracks were
+             * handed, so the grid ends a pixel inside its own right edge. The
+             * browser says 53 and 107.
+             *
+             * Handed to the first flexible track that has room rather than
+             * dropped, which is the same remedy the flex solver applies to the
+             * same arithmetic, and the reason is the same: nobody can explain
+             * the gap and everybody notices it.
+             */
+            {
+                unsigned char bumped[AR_GRID_MAX];
+                ar_i32        handed = 0;
+                ar_i32        rest;
+
+                for (t = 0; t < count; ++t)
+                {
+                    handed += tr[t].size >= 0 ? tr[t].size : tr[t].base;
+                    if (t < AR_GRID_MAX)
+                    {
+                        bumped[t] = 0;
+                    }
+                }
+                rest = space - handed;
+
+                /*
+                 * Largest remainder, not first come.
+                 *
+                 * `120px 1fr 2fr` in 280 leaves 160 to share: 53.33 and 106.67,
+                 * which floor to 53 and 106 and leave the grid a pixel inside
+                 * its own edge. The browser says 53 and 107 -- the pixel goes
+                 * to the track that lost the most of one, which is the 2fr.
+                 *
+                 * Handing it to the first flexible track instead gave 54 and
+                 * 106, which closes the gap and puts the wrong track a pixel
+                 * wide. Same total, still not the browser's answer.
+                 */
+                while (rest > 0)
+                {
+                    ar_i32 best = -1;
+                    ar_i32 best_rem = -1;
+
+                    for (t = 0; t < count && t < AR_GRID_MAX; ++t)
+                    {
+                        ar_i32 rem;
+
+                        /*
+                         * No growth-limit test here, and that is deliberate.
+                         *
+                         * An intrinsic track's limit is its max-content size,
+                         * which for a track of empty items is zero -- and the
+                         * distribution above has already put 53 and 106 into
+                         * tracks whose limit says nothing, because a flexible
+                         * track is sized by its factor rather than by its
+                         * contents. Refusing the pixel to a track already past
+                         * its limit refused it to every fr track there is, and
+                         * the leftover went back to being dropped.
+                         */
+                        if (tr[t].fr <= 0 || tr[t].size < 0 || bumped[t])
+                        {
+                            continue;
+                        }
+                        /*
+                         * The part of its share the division threw away, kept
+                         * as a numerator so there is no fraction anywhere.
+                         *
+                         * `free_space % total` first, because it is smaller
+                         * than `total` and the product then fits where
+                         * `free_space * fr` might not -- the same guard the
+                         * share arithmetic above uses, for the same reason. A
+                         * factor large enough to overflow even that ranks by
+                         * the factor itself, which is the right order whenever
+                         * the shares are proportional.
+                         */
+                        rem = free_space % total;
+                        rem = (rem <= 2147483647 / (tr[t].fr > 1 ? tr[t].fr : 1))
+                                  ? rem * tr[t].fr % total
+                                  : tr[t].fr;
+                        if (rem > best_rem)
+                        {
+                            best_rem = rem;
+                            best = t;
+                        }
+                    }
+                    if (best < 0)
+                    {
+                        break;
+                    }
+                    tr[best].size += 1;
+                    bumped[best] = 1;
+                    --rest;
+                }
+            }
             break;
         }
     }
@@ -891,6 +988,69 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
         }
     }
 
+    /*
+     * §11.6, maximise tracks: free space raises a track towards its growth
+     * limit before the flexible tracks are given anything.
+     *
+     * `minmax(60px, 100px) 1fr` in 280px came out 60 and 220 here, and 100 and
+     * 180 in a browser -- the minmax track was sized to its minimum and its
+     * maximum was never reached for, so the `1fr` beside it swallowed the
+     * forty pixels that belonged to it.
+     *
+     * Only tracks with a *stated* maximum are grown. A track whose maximum is
+     * content-derived has already been given its base by ar__size_tracks, and
+     * what happens to it afterwards is align-content's business below -- doing
+     * it here as well would hand the same space out twice.
+     */
+    if (definite && count > 0)
+    {
+        ar_i32 room = avail - gap * (count - 1);
+        ar_i32 guard;
+
+        for (t = 0; t < count; ++t)
+        {
+            room -= tr[t].fr > 0 ? tr[t].base : tr[t].size;
+        }
+
+        for (guard = 0; guard < count && room > 0; ++guard)
+        {
+            ar_i32 hungry = 0;
+            ar_i32 each;
+
+            for (t = 0; t < count; ++t)
+            {
+                if (tr[t].fr <= 0 && !tr[t].intrinsic_max && tr[t].size < tr[t].limit)
+                {
+                    ++hungry;
+                }
+            }
+            if (hungry == 0)
+            {
+                break;
+            }
+            each = room / hungry;
+            if (each < 1)
+            {
+                each = 1;
+            }
+            for (t = 0; t < count && room > 0; ++t)
+            {
+                if (tr[t].fr <= 0 && !tr[t].intrinsic_max && tr[t].size < tr[t].limit)
+                {
+                    ar_i32 want = tr[t].limit - tr[t].size;
+                    ar_i32 give = want < each ? want : each;
+
+                    if (give > room)
+                    {
+                        give = room;
+                    }
+                    tr[t].size += give;
+                    room -= give;
+                }
+            }
+        }
+    }
+
     ar__grow_fr(tr, count, definite ? avail - gap * (count > 0 ? count - 1 : 0) : 0);
 
     /*
@@ -925,7 +1085,26 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
 
         if (total < inner)
         {
-            ar_i32 mode = axis == 0 ? n->style.v[AR_P_JUSTIFY] : n->style.v[AR_P_ALIGN_CONTENT];
+            /*
+             * `align-content` defaults to stretch and the block axis gets that
+             * for free. The inline axis does not: `justify-content` defaults
+             * to `start` because that is right for a flex container, and for a
+             * grid CSS says `normal`, which behaves as stretch.
+             *
+             * The set mask is what tells the two apart -- it records whether
+             * anybody wrote the declaration, which is exactly the question,
+             * and it is the same mechanism the automatic minimum size uses to
+             * tell `min-width: 0` from a `min-width` nobody stated.
+             *
+             * Without this a subgrid whose parent is not a grid gave its items
+             * **zero width**: it falls back to an ordinary grid, its one
+             * implicit column is `auto`, the items in it have no stated width,
+             * and nothing ever handed that column the container's 200 pixels.
+             */
+            ar_i32 mode = axis == 0
+                              ? (ar_pset_has(n->style.set, AR_P_JUSTIFY) ? n->style.v[AR_P_JUSTIFY]
+                                                                         : AR_ALIGN_STRETCH)
+                              : n->style.v[AR_P_ALIGN_CONTENT];
             ar_i32 leftover = inner - total;
 
             if ((mode & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH)
@@ -1178,6 +1357,25 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
          * in the same call rather than beside it.
          */
         it->rect.h = ar_resolve_size(it, 1, rh, am == AR_ALIGN_STRETCH);
+
+        /*
+         * And the ratio, after that assignment rather than before it.
+         *
+         * ar_wrap_height already applied the ratio in the column pass -- it is
+         * the hook that means "the width is settled, now fix the height" -- and
+         * the line above then overwrote the answer with `fit[1]`, which for a
+         * box with a ratio and no children is zero. `width: 80px;
+         * aspect-ratio: 2` in a grid came out **eighty by nothing**.
+         *
+         * Not when the item is being stretched: an item told to fill its row
+         * has been given a definite height, and CSS gives that precedence over
+         * the ratio. ar_apply_ratio is a no-op unless exactly one axis was
+         * stated, so this cannot disturb an item that named both.
+         */
+        if (am != AR_ALIGN_STRETCH)
+        {
+            ar_apply_ratio(it);
+        }
 
         it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
         it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
