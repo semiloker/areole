@@ -793,9 +793,6 @@ static void ar__grow_fr(ar__gtrack *tr, ar_i32 count, ar_i32 space)
             {
                 continue;
             }
-            share = total > 0 ? (ar_i32)((double)0) : 0;
-            (void)share;
-
             /* free_space * fr / total without leaving ar_i32 on the way. */
             if (free_space <= 2147483647 / (tr[t].fr > 1 ? tr[t].fr : 1))
             {
