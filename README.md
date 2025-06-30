@@ -478,8 +478,11 @@ Windows 2000 or newer. A C89 compiler. That is the entire list.
 
 ## Documentation
 
-- [Performance](docs/PERFORMANCE.md) — every scene, every percentile, the
-  comparison tables, and what each number assumed. Generated, never typed
+- [Performance](docs/PERFORMANCE.md) — every scene, every percentile, and what each
+  number assumed. Generated, never typed
+- [Against other engines](docs/COMPARISON.md) — who wins each case against Win32 GDI,
+  Clay and microui, how much of it survives the noise, and the caveat beside every
+  ratio rather than under it. Generated, never typed
 - [The CSS subset](docs/CSS_REFERENCE.md) — every property and selector, and
   what is deliberately missing
 - [Contributing](CONTRIBUTING.md) — the two invariants, the C89 rules, and why
