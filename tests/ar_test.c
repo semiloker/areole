@@ -13524,6 +13524,196 @@ static void test_a_document_survives_the_round_trip(void)
     CHECK(bad == 0, "html: every document walks into a balanced box tree");
 }
 
+/* ------------------------------------------------------------------------
+ * Encoding, and stylesheets out of the document
+ * ------------------------------------------------------------------------ */
+
+static char g_enc_out[512];
+
+static int ar__decoded_is(ar_encoding e, const char *in, ar_u32 len, const char *want)
+{
+    ar_u32 n = ar_encoding_decode(e, in, len, g_enc_out, (ar_u32)sizeof g_enc_out);
+
+    return n == (ar_u32)strlen(want) && memcmp(g_enc_out, want, n) == 0;
+}
+
+static void test_encoding_sniffing(void)
+{
+    ar_u32 skip = 99;
+
+    /*
+     * Step 1: a byte order mark beats everything after it, including a
+     * `<meta charset>` that disagrees. Authoring tools write both and
+     * contradict themselves constantly, and the specification is explicit
+     * about which wins.
+     */
+    CHECK(ar_encoding_sniff("\357\273\277<html>", 9, &skip) == AR_ENC_UTF8,
+          "enc: a UTF-8 BOM says UTF-8");
+    CHECK(skip == 3, "enc: and the three bytes of it are not content");
+
+    CHECK(ar_encoding_sniff("\376\377\0<", 4, &skip) == AR_ENC_UTF16BE, "enc: FE FF is UTF-16BE");
+    CHECK(skip == 2, "enc: two bytes of mark");
+    CHECK(ar_encoding_sniff("\377\376<\0", 4, &skip) == AR_ENC_UTF16LE, "enc: FF FE is UTF-16LE");
+
+    CHECK(ar_encoding_sniff("\357\273\277<meta charset=\"windows-1252\">", 30, &skip) ==
+              AR_ENC_UTF8,
+          "enc: and the mark beats a meta that disagrees with it");
+
+    /* Step 2: the declaration, in both spellings documents actually use. */
+    CHECK(ar_encoding_sniff("<meta charset=\"utf-8\">", 22, &skip) == AR_ENC_UTF8,
+          "enc: <meta charset> is read");
+    CHECK(skip == 0, "enc: with nothing to skip");
+    CHECK(ar_encoding_sniff("<meta charset=utf-8>", 20, &skip) == AR_ENC_UTF8, "enc: unquoted too");
+    CHECK(
+        ar_encoding_sniff("<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">",
+                          67, &skip) == AR_ENC_UTF8,
+        "enc: and the older http-equiv spelling");
+
+    /* `iso-8859-1` means windows-1252, which is the Encoding Standard's own
+       answer rather than a shortcut: a document labelled 8859-1 with a curly
+       quote in it is relying on the 1252 mapping. */
+    CHECK(ar_encoding_from_label("iso-8859-1", 10) == AR_ENC_WINDOWS1252,
+          "enc: iso-8859-1 means windows-1252");
+    CHECK(ar_encoding_from_label("Latin1", 6) == AR_ENC_WINDOWS1252, "enc: and so does latin1");
+    CHECK(ar_encoding_from_label("  UTF-8  ", 9) == AR_ENC_UTF8,
+          "enc: a label is trimmed and case-folded");
+
+    /* Step 3: no mark and no declaration. */
+    CHECK(ar_encoding_sniff("<html><body>x", 13, &skip) == AR_ENC_WINDOWS1252,
+          "enc: a document that says nothing is windows-1252, not UTF-8");
+}
+
+static void test_encoding_decoding(void)
+{
+    /* The high half of windows-1252 is where the curly quotes live, and
+       reading it as UTF-8 turns every one into a replacement character. */
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "\223hi\224", 4, "\342\200\234hi\342\200\235"),
+          "enc: windows-1252 curly quotes become the right code points");
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "caf\351", 4, "caf\303\251"),
+          "enc: and an accented letter becomes UTF-8");
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "plain", 5, "plain"),
+          "enc: ASCII passes through unchanged");
+
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "h\0i\0", 4, "hi"), "enc: UTF-16LE decodes");
+    CHECK(ar__decoded_is(AR_ENC_UTF16BE, "\0h\0i", 4, "hi"), "enc: UTF-16BE decodes");
+
+    /* A surrogate pair is one character, not two. U+1F600 as UTF-16LE. */
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "\075\330\0\336", 4, "\360\237\230\200"),
+          "enc: a surrogate pair joins into one code point");
+
+    /* An unpaired surrogate is not a character and cannot be encoded. */
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "\075\330", 2, "\357\277\275"),
+          "enc: an unpaired surrogate becomes U+FFFD");
+
+    /* Truncated rather than overrun, which is the contract every buffer in
+       this library has. */
+    {
+        char   tiny[4];
+        ar_u32 n = ar_encoding_decode(AR_ENC_WINDOWS1252, "abcdefgh", 8, tiny, (ar_u32)sizeof tiny);
+
+        CHECK(n <= (ar_u32)sizeof tiny, "enc: a small buffer truncates rather than overruns");
+    }
+}
+
+static void test_a_document_carries_its_own_stylesheet(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+    ar_i32     found;
+
+    /*
+     * The last piece that makes a document self-contained: its own `<style>`
+     * is what styles it, with no author sheet passed in beside it.
+     */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<html><head><style>body{margin:0px;} .box{width:37px;height:19px;}</style>"
+              "</head><body><div class=\"box\">x</div></body></html>");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 1, "html: the document's own <style> element is found");
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "html: and parses");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+
+    {
+        ar_i32 i;
+        int    hit = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w == 37 && r.h == 19)
+            {
+                hit = 1;
+            }
+        }
+        CHECK(hit, "html: and the rule in it reaches the box it names");
+    }
+}
+
+static void test_stylesheets_arrive_in_tree_order(void)
+{
+    /*
+     * Tree order is cascade order: two rules of equal specificity are settled
+     * by which came last. A collector that searched for the first `<style>`,
+     * or that visited them in any other order, would get this backwards on
+     * every document with two of them -- and there is no error to see, just
+     * the wrong colour.
+     */
+    ar_i32 found;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>.b{width:10px;}</style><style>.b{width:20px;}</style></head>"
+              "<body><div class=\"b\">x</div></body>");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 2, "html: both style elements are collected");
+
+    {
+        ar_surface s = ar__ui_surface(400, 300);
+        ar_input   in;
+        ar_i32     i;
+        int        second_won = 0;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, &s);
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            if (ar_node_rect(g_ui, i).w == 20)
+            {
+                second_won = 1;
+            }
+        }
+        CHECK(second_won, "html: and the later one wins, which is what cascade order means");
+    }
+}
+
+static void test_a_style_element_is_not_markup(void)
+{
+    /* `<style>` is RAWTEXT, so a `<` inside it is not a tag and the whole
+       sheet arrives as one text node. A parser that got this wrong would hand
+       the collector fragments. */
+    ar_i32 found;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<style>.a{width:5px;} /* <b> not a tag */ .c{width:6px;}</style><p>after");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 1, "html: a stylesheet containing < is still one sheet");
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "html: and parses whole");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -13963,6 +14153,12 @@ int main(void)
     test_a_table_from_markup_uses_the_table_model();
     test_head_content_draws_nothing();
     test_a_document_survives_the_round_trip();
+
+    test_encoding_sniffing();
+    test_encoding_decoding();
+    test_a_document_carries_its_own_stylesheet();
+    test_stylesheets_arrive_in_tree_order();
+    test_a_style_element_is_not_markup();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

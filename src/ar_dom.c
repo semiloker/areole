@@ -197,3 +197,57 @@ void ar_dom_build(ar_ctx *c, const ar_doc *d)
     }
     ar__walk(c, d, ar_dom_root(d));
 }
+
+/*
+ * Every `<style>` element's text, handed to the stylesheet parser in tree
+ * order.
+ *
+ * Tree order is cascade order: two rules of equal specificity are decided by
+ * which came last, so the sheets have to arrive in the order the document
+ * declares them. That is why this is a walk rather than a search for the first
+ * one.
+ *
+ * A `<style>` element holds exactly one text child, because the tokenizer put
+ * the whole element in RAWTEXT -- so there is no reassembly to do here, which
+ * there would be if `<` inside a stylesheet had been read as markup.
+ *
+ * Not handled: `<link rel=stylesheet>`, which needs a resource the embedder
+ * has to fetch, and there is no networking here by design. The release
+ * document gives that a callback and 0.9.1 is where it lands.
+ */
+static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_i32 found = 0;
+    ar_i32 child;
+
+    if (node < 0)
+    {
+        return 0;
+    }
+    if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "style"))
+    {
+        ar_i32 text = d->nodes[node].first_child;
+
+        if (text >= 0 && d->nodes[text].kind == AR_DOM_TEXT && d->nodes[text].text.p &&
+            d->nodes[text].text.n > 0)
+        {
+            ar_stylesheet(c, d->nodes[text].text.p);
+            ++found;
+        }
+        return found;
+    }
+    for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
+    {
+        found += ar__collect_styles(c, d, child);
+    }
+    return found;
+}
+
+ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d)
+{
+    if (!c || !d || d->node_count == 0)
+    {
+        return 0;
+    }
+    return ar__collect_styles(c, d, 0);
+}
