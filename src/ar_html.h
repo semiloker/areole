@@ -280,6 +280,34 @@ typedef struct ar_doc
  */
 int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
 
+/*
+ * The document into the box tree.
+ *
+ * HTML is a second front end rather than a second box builder: this walks the
+ * document through ar_begin and ar_text, so style resolution, the stable keys
+ * hover and damage tracking use, and the pre-order invariant the layout passes
+ * depend on are all the ones every other caller gets.
+ *
+ * Call it between ar_frame_begin and ar_frame_end, exactly where the
+ * equivalent ar_begin/ar_end block would go.
+ */
+void ar_dom_build(ar_ctx *c, const ar_doc *d);
+
+/*
+ * The user-agent stylesheet: the default style for every element, which is
+ * what makes <h1> large and <table> use the table model.
+ *
+ * Hand it the context before the first frame, like any other stylesheet. It is
+ * not optional for a document: areole's own default display is `flex`, so
+ * without this every paragraph lays out in a row.
+ */
+void ar_ua_stylesheet(ar_ctx *c);
+
+/* The sheet is several strings, because C89 caps one literal at 509
+   characters. These are for the check that every part parses. */
+ar_i32      ar_ua_stylesheet_parts(void);
+const char *ar_ua_stylesheet_part(ar_i32 i);
+
 /* The root element of the document, or -1. Almost always <html>. */
 ar_i32 ar_dom_root(const ar_doc *doc);
 

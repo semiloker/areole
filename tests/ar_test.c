@@ -13247,6 +13247,283 @@ static void test_the_tree_builder_survives_anything(void)
     CHECK(bad == 0, "html: no malformed document overruns the tree builder");
 }
 
+/* ------------------------------------------------------------------------
+ * HTML into the box tree
+ *
+ * The piece that makes the parser visible. These check that a document laid
+ * out through ar_dom_build lands where the same tree written by hand would,
+ * and that the user-agent stylesheet is doing the work that makes it so.
+ * ------------------------------------------------------------------------ */
+
+/* A whole document, from bytes to boxes, into the shared test context. */
+static void ar__render_html(ar_surface *s, const char *src, const char *author)
+{
+    ar_input in;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    if (author)
+    {
+        ar_stylesheet(g_ui, author);
+    }
+    ar__parse(src);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_the_ua_stylesheet_parses(void)
+{
+    /* Every part of it, and none may have a syntax error -- a UA sheet with a
+       bad rule in it fails silently and takes a few elements with it. */
+    ar_i32 i;
+    ar_i32 bad = 0;
+
+    for (i = 0; i < ar_ua_stylesheet_parts(); ++i)
+    {
+        ar__ui_reset("");
+        ar_stylesheet(g_ui, ar_ua_stylesheet_part(i));
+        if (ar_stylesheet_errors(g_ui))
+        {
+            printf("      part %ld has %lu problem(s)\n", (long)i,
+                   (unsigned long)ar_stylesheet_errors(g_ui));
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "ua: every part of the user-agent stylesheet parses cleanly");
+    CHECK(ar_ua_stylesheet_parts() > 5, "ua: and there is a real sheet there");
+
+    /* And all of it together, which is what an application actually does. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "ua: and the whole sheet at once");
+}
+
+static void test_a_document_lays_out_as_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * The thing the user-agent stylesheet exists for. areole's own default
+     * display is flex, so without it these paragraphs would sit in a row.
+     */
+    ar__render_html(&s, "<p>one</p><p>two</p>", "p { margin:0px; height:20px; }");
+
+    {
+        ar_i32 n = ar_node_count(g_ui);
+        ar_i32 first = -1, second = -1;
+        ar_i32 i;
+
+        for (i = 0; i < n; ++i)
+        {
+            if (ar_node_rect(g_ui, i).h == 20)
+            {
+                if (first < 0)
+                {
+                    first = i;
+                }
+                else if (second < 0)
+                {
+                    second = i;
+                }
+            }
+        }
+        CHECK(first >= 0 && second >= 0, "html: both paragraphs became boxes");
+        if (first >= 0 && second >= 0)
+        {
+            ar_rect a = ar_node_rect(g_ui, first);
+            ar_rect b = ar_node_rect(g_ui, second);
+
+            CHECK(b.y == a.y + 20, "html: and they stack down the page rather than across it");
+            CHECK(a.x == b.x, "html: at the same left edge");
+        }
+    }
+}
+
+static void test_the_class_and_id_reach_the_style(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* The selector the walk spells out is what carries an author stylesheet
+       onto a parsed document. Without it every rule but a type selector is
+       dead. */
+    ar__render_html(&s, "<div class=\"card wide\" id=\"first\">x</div>",
+                    "body { margin:0px; } .card { height:11px; } #first { width:57px; }");
+
+    {
+        ar_i32 i;
+        int    found = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.h == 11 && r.w == 57)
+            {
+                found = 1;
+            }
+        }
+        CHECK(found, "html: a class and an id from the markup both match author rules");
+    }
+}
+
+static void test_whitespace_between_blocks_is_dropped(void)
+{
+    /*
+     * `<ul>\n  <li>a</li>\n</ul>` has text nodes between the items that a
+     * browser drops. Keeping them would put an empty box between every pair,
+     * and every hand-written document is full of them.
+     *
+     * Counted against the same markup with the whitespace taken out, rather
+     * than inspected: if the newlines generated boxes the two would differ by
+     * three.
+     *
+     * The first version of this check counted boxes with no size at all and
+     * failed -- on the implied `<head>`, which is `display: none` and is
+     * supposed to be 0x0. The heuristic was wrong, not the walk.
+     */
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     with_space;
+    ar_i32     without;
+
+    ar__render_html(&s, "<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>", "body { margin:0px; }");
+    with_space = ar_node_count(g_ui);
+
+    ar__render_html(&s, "<ul><li>a</li><li>b</li></ul>", "body { margin:0px; }");
+    without = ar_node_count(g_ui);
+
+    CHECK(with_space == without, "html: whitespace between block elements generates no boxes");
+    if (with_space != without)
+    {
+        printf("      %ld boxes with whitespace, %ld without\n", (long)with_space, (long)without);
+    }
+
+    /* html, head, body, ul, two li and two text spans. Stated so a change in
+       what the walk generates is visible rather than merely consistent. */
+    CHECK(without == 8, "html: and a two-item list is eight boxes");
+}
+
+static void test_a_table_from_markup_uses_the_table_model(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * areole has had the table formatting context since 0.7.0 and this is the
+     * first time markup reaches it: the user-agent sheet is what turns `<tr>`
+     * into `display: table-row`.
+     *
+     * The cells of a row share a top edge, which is the one property that is
+     * true of a table and of nothing else the engine could have used instead.
+     */
+    ar__render_html(&s,
+                    "<table><tr><td>a</td><td>b</td></tr>"
+                    "<tr><td>c</td><td>d</td></tr></table>",
+                    "body { margin:0px; } td { width:40px; height:10px; padding:0px; }");
+
+    {
+        ar_i32 i;
+        ar_i32 cells[8];
+        ar_i32 n = 0;
+
+        for (i = 0; i < ar_node_count(g_ui) && n < 8; ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w == 40 && r.h == 10)
+            {
+                cells[n++] = i;
+            }
+        }
+        CHECK(n == 4, "html: four cells came out of the markup");
+        if (n == 4)
+        {
+            ar_rect a = ar_node_rect(g_ui, cells[0]);
+            ar_rect b = ar_node_rect(g_ui, cells[1]);
+            ar_rect c = ar_node_rect(g_ui, cells[2]);
+
+            CHECK(a.y == b.y, "html: the two cells of a row share a top edge");
+            CHECK(c.y > a.y, "html: and the second row is below the first");
+            CHECK(b.x > a.x, "html: with the columns side by side");
+        }
+    }
+}
+
+static void test_head_content_draws_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `display: none` on head, style, script and title is what stops a
+     * stylesheet's own text appearing on the page -- which is exactly what a
+     * document without a user-agent sheet does, and it looks like a bug in the
+     * renderer rather than a missing rule.
+     */
+    ar__render_html(&s,
+                    "<html><head><title>T</title><style>p{color:#ff0000;}</style></head>"
+                    "<body><p>visible</p></body></html>",
+                    "body { margin:0px; }");
+
+    {
+        ar_i32 i;
+        ar_i32 drawn = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w > 0 && r.h > 0)
+            {
+                ++drawn;
+            }
+        }
+        /* html, body and the paragraph, and the paragraph's text. Nothing from
+           the head, which would be two more. */
+        CHECK(drawn > 0 && drawn <= 5, "html: nothing in the head generates a visible box");
+        if (drawn > 5)
+        {
+            printf("      %ld boxes have a size\n", (long)drawn);
+        }
+    }
+}
+
+static void test_a_document_survives_the_round_trip(void)
+{
+    /* Bytes to boxes, on the malformed shapes the tree builder recovers from.
+       None may leave the tree unbalanced, which is what would break every
+       layout pass after it. */
+    static const char *const DOCS[] = {"<p>a<p>b",
+                                       "<table><em>x</em><tr><td>y</table>",
+                                       "<b>1<i>2</b>3</i>",
+                                       "<ul><li>a<li>b</ul>",
+                                       "<div><span>x</span></div>",
+                                       "<!DOCTYPE html><html><body><h1>T</h1></body></html>",
+                                       "",
+                                       "</p></div>"};
+    ar_surface               s = ar__ui_surface(400, 300);
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof DOCS / sizeof DOCS[0]); ++i)
+    {
+        ar__render_html(&s, DOCS[i], "body { margin:0px; }");
+        if (ar_unbalanced(g_ui))
+        {
+            printf("      %s left the tree unbalanced\n", DOCS[i]);
+            ++bad;
+        }
+        if (ar_overflowed(g_ui))
+        {
+            printf("      %s overflowed the box budget\n", DOCS[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: every document walks into a balanced box tree");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -13678,6 +13955,14 @@ int main(void)
     test_quirks_mode();
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
+
+    test_the_ua_stylesheet_parses();
+    test_a_document_lays_out_as_blocks();
+    test_the_class_and_id_reach_the_style();
+    test_whitespace_between_blocks_is_dropped();
+    test_a_table_from_markup_uses_the_table_model();
+    test_head_content_draws_nothing();
+    test_a_document_survives_the_round_trip();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
