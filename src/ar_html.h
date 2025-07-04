@@ -328,6 +328,24 @@ ar_u32 ar_encoding_decode(ar_encoding enc, const char *in, ar_u32 len, char *out
 ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d);
 
 /*
+ * Parse into the context's own arena, sniffing and decoding the encoding first.
+ *
+ * How much it may spend was fixed at init: size the block with AR_MEM_DOC and
+ * hand the same figure to ar_init_ex. A document is per-parse
+ * rather than per-frame, so it cannot come out of the box budget: a caller
+ * that asked for two thousand boxes must still get two thousand.
+ *
+ * Call it **before the first frame**, for the reason ar_stylesheet gives -- a
+ * frame reserves the whole box budget from the other end of the arena.
+ *
+ * Returns the document, or null if the context could not spare the space at
+ * all. A document that was built but did not fit comes back with `overflowed`
+ * set and holds as much as it could, which is 0.9.0 acceptance criterion 7:
+ * fail cleanly with a reported reason rather than truncate silently.
+ */
+ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/*
  * The document into the box tree.
  *
  * HTML is a second front end rather than a second box builder: this walks the
