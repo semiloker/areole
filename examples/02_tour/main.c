@@ -27,6 +27,7 @@
  */
 #include "areole.h"
 #include "areole_win32.h"
+#include "ar_html.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -451,12 +452,13 @@ enum
     PAGE_TABLE,
     PAGE_TABLE2,
     PAGE_FLEXGRID,
+    PAGE_HTML,
     PAGE_COUNT
 };
 
 static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
                                            "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2",
-                                           "0.6.3", "0.7.0", "0.7.1", "0.8.0"};
+                                           "0.6.3", "0.7.0", "0.7.1", "0.8.0", "0.9.0"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The counters",
@@ -471,7 +473,8 @@ static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The top layer",
                                             "Tables",
                                             "Tables that behave",
-                                            "Flex and grid"};
+                                            "Flex and grid",
+                                            "Real HTML"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -487,7 +490,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Above every stacking context, out of every clip, attached to an anchor.",
     "A constraint solve, not a tree walk: columns, spans and collapsed lines.",
     "A header that stays, a column that stays, and a row that is not there.",
-    "A ratio rather than a count, a maximum that redistributes, and fr."};
+    "A ratio rather than a count, a maximum that redistributes, and fr.",
+    "Malformed markup, and the tree every browser agrees on."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -1251,6 +1255,183 @@ static void page_flexgrid(ar_ctx *ui)
     ar_end(ui);
 }
 
+/*
+ * The 0.9.0 page: real markup, parsed and laid out.
+ *
+ * ------------------------------------------------------------------------
+ * Why this page shows the tree as text as well as drawing it
+ *
+ * Every other page in this tour shows a thing working. This one has to show
+ * two things, because the interesting half of an HTML parser is invisible: the
+ * markup below is malformed in four separate ways and the tree that comes out
+ * is not the one it appears to describe. Drawing the result proves it renders;
+ * printing the tree proves it recovered.
+ *
+ * ------------------------------------------------------------------------
+ * Why the user-agent stylesheet is not used here
+ *
+ * `ar_ua_stylesheet` says `div { display: block }`, and areole's own default
+ * display is flex -- so adding it would restyle every other page in this tour.
+ * That collision is the honest reason and it is worth stating: `div` means one
+ * thing to a UI library and another to a document, and a process rendering
+ * both has to keep two answers.
+ *
+ * So the rules below cover exactly the tags this document uses, and nothing
+ * this tour styles by tag. A real application calls ar_ua_stylesheet once and
+ * has no such problem.
+ */
+static const char *SHEET_HTMLDOC =
+    "html, body { display:block; }"
+    "h1 { display:block; font-size:22px; color:#20201e; }"
+    "p { display:block; margin:6px 0px; color:#3a3733; }"
+    "ul { display:block; margin:6px 0px; padding-left:22px; }"
+    ".code { background:#f4efe4; color:#6f685d; padding:8px 10px; font-size:12px; }"
+    ".docframe { display:block; background:#fdfaf3; padding:10px 12px; }";
+
+static const char *SHEET_HTMLDOC2 =
+    "li { display:block; color:#3a3733; }"
+    "b, i, span { display:inline; }"
+    "table { display:table; border-spacing:2px; }"
+    "tbody { display:table-row-group; }"
+    "tr { display:table-row; }"
+    "td { display:table-cell; padding:3px 8px; background:#f4efe4; color:#3a3733; }";
+
+/*
+ * Four kinds of malformed, in five lines.
+ *
+ *   - `<p>` with no `</p>`, twice. The second closes the first.
+ *   - `<li>` with no `</li>`. The same rule.
+ *   - a table with no `<tbody>`, which the tree gets anyway.
+ *   - `<b><i>...</b>...</i>`, which is the adoption agency's whole reason.
+ *
+ * None of these are contrived. This is what hand-written markup looks like.
+ */
+static const char *HTML_SRC = "<h1>areole</h1>\n"
+                              "<p>A paragraph that never closes\n"
+                              "<p>and <b>bold <i>crossing</b> over</i> it\n"
+                              "<ul><li>one<li>two</ul>\n"
+                              "<table><tr><td>a<td>b</table>";
+
+/* Caller storage rather than the arena, so this page cannot change the tour's
+   box budget. A real application uses ar_init_ex and ar_html_parse_into. */
+static ar_dom_node g_html_nodes[128];
+static ar_attr     g_html_attrs[32];
+static char        g_html_text[2048];
+static char        g_html_scratch[1024];
+static ar_doc      g_html_doc;
+static int         g_html_parsed = 0;
+static char        g_html_shape[512];
+
+static void html_shape(const ar_doc *d, ar_i32 i, ar_u32 *used)
+{
+    ar_i32 c;
+
+    if (i < 0 || *used + 2 >= sizeof g_html_shape)
+    {
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_TEXT)
+    {
+        g_html_shape[(*used)++] = '#';
+        return;
+    }
+    if (d->nodes[i].kind != AR_DOM_ELEMENT)
+    {
+        return;
+    }
+    {
+        ar_u32 k;
+
+        for (k = 0; k < d->nodes[i].name.n && *used + 1 < sizeof g_html_shape; ++k)
+        {
+            g_html_shape[(*used)++] = d->nodes[i].name.p[k];
+        }
+    }
+    if (d->nodes[i].first_child < 0)
+    {
+        return;
+    }
+    g_html_shape[(*used)++] = '(';
+    for (c = d->nodes[i].first_child; c >= 0; c = d->nodes[c].next_sibling)
+    {
+        if (c != d->nodes[i].first_child && *used + 1 < sizeof g_html_shape)
+        {
+            g_html_shape[(*used)++] = ' ';
+        }
+        html_shape(d, c, used);
+    }
+    if (*used + 1 < sizeof g_html_shape)
+    {
+        g_html_shape[(*used)++] = ')';
+    }
+}
+
+/* Parsed once. Nothing about the document changes between frames, and the tour
+   redraws at whatever rate the window asks for. */
+static void html_parse_once(void)
+{
+    ar_u32 used = 0;
+
+    if (g_html_parsed)
+    {
+        return;
+    }
+    g_html_parsed = 1;
+
+    memset(&g_html_doc, 0, sizeof g_html_doc);
+    g_html_doc.nodes = g_html_nodes;
+    g_html_doc.node_cap = (ar_i32)(sizeof g_html_nodes / sizeof g_html_nodes[0]);
+    g_html_doc.attrs = g_html_attrs;
+    g_html_doc.attr_cap = (ar_i32)(sizeof g_html_attrs / sizeof g_html_attrs[0]);
+    g_html_doc.text = g_html_text;
+    g_html_doc.text_cap = (ar_u32)sizeof g_html_text;
+
+    ar_html_parse(&g_html_doc, HTML_SRC, (ar_u32)strlen(HTML_SRC), g_html_scratch,
+                  (ar_u32)sizeof g_html_scratch);
+
+    html_shape(&g_html_doc, ar_dom_root(&g_html_doc), &used);
+    g_html_shape[used] = 0;
+}
+
+static void page_html(ar_ctx *ui)
+{
+    html_parse_once();
+
+    ar_text(ui, "div.h2", "The markup");
+    ar_text(ui, "div.dim",
+            "Four kinds of malformed in five lines, and none of them contrived: "
+            "two paragraphs that never close, list items that never close, a "
+            "table with no tbody, and a bold crossing an italic. This is what "
+            "hand-written markup actually looks like.");
+    ar_text(ui, "div.code", HTML_SRC);
+
+    ar_text(ui, "div.h2", "The tree it produces");
+    ar_text(ui, "div.dim",
+            "Not the tree the markup appears to describe. The paragraphs are "
+            "siblings, the list items are siblings, a tbody nobody wrote is "
+            "there, and the italic has been split in two by the adoption "
+            "agency. Every browser produces exactly this, because they all "
+            "implement the same specification -- and so does areole.");
+    ar_text(ui, "div.code", g_html_shape);
+
+    ar_text(ui, "div.h2", "And the same document, laid out");
+    ar_text(ui, "div.dim",
+            "Through ar_dom_build, which walks the document into the box tree "
+            "using ar_begin and ar_text -- the same front end everything else "
+            "in this tour is built with. HTML is a second front end, not a "
+            "second engine.");
+    ar_begin(ui, "div.docframe");
+    ar_dom_build(ui, &g_html_doc);
+    ar_end(ui);
+
+    ar_text(ui, "div.dim",
+            fmt("%ld nodes, %lu bytes of text kept, and %lu parse errors -- because not one "
+                "of those four omissions is an error. An end tag a document may leave out is "
+                "left out legally, and the recovery is the specification rather than a repair.",
+                (long)g_html_doc.node_count, (unsigned long)g_html_doc.text_used,
+                (unsigned long)g_html_doc.errors));
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -1291,6 +1472,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_FLEXGRID:
         page_flexgrid(ui);
+        break;
+    case PAGE_HTML:
+        page_html(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1746,8 +1930,31 @@ static void dump_page(ar_ctx *ui, ar_surface *s, ar_i32 page, struct settings *s
         ar_rect r = ar_node_rect(ui, i);
 
         dump_path(ui, i, path);
-        printf("%s %ld %ld %ld %ld |%s\n", path, (long)r.x, (long)r.y, (long)r.w, (long)r.h,
-               ar_node_text(ui, i));
+        printf("%s %ld %ld %ld %ld |", path, (long)r.x, (long)r.y, (long)r.w, (long)r.h);
+
+        /*
+         * The text, with its newlines flattened.
+         *
+         * The dump is one line per box and the comparison tool splits on
+         * lines, so a box whose text contains a newline produces a line the
+         * tool reads as a box with a word where its x should be -- and it
+         * stops with a parse error rather than a mismatch.
+         *
+         * Latent since the format was written; the 0.9.0 page found it by
+         * being the first to show a multi-line string. A browser's
+         * getBoundingClientRect side has the same flattening applied by
+         * `norm`, so the two still agree on what the text is.
+         */
+        {
+            const char *tx = ar_node_text(ui, i);
+
+            while (tx && *tx)
+            {
+                putchar((*tx == '\n' || *tx == '\r') ? ' ' : *tx);
+                ++tx;
+            }
+        }
+        printf("\n");
     }
 }
 
@@ -1843,6 +2050,8 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_CASCADE);
     ar_stylesheet(ui, SHEET_STRUCTURE);
     ar_stylesheet(ui, SHEET_FLOW);
+    ar_stylesheet(ui, SHEET_HTMLDOC);
+    ar_stylesheet(ui, SHEET_HTMLDOC2);
     ar_stylesheet(ui, SHEET_POS);
     ar_stylesheet(ui, SHEET_POS2);
     ar_stylesheet(ui, SHEET_SCROLL2);
