@@ -650,6 +650,7 @@ int main(int argc, char **argv)
     bench_register_style();
     bench_register_realistic();
     bench_register_patho();
+    bench_register_html();
 
     for (i = 1; i < argc; ++i)
     {
