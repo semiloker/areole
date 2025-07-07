@@ -78,6 +78,29 @@ const CASES = [
   ["lone-lt", "a < b"],
   ["after-body", "<body><p>a</body>trailing"],
   ["empty", ""],
+  ["select-option", "<select><option>a<option>b</select>"],
+  ["select-optgroup", "<select><optgroup label=x><option>a</select>"],
+  ["select-stray-div", "<select><div>x</div><option>a</select>"],
+  ["select-in-table", "<table><select><option>a</select></table>"],
+  ["template-basic", "<template><p>x</p></template>"],
+  ["template-in-table", "<table><template><tr><td>a</template></table>"],
+  ["svg-inline", "<p>a<svg><circle/></svg>b"],
+  ["math-inline", "<p><math><mi>x</mi></math>"],
+  ["frameset", "<frameset><frame></frameset>"],
+  ["form-unclosed", "<form><p>a</form>"],
+  ["button-nesting", "<button>a<button>b"],
+  ["nobr-nesting", "<nobr>a<nobr>b"],
+  ["image-is-img", "<image src=x>"],
+  ["ruby", "<ruby>a<rt>b</ruby>"],
+  ["iframe-rawtext", "<iframe><p>x</iframe><p>after"],
+  ["noscript-in-body", "<noscript><p>x</p></noscript>"],
+  ["xmp-rawtext", "<xmp><b>x</xmp>"],
+  ["plaintext-eats-all", "<plaintext><b>x"],
+  ["hr-in-p", "<p>a<hr>b"],
+  ["address-closes-p", "<p>a<address>b"],
+  ["nested-forms", "<form><form><p>a"],
+  ["option-closes-option", "<option>a<option>b"],
+  ["h1-closes-h2", "<h1>a<h2>b"],
 ];
 
 /* The same shape the C side prints: element names, '#' for a text node,
@@ -87,9 +110,15 @@ function shape(el) {
   if (el.nodeType === 3) return el.data.length ? '#' : '';
   if (el.nodeType === 8) return '!';
   if (el.nodeType !== 1) return '';
+  /* A template keeps its children in a DocumentFragment rather than in
+     childNodes. areole has no fragment -- the children are on the element
+     -- so the comparison looks through .content here and asks both sides
+     the same question. Without it every template case disagrees for a
+     reason that is a model difference rather than a bug. */
+  const kids0 = el.content ? el.content.childNodes : el.childNodes;
   let s = el.nodeName.toLowerCase();
   const kids = [];
-  for (const c of el.childNodes) {
+  for (const c of kids0) {
     const t = shape(c);
     if (t) kids.push(t);
   }

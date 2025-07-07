@@ -143,7 +143,34 @@ static const struct
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
-    {"empty", ""}};
+    {"empty", ""},
+
+    /* ------------------------------------------- the modes not built yet -- */
+    {"select-option", "<select><option>a<option>b</select>"},
+    {"select-optgroup", "<select><optgroup label=x><option>a</select>"},
+    {"select-stray-div", "<select><div>x</div><option>a</select>"},
+    {"select-in-table", "<table><select><option>a</select></table>"},
+    {"template-basic", "<template><p>x</p></template>"},
+    {"template-in-table", "<table><template><tr><td>a</template></table>"},
+    {"svg-inline", "<p>a<svg><circle/></svg>b"},
+    {"math-inline", "<p><math><mi>x</mi></math>"},
+    {"frameset", "<frameset><frame></frameset>"},
+
+    /* -------------------------------------------- more of the ordinary -- */
+    {"form-unclosed", "<form><p>a</form>"},
+    {"button-nesting", "<button>a<button>b"},
+    {"nobr-nesting", "<nobr>a<nobr>b"},
+    {"image-is-img", "<image src=x>"},
+    {"ruby", "<ruby>a<rt>b</ruby>"},
+    {"iframe-rawtext", "<iframe><p>x</iframe><p>after"},
+    {"noscript-in-body", "<noscript><p>x</p></noscript>"},
+    {"xmp-rawtext", "<xmp><b>x</xmp>"},
+    {"plaintext-eats-all", "<plaintext><b>x"},
+    {"hr-in-p", "<p>a<hr>b"},
+    {"address-closes-p", "<p>a<address>b"},
+    {"nested-forms", "<form><form><p>a"},
+    {"option-closes-option", "<option>a<option>b"},
+    {"h1-closes-h2", "<h1>a<h2>b"}};
 
 #define CASE_COUNT ((ar_i32)(sizeof CASES / sizeof CASES[0]))
 
@@ -285,9 +312,15 @@ static int run_html(void)
     printf("  if (el.nodeType === 3) return el.data.length ? '#' : '';\n");
     printf("  if (el.nodeType === 8) return '!';\n");
     printf("  if (el.nodeType !== 1) return '';\n");
+    printf("  /* A template keeps its children in a DocumentFragment rather than in\n");
+    printf("     childNodes. areole has no fragment -- the children are on the element\n");
+    printf("     -- so the comparison looks through .content here and asks both sides\n");
+    printf("     the same question. Without it every template case disagrees for a\n");
+    printf("     reason that is a model difference rather than a bug. */\n");
+    printf("  const kids0 = el.content ? el.content.childNodes : el.childNodes;\n");
     printf("  let s = el.nodeName.toLowerCase();\n");
     printf("  const kids = [];\n");
-    printf("  for (const c of el.childNodes) {\n");
+    printf("  for (const c of kids0) {\n");
     printf("    const t = shape(c);\n");
     printf("    if (t) kids.push(t);\n");
     printf("  }\n");
