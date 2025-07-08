@@ -147,6 +147,17 @@ typedef struct ar_html_tok
        recovery for every one of them, and a tokenizer that stops is a
        tokenizer that disagrees with every browser. */
     ar_u32 errors;
+
+    /*
+     * Set when a decoded character reference did not fit in `scratch`.
+     *
+     * Distinct from `errors`, which counts things wrong with the *document*.
+     * This is something wrong with the *budget*, and it is the difference
+     * between "the author wrote bad markup" and "you did not give me enough
+     * room to hold what the author wrote". The document reports it as
+     * `overflowed`, which is 0.9.0 acceptance criterion 7.
+     */
+    int scratch_full;
 } ar_html_tok;
 
 /*
@@ -198,6 +209,13 @@ const char *ar_html_entity_name(ar_i32 i);
  * a scratch buffer it reuses for every token. The second kind cannot be kept,
  * so the document copies exactly those into storage of its own and leaves the
  * rest pointing at the input.
+ *
+ * There is a third kind, and it is easy to miss: an element the tree builder
+ * *implied* -- the <html> a document without one is given, the <tbody> a bare
+ * <tr> is given -- has no bytes anywhere to point at, so its name is a string
+ * literal in the binary. Such a name outlives everything and needs no copy,
+ * but code that assumes every span lies inside one of the two buffers is
+ * wrong about it. tests/ar_fuzz.c checks all three.
  *
  * That is not an optimisation for its own sake. A document of ordinary prose
  * contains almost no character references, so almost nothing is copied, and

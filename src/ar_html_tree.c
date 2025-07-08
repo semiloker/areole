@@ -160,13 +160,89 @@ static ar_i32 ar__node(ar__tree *t, ar_dom_kind kind)
     return d->node_count++;
 }
 
+static void ar__detach(ar__tree *t, ar_i32 i);
+
+/*
+ * Would putting `child` under `parent` make a loop?
+ *
+ * A node cannot go inside its own descendant. The DOM calls the refusal a
+ * HierarchyRequestError; here the consequence of not asking is a `parent`
+ * link that points at the node itself and a tree walk that never returns.
+ *
+ * The check is a walk up the ancestors, which is not free, so it is asked only
+ * when `child` has children at all. A node that was created a moment ago has
+ * none -- which is every insertion in an ordinary document -- so the common
+ * path pays one comparison and the walk happens only when a subtree is being
+ * moved. That is the adoption agency and foster parenting, and those are
+ * exactly the two that can produce a cycle.
+ *
+ * The depth is bounded by the tree, and the loop counts its own steps rather
+ * than trusting it: this runs on a tree that may already be malformed, and a
+ * cycle detector that can itself hang is not one.
+ */
+static int ar__would_loop(const ar__tree *t, ar_i32 parent, ar_i32 child)
+{
+    const ar_doc *d = t->doc;
+    ar_i32        up;
+    ar_i32        steps = 0;
+
+    if (child < 0 || d->nodes[child].first_child < 0)
+    {
+        return 0;
+    }
+    for (up = parent; up >= 0; up = d->nodes[up].parent)
+    {
+        if (up == child)
+        {
+            return 1;
+        }
+        if (++steps > d->node_count)
+        {
+            return 1; /* already looped; refusing is the only safe answer */
+        }
+    }
+    return 0;
+}
+
+/*
+ * Insertion is a move.
+ *
+ * Both of the functions below take a node out of wherever it is before they
+ * put it where it is going, because that is what every caller means and
+ * because the alternative is not a wrong tree, it is a *corrupt* one: append a
+ * node that is already its parent's last child and the first thing the code
+ * does is set its own previous sibling to itself. The sibling walk that
+ * follows never terminates.
+ *
+ * The specification says this in a clause everybody skims -- "if node has a
+ * parent, remove it from its parent" -- and the callers here mostly did it by
+ * hand, which is how one of them came not to. ar_fuzz found the survivor at
+ * iteration 8955409 of seed 3, in a document with a hundred and eighteen bytes
+ * of nested formatting elements and no room at all for text.
+ */
 static void ar__append(ar__tree *t, ar_i32 parent, ar_i32 child)
 {
     ar_doc *d = t->doc;
 
-    if (parent < 0 || child < 0)
+    /*
+     * A node is never its own parent.
+     *
+     * A tree invariant rather than a special case, and checked here because
+     * here is the only place a parent link is made. The bug that put it here
+     * reached this function with parent == child == the paragraph in
+     * `<table><em><p>x</em`; the cycle it made was invisible until something
+     * walked the tree, and then that walk never came back.
+     *
+     * The insertion point below is the real fix. This is the invariant, stated
+     * where it can be enforced.
+     */
+    if (parent < 0 || child < 0 || parent == child || ar__would_loop(t, parent, child))
     {
         return;
+    }
+    if (d->nodes[child].parent >= 0)
+    {
+        ar__detach(t, child);
     }
     d->nodes[child].parent = parent;
     d->nodes[child].prev_sibling = d->nodes[parent].last_child;
@@ -219,7 +295,18 @@ static void ar__insert_before(ar__tree *t, ar_i32 before, ar_i32 child)
     ar_doc *d = t->doc;
     ar_i32  p;
 
-    if (before < 0 || child < 0 || d->nodes[before].parent < 0)
+    if (before < 0 || child < 0 || before == child || d->nodes[before].parent < 0 ||
+        ar__would_loop(t, d->nodes[before].parent, child))
+    {
+        return;
+    }
+    if (d->nodes[child].parent >= 0)
+    {
+        ar__detach(t, child);
+    }
+    /* Re-read after the detach: taking the child out can have changed which
+       node comes before this one. */
+    if (d->nodes[before].parent < 0)
     {
         return;
     }
@@ -402,17 +489,36 @@ static void ar__implied_end_tags(ar__tree *t, const char *except)
  *
  * Returns the parent to insert into, and sets `*before` to the node to insert
  * before, or -1 to append.
+ *
+ * ------------------------------------------------------------------------
+ * The override target
+ *
+ * `target` is the specification's *override target*: the element the caller
+ * has already decided to insert into, or -1 for "wherever we currently are".
+ *
+ * Nearly every caller passes -1. The adoption agency's step 4.14 does not, and
+ * that is the whole reason this parameter exists. By then it has worked out
+ * for itself that the destination is the common ancestor and that the common
+ * ancestor is a table, so foster parenting applies -- but the *current node*
+ * at that moment is something else entirely. Deciding again from the current
+ * node gives a different answer to the one the caller already committed to,
+ * and for `<table><em><p>x</em` the answer it gives is the paragraph that is
+ * being moved. Nothing can be inserted into itself.
+ *
+ * Found by ar_fuzz, and only with a node budget small enough that the tree ran
+ * out mid-agency -- which is why no corpus reached it.
  */
-static ar_i32 ar__insertion_point(ar__tree *t, ar_i32 *before)
+static ar_i32 ar__insertion_point(ar__tree *t, ar_i32 target, ar_i32 *before)
 {
     static const char *const FOSTER[] = {"table", "tbody", "tfoot", "thead", "tr", 0};
     ar_i32                   i;
+    ar_i32                   cur = target >= 0 ? target : ar__current(t);
 
     *before = -1;
 
     for (i = 0; FOSTER[i]; ++i)
     {
-        if (ar__is(t, ar__current(t), FOSTER[i]))
+        if (ar__is(t, cur, FOSTER[i]))
         {
             ar_i32 k;
 
@@ -433,13 +539,61 @@ static ar_i32 ar__insertion_point(ar__tree *t, ar_i32 *before)
             return k > 1 ? t->open[k - 1] : t->open[0];
         }
     }
-    return ar__current(t);
+    return cur;
 }
 
-static void ar__insert_node(ar__tree *t, ar_i32 node, int foster)
+static void ar__insert_node_into(ar__tree *t, ar_i32 node, int foster, ar_i32 target)
 {
     ar_i32 before = -1;
-    ar_i32 parent = foster ? ar__insertion_point(t, &before) : ar__current(t);
+    ar_i32 parent =
+        foster ? ar__insertion_point(t, target, &before) : (target >= 0 ? target : ar__current(t));
+
+    if (before >= 0)
+    {
+        parent = t->doc->nodes[before].parent;
+    }
+
+    /*
+     * Out of the node's own subtree, if the placement landed inside it.
+     *
+     * Foster parenting picks the last table on the stack and inserts before
+     * it, into the table's parent. Once the list of active formatting
+     * elements has overflowed -- AR_HTML_FMT is a fixed cap, and past it a
+     * clone is dropped rather than made -- the stack and the tree can disagree
+     * about who contains whom, and that parent can turn out to be the element
+     * being moved. The result was an element that was its own parent and its
+     * own first child at once.
+     *
+     * Refusing the insertion is not enough on its own: the caller has already
+     * detached the node, so refusing loses the subtree, which is the same bug
+     * with the damage moved somewhere quieter. So walk up instead, and place
+     * it at the first ancestor that is not inside it.
+     *
+     * The floor is the html element, which nothing can be a descendant of and
+     * which therefore always terminates this. A node parked there is in the
+     * wrong place in a document that was already beyond repair; it is in the
+     * tree, and the tree is a tree.
+     */
+    if (ar__would_loop(t, parent, node))
+    {
+        ar_i32 steps = 0;
+
+        before = -1;
+        while (parent >= 0 && ar__would_loop(t, parent, node))
+        {
+            parent = t->doc->nodes[parent].parent;
+            if (++steps > t->doc->node_count)
+            {
+                parent = -1;
+                break;
+            }
+        }
+        if (parent < 0)
+        {
+            parent = t->open_n > 1 ? t->open[1] : 0;
+        }
+        t->doc->errors++;
+    }
 
     if (before >= 0)
     {
@@ -449,6 +603,12 @@ static void ar__insert_node(ar__tree *t, ar_i32 node, int foster)
     {
         ar__append(t, parent, node);
     }
+}
+
+/* Wherever we currently are, which is what every caller but one wants. */
+static void ar__insert_node(ar__tree *t, ar_i32 node, int foster)
+{
+    ar__insert_node_into(t, node, foster, -1);
 }
 
 /*
@@ -515,7 +675,7 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
 static void ar__insert_text(ar__tree *t, ar_span s, int foster)
 {
     ar_i32 before = -1;
-    ar_i32 parent = foster ? ar__insertion_point(t, &before) : ar__current(t);
+    ar_i32 parent = foster ? ar__insertion_point(t, -1, &before) : ar__current(t);
     ar_i32 node;
 
     if (s.n == 0)
@@ -941,7 +1101,9 @@ static int ar__adoption(ar__tree *t, const char *tag)
             if (ar__is(t, common, "table") || ar__is(t, common, "tbody") ||
                 ar__is(t, common, "tfoot") || ar__is(t, common, "thead") || ar__is(t, common, "tr"))
             {
-                ar__insert_node(t, last, 1); /* foster parented */
+                /* Foster parented into the common ancestor -- the override
+                   target, and not the current node. */
+                ar__insert_node_into(t, last, 1, common);
             }
             else
             {
@@ -1621,6 +1783,60 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
  * be in a table is relocated rather than dropped, and every browser agrees
  * because they all implement the same paragraph.
  * ------------------------------------------------------------------------ */
+/*
+ * "Clear the stack back to a table context", §13.2.6.4.9, and its two
+ * siblings for a table body and a table row.
+ *
+ * Three sentences in the specification and the reason four browser-corpus
+ * cases disagreed. Anything the table fostered out -- a stray `<b>`, an
+ * `<em>`, an `<a>` -- is relocated in the *tree* but stays on the stack of
+ * open elements, so it is still the current node when the next table part
+ * arrives. Without this, `<table><b><td>` puts the implied tbody inside the
+ * bold, and the whole table is built in the wrong place while looking
+ * perfectly well-formed.
+ *
+ * The `html` at the end of every list is the floor: the stack always has the
+ * document and the html element under everything, and popping past them would
+ * leave nowhere to insert into.
+ */
+static void ar__clear_stack_to(ar__tree *t, const char *const *keep)
+{
+    while (t->open_n > 1)
+    {
+        ar_i32 i;
+
+        for (i = 0; keep[i]; ++i)
+        {
+            if (ar__is(t, ar__current(t), keep[i]))
+            {
+                return;
+            }
+        }
+        ar__pop(t);
+    }
+}
+
+static void ar__clear_to_table(ar__tree *t)
+{
+    static const char *const KEEP[] = {"table", "template", "html", 0};
+
+    ar__clear_stack_to(t, KEEP);
+}
+
+static void ar__clear_to_table_body(ar__tree *t)
+{
+    static const char *const KEEP[] = {"tbody", "tfoot", "thead", "template", "html", 0};
+
+    ar__clear_stack_to(t, KEEP);
+}
+
+static void ar__clear_to_table_row(ar__tree *t)
+{
+    static const char *const KEEP[] = {"tr", "template", "html", 0};
+
+    ar__clear_stack_to(t, KEEP);
+}
+
 static void ar__in_table(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_COMMENT)
@@ -1648,12 +1864,14 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         if (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
             ar_span_is(tok->name, "thead"))
         {
+            ar__clear_to_table(t);
             ar__insert_element(t, tok, 0);
             t->mode = M_IN_TABLE_BODY;
             return;
         }
         if (ar_span_is(tok->name, "tr"))
         {
+            ar__clear_to_table(t);
             ar__insert_implied(t, "tbody");
             ar__insert_element(t, tok, 0);
             t->mode = M_IN_ROW;
@@ -1661,6 +1879,7 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th"))
         {
+            ar__clear_to_table(t);
             ar__insert_implied(t, "tbody");
             ar__insert_implied(t, "tr");
             ar__insert_element(t, tok, 0);
@@ -1670,6 +1889,7 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "caption"))
         {
+            ar__clear_to_table(t);
             ar__insert_element(t, tok, 0);
             ar__fmt_marker(t);
             t->mode = M_IN_CAPTION;
@@ -1688,6 +1908,7 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "col"))
         {
+            ar__clear_to_table(t);
             ar__insert_element(t, tok, 0);
             if (ar_span_is(tok->name, "col"))
             {
@@ -1753,12 +1974,14 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "tr"))
     {
+        ar__clear_to_table_body(t);
         ar__insert_element(t, tok, 0);
         t->mode = M_IN_ROW;
         return;
     }
     if (tok->kind == AR_TOK_START && (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th")))
     {
+        ar__clear_to_table_body(t);
         ar__insert_implied(t, "tr");
         ar__insert_element(t, tok, 0);
         ar__fmt_marker(t);
@@ -1798,6 +2021,7 @@ static void ar__in_row(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_START && (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th")))
     {
+        ar__clear_to_table_row(t);
         ar__insert_element(t, tok, 0);
         ar__fmt_marker(t);
         t->mode = M_IN_CELL;
@@ -2338,9 +2562,48 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
     }
     ar__push(&t, 0);
 
-    while (ar_html_next(&tk, &tok))
+    /*
+     * The loop, with a guarantee rather than a hope.
+     *
+     * `ar_html_next` is required to consume input, and if it ever stops doing
+     * so this loop runs forever -- which is exactly what `&#0` with a
+     * one-byte scratch buffer did, and a hang is the most expensive failure
+     * to diagnose because it produces no output to diagnose from.
+     *
+     * The tokenizer's own guarantee is the real fix and lives in
+     * ar_html_token.c. This is the backstop: one comparison per token, and it
+     * turns any future violation into a document that stops early and says
+     * `overflowed` instead of a process that has to be killed. A backstop for
+     * an invariant that is already enforced is cheap; a hang in a parser
+     * reading untrusted input is not.
+     */
+    for (;;)
     {
+        const char *before = tk.p;
+
+        if (!ar_html_next(&tk, &tok))
+        {
+            break;
+        }
         ar__process(&t, &tok);
+
+        /* Note where `before` is taken: across the whole cycle, not across
+           ar__process, which moves nothing and would make this fire on every
+           token. It did, on the first attempt, and truncated every document in
+           the suite to a single node. */
+        if (tk.p == before)
+        {
+            doc->overflowed = 1;
+            break;
+        }
+    }
+
+    /* A reference that did not fit is not a malformed document, it is a
+       budget that was too small, and the caller has to be able to tell the
+       difference. 0.9.0 acceptance criterion 7. */
+    if (tk.scratch_full)
+    {
+        doc->overflowed = 1;
     }
 
     /*

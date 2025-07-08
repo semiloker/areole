@@ -13976,6 +13976,387 @@ static void test_the_adoption_agency_inner_loop(void)
     CHECK(wrong == 0, "html: the adoption agency agrees with a browser on all eight");
 }
 
+/*
+ * A parse with a scratch buffer of a stated size, which is the whole point of
+ * these checks: everything else in this file hands the parser more room than
+ * any input needs, and the bugs below all live in the case where it does not
+ * have enough.
+ */
+static ar_doc *ar__parse_scratch(const char *src, ar_u32 scratch_cap)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    if (scratch_cap > (ar_u32)sizeof g_tree_scratch)
+    {
+        scratch_cap = (ar_u32)sizeof g_tree_scratch;
+    }
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, scratch_cap);
+    return &g_doc;
+}
+
+/* A parse with a stated node budget, which is where the tree-shape bugs are:
+   a budget nothing reaches is a budget nothing tests. */
+static void test_a_tag_that_never_ended_is_dropped(void)
+{
+    /*
+     * §13.2.5.10 and every state after it say the same thing about end of
+     * file: emit an end-of-file token. Not the tag. A tag the input stopped in
+     * the middle of is discarded whole, attributes and all -- so `<div id`
+     * contributes nothing at all, not a div with no attributes.
+     *
+     * This is not pedantry about a rare input. `<table><em><p>x</em` ends in
+     * an unterminated end tag, and honouring it runs the adoption agency,
+     * which moves the paragraph out of the emphasis and puts a clone of the
+     * emphasis inside it. One case in the browser corpus disagreed and every
+     * case around it agreed, which is what pointed at the tokenizer rather
+     * than at the agency.
+     *
+     * Every expectation below came out of Edge before it was written down.
+     */
+    static const char *const CASES[] = {"<p>a<div",
+                                        "html(head body(p(#)))",
+                                        "<b>x</b",
+                                        "html(head body(b(#)))",
+                                        "<div id",
+                                        "html(head body)",
+                                        "<div class=\"a",
+                                        "html(head body)",
+                                        "<br/",
+                                        "html(head body)",
+                                        "<b><p>x</b",
+                                        "html(head body(b(p(#))))",
+                                        "<table><em><p>x</em",
+                                        "html(head body(em(p(#)) table))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a tag the input ended inside is dropped, not emitted");
+}
+
+static void test_the_stack_is_cleared_back_to_a_table_context(void)
+{
+    /*
+     * Three sentences of the specification -- "clear the stack back to a table
+     * context" and its siblings for a table body and a table row -- and
+     * without them four browser-corpus cases came out with the table built
+     * inside the wrong element.
+     *
+     * Anything a table fosters out is relocated in the *tree* but stays on the
+     * stack of open elements, so it is still the current node when the next
+     * table part arrives. `<table><b><td>` therefore put the implied tbody
+     * inside the bold: the table came out empty and the whole row structure
+     * hung off a formatting element, while looking perfectly well-formed.
+     *
+     * From Edge, as above.
+     */
+    static const char *const CASES[] = {"<table><b><td><i></b>",
+                                        "html(head body(b table(tbody(tr(td(i))))))",
+                                        "<table><a><tr><td><a>x</a>",
+                                        "html(head body(a table(tbody(tr(td(a(#)))))))",
+                                        "<b><table><p></b><tr><td>",
+                                        "html(head body(b(p table(tbody(tr(td))))))",
+                                        "<table><tbody><em><tr><td><p></em>",
+                                        "html(head body(em table(tbody(tr(td(p))))))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
+}
+
+static ar_doc *ar__parse_capped(const char *src, ar_i32 node_cap)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = node_cap < (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0])
+                         ? node_cap
+                         : (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, (ar_u32)sizeof g_tree_scratch);
+    return &g_doc;
+}
+
+/* The links, checked the way tests/ar_fuzz.c checks them, so the same
+   invariant is enforced by the suite CI runs and not only by the fuzzer. */
+static int ar__tree_links_sane(const ar_doc *d, const char *what, ar_i32 cap)
+{
+    ar_i32 i;
+
+    for (i = 0; i < d->node_count; ++i)
+    {
+        const ar_dom_node *n = &d->nodes[i];
+        ar_i32             c;
+        ar_i32             steps;
+
+        if (n->parent == i || n->first_child == i || n->last_child == i || n->next_sibling == i ||
+            n->prev_sibling == i)
+        {
+            printf("      %s at %ld nodes: node %ld points at itself\n", what, (long)cap, (long)i);
+            return 0;
+        }
+        if (n->parent >= d->node_count || n->first_child >= d->node_count ||
+            n->next_sibling >= d->node_count)
+        {
+            printf("      %s at %ld nodes: node %ld points outside the tree\n", what, (long)cap,
+                   (long)i);
+            return 0;
+        }
+        /*
+         * And it is still attached. Refusing a bad link keeps the tree sane
+         * but loses the subtree, which is the same bug wearing a hat: the
+         * paragraph in `<table><em><p>x</em` came out with no parent at all
+         * when only the self-link was guarded against. Everything except the
+         * document node has somewhere to be.
+         */
+        if (i > 0 && n->parent < 0)
+        {
+            printf("      %s at %ld nodes: node %ld was left with no parent\n", what, (long)cap,
+                   (long)i);
+            return 0;
+        }
+        steps = 0;
+        for (c = n->first_child; c >= 0; c = d->nodes[c].next_sibling)
+        {
+            if (d->nodes[c].parent != i)
+            {
+                printf("      %s at %ld nodes: node %ld has a child that disowns it\n", what,
+                       (long)cap, (long)i);
+                return 0;
+            }
+            if (++steps > d->node_count)
+            {
+                printf("      %s at %ld nodes: node %ld has a cycle in its children\n", what,
+                       (long)cap, (long)i);
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void test_no_node_is_ever_its_own_parent(void)
+{
+    /*
+     * `<table><em><p>x</em` with room for exactly eight nodes, which ar_fuzz
+     * found at iteration 604612 of seed 9 and which no corpus could have
+     * reached -- every corpus runs with a budget nothing exhausts.
+     *
+     * The tree runs out of nodes in the middle of the adoption agency. Step
+     * 4.14 moves the paragraph into the common ancestor, decides the common
+     * ancestor is a table so foster parenting applies, and then asked for the
+     * insertion point *without saying where* -- so the insertion point was
+     * worked out again from the current node, which by then was the paragraph
+     * being moved. The paragraph became its own parent and the tree had a
+     * cycle in it, which nothing notices until something walks it.
+     *
+     * Swept across every budget rather than checked at eight, because the
+     * exhaustion point that matters is a function of the document and picking
+     * it by hand is how the next one gets missed.
+     */
+    static const char *const NASTY[] = {
+        "<table><em><p>x</em", "<table><b><td><i></b>", "<table><a><tr><td><a>x</a>",
+        "<table><em>x</em><tr><td>y</table>", "<b><table><p></b><tr><td>",
+        "<table><caption><b><p></b></caption>", "<table><tbody><em><tr><td><p></em>",
+        "<b><i><table><p></b></i>",
+
+        /*
+         * ar_fuzz, iteration 8955409 of seed
+         * 3, minimised from 3413 bytes to 118.
+         *
+         * A different shape of the same
+         * failure: not a node inserted into
+         * itself but a node inserted into its
+         * own child. Foster parenting picks
+         * the table to insert before and the
+         * table's parent to insert into, and
+         * here the table's parent *is* the
+         * element being moved -- so the
+         * element became its own parent and
+         * its own first child at once.
+         *
+         * It needs the list of active
+         * formatting elements to be full,
+         * which is why it is here and not in
+         * the browser corpus: AR_HTML_FMT is
+         * this engine's cap and a browser has
+         * its own, so the trees are allowed to
+         * differ. The invariant is not.
+         */
+        "<b><i><em><<<i><em><em><em><b><i><em>"
+        "<i><b><i><em><i><em><b><i><em><<<i><b>"
+        "<i><em><table></body><i><table><em>"
+        "<p></em>",
+        "<i><table><em><p></em>", "<b><i><table><em><p></em></i></b>"};
+    ar_i32 cap;
+    ar_i32 i;
+    ar_i32 bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        for (cap = 4; cap <= 40; ++cap)
+        {
+            if (!ar__tree_links_sane(ar__parse_capped(NASTY[i], cap), NASTY[i], cap))
+            {
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a tree that runs out of nodes is still a tree");
+}
+
+static void test_the_tokenizer_always_consumes_input(void)
+{
+    /*
+     * The hang ar_fuzz found at iteration 315 of seed 1, minimised to three
+     * bytes.
+     *
+     * `&#0` is a null character reference, which the specification replaces
+     * with U+FFFD -- three bytes of UTF-8. Given room for one, the reference
+     * could not be written, the `&` that would have replaced it could not be
+     * written either, and the text loop left with the read pointer exactly
+     * where it started. The token was not empty, so the tree builder accepted
+     * it and asked for the next one, and got the same one, forever.
+     *
+     * There is no assertion here beyond the test returning at all: a hang is
+     * caught by this function finishing. Which is also why it was expensive to
+     * find -- a process that hangs prints nothing to go on.
+     */
+    static const char *const STARVED[] = {"&#0",      "&#0;",        "&amp;",
+                                          "&#xFFFD;", "<title>&#0",  "<textarea>&#0;x",
+                                          "<p>a&#0b", "&#0&#0&#0&#0"};
+    ar_u32                   cap;
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (cap = 0; cap <= 4u; ++cap)
+    {
+        for (i = 0; i < (ar_i32)(sizeof STARVED / sizeof STARVED[0]); ++i)
+        {
+            ar_doc *d = ar__parse_scratch(STARVED[i], cap);
+
+            if (d->node_count <= 0)
+            {
+                printf("      %s with %lu scratch bytes built nothing\n", STARVED[i],
+                       (unsigned long)cap);
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a starved scratch buffer terminates rather than looping");
+
+    /*
+     * And it says so. A reference that did not fit is not bad markup, it is a
+     * budget too small to hold good markup, and the two have to be tellable
+     * apart -- 0.9.0 acceptance criterion 7 is failing cleanly with a reported
+     * reason rather than truncating in silence.
+     */
+    CHECK(ar__parse_scratch("&#0", 1u)->overflowed,
+          "html: and reports the overflow rather than truncating quietly");
+    CHECK(!ar__parse_scratch("&#0", 64u)->overflowed,
+          "html: while the same document with room to decode does not");
+}
+
+static void test_a_partial_code_point_never_reaches_the_tree(void)
+{
+    /*
+     * U+FFFD is three bytes. Given two, the old decoder wrote the first, ran
+     * out, and reported failure -- leaving a lone 0xEF in the buffer that the
+     * text token then carried into the tree as if it were a character.
+     *
+     * A partial sequence is not a character in any encoding, and nothing
+     * downstream -- shaping, the cascade, a caller writing the text out again
+     * -- has any defence against one. All of it or none of it.
+     */
+    ar_u32 cap;
+    ar_i32 bad = 0;
+
+    for (cap = 0; cap <= 3u; ++cap)
+    {
+        ar_doc *d = ar__parse_scratch("<p>&#xFFFD;</p>", cap);
+        ar_i32  i;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            const ar_dom_node *n = &d->nodes[i];
+            ar_u32             k;
+
+            if (n->kind != AR_DOM_TEXT)
+            {
+                continue;
+            }
+            for (k = 0; k < n->text.n; ++k)
+            {
+                unsigned char c = (unsigned char)n->text.p[k];
+                ar_u32        need;
+
+                if (c < 0x80u)
+                {
+                    continue;
+                }
+                if ((c & 0xE0u) == 0xC0u)
+                {
+                    need = 2u;
+                }
+                else if ((c & 0xF0u) == 0xE0u)
+                {
+                    need = 3u;
+                }
+                else if ((c & 0xF8u) == 0xF0u)
+                {
+                    need = 4u;
+                }
+                else
+                {
+                    /* A continuation byte with no lead is a fragment too. */
+                    printf("      %lu scratch bytes left a stray continuation\n",
+                           (unsigned long)cap);
+                    ++bad;
+                    continue;
+                }
+                if (k + need > n->text.n)
+                {
+                    printf("      %lu scratch bytes left a truncated sequence\n",
+                           (unsigned long)cap);
+                    ++bad;
+                }
+                k += need - 1u;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a code point that does not fit is not written at all");
+}
+
 static void test_the_adoption_agency_terminates_on_anything(void)
 {
     /*
@@ -14460,6 +14841,11 @@ int main(void)
 
     test_the_adoption_agency_inner_loop();
     test_the_adoption_agency_terminates_on_anything();
+    test_the_tokenizer_always_consumes_input();
+    test_a_partial_code_point_never_reaches_the_tree();
+    test_no_node_is_ever_its_own_parent();
+    test_a_tag_that_never_ended_is_dropped();
+    test_the_stack_is_cleared_back_to_a_table_context();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

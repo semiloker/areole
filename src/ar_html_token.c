@@ -107,25 +107,44 @@ static int ar__scratch_byte(ar_html_tok *t, char c)
 {
     if (!t->scratch || t->scratch_used >= t->scratch_cap)
     {
+        /* Remembered rather than merely returned, because the callers recover
+           from this locally and the document as a whole still has to be able
+           to say it did not fit. */
+        t->scratch_full = 1;
         return 0;
     }
     t->scratch[t->scratch_used++] = c;
     return 1;
 }
 
-/* A code point as UTF-8, which is what the rest of areole reads. */
+/*
+ * A code point as UTF-8, which is what the rest of areole reads.
+ *
+ * All of it or none of it. The first version wrote byte by byte and stopped
+ * where it ran out, which left a partial sequence in the buffer -- a lone
+ * 0xEF that is not a character in any encoding, handed on as if it were text.
+ * Checking the length first costs one comparison and removes the whole class.
+ */
 static int ar__scratch_cp(ar_html_tok *t, ar_u32 cp)
 {
-    if (cp < 0x80u)
+    ar_u32 need = cp < 0x80u ? 1u : (cp < 0x800u ? 2u : (cp < 0x10000u ? 3u : 4u));
+
+    if (!t->scratch || t->scratch_used + need > t->scratch_cap)
+    {
+        t->scratch_full = 1;
+        return 0;
+    }
+
+    if (need == 1u)
     {
         return ar__scratch_byte(t, (char)cp);
     }
-    if (cp < 0x800u)
+    if (need == 2u)
     {
         return ar__scratch_byte(t, (char)(0xC0u | (cp >> 6))) &&
                ar__scratch_byte(t, (char)(0x80u | (cp & 0x3Fu)));
     }
-    if (cp < 0x10000u)
+    if (need == 3u)
     {
         return ar__scratch_byte(t, (char)(0xE0u | (cp >> 12))) &&
                ar__scratch_byte(t, (char)(0x80u | ((cp >> 6) & 0x3Fu))) &&
@@ -370,6 +389,28 @@ static void ar__text(ar_html_tok *t, ar_token *out, int allow_tags, int allow_re
         ++t->p;
     }
 
+    /*
+     * A token that consumes nothing is an infinite loop.
+     *
+     * Every `break` above leaves on a full scratch buffer, and one of them can
+     * fire before a single byte has been consumed: `&#0` with room for one
+     * byte decodes to U+FFFD, which needs three, so the reference is refused,
+     * the `&` cannot be stored either, and the loop leaves with `t->p` exactly
+     * where it started. The token was not empty -- it held whatever the
+     * reference managed to write -- so the tree builder took it and asked for
+     * the next one, and got the same token, forever.
+     *
+     * Found by ar_fuzz at iteration 315 of seed 1, and it took a bisect to
+     * find because a hang prints nothing. The rule that prevents the whole
+     * family: a tokenizer that is called with input remaining consumes some
+     * of it. Dropping one character is the honest cost of a buffer that is too
+     * small, and `scratch_full` is what tells the caller it happened.
+     */
+    if (t->p == start && t->p < t->end)
+    {
+        ++t->p;
+    }
+
     out->kind = AR_TOK_TEXT;
     out->text = used_scratch ? ar__span(t->scratch, t->scratch_used) : ar__span(start, plain);
 }
@@ -461,6 +502,13 @@ static void ar__raw_text(ar_html_tok *t, ar_token *out, int allow_refs)
         {
             ++plain;
         }
+        ++t->p;
+    }
+
+    /* The same rule as ar__text, for the same reason, in the same shape --
+       `<title>&#0` reaches this copy of the loop rather than that one. */
+    if (t->p == start && t->p < t->end)
+    {
         ++t->p;
     }
 
@@ -727,7 +775,26 @@ static ar_span ar__attr_value(ar_html_tok *t)
     return ar__span(start, plain);
 }
 
-static void ar__tag(ar_html_tok *t, ar_token *out, int is_end)
+/*
+ * A tag, §13.2.5.6 onwards.
+ *
+ * Returns 1 if a tag was produced and 0 if the input ended inside it.
+ *
+ * The return value is the whole point. Every state between `tag open` and
+ * `after attribute value (quoted)` says the same thing about end of file: "this
+ * is an eof-in-tag parse error, emit an end-of-file token" -- *emit an
+ * end-of-file token*, not emit the tag. A tag that was never finished is
+ * dropped whole, attributes and all.
+ *
+ * This version finished the tag and emitted it, which is a reasonable-looking
+ * thing to do and is wrong in a way that changes trees. `<table><em><p>x</em`
+ * ends in an unterminated end tag; taking it seriously runs the adoption
+ * agency, which relocates the paragraph out of the emphasis and clones the
+ * emphasis inside it. Dropping it, as every browser does, leaves the tree
+ * alone. The browser corpus disagreed on exactly that one case and on no
+ * other, which is what pointed here rather than at the agency.
+ */
+static int ar__tag(ar_html_tok *t, ar_token *out, int is_end)
 {
     const char *start;
     ar_u32      n = 0;
@@ -755,8 +822,8 @@ static void ar__tag(ar_html_tok *t, ar_token *out, int is_end)
         }
         if (t->p >= t->end)
         {
-            t->errors++; /* eof-in-tag */
-            break;
+            t->errors++; /* eof-in-tag: the tag is dropped, not emitted */
+            return 0;
         }
         if (*t->p == '>')
         {
@@ -844,6 +911,7 @@ static void ar__tag(ar_html_tok *t, ar_token *out, int is_end)
             t->last_start[i] = (char)ar__h_lower((unsigned char)out->name.p[i]);
         }
     }
+    return 1;
 }
 
 /* ------------------------------------------------------------------------
@@ -903,7 +971,11 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
         if (next < t->end && ar__h_alpha(*next))
         {
             t->p = next;
-            ar__tag(t, out, 0);
+            if (!ar__tag(t, out, 0))
+            {
+                out->kind = AR_TOK_EOF;
+                return 0;
+            }
             return 1;
         }
         if (next < t->end && *next == '/')
@@ -911,7 +983,11 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
             if (next + 1 < t->end && ar__h_alpha(next[1]))
             {
                 t->p = next + 1;
-                ar__tag(t, out, 1);
+                if (!ar__tag(t, out, 1))
+                {
+                    out->kind = AR_TOK_EOF;
+                    return 0;
+                }
                 return 1;
             }
             /* `</>` is missing-end-tag-name: the specification drops it
