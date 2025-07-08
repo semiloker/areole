@@ -85,6 +85,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      # The suite. It had never run here: every release was gated on the greps,
+      # the compile, clang-format, cppcheck and the examples' own --selftest,
+      # and the twelve hundred checks in ar_test were run by hand by whoever
+      # remembered. A gate that is green because nobody pulled the lever is the
+      # same failure as a baseline that never checked it covered the scenes.
+      #
+      # ctest also carries ar_bench_selftest and the short fuzz run.
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
   build-mingw:
     name: windows / mingw-w64
     runs-on: windows-latest
@@ -106,6 +116,9 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
 
       # Every page of the tour, declared against a real surface with no window.
       # A page that leaves the tree unbalanced or overruns the box budget fails
