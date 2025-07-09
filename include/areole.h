@@ -976,6 +976,236 @@ ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i);
    two out parameters may be null. */
 ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i32 *out_to);
 
+/* ------------------------------------------------------------------------
+ * HTML
+ *
+ * A second front end, not a second engine. `ar_html_parse_into` builds a
+ * document and `ar_dom_build` walks it through the same `ar_begin`/`ar_text`
+ * calls a hand-written interface makes -- so style resolution, the stable keys
+ * hover and damage tracking depend on, and the pre-order invariant the layout
+ * passes require are the ones every other caller already gets.
+ *
+ * The tokenizer is not here. It is thirty states and a token struct, it is of
+ * no use to somebody who wants a document laid out, and a header is a promise:
+ * everything in this file has to keep working. `src/ar_html.h` has it for
+ * anyone who wants to drive the parser directly, and that one is not installed
+ * and not promised.
+ *
+ * ------------------------------------------------------------------------
+ * Who owns the text
+ *
+ * A span points into one of three places and never copies unless it must.
+ * Usually it points at the caller's own bytes, which is why the input has to
+ * outlive the document. Text that had a character reference in it cannot be a
+ * span of the input any more -- `&amp;` is five bytes in and one out -- so
+ * exactly those are copied into the document's own buffer. And an element the
+ * parser *implied*, the `<html>` a document without one is given, has no bytes
+ * anywhere to point at, so its name is a string literal that outlives
+ * everything.
+ *
+ * That is not an optimisation for its own sake. Ordinary prose contains almost
+ * no character references, so almost nothing is copied, and what is copied is
+ * bounded by the entities present rather than by the size of the document.
+ * ------------------------------------------------------------------------ */
+
+/* A run of bytes somewhere. Not NUL-terminated: `n` is the length. */
+typedef struct ar_span
+{
+    const char *p;
+    ar_u32      n;
+} ar_span;
+
+typedef struct ar_attr
+{
+    ar_span name;
+    ar_span value;
+} ar_attr;
+
+typedef enum ar_dom_kind
+{
+    AR_DOM_DOCUMENT = 0,
+    AR_DOM_ELEMENT,
+    AR_DOM_TEXT,
+    AR_DOM_COMMENT,
+    AR_DOM_DOCTYPE
+} ar_dom_kind;
+
+/*
+ * The three quirks modes, selected from the doctype by the specification's own
+ * table.
+ *
+ * Not a curiosity. Quirks changes the box model to content-box-plus-padding,
+ * changes table cell inheritance and changes line height. A document with no
+ * doctype has to render the way a browser renders it or the engine is wrong
+ * about a large fraction of the web.
+ */
+typedef enum ar_quirks
+{
+    AR_QUIRKS_NO = 0,
+    AR_QUIRKS_LIMITED,
+    AR_QUIRKS_YES
+} ar_quirks;
+
+/*
+ * A node. Index-referenced rather than pointer-linked, for the reasons the box
+ * tree gives: indices survive the array moving, they halve the size of a link
+ * on a 64 bit target, and a flat array makes a walk a linear sweep.
+ *
+ * Every link is an index into `ar_doc.nodes`, or -1.
+ */
+typedef struct ar_dom_node
+{
+    ar_dom_kind kind;
+
+    ar_span name; /* element tag name, or the doctype's name */
+    ar_span text; /* text data, or a comment's body */
+
+    ar_i32 parent;
+    ar_i32 first_child;
+    ar_i32 last_child;
+    ar_i32 next_sibling;
+    ar_i32 prev_sibling;
+
+    ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
+    ar_i32 attr_count;
+} ar_dom_node;
+
+typedef struct ar_doc
+{
+    ar_dom_node *nodes;
+    ar_i32       node_cap;
+    ar_i32       node_count;
+
+    ar_attr *attrs;
+    ar_i32   attr_cap;
+    ar_i32   attr_count;
+
+    /* Where text that could not stay a span of the input goes. */
+    char  *text;
+    ar_u32 text_cap;
+    ar_u32 text_used;
+
+    ar_quirks quirks;
+
+    /* Parse errors. Never fatal: the specification defines a recovery for
+       every one of them, and a parser that stops disagrees with every
+       browser. This is a count of how odd the document was, not a verdict. */
+    ar_u32 errors;
+
+    /* Set when any budget ran out -- nodes, attributes, text, or the scratch a
+       character reference decodes into. A document larger than the budget
+       fails cleanly and says so rather than truncating in silence, and the
+       tree holds as much as fitted. */
+    int overflowed;
+} ar_doc;
+
+/*
+ * Parse into the context's own arena, sniffing and decoding the encoding
+ * first.
+ *
+ * How much it may spend was fixed at init: size the block with AR_MEM_DOC and
+ * hand the same figure to ar_init_ex. A document is per-parse rather than
+ * per-frame, so it cannot come out of the box budget -- a caller that asked
+ * for two thousand boxes must still get two thousand.
+ *
+ * Call it **before the first frame**: a frame reserves the whole box budget
+ * from the other end of the arena and does not release it until the next
+ * ar_frame_begin.
+ *
+ * Returns the document, or null if the context could not spare the space at
+ * all. A document that was built but did not fit comes back with `overflowed`
+ * set.
+ */
+ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/*
+ * Parse into storage the caller points at, with no context involved.
+ *
+ * Returns non-zero if the whole document was built, zero if anything
+ * overflowed. Set `nodes`, `node_cap`, `attrs`, `attr_cap`, `text` and
+ * `text_cap` on `doc` first; everything else is written by the parse.
+ *
+ * `scratch` is where a decoded character reference goes and may be null, in
+ * which case a reference is passed through as the literal bytes that spell it
+ * -- which is what a caller rendering only its own markup wants. A few hundred
+ * bytes is plenty for a document; the parser reuses it per token.
+ *
+ * The input is not copied and must outlive the document.
+ */
+int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
+
+/*
+ * The document into the box tree.
+ *
+ * Call it between ar_frame_begin and ar_frame_end, exactly where the
+ * equivalent ar_begin/ar_end block would go.
+ */
+void ar_dom_build(ar_ctx *c, const ar_doc *d);
+
+/*
+ * Every `<style>` element in the document, handed to ar_stylesheet in tree
+ * order -- which is cascade order, and is why it is a walk rather than a
+ * search. Returns how many sheets were found.
+ *
+ * Call it after parsing and before the first frame.
+ */
+ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d);
+
+/*
+ * The user-agent stylesheet: the default style for every element, which is
+ * what makes <h1> large and <table> use the table model.
+ *
+ * Not optional for a document. areole's own default display is `flex`, so
+ * without this every paragraph lays out in a row.
+ */
+void ar_ua_stylesheet(ar_ctx *c);
+
+/* The root element, or -1. Almost always <html>. */
+ar_i32 ar_dom_root(const ar_doc *doc);
+
+/* First child of `i` that is an element with this tag, or -1. */
+ar_i32 ar_dom_child_element(const ar_doc *doc, ar_i32 i, const char *tag);
+
+/* Case-insensitive ASCII comparison of a span against a C string, which is the
+   question every tag name is asked. */
+int ar_span_is(ar_span s, const char *lit);
+
+/* ------------------------------------------------------------------------
+ * Encoding
+ *
+ * The parser reads UTF-8 and a document on disk is whatever somebody saved it
+ * as. Reading windows-1252 as UTF-8 does not fail -- every byte is valid on
+ * its own -- it renders every accented letter as a replacement character and
+ * looks like a font problem.
+ *
+ * ar_html_parse_into does all of this for you. These are for a caller doing
+ * its own reading.
+ * ------------------------------------------------------------------------ */
+typedef enum ar_encoding
+{
+    AR_ENC_UNKNOWN = 0,
+    AR_ENC_UTF8,
+    AR_ENC_UTF16LE,
+    AR_ENC_UTF16BE,
+    AR_ENC_WINDOWS1252
+} ar_encoding;
+
+/*
+ * What these bytes are, and how many of them are a byte order mark.
+ *
+ * A BOM beats a `<meta charset>` that disagrees with it, which is the
+ * specification's rule and matters because authoring tools write both and
+ * contradict themselves constantly.
+ */
+ar_encoding ar_encoding_sniff(const char *bytes, ar_u32 len, ar_u32 *skip);
+
+/* A label such as "utf-8" or "iso-8859-1" to an encoding, or AR_ENC_UNKNOWN. */
+ar_encoding ar_encoding_from_label(const char *label, ar_u32 n);
+
+/* Into UTF-8, in the caller's buffer. Returns the bytes written, truncated
+   rather than overrun if the buffer is too small. */
+ar_u32 ar_encoding_decode(ar_encoding enc, const char *in, ar_u32 len, char *out, ar_u32 cap);
+
 const char *ar_version(void);
 
 #ifdef __cplusplus
