@@ -55,3 +55,33 @@ shipping build of areole contains any of it.
 Compiled with relaxed flags. microui is not C89 -- `long long`, an unsuffixed
 unsigned constant, a const-discarding qsort comparator -- so its translation
 unit is built as gnu99 while the library keeps its own rules.
+
+## The HTML named character reference table
+
+`tools/entities.json`
+
+The 2,231 named character references the HTML Standard defines, as the standard
+itself publishes them.
+
+- Author: WHATWG, and its contributors
+- License: **CC BY 4.0** — https://creativecommons.org/licenses/by/4.0/
+- Source: https://html.spec.whatwg.org/entities.json
+
+Vendored rather than fetched, for the reason font8x8 is: the build has no
+network step, and the exact bytes that produced `src/ar_html_entity.c` are in
+the tree. Regenerate with:
+
+```sh
+python tools/gen_entities.py --fetch    # only when the standard changes
+python tools/gen_entities.py
+```
+
+It is data for a generator and not a build input. Nothing in a clean build
+reads it; the generated `.c` is committed, and `--check` compares the two. That
+check is 0.9.0 acceptance criterion 3 and runs in CI, which is why the file has
+to be here rather than at a URL: a criterion that needs the network is a
+criterion that fails on a runner without it.
+
+The generator does not alter a code point. It re-emits the table as a names
+blob with offsets beside it, because the obvious `{const char *, ar_u32}` array
+is 51 KB against a budget of 30.

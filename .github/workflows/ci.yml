@@ -162,6 +162,16 @@ jobs:
           ./build/example_html.exe --html > /tmp/cases.html
           diff -u examples/12_html/cases.html /tmp/cases.html
 
+      # 0.9.0 acceptance criterion 3: the full named character reference table
+      # round-trips against the specification's own JSON. It regenerates
+      # src/ar_html_entity.c from the vendored tools/entities.json and compares,
+      # so a hand edit to either fails here.
+      #
+      # Offline on purpose. entities.json is vendored, so this needs no network
+      # and cannot change underneath a release because a URL did.
+      - name: The entity table round-trips
+        run: python tools/gen_entities.py --check
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest

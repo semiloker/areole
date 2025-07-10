@@ -12621,24 +12621,42 @@ static int ar__text_is(ar_span s, const char *lit)
 
 static void test_the_entity_table_is_sorted(void)
 {
+    char   prev[40];
+    char   cur[40];
     ar_i32 i;
     ar_i32 bad = 0;
+    ar_i32 truncated = 0;
     ar_i32 n = ar_html_entity_count();
 
-    /* A binary search over an unsorted table does not fail loudly. It fails on
-       one entity, in one document, and the generated table that replaces this
-       one will have two thousand more chances to do it. */
-    for (i = 1; i < n; ++i)
+    /*
+     * The match loop narrows a range of this table one byte at a time and
+     * trusts the order absolutely. An unsorted table does not fail loudly: it
+     * fails on one entity, in one document, and now there are two thousand
+     * two hundred chances to do it rather than two hundred.
+     *
+     * The order is plain byte order, which is not the order a person would
+     * write. `sup;` sorts after `sup1;` -- '1' is 0x31 and ';' is 0x3B -- and
+     * `not` sorts before `notin;` because a name comes before anything that
+     * extends it. That second one is what the longest match depends on.
+     */
+    prev[0] = 0;
+    for (i = 0; i < n; ++i)
     {
-        if (strcmp(ar_html_entity_name(i - 1), ar_html_entity_name(i)) >= 0)
+        if (ar_html_entity_name(i, cur, (ar_u32)sizeof cur) == 0)
         {
-            printf("      out of order at %ld: %s before %s\n", (long)i, ar_html_entity_name(i - 1),
-                   ar_html_entity_name(i));
+            ++truncated;
+            continue;
+        }
+        if (i > 0 && strcmp(prev, cur) >= 0)
+        {
+            printf("      out of order at %ld: %s before %s\n", (long)i, prev, cur);
             ++bad;
         }
+        memcpy(prev, cur, strlen(cur) + 1);
     }
     CHECK(bad == 0, "html: the named character reference table is sorted");
-    CHECK(n > 100, "html: and has the HTML 4 set in it");
+    CHECK(truncated == 0, "html: and every name fits the buffer it is copied into");
+    CHECK(n == 2231, "html: and holds all 2,231 references the specification defines");
 }
 
 static void test_the_tokenizer_reads_a_tag(void)
@@ -14001,6 +14019,103 @@ static ar_doc *ar__parse_scratch(const char *src, ar_u32 scratch_cap)
 
 /* A parse with a stated node budget, which is where the tree-shape bugs are:
    a budget nothing reaches is a budget nothing tests. */
+/* Bytes, with the unprintable ones shown, because half these expectations are
+   a tab or a combining mark and "want  got " helps nobody. */
+static void ar__print_escaped(const char *p, ar_u32 n)
+{
+    ar_u32 i;
+
+    for (i = 0; i < n; ++i)
+    {
+        unsigned char c = (unsigned char)p[i];
+
+        if (c >= 0x20u && c < 0x7Fu)
+        {
+            putchar((int)c);
+        }
+        else
+        {
+            printf("\\x%02X", (unsigned)c);
+        }
+    }
+}
+
+static void test_the_longest_named_reference_wins(void)
+{
+    /*
+     * The rule that arrives with the semicolon-less names, and the reason the
+     * lookup became a match.
+     *
+     * `&notit;` is `&not` followed by the literal text `it;`, because `not` is
+     * a reference and `notit` is not. Reading to the first non-alphanumeric
+     * and looking that up -- which is what this parser did while every name in
+     * its table ended in a semicolon and the question could not arise -- finds
+     * nothing and emits six characters of literal text.
+     *
+     * Every expectation here is from the specification's own table, and the
+     * shapes were checked against Edge.
+     */
+    static const char *const CASES[] = {
+        "&notit;", "\302\254it;",        /* &not, then text */
+        "&notin;", "\342\210\211",       /* the longer name wins outright */
+        "&amp;", "&", "&ampere", "&ere", /* &amp without its semicolon, then text */
+        "&lt;", "<", "&ltcc;", "\342\252\246", "&copy",
+        "\302\251", /* legacy, no semicolon: still a reference */
+        "&copyright", "\302\251right", "&NotEqualTilde;",
+        "\342\211\202\314\270", /* two code points, both or neither */
+        "&bne;", "=\342\203\245",
+        /* Anchored to a letter: a text node that is only whitespace is dropped
+           before <body> exists, which is the specification's rule about
+           insertion modes and not this table's business. */
+        "a&Tab;", "a\011", "a&NewLine;", "a\012", "&nosuchthing;",
+        "&nosuchthing;", /* not a reference at all */
+        "&", "&", "&#", "&#", 0, 0};
+    ar_i32 i;
+    ar_i32 wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        ar_doc *d = ar__parse(CASES[i]);
+        ar_i32  body = ar_dom_child_element(d, ar_dom_root(d), "body");
+        ar_i32  text = body >= 0 ? d->nodes[body].first_child : -1;
+
+        if (text < 0 || d->nodes[text].kind != AR_DOM_TEXT ||
+            !ar__text_is(d->nodes[text].text, CASES[i + 1]))
+        {
+            printf("      %s\n        want ", CASES[i]);
+            ar__print_escaped(CASES[i + 1], (ar_u32)strlen(CASES[i + 1]));
+            printf("\n        got  ");
+            if (text >= 0 && d->nodes[text].kind == AR_DOM_TEXT)
+            {
+                ar__print_escaped(d->nodes[text].text.p, d->nodes[text].text.n);
+            }
+            else
+            {
+                printf("(no text node)");
+            }
+            printf("\n");
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: the longest named reference in the table is the one taken");
+
+    /*
+     * And the attribute exception, which is why a decade of URLs still work.
+     * A reference without a semicolon followed by `=` or an alphanumeric is
+     * not a reference inside an attribute value: `?cite=1&copy=2` is a query
+     * string, not a copyright sign in the middle of one.
+     */
+    {
+        ar_doc *d = ar__parse("<a href=\"?cite=1&copy=2\">x</a>");
+        ar_i32  body = ar_dom_child_element(d, ar_dom_root(d), "body");
+        ar_i32  a = body >= 0 ? ar_dom_child_element(d, body, "a") : -1;
+
+        CHECK(a >= 0 && d->nodes[a].attr_count == 1 &&
+                  ar__text_is(d->attrs[d->nodes[a].attr_first].value, "?cite=1&copy=2"),
+              "html: and not inside an attribute, where a query string needs its ampersand");
+    }
+}
+
 static void test_a_tag_that_never_ended_is_dropped(void)
 {
     /*
@@ -14844,6 +14959,7 @@ int main(void)
     test_the_tokenizer_always_consumes_input();
     test_a_partial_code_point_never_reaches_the_tree();
     test_no_node_is_ever_its_own_parent();
+    test_the_longest_named_reference_wins();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
 
