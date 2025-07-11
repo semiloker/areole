@@ -13898,7 +13898,14 @@ static void test_a_document_decodes_its_own_encoding(void)
 
     /* `<p>caf\351</p>` -- an e-acute in windows-1252, which is not valid
        UTF-8 and would otherwise be dropped. */
-    d = ar_html_parse_into(c, "<p>caf\351</p>", 12);
+    {
+        static const char SRC[] = "<p>caf\351</p>";
+
+        /* strlen, not a hand count. Both of these were one too many, which fed
+           the terminating NUL to the parser as content -- harmless while a NUL
+           in text was dropped, and a real U+FFFD once it was not. */
+        d = ar_html_parse_into(c, SRC, (ar_u32)(sizeof SRC - 1));
+    }
     CHECK(d != 0 && !d->overflowed, "html: a windows-1252 document parses");
     if (d)
     {
@@ -13925,7 +13932,11 @@ static void test_a_document_decodes_its_own_encoding(void)
     /* A UTF-8 byte order mark is not content and must not become text. */
     c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 32 * 1024);
     ar_ua_stylesheet(c);
-    d = ar_html_parse_into(c, "\357\273\277<p>hi</p>", 13);
+    {
+        static const char SRC[] = "\357\273\277<p>hi</p>";
+
+        d = ar_html_parse_into(c, SRC, (ar_u32)(sizeof SRC - 1));
+    }
     CHECK(d != 0, "html: a document with a BOM parses");
     if (d)
     {
