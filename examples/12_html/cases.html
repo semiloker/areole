@@ -125,6 +125,26 @@ const CASES = [
   ["nested-forms", "<form><form><p>a"],
   ["option-closes-option", "<option>a<option>b"],
   ["h1-closes-h2", "<h1>a<h2>b"],
+  ["svg-basic", "<svg><circle/></svg>"],
+  ["svg-case-fixed", "<svg><foreignobject><div>x</div></foreignobject></svg>"],
+  ["svg-nested-html", "<div><svg><foreignObject><p>a</p></foreignObject></svg></div>"],
+  ["svg-breakout-p", "<svg><p>a"],
+  ["svg-breakout-table", "<svg><g><table><tr><td>x"],
+  ["svg-self-closing", "<svg><g/><g/></svg>after"],
+  ["svg-in-table", "<table><svg><g></g></svg><tr><td>y</table>"],
+  ["svg-title-is-not-html", "<svg><title>a<b>c</b></title></svg>"],
+  ["svg-desc-integration", "<p><svg><desc><p>x"],
+  ["math-basic", "<math><mi>x</mi></math>"],
+  ["math-text-integration", "<math><mtext><b>bold</b></mtext></math>"],
+  ["math-breakout", "<math><mi>a<p>b"],
+  ["math-annotation-html", "<math><annotation-xml encoding=\"text/html\"><p>x</p></annotation-xml></math>"],
+  ["math-annotation-svg", "<math><annotation-xml><svg><g></g></svg></annotation-xml></math>"],
+  ["svg-then-html", "<svg></svg><p>after"],
+  ["math-then-html", "<math></math><p>after"],
+  ["svg-unclosed", "<div><svg><g>x</div>y"],
+  ["nested-svg-math", "<svg><foreignObject><math><mi>i</mi></math></foreignObject></svg>"],
+  ["template-content-nested", "<template><div><template><p>x</p></template></div></template>"],
+  ["template-text", "<template>plain text</template>"],
 ];
 
 /* The same shape the C side prints: element names, '#' for a text node,
@@ -140,7 +160,7 @@ function shape(el) {
      the same question. Without it every template case disagrees for a
      reason that is a model difference rather than a bug. */
   const kids0 = el.content ? el.content.childNodes : el.childNodes;
-  let s = el.nodeName.toLowerCase();
+  let s = el.localName;
   const kids = [];
   for (const c of kids0) {
     const t = shape(c);

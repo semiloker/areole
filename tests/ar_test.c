@@ -12940,6 +12940,18 @@ static void ar__shape(const ar_doc *d, ar_i32 i, char *out, ar_u32 cap, ar_u32 *
         out[(*used)++] = '!';
         return;
     }
+    if (d->nodes[i].kind == AR_DOM_FRAGMENT)
+    {
+        /* Transparent, as in examples/12_html: the browser reads a template
+           through `el.content` and hands back its children directly. */
+        ar_i32 k;
+
+        for (k = d->nodes[i].first_child; k >= 0; k = d->nodes[k].next_sibling)
+        {
+            ar__shape(d, k, out, cap, used);
+        }
+        return;
+    }
     if (d->nodes[i].kind == AR_DOM_DOCTYPE)
     {
         out[(*used)++] = '@';
