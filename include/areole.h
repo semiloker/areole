@@ -1073,6 +1073,19 @@ typedef enum ar_dom_kind
     AR_DOM_DOCTYPE,
 
     /*
+     * A processing instruction: `<?target data>`.
+     *
+     * `name` is the target and `text` is the data. HTML had no such node for
+     * twenty years -- `<?php ... ?>` in a file served as HTML became a comment
+     * -- and the specification changed: a `<?` followed by something that is a
+     * valid XML name now produces one of these. `<?a$>` still becomes a
+     * comment, because `a$` is not a name.
+     *
+     * Nothing renders it. It is in the tree because it is in the document.
+     */
+    AR_DOM_PI,
+
+    /*
      * A `<template>` element's contents.
      *
      * Every template gets exactly one of these as its only child, and

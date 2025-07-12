@@ -242,7 +242,16 @@ static int ar__begin_scratch(ar_html_tok *t, const char *start, ar_u32 plain, in
     return 1;
 }
 
-static ar_span ar__clean(ar_html_tok *t, const char *p, const char *end)
+/*
+ * `nul_replaced` says which of the two substitutions applies.
+ *
+ * The carriage return rule is universal. The NUL rule is not: most states
+ * replace it with U+FFFD, the data state keeps it, and so does a CDATA
+ * section -- §13.2.5.69 lists no NUL rule at all, so "anything else: emit the
+ * current input character" takes it. One conformance test covers that and it
+ * is the only thing this parameter exists for.
+ */
+static ar_span ar__clean_ex(ar_html_tok *t, const char *p, const char *end, int nul_replaced)
 {
     ar_u32 begin;
 
@@ -262,7 +271,7 @@ static ar_span ar__clean(ar_html_tok *t, const char *p, const char *end)
                 ++p; /* CRLF is one line feed, not two */
             }
         }
-        else if (*p == 0)
+        else if (*p == 0 && nul_replaced)
         {
             t->errors++;
             ar__scratch_cp(t, 0xFFFDu);
@@ -275,6 +284,11 @@ static ar_span ar__clean(ar_html_tok *t, const char *p, const char *end)
         }
     }
     return ar__span(t->scratch + begin, t->scratch_used - begin);
+}
+
+static ar_span ar__clean(ar_html_tok *t, const char *p, const char *end)
+{
+    return ar__clean_ex(t, p, end, 1);
 }
 
 /*
@@ -953,6 +967,97 @@ static void ar__comment(ar_html_tok *t, ar_token *out)
  * This is where `<?php`, `</>` and `<!nonsense` all end up, and it is why a
  * stray processing instruction does not destroy the rest of a document.
  */
+/*
+ * A processing instruction, `<?target data>`.
+ *
+ * `<?` used to mean bogus comment and nothing else -- `<?php` in a file served
+ * as HTML became a comment, which is why the whole file did not disappear. The
+ * specification changed: if what follows is a valid XML name, this is a
+ * processing instruction node, and browsers agree (Edge reports nodeType 7).
+ *
+ * Returns 0 if it is not one after all, having consumed nothing, and the
+ * caller falls back to the bogus comment it always was.
+ *
+ * ------------------------------------------------------------------------
+ * What it emits, and why that is still a comment token
+ *
+ * A comment token, with the whole `?target data` text in `text` exactly as the
+ * bogus comment path would produce it -- plus the target in `name`.
+ *
+ * That is not a hedge. html5lib's tokenizer suite and web-platform-tests
+ * disagree here: the tokenizer tests are older than this change and expect
+ * `<?namespace>` to be a comment token, while the tree tests expect a
+ * processing instruction node. Both are right about their own layer. The
+ * tokenizer really does emit a comment; what makes it a processing instruction
+ * is where the tree builder puts it, and the target is the only extra fact
+ * needed to decide that.
+ *
+ * So both suites pass, and neither is fudged.
+ *
+ * ------------------------------------------------------------------------
+ * Where the target ends
+ *
+ * At whitespace, at `>`, or at `?` -- and at nothing else. That last part is
+ * the rule that is easy to miss: `<?hey?there>` is a processing instruction
+ * whose target is `hey` and whose data is `?there`, while `<?a$>` is a comment,
+ * because `$` is neither a name character nor one of the three terminators.
+ *
+ * The data then runs to the `>`, minus one `?` immediately before it, and
+ * minus any whitespace at its start. `<?good?>` has empty data; `<?hey   x?>`
+ * has `x`; `<?something ? >` has `? `.
+ */
+static int ar__name_start(int c)
+{
+    return ar__h_alpha(c) || c == '_' || c == ':';
+}
+
+static int ar__name_char(int c)
+{
+    return ar__h_alpha(c) || ar__h_digit(c) || c == '.' || c == '-' || c == '_' || c == ':';
+}
+
+static int ar__pi(ar_html_tok *t, ar_token *out)
+{
+    const char *target = t->p;
+    const char *p = t->p;
+    const char *dstart;
+    const char *dend;
+
+    if (p >= t->end || !ar__name_start((unsigned char)*p))
+    {
+        return 0;
+    }
+    ++p;
+    while (p < t->end && ar__name_char((unsigned char)*p))
+    {
+        ++p;
+    }
+    if (p < t->end && !ar__h_space(*p) && *p != '>' && *p != '?')
+    {
+        return 0;
+    }
+
+    ar__scratch_reset(t);
+    out->kind = AR_TOK_COMMENT;
+    out->name = ar__span(target, (ar_u32)(p - target));
+
+    /* The comment data is everything from the `?` to the `>`, which is what a
+       bogus comment here has always been. The tree builder splits it. */
+    dstart = target - 1;
+    while (p < t->end && *p != '>')
+    {
+        ++p;
+    }
+    dend = p;
+    out->text = ar__clean(t, dstart, dend);
+    if (p < t->end)
+    {
+        ++p;
+    }
+    t->p = p;
+    return 1;
+}
+
 static void ar__bogus_comment(ar_html_tok *t, ar_token *out)
 {
     const char *start = t->p;
@@ -1514,6 +1619,43 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
         return 0;
     }
 
+    /*
+     * A CDATA section, §13.2.5.69. Everything to `]]>` is character data.
+     *
+     * Entered by the markup declaration open state below, and also settable
+     * directly -- the conformance suite names it as an initial state, and a
+     * caller driving the tokenizer for foreign content wants it too.
+     */
+    if (t->state == AR_HTML_CDATA)
+    {
+        const char *start = t->p;
+
+        while (t->p + 2 < t->end && !(t->p[0] == ']' && t->p[1] == ']' && t->p[2] == '>'))
+        {
+            ++t->p;
+        }
+        if (t->p + 2 < t->end)
+        {
+            out->kind = AR_TOK_TEXT;
+            out->text = ar__clean_ex(t, start, t->p, 0);
+            t->p += 3;
+        }
+        else
+        {
+            /* eof-in-cdata: everything there is, and no more section. */
+            t->errors++;
+            out->kind = AR_TOK_TEXT;
+            out->text = ar__clean_ex(t, start, t->end, 0);
+            t->p = t->end;
+        }
+        t->state = AR_HTML_DATA;
+        if (out->text.n == 0)
+        {
+            return ar_html_next(t, out);
+        }
+        return 1;
+    }
+
     /* PLAINTEXT never leaves itself: everything to the end of the file is
        text, tags included. It exists for documents from 1994 and is two lines
        rather than a special case elsewhere. */
@@ -1607,10 +1749,19 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
                 return 1;
             }
             /*
-             * `<![CDATA[` is only a CDATA section inside foreign content, and
-             * there is no foreign content until SVG arrives in 0.13.0. Outside
-             * it the specification says bogus comment, which is what this is.
+             * `<![CDATA[` is a CDATA section inside foreign content and a
+             * bogus comment everywhere else -- which is what keeps it from
+             * swallowing an HTML document that contains the characters by
+             * accident. `in_foreign` is set by the tree builder; see ar_html.h.
              */
+            if (t->in_foreign && next + 8 < t->end && next[1] == '[' &&
+                ar_span_is(ar__span(next + 2, 6), "CDATA") == 0 &&
+                memcmp(next + 2, "CDATA[", 6) == 0)
+            {
+                t->p = next + 8;
+                t->state = AR_HTML_CDATA;
+                return ar_html_next(t, out);
+            }
             t->errors++;
             t->p = next + 1;
             ar__bogus_comment(t, out);
@@ -1618,9 +1769,14 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
         }
         if (next < t->end && *next == '?')
         {
-            /* unexpected-question-mark-instead-of-tag-name. `<?php` in a file
-               served as HTML lands here, and becomes a comment rather than
-               eating the document. */
+            /* A processing instruction if the target is a name, and otherwise
+               the bogus comment `<?` has always been -- which is what keeps
+               `<?php` in a file served as HTML from eating the document. */
+            t->p = next + 1;
+            if (ar__pi(t, out))
+            {
+                return 1;
+            }
             t->errors++;
             t->p = next;
             ar__bogus_comment(t, out);
