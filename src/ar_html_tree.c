@@ -1432,55 +1432,153 @@ static int ar__starts_with_ci(ar_span s, const char *prefix)
 static ar_quirks ar__quirks_for(const ar_token *tok)
 {
     /*
-     * The double solidus is spelled AR__FPI rather than written, and that is
-     * not squeamishness.
+     * The three-way decision of §13.2.6.4.1, from the specification's own
+     * lists rather than from an approximation of them.
      *
-     * A DTD public identifier is full of it, and the
-     * CI gate that keeps C99 comments out of this codebase greps for the pair
-     * with a regular expression, which cannot tell one inside a string literal
-     * from one starting a comment. The gate has caught three real portability
-     * bugs and is worth more than the readability of eight strings, so the
-     * strings bend.
+     * It used to be eight prefixes chosen by eye, and a thirty-four doctype
+     * corpus measured against a browser said sixteen of them were wrong. Some
+     * were wrong in both directions: `-" AR__FPI "W3C" AR__FPI "DTD HTML 3.0" AR__FPI "EN` is *not*
+     * on the legacy list although 3.2 is, and `nonsense` as a public
+     * identifier is standards mode rather than quirks.
+     *
+     * Quirks is not a curiosity: it changes the box model to
+     * content-box-plus-padding, changes table cell inheritance and changes
+     * line height. Sixteen doctypes in the wrong mode is sixteen documents
+     * laid out wrongly from end to end.
+     *
+     * ------------------------------------------------------------------
+     * The double solidus is spelled AR__FPI rather than written
+     *
+     * A DTD public identifier is full of it, and the CI gate that keeps C99
+     * comments out of this codebase greps for the pair with a regular
+     * expression, which cannot tell one inside a string literal from one
+     * starting a comment. The gate has caught three real portability bugs and
+     * is worth more than the readability of sixty strings, so the strings
+     * bend.
      */
 #define AR__FPI                                                                                    \
     "/"                                                                                            \
     "/"
 
-    static const char *const QUIRKY[] = {"-" AR__FPI "W3C" AR__FPI "DTD HTML 3",
-                                         "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.0 Transitional",
-                                         "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.0 Frameset",
-                                         "-" AR__FPI "IETF" AR__FPI "DTD HTML",
-                                         "-" AR__FPI "W3O" AR__FPI "DTD W3 HTML",
-                                         "-" AR__FPI "SoftQuad",
-                                         "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer",
-                                         "HTML",
-                                         0};
-    ar_i32                   i;
+    static const char *const QUIRKY_EXACT[] = {"-" AR__FPI "W3O" AR__FPI
+                                               "DTD W3 HTML Strict 3.0" AR__FPI "EN" AR__FPI,
+                                               "-/W3C/DTD HTML 4.0 Transitional/EN", "HTML", 0};
+
+    static const char *const QUIRKY_PREFIX[] = {
+        "+" AR__FPI "Silmaril" AR__FPI "dtd html Pro v0r11 19970101" AR__FPI,
+        "-" AR__FPI "AS" AR__FPI "DTD HTML 3.0 asWedit + extensions" AR__FPI,
+        "-" AR__FPI "AdvaSoft Ltd" AR__FPI "DTD HTML 3.0 asWedit + extensions" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0 Level 1" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0 Level 2" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0 Strict Level 1" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0 Strict Level 2" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0 Strict" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.0" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 2.1E" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 3.0" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 3.2 Final" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 3.2" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML 3" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Level 0" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Level 1" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Level 2" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Level 3" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Strict Level 0" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Strict Level 1" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Strict Level 2" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Strict Level 3" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML Strict" AR__FPI,
+        "-" AR__FPI "IETF" AR__FPI "DTD HTML" AR__FPI,
+        "-" AR__FPI "Metrius" AR__FPI "DTD Metrius Presentational" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 2.0 HTML Strict" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 2.0 HTML" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 2.0 Tables" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 3.0 HTML Strict" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 3.0 HTML" AR__FPI,
+        "-" AR__FPI "Microsoft" AR__FPI "DTD Internet Explorer 3.0 Tables" AR__FPI,
+        "-" AR__FPI "Netscape Comm. Corp." AR__FPI "DTD HTML" AR__FPI,
+        "-" AR__FPI "Netscape Comm. Corp." AR__FPI "DTD Strict HTML" AR__FPI,
+        "-" AR__FPI "O'Reilly and Associates" AR__FPI "DTD HTML 2.0" AR__FPI,
+        "-" AR__FPI "O'Reilly and Associates" AR__FPI "DTD HTML Extended 1.0" AR__FPI,
+        "-" AR__FPI "O'Reilly and Associates" AR__FPI "DTD HTML Extended Relaxed 1.0" AR__FPI,
+        "-" AR__FPI "SQ" AR__FPI "DTD HTML 2.0 HoTMetaL + extensions" AR__FPI,
+        "-" AR__FPI "SoftQuad Software" AR__FPI
+        "DTD HoTMetaL PRO 6.0::19990601::extensions to HTML 4.0" AR__FPI,
+        "-" AR__FPI "SoftQuad" AR__FPI
+        "DTD HoTMetaL PRO 4.0::19971010::extensions to HTML 4.0" AR__FPI,
+        "-" AR__FPI "Spyglass" AR__FPI "DTD HTML 2.0 Extended" AR__FPI,
+        "-" AR__FPI "Sun Microsystems Corp." AR__FPI "DTD HotJava HTML" AR__FPI,
+        "-" AR__FPI "Sun Microsystems Corp." AR__FPI "DTD HotJava Strict HTML" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 3 1995-03-24" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 3.2 Draft" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 3.2 Final" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 3.2" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 3.2S Draft" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.0 Frameset" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.0 Transitional" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML Experimental 19960712" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML Experimental 970421" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD W3 HTML" AR__FPI,
+        "-" AR__FPI "W3O" AR__FPI "DTD W3 HTML 3.0" AR__FPI,
+        "-" AR__FPI "WebTechs" AR__FPI "DTD Mozilla HTML 2.0" AR__FPI,
+        "-" AR__FPI "WebTechs" AR__FPI "DTD Mozilla HTML" AR__FPI,
+        0};
+
+    /* Two that are quirks only when no system identifier stands beside them,
+       and limited quirks when one does. The empty string counts as missing for
+       these two and for nothing else, which the specification says out loud
+       because it is otherwise unguessable. */
+    static const char *const FOUR_OH_ONE[] = {
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.01 Frameset" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD HTML 4.01 Transitional" AR__FPI, 0};
+
+    static const char *const LIMITED_PREFIX[] = {
+        "-" AR__FPI "W3C" AR__FPI "DTD XHTML 1.0 Frameset" AR__FPI,
+        "-" AR__FPI "W3C" AR__FPI "DTD XHTML 1.0 Transitional" AR__FPI, 0};
+
+    ar_i32 i;
+    int    has_system = tok->sys.p != 0 && tok->sys.n != 0;
 
     if (tok->force_quirks || !ar_span_is(tok->name, "html"))
     {
         return AR_QUIRKS_YES;
     }
-    for (i = 0; QUIRKY[i]; ++i)
+    if (tok->sys.p &&
+        ar_span_is(tok->sys, "http:" AR__FPI "www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"))
     {
-        if (ar__starts_with_ci(tok->pub, QUIRKY[i]))
+        return AR_QUIRKS_YES;
+    }
+    for (i = 0; QUIRKY_EXACT[i]; ++i)
+    {
+        if (ar_span_is(tok->pub, QUIRKY_EXACT[i]))
         {
             return AR_QUIRKS_YES;
         }
     }
-    /* A public identifier with no system identifier beside it is the limited
-       form -- which is what a bare HTML 4.01 public identifier
-       gets, and it differs from full quirks only in table cell heights. */
-    if (tok->pub.n > 0 && tok->sys.n == 0)
+    for (i = 0; QUIRKY_PREFIX[i]; ++i)
     {
-        return AR_QUIRKS_LIMITED;
+        if (ar__starts_with_ci(tok->pub, QUIRKY_PREFIX[i]))
+        {
+            return AR_QUIRKS_YES;
+        }
     }
-    if (ar__starts_with_ci(tok->sys,
-                           "http:" AR__FPI "www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"))
+    for (i = 0; FOUR_OH_ONE[i]; ++i)
     {
-        return AR_QUIRKS_YES;
+        if (ar__starts_with_ci(tok->pub, FOUR_OH_ONE[i]))
+        {
+            return has_system ? AR_QUIRKS_LIMITED : AR_QUIRKS_YES;
+        }
+    }
+    for (i = 0; LIMITED_PREFIX[i]; ++i)
+    {
+        if (ar__starts_with_ci(tok->pub, LIMITED_PREFIX[i]))
+        {
+            return AR_QUIRKS_LIMITED;
+        }
     }
     return AR_QUIRKS_NO;
+
+#undef AR__FPI
 }
 
 /* ------------------------------------------------------------------------
@@ -3045,6 +3143,16 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
                 t->doc->nodes[node].name = ar__keep(t, tok->name);
                 ar__append(t, 0, node);
             }
+            t->doc->doctype_public = ar__keep(t, tok->pub);
+            t->doc->doctype_system = ar__keep(t, tok->sys);
+            if (!tok->pub.p)
+            {
+                t->doc->doctype_public.p = 0;
+            }
+            if (!tok->sys.p)
+            {
+                t->doc->doctype_system.p = 0;
+            }
             t->doc->quirks = ar__quirks_for(tok);
             t->mode = M_BEFORE_HTML;
             return;
@@ -3498,6 +3606,20 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
      * An empty file is still `html(head body)` in every browser, and areole
      * returned nothing at all until the tree corpus asked.
      */
+    /*
+     * An empty file is a quirks document.
+     *
+     * The initial insertion mode sets quirks when it meets anything that is
+     * not a doctype -- and a file with nothing in it never meets anything at
+     * all, so the mode never ran and the document came out in standards
+     * mode. Every browser reports BackCompat for it, which is what the
+     * doctype corpus asked.
+     */
+    if (t.mode == M_INITIAL)
+    {
+        doc->quirks = AR_QUIRKS_YES;
+    }
+
     /*
      * The condition is "unless this document has a frameset", not "unless the
      * insertion mode is early".

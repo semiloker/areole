@@ -1157,6 +1157,21 @@ typedef struct ar_doc
 
     ar_quirks quirks;
 
+    /*
+     * The doctype's public and system identifiers, or empty spans.
+     *
+     * On the document rather than on the node because a document has exactly
+     * one doctype and every node would otherwise carry thirty-two bytes it
+     * never uses. `quirks` is here for the same reason and was decided from
+     * these two.
+     *
+     * `p` is null when the identifier was absent, which is not the same as
+     * present and empty: `<!DOCTYPE html PUBLIC "">` has one and
+     * `<!DOCTYPE html>` does not.
+     */
+    ar_span doctype_public;
+    ar_span doctype_system;
+
     /* Parse errors. Never fatal: the specification defines a recovery for
        every one of them, and a parser that stops disagrees with every
        browser. This is a count of how odd the document was, not a verdict. */

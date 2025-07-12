@@ -1382,6 +1382,16 @@ static void serialise(const ar_doc *d, ar_i32 i, ar_i32 depth)
         tree_indent(depth);
         tree_puts("<!DOCTYPE ");
         tree_span(n->name);
+        /* html5lib prints both identifiers when *either* is present, with an
+           empty string standing in for the absent one. */
+        if (d->doctype_public.p || d->doctype_system.p)
+        {
+            tree_puts(" \"");
+            tree_span(d->doctype_public);
+            tree_puts("\" \"");
+            tree_span(d->doctype_system);
+            tree_puts("\"");
+        }
         tree_puts(">\n");
         break;
 

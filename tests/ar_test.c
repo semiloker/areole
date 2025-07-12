@@ -13224,9 +13224,24 @@ static void test_quirks_mode(void)
     d = ar__parse("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"><p>x");
     CHECK(d->quirks == AR_QUIRKS_YES, "html: and so is HTML 4.0 Transitional");
 
+    /*
+     * 4.01 *strict* is on no list at all, so it is no-quirks -- and this
+     * assertion used to say limited, which was wrong twice over. The
+     * conditional rule names only `DTD HTML 4.01 Frameset` and `DTD HTML
+     * 4.01 Transitional`; strict is neither. Edge agrees: CSS1Compat.
+     *
+     * The corrected pair is below, and it is where the rule actually bites.
+     */
     d = ar__parse("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><p>x");
-    CHECK(d->quirks == AR_QUIRKS_LIMITED,
-          "html: a public identifier with no system identifier is the limited form");
+    CHECK(d->quirks == AR_QUIRKS_NO, "html: HTML 4.01 strict is no-quirks, list or no list");
+
+    d = ar__parse("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES,
+          "html: 4.01 transitional with no system identifier is quirks");
+
+    d = ar__parse(
+        "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"loose.dtd\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_LIMITED, "html: and limited quirks with one");
 }
 
 static void test_rawtext_content_is_not_markup(void)
@@ -14139,6 +14154,159 @@ static void test_the_longest_named_reference_wins(void)
     }
 }
 
+static void test_quirks_matches_a_browser(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 5: quirks mode selection matches a browser on
+     * a thirty-doctype corpus, at 100%.
+     *
+     * Quirks is not a curiosity. It changes the box model to
+     * content-box-plus-padding, changes table cell inheritance and changes
+     * line height, so a document put in the wrong mode is wrong about its
+     * whole layout -- and the decision is made from a string nobody has read
+     * since 1999.
+     *
+     * ------------------------------------------------------------------
+     * Where the two expectations come from
+     *
+     * `back` is Edge's `document.compatMode` for the same doctype, taken by
+     * running all 34 of them through DOMParser and reading the answer. It is
+     * the browser half of the criterion and it is two-valued: BackCompat or
+     * CSS1Compat.
+     *
+     * `mode` is the three-way answer, and it comes from the specification's own
+     * table -- because *no browser API exposes limited quirks*. compatMode
+     * reports CSS1Compat for both no-quirks and limited-quirks, so a browser
+     * cannot confirm the distinction and this check does not pretend it can.
+     * The two are checked separately and the difference is stated rather than
+     * blurred.
+     *
+     * The interesting rows are the pairs. `HTML 4.01 Transitional` is quirks
+     * without a system identifier and *limited* quirks with one; `XHTML 1.0
+     * Transitional` is limited either way; and 3.2 is on the legacy list while
+     * 3.0 and 2.0 are not, which reads like an oversight and is what every
+     * browser does.
+     */
+    static const struct
+    {
+        const char *src;
+        ar_quirks   mode;
+        int         back;
+    } CASES[] = {
+        /* no doctype at all */
+        {"", AR_QUIRKS_YES, 1},
+        /* the modern one */
+        {"<!DOCTYPE html>", AR_QUIRKS_NO, 0},
+        /* and its case */
+        {"<!DOCTYPE HTML>", AR_QUIRKS_NO, 0},
+        /* and its other case */
+        {"<!doctype html>", AR_QUIRKS_NO, 0},
+        /* the legacy-compat escape hatch */
+        {"<!DOCTYPE html SYSTEM \"about:legacy-compat\">", AR_QUIRKS_NO, 0},
+        /* 4.01 strict, no system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\">", AR_QUIRKS_NO, 0},
+        /* 4.01 strict, with one */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" "
+         "\"http://www.w3.org/TR/html4/strict.dtd\">",
+         AR_QUIRKS_NO, 0},
+        /* transitional without a system id is quirks */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">", AR_QUIRKS_YES, 1},
+        /* and with one it is limited quirks */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" "
+         "\"http://www.w3.org/TR/html4/loose.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* frameset, likewise */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Frameset//EN\">", AR_QUIRKS_YES, 1},
+        /* and likewise */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Frameset//EN\" "
+         "\"http://www.w3.org/TR/html4/frameset.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* HTML 3.2 */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">", AR_QUIRKS_YES, 1},
+        /* 3.0 is NOT on the list, though 3.2 is */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.0//EN\">", AR_QUIRKS_NO, 0},
+        /* nor is 2.0 */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 2.0//EN\">", AR_QUIRKS_NO, 0},
+        /* the IETF one */
+        {"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML//EN\">", AR_QUIRKS_YES, 1},
+        /* and a level of it */
+        {"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML Level 1//EN\">", AR_QUIRKS_YES, 1},
+        /* XHTML 1.0 strict */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">",
+         AR_QUIRKS_NO, 0},
+        /* XHTML transitional is limited with or without a system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* and its frameset */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Frameset//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* XHTML 1.1 */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\">", AR_QUIRKS_NO, 0},
+        /* XHTML Basic */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML Basic 1.0//EN\">", AR_QUIRKS_NO, 0},
+        /* the one system identifier that forces quirks by itself */
+        {"<!DOCTYPE html SYSTEM \"http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd\">",
+         AR_QUIRKS_YES, 1},
+        /* a vendor DTD from the list */
+        {"<!DOCTYPE html PUBLIC \"-//Advasoft Ltd//DTD HTML 3.0 asWedit + extensions//EN\">",
+         AR_QUIRKS_YES, 1},
+        /* another, and it starts with a plus */
+        {"<!DOCTYPE html PUBLIC \"+//Silmaril//dtd html Pro v0r11 19970101//EN\">", AR_QUIRKS_YES,
+         1},
+        /* Netscape's */
+        {"<!DOCTYPE html PUBLIC \"-//Netscape Comm. Corp.//DTD HTML//EN\">", AR_QUIRKS_YES, 1},
+        /* Spyglass's */
+        {"<!DOCTYPE html PUBLIC \"-//Spyglass//DTD HTML 2.0 Extended//EN\">", AR_QUIRKS_YES, 1},
+        /* W3O, and the trailing slashes are part of it */
+        {"<!DOCTYPE html PUBLIC \"-//W3O//DTD W3 HTML Strict 3.0//EN//\">", AR_QUIRKS_YES, 1},
+        /* the shortest legacy public identifier there is */
+        {"<!DOCTYPE html PUBLIC \"HTML\">", AR_QUIRKS_YES, 1},
+        /* a name that is not html */
+        {"<!DOCTYPE potato>", AR_QUIRKS_YES, 1},
+        /* a public identifier nobody has ever used */
+        {"<!DOCTYPE html PUBLIC \"nonsense\">", AR_QUIRKS_NO, 0},
+        /* both present and both empty */
+        {"<!DOCTYPE html PUBLIC \"\" \"\">", AR_QUIRKS_NO, 0},
+        /* a doctype with no name at all */
+        {"<!DOCTYPE>", AR_QUIRKS_YES, 1},
+        /* 4.0 rather than 4.01, no system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\">", AR_QUIRKS_YES, 1},
+        /* and its frameset */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Frameset//EN\">", AR_QUIRKS_YES, 1},
+        {0, AR_QUIRKS_NO, 0}};
+    ar_i32 i;
+    ar_i32 wrong_mode = 0;
+    ar_i32 wrong_browser = 0;
+    ar_i32 n = 0;
+
+    for (i = 0; CASES[i].src; ++i)
+    {
+        ar_doc *d = ar__parse(CASES[i].src);
+        int     is_back = d->quirks == AR_QUIRKS_YES;
+
+        ++n;
+        if (d->quirks != CASES[i].mode)
+        {
+            printf("      %s\n        want mode %d, got %d\n", CASES[i].src, (int)CASES[i].mode,
+                   (int)d->quirks);
+            ++wrong_mode;
+        }
+        if (is_back != CASES[i].back)
+        {
+            printf("      %s\n        browser says %s\n", CASES[i].src,
+                   CASES[i].back ? "BackCompat" : "CSS1Compat");
+            ++wrong_browser;
+        }
+    }
+    CHECK(n >= 30, "html: the quirks corpus has at least thirty doctypes");
+    CHECK(wrong_browser == 0, "html: quirks agrees with a browser on every one of them");
+    CHECK(wrong_mode == 0,
+          "html: and with the specification on limited quirks, which no browser reports");
+}
+
 static void test_a_tag_that_never_ended_is_dropped(void)
 {
     /*
@@ -14983,6 +15151,7 @@ int main(void)
     test_a_partial_code_point_never_reaches_the_tree();
     test_no_node_is_ever_its_own_parent();
     test_the_longest_named_reference_wins();
+    test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
 
