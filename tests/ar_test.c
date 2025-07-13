@@ -14154,6 +14154,188 @@ static void test_the_longest_named_reference_wins(void)
     }
 }
 
+static void test_the_encoding_corpus(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 4: encoding sniffing matches the
+     * specification on a fifty-document corpus.
+     *
+     * Fifty documents, and the expectations come from §13.2.3.2 and the
+     * Encoding Standard's label table rather than from a browser -- the
+     * criterion says specification, and for the pragma rule and the UTF-16
+     * adjustment the specification is the only thing that states the answer
+     * plainly.
+     *
+     * ------------------------------------------------------------------
+     * What this is really testing
+     *
+     * That the prescan is an *algorithm* and not a search. Roughly a third of
+     * the cases below put the word `charset` somewhere it does not count: in a
+     * comment, in an unrelated attribute value, in prose, in a `content`
+     * attribute with no `http-equiv` beside it. Each of those used to be found
+     * and taken, and each is a document decoded as something its author did
+     * not write -- which is not a subtle failure, because every accented
+     * letter in it becomes a replacement character and it looks like a font
+     * problem.
+     *
+     * The two that read oddly and are both correct:
+     *
+     *   - `<meta charset="utf-16">` means UTF-8. A document that declares
+     *     UTF-16 in a meta is lying by construction: the declaration was read
+     *     as ASCII, so the bytes were never UTF-16.
+     *   - `us-ascii` means windows-1252, because every byte ASCII can hold
+     *     means the same thing in both and the high half has to mean
+     *     something.
+     */
+    static const struct
+    {
+        const char *src;
+        ar_encoding enc;
+        ar_u32      skip;
+    } CASES[] = {
+        /* a UTF-8 BOM beats a meta that disagrees */
+        {"\357\273\277<meta charset=windows-1252>", AR_ENC_UTF8, 3},
+        /* a big-endian BOM */
+        {"\376\377<html>", AR_ENC_UTF16BE, 2},
+        /* a little-endian BOM */
+        {"\377\376<html>", AR_ENC_UTF16LE, 2},
+        /* a BOM and nothing else */
+        {"\357\273\277", AR_ENC_UTF8, 3},
+        /* quoted */
+        {"<meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* single quoted */
+        {"<meta charset='utf-8'>", AR_ENC_UTF8, 0},
+        /* unquoted */
+        {"<meta charset=utf-8>", AR_ENC_UTF8, 0},
+        /* spaces around the equals */
+        {"<meta charset = utf-8 >", AR_ENC_UTF8, 0},
+        /* and the case of both */
+        {"<meta CHARSET=\"UTF-8\">", AR_ENC_UTF8, 0},
+        /* padded, which the label rule trims */
+        {"<meta charset=\"  utf-8  \">", AR_ENC_UTF8, 0},
+        /* windows-1252 */
+        {"<meta charset=\"windows-1252\">", AR_ENC_WINDOWS1252, 0},
+        /* its most common alias */
+        {"<meta charset=\"iso-8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* without the second hyphen */
+        {"<meta charset=\"iso8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* the IBM spelling */
+        {"<meta charset=\"cp1252\">", AR_ENC_WINDOWS1252, 0},
+        /* and the shortest alias there is */
+        {"<meta charset=\"l1\">", AR_ENC_WINDOWS1252, 0},
+        /* a UTF-8 alias nobody remembers */
+        {"<meta charset=\"unicode-1-1-utf-8\">", AR_ENC_UTF8, 0},
+        /* ASCII is windows-1252 here */
+        {"<meta charset=\"us-ascii\">", AR_ENC_WINDOWS1252, 0},
+        /* UTF-16 in a meta is impossible by construction, so it means UTF-8 */
+        {"<meta charset=\"utf-16\">", AR_ENC_UTF8, 0},
+        /* and so is the big-endian label */
+        {"<meta charset=\"utf-16be\">", AR_ENC_UTF8, 0},
+        /* the pre-2010 spelling */
+        {"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">", AR_ENC_UTF8, 0},
+        /* no space after the semicolon */
+        {"<meta http-equiv='content-type' content='text/html;charset=iso-8859-1'>",
+         AR_ENC_WINDOWS1252, 0},
+        /* and in the other order */
+        {"<meta content=\"text/html; charset=utf-8\" http-equiv=\"Content-Type\">", AR_ENC_UTF8, 0},
+        /* no media type in front of it */
+        {"<meta http-equiv=\"Content-Type\" content=\"charset=windows-1252\">", AR_ENC_WINDOWS1252,
+         0},
+        /* content WITHOUT http-equiv declares nothing: the pragma rule */
+        {"<meta content=\"text/html; charset=utf-8\">", AR_ENC_WINDOWS1252, 0},
+        /* and a description that merely mentions it declares nothing */
+        {"<meta name=\"description\" content=\"charset=utf-8 is a thing\">", AR_ENC_WINDOWS1252, 0},
+        /* nor does a refresh */
+        {"<meta http-equiv=\"refresh\" content=\"0; charset=utf-8\">", AR_ENC_WINDOWS1252, 0},
+        /* a pragma with no charset in it */
+        {"<meta http-equiv=\"Content-Type\" content=\"text/html\">", AR_ENC_WINDOWS1252, 0},
+        /* a meta inside a comment declares nothing */
+        {"<!-- <meta charset=\"utf-8\"> --><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor does the word in a comment */
+        {"<!-- charset=utf-8 --><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor one in an unrelated attribute value */
+        {"<div title=\"charset=utf-8\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor a whole meta quoted inside one */
+        {"<div title=\"<meta charset=utf-8>\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* the comment is skipped and the real one is found */
+        {"<!-- <meta charset=utf-8> --><meta charset=\"iso-8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* and the attribute is stepped over, not stopped at */
+        {"<div title=\"charset=utf-8\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* the word in prose declares nothing */
+        {"<p>charset=utf-8</p>", AR_ENC_WINDOWS1252, 0},
+        /* the first one wins */
+        {"<meta charset=\"utf-8\"><meta charset=\"iso-8859-1\">", AR_ENC_UTF8, 0},
+        /* a label nobody knows is skipped and the next is taken */
+        {"<meta charset=\"nonsense\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* and so is an empty one */
+        {"<meta charset=\"\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after other elements */
+        {"<html><head><title>t</title><meta charset=\"utf-8\"></head>", AR_ENC_UTF8, 0},
+        /* after a processing instruction */
+        {"<?xml version=\"1.0\"?><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after a doctype */
+        {"<!DOCTYPE html><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after an end tag */
+        {"</p><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* a solidus where a space should be */
+        {"<meta/charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* a meta the file ends inside */
+        {"<meta charset=utf-8", AR_ENC_UTF8, 0},
+        /* metaX is not meta */
+        {"<metaX charset=\"utf-8\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* a meta with nothing in it */
+        {"<meta>", AR_ENC_WINDOWS1252, 0},
+        /* a charset with no value */
+        {"<meta charset>", AR_ENC_WINDOWS1252, 0},
+        /*
+         * A meta inside a script string IS found, and that is correct.
+         *
+         * The prescan runs before anything is tokenized, so it has no idea
+         * what a script is; the specification walks tags and this is a tag.
+         * Every browser does the same, and a page that puts a meta element
+         * inside a string really can change its own encoding by accident.
+         *
+         * This expectation said windows-1252 when it was written, which was
+         * the guess rather than the rule.
+         */
+        {"<script>var s = \"<meta charset=utf-8>\";</script><meta charset=\"iso-8859-1\">",
+         AR_ENC_UTF8, 0},
+        /* no declaration is the windows-1252 default */
+        {"<p>hello</p>", AR_ENC_WINDOWS1252, 0},
+        /* an empty file, where there is nothing to be wrong about */
+        {"", AR_ENC_UTF8, 0},
+        /* a real encoding this build does not implement falls back rather than guessing */
+        {"<meta charset=\"shift_jis\">", AR_ENC_WINDOWS1252, 0},
+        {0, AR_ENC_UNKNOWN, 0}};
+    ar_i32 i;
+    ar_i32 n = 0;
+    ar_i32 wrong = 0;
+    ar_i32 wrong_skip = 0;
+
+    for (i = 0; CASES[i].src; ++i)
+    {
+        ar_u32      skip = 99u;
+        ar_u32      len = (ar_u32)strlen(CASES[i].src);
+        ar_encoding e = ar_encoding_sniff(CASES[i].src, len, &skip);
+
+        ++n;
+        if (e != CASES[i].enc)
+        {
+            printf("      %s\n        want %d, got %d\n", CASES[i].src, (int)CASES[i].enc, (int)e);
+            ++wrong;
+        }
+        if (skip != CASES[i].skip)
+        {
+            printf("      %s\n        want %lu bytes of mark, got %lu\n", CASES[i].src,
+                   (unsigned long)CASES[i].skip, (unsigned long)skip);
+            ++wrong_skip;
+        }
+    }
+    CHECK(n >= 50, "html: the encoding corpus has at least fifty documents");
+    CHECK(wrong == 0, "html: encoding sniffing matches the specification on every one");
+    CHECK(wrong_skip == 0, "html: and reports the byte order mark's length exactly");
+}
+
 static void test_quirks_matches_a_browser(void)
 {
     /*
@@ -15151,6 +15333,7 @@ int main(void)
     test_a_partial_code_point_never_reaches_the_tree();
     test_no_node_is_ever_its_own_parent();
     test_the_longest_named_reference_wins();
+    test_the_encoding_corpus();
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();

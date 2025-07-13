@@ -91,77 +91,368 @@ ar_encoding ar_encoding_from_label(const char *label, ar_u32 n)
     label += start;
     n -= start;
 
-    if (ar__e_is(label, n, "utf-8") || ar__e_is(label, n, "utf8"))
+    /*
+     * Every label the Encoding Standard gives these four, and not a subset.
+     *
+     * There were nine. The standard has thirty-two, and the missing ones are
+     * not exotic: `iso8859-1` without the second hyphen, `cp1252`, `l1`,
+     * `csisolatin1`, `unicode-1-1-utf-8`. A document labelled with one of
+     * those was falling through to the windows-1252 default by luck rather
+     * than by decision, and `unicode-1-1-utf-8` was falling through to it
+     * wrongly.
+     *
+     * Only these four encodings exist here; a label for any other -- shift_jis,
+     * euc-kr, koi8-r -- comes back AR_ENC_UNKNOWN and the caller falls back to
+     * the default. That is a real limit and is not the same as the label being
+     * unrecognised.
+     */
     {
-        return AR_ENC_UTF8;
-    }
-    if (ar__e_is(label, n, "utf-16le") || ar__e_is(label, n, "utf-16"))
-    {
-        return AR_ENC_UTF16LE;
-    }
-    if (ar__e_is(label, n, "utf-16be"))
-    {
-        return AR_ENC_UTF16BE;
-    }
-    if (ar__e_is(label, n, "windows-1252") || ar__e_is(label, n, "iso-8859-1") ||
-        ar__e_is(label, n, "latin1") || ar__e_is(label, n, "ascii") ||
-        ar__e_is(label, n, "us-ascii"))
-    {
-        return AR_ENC_WINDOWS1252;
+        static const char *const UTF8[] = {
+            "utf-8",           "utf8", "unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8",
+            "x-unicode20utf8", 0};
+        static const char *const W1252[] = {"windows-1252",    "ansi_x3.4-1968",
+                                            "ascii",           "cp1252",
+                                            "cp819",           "csisolatin1",
+                                            "ibm819",          "iso-8859-1",
+                                            "iso-ir-100",      "iso8859-1",
+                                            "iso88591",        "iso_8859-1",
+                                            "iso_8859-1:1987", "l1",
+                                            "latin1",          "us-ascii",
+                                            "x-cp1252",        0};
+        static const char *const U16LE[] = {"utf-16",          "utf-16le", "csunicode",   "ucs-2",
+                                            "iso-10646-ucs-2", "unicode",  "unicodefeff", 0};
+        static const char *const U16BE[] = {"utf-16be", "unicodefffe", 0};
+        ar_u32                   i;
+
+        for (i = 0; UTF8[i]; ++i)
+        {
+            if (ar__e_is(label, n, UTF8[i]))
+            {
+                return AR_ENC_UTF8;
+            }
+        }
+        for (i = 0; W1252[i]; ++i)
+        {
+            if (ar__e_is(label, n, W1252[i]))
+            {
+                return AR_ENC_WINDOWS1252;
+            }
+        }
+        for (i = 0; U16LE[i]; ++i)
+        {
+            if (ar__e_is(label, n, U16LE[i]))
+            {
+                return AR_ENC_UTF16LE;
+            }
+        }
+        for (i = 0; U16BE[i]; ++i)
+        {
+            if (ar__e_is(label, n, U16BE[i]))
+            {
+                return AR_ENC_UTF16BE;
+            }
+        }
     }
     return AR_ENC_UNKNOWN;
 }
 
-/* The `charset=` inside a `content` attribute, which is the older spelling and
-   is still what most documents from before 2010 carry. */
-static ar_encoding ar__charset_in_content(const char *p, ar_u32 n)
+/* ------------------------------------------------------------------------
+ * The prescan, §13.2.3.3
+ *
+ * "Prescan a byte stream to determine its encoding", and it is an algorithm
+ * rather than a search. That distinction is the whole of this section.
+ *
+ * Searching the first kilobyte for `charset` finds one in a comment, in an
+ * unrelated attribute, in a script, in prose. Each of those is a document
+ * decoded as something its author did not write, which is not a subtle
+ * failure: every accented letter in it becomes a replacement character and it
+ * looks like a font problem.
+ *
+ * So this walks the bytes the way the specification does -- skipping comments
+ * whole, skipping other tags by reading their attributes, and only reading
+ * `charset` out of a `<meta>` -- with the pragma rule that a `content`
+ * attribute counts only when `http-equiv` says `content-type` beside it.
+ *
+ * It is not a tokenizer and does not need to be: it never has to build a tree,
+ * so it can be a few hundred lines that stop at the first answer.
+ * ------------------------------------------------------------------------ */
+
+/* The spec's whitespace for this algorithm: tab, LF, FF, CR, space. */
+static int ar__p_space(int c)
 {
-    ar_u32 i;
+    return c == 0x09 || c == 0x0A || c == 0x0C || c == 0x0D || c == 0x20;
+}
 
-    for (i = 0; i + 8 <= n; ++i)
+static int ar__p_alpha(int c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+/*
+ * "Get an attribute", §13.2.3.3.
+ *
+ * Returns 0 when the tag has no more of them. The name and value are reported
+ * as spans of the input, lowercased on comparison rather than in place --
+ * these bytes are the caller's, as everywhere else in this parser.
+ */
+static int ar__p_attr(const char *b, ar_u32 n, ar_u32 *at, ar_u32 *ns, ar_u32 *nn, ar_u32 *vs,
+                      ar_u32 *vn)
+{
+    ar_u32 i = *at;
+
+    while (i < n && (ar__p_space((unsigned char)b[i]) || b[i] == '/'))
     {
-        if (ar__e_is(p + i, 7, "charset"))
-        {
-            ar_u32 k = i + 7;
-            ar_u32 start;
+        ++i;
+    }
+    if (i >= n || b[i] == '>')
+    {
+        *at = i;
+        return 0;
+    }
 
-            while (k < n && ar__e_space((unsigned char)p[k]))
+    *ns = i;
+    while (i < n)
+    {
+        if (b[i] == '=' && i > *ns)
+        {
+            break;
+        }
+        if (ar__p_space((unsigned char)b[i]) || b[i] == '/' || b[i] == '>')
+        {
+            break;
+        }
+        ++i;
+    }
+    *nn = i - *ns;
+
+    while (i < n && ar__p_space((unsigned char)b[i]))
+    {
+        ++i;
+    }
+    if (i >= n || b[i] != '=')
+    {
+        /* A bare attribute. Its value is empty and the next one starts here. */
+        *vs = i;
+        *vn = 0;
+        *at = i;
+        return 1;
+    }
+    ++i; /* the `=` */
+    while (i < n && ar__p_space((unsigned char)b[i]))
+    {
+        ++i;
+    }
+    if (i < n && (b[i] == '"' || b[i] == '\''))
+    {
+        char q = b[i];
+
+        ++i;
+        *vs = i;
+        while (i < n && b[i] != q)
+        {
+            ++i;
+        }
+        *vn = i - *vs;
+        if (i < n)
+        {
+            ++i; /* the closing quote */
+        }
+        *at = i;
+        return 1;
+    }
+    *vs = i;
+    while (i < n && !ar__p_space((unsigned char)b[i]) && b[i] != '>')
+    {
+        ++i;
+    }
+    *vn = i - *vs;
+    *at = i;
+    return 1;
+}
+
+/*
+ * "Extract a character encoding from a meta element", from a `content` value.
+ *
+ * The older spelling, and still what most documents from before 2010 carry:
+ * `<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">`.
+ */
+static ar_encoding ar__p_from_content(const char *b, ar_u32 n)
+{
+    ar_u32 i = 0;
+
+    while (i + 7 <= n)
+    {
+        if (!ar__e_is(b + i, 7, "charset"))
+        {
+            ++i;
+            continue;
+        }
+        i += 7;
+        while (i < n && ar__p_space((unsigned char)b[i]))
+        {
+            ++i;
+        }
+        if (i >= n || b[i] != '=')
+        {
+            continue; /* `charset` without an `=` is not a declaration */
+        }
+        ++i;
+        while (i < n && ar__p_space((unsigned char)b[i]))
+        {
+            ++i;
+        }
+        if (i < n && (b[i] == '"' || b[i] == '\''))
+        {
+            char   q = b[i];
+            ar_u32 s;
+
+            ++i;
+            s = i;
+            while (i < n && b[i] != q)
             {
-                ++k;
+                ++i;
             }
-            if (k >= n || p[k] != '=')
+            return ar_encoding_from_label(b + s, i - s);
+        }
+        {
+            ar_u32 s = i;
+
+            while (i < n && !ar__p_space((unsigned char)b[i]) && b[i] != ';')
             {
+                ++i;
+            }
+            return ar_encoding_from_label(b + s, i - s);
+        }
+    }
+    return AR_ENC_UNKNOWN;
+}
+
+/*
+ * A found encoding, adjusted the way the specification adjusts it.
+ *
+ * A document that declares UTF-16 in a `<meta>` is lying by construction: the
+ * declaration itself was read as ASCII, so the bytes cannot have been UTF-16.
+ * The specification says to treat it as UTF-8, and that is not a courtesy --
+ * it is the only reading under which the document makes sense.
+ */
+static ar_encoding ar__p_adjust(ar_encoding e)
+{
+    if (e == AR_ENC_UTF16LE || e == AR_ENC_UTF16BE)
+    {
+        return AR_ENC_UTF8;
+    }
+    return e;
+}
+
+static ar_encoding ar__prescan(const char *b, ar_u32 n)
+{
+    ar_u32 i = 0;
+
+    while (i < n)
+    {
+        if (b[i] != '<')
+        {
+            ++i;
+            continue;
+        }
+
+        /* A comment is skipped whole, which is the single most important line
+           here: `<!-- charset=utf-8 -->` declares nothing. */
+        if (i + 4 <= n && b[i + 1] == '!' && b[i + 2] == '-' && b[i + 3] == '-')
+        {
+            ar_u32 j = i + 4;
+
+            while (j + 3 <= n && !(b[j] == '-' && b[j + 1] == '-' && b[j + 2] == '>'))
+            {
+                ++j;
+            }
+            i = j + 3 <= n ? j + 3 : n;
+            continue;
+        }
+
+        if (i + 6 <= n && ar__e_is(b + i + 1, 4, "meta") &&
+            (ar__p_space((unsigned char)b[i + 5]) || b[i + 5] == '/'))
+        {
+            ar_u32      at = i + 5;
+            ar_u32      ns, nn, vs, vn;
+            int         got_pragma = 0;
+            int         need_pragma = -1; /* -1 is the specification's null */
+            ar_encoding charset = AR_ENC_UNKNOWN;
+
+            while (ar__p_attr(b, n, &at, &ns, &nn, &vs, &vn))
+            {
+                if (ar__e_is(b + ns, nn, "http-equiv"))
+                {
+                    if (ar__e_is(b + vs, vn, "content-type"))
+                    {
+                        got_pragma = 1;
+                    }
+                }
+                else if (ar__e_is(b + ns, nn, "content"))
+                {
+                    ar_encoding e = ar__p_from_content(b + vs, vn);
+
+                    if (e != AR_ENC_UNKNOWN && charset == AR_ENC_UNKNOWN)
+                    {
+                        charset = e;
+                        need_pragma = 1;
+                    }
+                }
+                else if (ar__e_is(b + ns, nn, "charset"))
+                {
+                    charset = ar_encoding_from_label(b + vs, vn);
+                    need_pragma = 0;
+                }
+            }
+
+            /*
+             * The pragma rule. A `content` attribute counts only when
+             * `http-equiv="content-type"` stands beside it -- so
+             * `<meta name="description" content="charset=utf-8">` declares
+             * nothing, which is exactly the kind of sentence that used to fool
+             * the search this replaced.
+             */
+            if (need_pragma < 0 || (need_pragma == 1 && !got_pragma) || charset == AR_ENC_UNKNOWN)
+            {
+                i = at;
                 continue;
             }
-            ++k;
-            while (k < n && ar__e_space((unsigned char)p[k]))
-            {
-                ++k;
-            }
-            if (k < n && (p[k] == '"' || p[k] == '\''))
-            {
-                char q = p[k++];
-
-                start = k;
-                while (k < n && p[k] != q)
-                {
-                    ++k;
-                }
-                return ar_encoding_from_label(p + start, k - start);
-            }
-            /* An unquoted value ends at whitespace, at a separator, and at a
-               quote -- which it cannot contain, and which is here because
-               `content="text/html; charset=utf-8"` puts the closing quote of
-               the *content* attribute immediately after the label. Without it
-               the label reads `utf-8"` and matches nothing. */
-            start = k;
-            while (k < n && !ar__e_space((unsigned char)p[k]) && p[k] != ';' && p[k] != '>' &&
-                   p[k] != '"' && p[k] != '\'')
-            {
-                ++k;
-            }
-            return ar_encoding_from_label(p + start, k - start);
+            return ar__p_adjust(charset);
         }
+
+        /* Any other tag: step over its name, then read its attributes so the
+           walk resumes after them rather than inside a quoted value. */
+        if (i + 2 <= n && (ar__p_alpha((unsigned char)b[i + 1]) ||
+                           (b[i + 1] == '/' && i + 3 <= n && ar__p_alpha((unsigned char)b[i + 2]))))
+        {
+            ar_u32 at = i + 1;
+            ar_u32 ns, nn, vs, vn;
+
+            while (at < n && !ar__p_space((unsigned char)b[at]) && b[at] != '>')
+            {
+                ++at;
+            }
+            while (ar__p_attr(b, n, &at, &ns, &nn, &vs, &vn))
+            {
+                /* nothing: the point is where it leaves `at` */
+            }
+            i = at < n ? at + 1 : n;
+            continue;
+        }
+
+        if (i + 2 <= n && (b[i + 1] == '!' || b[i + 1] == '/' || b[i + 1] == '?'))
+        {
+            ar_u32 j = i + 2;
+
+            while (j < n && b[j] != '>')
+            {
+                ++j;
+            }
+            i = j < n ? j + 1 : n;
+            continue;
+        }
+
+        ++i;
     }
     return AR_ENC_UNKNOWN;
 }
@@ -213,89 +504,13 @@ ar_encoding ar_encoding_sniff(const char *bytes, ar_u32 len, ar_u32 *skip)
         return AR_ENC_UTF16LE;
     }
 
-    /* Step 2: a declaration in the first 1024 bytes. */
+    /* Step 2: a declaration in the first 1024 bytes, found by the
+       specification's prescan rather than by looking for the word. */
     limit = len < 1024u ? len : 1024u;
-    for (i = 0; i + 6 <= limit; ++i)
+    i = ar__prescan(bytes, limit);
+    if (i != (ar_u32)AR_ENC_UNKNOWN)
     {
-        ar_u32 k;
-        ar_u32 stop;
-
-        if (bytes[i] != '<' || !ar__e_is(bytes + i + 1, 4, "meta"))
-        {
-            continue;
-        }
-        k = i + 5;
-        stop = k;
-        while (stop < limit && bytes[stop] != '>')
-        {
-            ++stop;
-        }
-
-        /* `<meta charset="utf-8">`, the modern spelling. */
-        {
-            ar_u32 a;
-
-            for (a = k; a + 8 <= stop; ++a)
-            {
-                if (ar__e_is(bytes + a, 7, "charset"))
-                {
-                    ar_u32 v = a + 7;
-                    ar_u32 start;
-
-                    while (v < stop && ar__e_space((unsigned char)bytes[v]))
-                    {
-                        ++v;
-                    }
-                    if (v >= stop || bytes[v] != '=')
-                    {
-                        continue;
-                    }
-                    ++v;
-                    while (v < stop && ar__e_space((unsigned char)bytes[v]))
-                    {
-                        ++v;
-                    }
-                    if (v < stop && (bytes[v] == '"' || bytes[v] == '\''))
-                    {
-                        char q = bytes[v++];
-
-                        start = v;
-                        while (v < stop && bytes[v] != q)
-                        {
-                            ++v;
-                        }
-                    }
-                    else
-                    {
-                        start = v;
-                        while (v < stop && !ar__e_space((unsigned char)bytes[v]) &&
-                               bytes[v] != '/' && bytes[v] != '"' && bytes[v] != '\'' &&
-                               bytes[v] != ';')
-                        {
-                            ++v;
-                        }
-                    }
-                    {
-                        ar_encoding e = ar_encoding_from_label(bytes + start, v - start);
-
-                        if (e != AR_ENC_UNKNOWN)
-                        {
-                            return e;
-                        }
-                    }
-                }
-            }
-        }
-
-        /* `<meta http-equiv=content-type content="text/html; charset=...">`. */
-        {
-            ar_encoding e = ar__charset_in_content(bytes + k, stop - k);
-
-            if (e != AR_ENC_UNKNOWN)
-            {
-                return e;
-            }
-        }
+        return (ar_encoding)i;
     }
 
     /*
