@@ -1755,6 +1755,124 @@ static void ar__close_p(ar__tree *t)
     ar__pop_until(t, "p");
 }
 
+/*
+ * "Reset the insertion mode appropriately", §13.2.4.1.
+ *
+ * Walk the stack from the current node down and take the mode from the first
+ * element that names one. It is how a mode is recovered rather than
+ * remembered, and it is the answer to the question every closing construct
+ * asks: what were we doing before this?
+ *
+ * `</template>` used to answer it with `original_mode`, which is a single
+ * remembered value and was `in head` -- because a template is head content
+ * wherever it appears. So closing a template inside `<div>` inside `<body>`
+ * put the parser back in `in head`, and the next start tag opened a second
+ * `<body>` for itself.
+ *
+ * A remembered mode cannot be right here: the same `</template>` has to resume
+ * `in body`, `in table`, `in row` or `in cell` depending on nothing but where
+ * the template sits.
+ */
+static int ar__on_stack_named(const ar__tree *t, const char *tag)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML && ar__is(t, t->open[i], tag))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void ar__reset_mode(ar__tree *t)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        ar_i32 node = t->open[i];
+        int    last = i == 1;
+
+        if (t->doc->nodes[node].ns != AR_NS_HTML)
+        {
+            continue;
+        }
+        /* The specification checks for a `select` first and areole has no
+           `in select` mode to name -- `<select>` is handled inside `in
+           body`. A select on the stack therefore falls through to whatever
+           encloses it, which is the right answer for every case in the
+           suite and is a real gap for none of them. */
+        if ((ar__is(t, node, "td") || ar__is(t, node, "th")) && !last)
+        {
+            t->mode = M_IN_CELL;
+            return;
+        }
+        if (ar__is(t, node, "tr"))
+        {
+            t->mode = M_IN_ROW;
+            return;
+        }
+        if (ar__is(t, node, "tbody") || ar__is(t, node, "thead") || ar__is(t, node, "tfoot"))
+        {
+            t->mode = M_IN_TABLE_BODY;
+            return;
+        }
+        if (ar__is(t, node, "caption"))
+        {
+            t->mode = M_IN_CAPTION;
+            return;
+        }
+        if (ar__is(t, node, "colgroup"))
+        {
+            t->mode = M_IN_COLUMN_GROUP;
+            return;
+        }
+        if (ar__is(t, node, "table"))
+        {
+            t->mode = M_IN_TABLE;
+            return;
+        }
+        if (ar__is(t, node, "template"))
+        {
+            /* The specification takes the current template insertion mode off
+               its stack here. areole keeps one value, which is the gap named
+               below; `in body` is the answer for every template that is not
+               inside a table. */
+            t->mode = M_IN_TEMPLATE;
+            return;
+        }
+        if (ar__is(t, node, "head") && !last)
+        {
+            t->mode = M_IN_HEAD;
+            return;
+        }
+        if (ar__is(t, node, "body"))
+        {
+            t->mode = M_IN_BODY;
+            return;
+        }
+        if (ar__is(t, node, "frameset"))
+        {
+            t->mode = M_IN_FRAMESET;
+            return;
+        }
+        if (ar__is(t, node, "html"))
+        {
+            t->mode = t->head < 0 ? M_BEFORE_HEAD : M_AFTER_HEAD;
+            return;
+        }
+        if (last)
+        {
+            t->mode = M_IN_BODY;
+            return;
+        }
+    }
+    t->mode = M_IN_BODY;
+}
+
 static void ar__in_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_TEXT)
@@ -2037,6 +2155,52 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             t->mode = M_TEXT;
             return;
         }
+
+        /*
+         * A template is head content wherever it appears, and `in body` has to
+         * say so or the mode never changes.
+         *
+         * The element was being inserted and given its content fragment --
+         * that part is in ar__insert_element and works anywhere -- but the
+         * insertion mode stayed `in body`, so `</template>` never reached the
+         * rule that closes it and fell through to the general end-tag walk
+         * instead. That walk correctly refuses to cross a `<div>`, so
+         * `<div><template><div><span></template><b>` put the `<b>` inside the
+         * span and left the template open forever.
+         */
+        if (ar_span_is(tok->name, "template"))
+        {
+            t->mode = M_IN_HEAD;
+            ar__process_mode(t, tok);
+            return;
+        }
+
+        /*
+         * Ruby, §13.2.6.4.7. `<rb>` and `<rtc>` generate implied end tags;
+         * `<rt>` and `<rp>` generate them *except* for `rtc`, which is what
+         * lets a `<rtc>` hold several `<rt>`s.
+         *
+         * Without these, `<ruby>a<rb>b<rb>` puts the second `<rb>` inside the
+         * first, because nothing closed it.
+         */
+        if (ar_span_is(tok->name, "rb") || ar_span_is(tok->name, "rtc"))
+        {
+            if (ar__in_scope(t, "ruby", 0))
+            {
+                ar__implied_end_tags(t, 0);
+            }
+            ar__insert_element(t, tok, 1);
+            return;
+        }
+        if (ar_span_is(tok->name, "rt") || ar_span_is(tok->name, "rp"))
+        {
+            if (ar__in_scope(t, "ruby", 0))
+            {
+                ar__implied_end_tags(t, "rtc");
+            }
+            ar__insert_element(t, tok, 1);
+            return;
+        }
         /*
          * `<svg>` and `<math>` are the two doors into foreign content, and
          * they are the only ones: nothing else in an HTML document changes
@@ -2114,6 +2278,14 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
         {
             t->doc->errors++;
         }
+        return;
+    }
+
+    /* `</template>` is head content too, and for the same reason. */
+    if (ar_span_is(tok->name, "template"))
+    {
+        t->mode = M_IN_TEMPLATE;
+        ar__process_mode(t, tok);
         return;
     }
 
@@ -3368,12 +3540,38 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_HEAD;
             return;
         }
+        if (tok->kind == AR_TOK_DOCTYPE)
+        {
+            /* Ignored, and that matters: falling through would pop the
+               noscript, and the comment after it would land in the body. */
+            t->doc->errors++;
+            return;
+        }
+        if (tok->kind == AR_TOK_START &&
+            (ar_span_is(tok->name, "head") || ar_span_is(tok->name, "noscript")))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (tok->kind == AR_TOK_COMMENT || (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text)))
         {
             t->mode = M_IN_HEAD;
             ar__process(t, tok);
             t->mode = M_IN_HEAD_NOSCRIPT;
             return;
+        }
+        if (tok->kind == AR_TOK_START)
+        {
+            static const char *const ALLOWED[] = {"basefont", "bgsound", "link", "meta",
+                                                  "noframes", "style",   0};
+
+            if (ar__name_in(tok->name, ALLOWED))
+            {
+                t->mode = M_IN_HEAD;
+                ar__process_mode(t, tok);
+                t->mode = M_IN_HEAD_NOSCRIPT;
+                return;
+            }
         }
         /* Anything else closes it and is reprocessed, which is what puts the
            paragraph in the body rather than inside the noscript. */
@@ -3385,53 +3583,88 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
 
     case M_IN_TEMPLATE:
         /*
-         * A table part inside a template uses the table rules, which is what
-         * `<table><template><tr><td>a</template>` needs: `in body` now ignores
-         * an orphan `<tr>` outright, so without this the row and the cell
-         * vanished and only their text survived.
+         * `in template`, §13.2.6.4.18, which is a *dispatcher* and not a mode
+         * that content sits in.
          *
-         * The specification does this with a stack of template insertion
-         * modes; this is the same routing, one level deep.
+         * Each rule sets the insertion mode to something else and reprocesses
+         * the token, so `<template><p>x</p>` runs `<p>` under `in body` and
+         * then `</p>` under `in body` too -- the parser has left `in template`
+         * by the time the end tag arrives. That is why "any other end tag is
+         * ignored" is safe here and was not safe when this mode delegated to
+         * `in body` while staying put: it saw every end tag in the template
+         * and would have swallowed all of them.
+         *
+         * Coming back out is ar__reset_mode's job. It walks the stack and
+         * finds the enclosing template, table, row or body, which is how a
+         * nested template resumes the right rules without a stack of modes
+         * being kept by hand.
          */
-        if (tok->kind == AR_TOK_START && t->original_mode == M_IN_TABLE)
+        if (tok->kind == AR_TOK_START)
         {
+            static const char *const HEAD_CONTENT[] = {"base",     "basefont", "bgsound", "link",
+                                                       "meta",     "noframes", "script",  "style",
+                                                       "template", "title",    0};
+
+            if (ar__name_in(tok->name, HEAD_CONTENT))
+            {
+                t->mode = M_IN_HEAD;
+                ar__process_mode(t, tok);
+                t->mode = M_IN_TEMPLATE;
+                return;
+            }
             if (ar_span_is(tok->name, "caption") || ar_span_is(tok->name, "colgroup") ||
                 ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
                 ar_span_is(tok->name, "thead"))
             {
                 t->mode = M_IN_TABLE;
-                ar__process(t, tok);
-                t->mode = M_IN_TEMPLATE;
+                ar__process_mode(t, tok);
+                return;
+            }
+            if (ar_span_is(tok->name, "col"))
+            {
+                t->mode = M_IN_COLUMN_GROUP;
+                ar__process_mode(t, tok);
                 return;
             }
             if (ar_span_is(tok->name, "tr"))
             {
-                ar__insert_element(t, tok, 0);
+                t->mode = M_IN_TABLE_BODY;
+                ar__process_mode(t, tok);
                 return;
             }
             if (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th"))
             {
-                ar__insert_element(t, tok, 0);
-                ar__fmt_marker(t);
+                t->mode = M_IN_ROW;
+                ar__process_mode(t, tok);
                 return;
             }
-        }
-        if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "template"))
-        {
-            ar__pop_until(t, "template");
-            ar__fmt_clear_to_marker(t);
-            t->mode = t->original_mode;
+            t->mode = M_IN_BODY;
+            ar__process_mode(t, tok);
             return;
         }
-        /*
-         * Everything else is `in body`.
-         *
-         * The specification keeps a *stack* of template insertion modes, so a
-         * template inside a table resumes the table rules when it closes.
-         * areole keeps one, so a template nested inside another resumes the
-         * outer one. Named rather than left to be found: it takes two
-         * templates and a table to notice.
-         */
+
+        if (tok->kind == AR_TOK_END)
+        {
+            if (ar_span_is(tok->name, "template"))
+            {
+                if (!ar__on_stack_named(t, "template"))
+                {
+                    t->doc->errors++;
+                    return;
+                }
+                ar__implied_end_tags(t, 0);
+                ar__pop_until(t, "template");
+                ar__fmt_clear_to_marker(t);
+                ar__reset_mode(t);
+                return;
+            }
+            /* A template's contents are a fragment: there is nothing outside
+               it for an end tag to name, so it is a parse error and dropped. */
+            t->doc->errors++;
+            return;
+        }
+
+        /* Text, comments and doctypes are `in body`'s business. */
         ar__in_body(t, tok);
         return;
 
