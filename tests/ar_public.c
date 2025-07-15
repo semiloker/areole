@@ -73,7 +73,37 @@ int main(void)
         return 1;
     }
 
-    /* 2. The encoding functions. */
+    /* 2. A fragment, the way innerHTML does it. The context decides the
+       answer: `<td>x` inside a `tr` is a cell, and inside a `div` the tag is
+       dropped and only the text survives. */
+    {
+        static const char FRAG[] = "<td>x";
+        ar_i32            fr;
+        ar_i32            fc;
+
+        memset(&doc, 0, sizeof doc);
+        doc.nodes = g_nodes;
+        doc.node_cap = (ar_i32)(sizeof g_nodes / sizeof g_nodes[0]);
+        doc.attrs = g_attrs;
+        doc.attr_cap = (ar_i32)(sizeof g_attrs / sizeof g_attrs[0]);
+        doc.text = g_text;
+        doc.text_cap = (ar_u32)sizeof g_text;
+        if (!ar_html_parse_fragment(&doc, FRAG, (ar_u32)(sizeof FRAG - 1), "tr", AR_NS_HTML,
+                                    g_scratch, (ar_u32)sizeof g_scratch))
+        {
+            printf("FAIL: the fragment parse overflowed\n");
+            return 1;
+        }
+        fr = ar_dom_root(&doc);
+        fc = fr >= 0 ? doc.nodes[fr].first_child : -1;
+        if (fc < 0 || !ar_span_is(doc.nodes[fc].name, "td"))
+        {
+            printf("FAIL: a td in a tr context should be a cell\n");
+            return 1;
+        }
+    }
+
+    /* 3. The encoding functions. */
     enc = ar_encoding_sniff("\357\273\277<p>x", 8, &skip);
     if (enc != AR_ENC_UTF8 || skip != 3)
     {
@@ -81,7 +111,7 @@ int main(void)
         return 1;
     }
 
-    /* 3. The arena form, plus the whole pipeline: sheet, document, boxes. */
+    /* 4. The arena form, plus the whole pipeline: sheet, document, boxes. */
     c = ar_init_ex(g_mem, (ar_u32)sizeof g_mem, 256, 64 * 1024);
     if (!c)
     {

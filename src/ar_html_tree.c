@@ -80,6 +80,18 @@ typedef struct ar__tree
     int    original_mode; /* what `text` mode returns to */
 
     int frameset_ok;
+
+    /*
+     * Fragment parsing: the element this markup is being parsed as if it were
+     * inside. Null for an ordinary document.
+     *
+     * It is not in the tree and never becomes a node. It exists to answer two
+     * questions -- what insertion mode to start in, and what the *adjusted
+     * current node* is while the stack holds only the synthetic root -- and
+     * the specification treats it exactly that way.
+     */
+    const char *ctx;
+    ar_ns       ctx_ns;
 } ar__tree;
 
 enum
@@ -1787,6 +1799,25 @@ static int ar__on_stack_named(const ar__tree *t, const char *tag)
     return 0;
 }
 
+/* Two C strings, case-insensitively -- the context element is a literal from
+   the caller rather than a span of the document. */
+static int ar__lit_is(const char *a, const char *b)
+{
+    while (*a && *b)
+    {
+        int x = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+        int y = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+
+        if (x != y)
+        {
+            return 0;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
 static void ar__reset_mode(ar__tree *t)
 {
     ar_i32 i;
@@ -1795,6 +1826,71 @@ static void ar__reset_mode(ar__tree *t)
     {
         ar_i32 node = t->open[i];
         int    last = i == 1;
+
+        /*
+         * In a fragment the bottom of the stack is the synthetic root, and the
+         * specification says to use the *context* element in its place. That
+         * is the whole reason a fragment starts in the right mode: `<td>x`
+         * with a `tr` context begins in `in row`, and with a `div` context it
+         * begins in `in body` and the tag is dropped.
+         */
+        if (last && t->ctx)
+        {
+            if (t->ctx_ns != AR_NS_HTML)
+            {
+                t->mode = M_IN_BODY;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "td") || ar__lit_is(t->ctx, "th"))
+            {
+                t->mode = M_IN_BODY; /* a cell context parses as body content */
+                return;
+            }
+            if (ar__lit_is(t->ctx, "tr"))
+            {
+                t->mode = M_IN_ROW;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "tbody") || ar__lit_is(t->ctx, "thead") ||
+                ar__lit_is(t->ctx, "tfoot"))
+            {
+                t->mode = M_IN_TABLE_BODY;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "caption"))
+            {
+                t->mode = M_IN_CAPTION;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "colgroup"))
+            {
+                t->mode = M_IN_COLUMN_GROUP;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "table"))
+            {
+                t->mode = M_IN_TABLE;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "template"))
+            {
+                t->mode = M_IN_TEMPLATE;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "head") || ar__lit_is(t->ctx, "body") ||
+                ar__lit_is(t->ctx, "html"))
+            {
+                t->mode = M_IN_BODY;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "frameset"))
+            {
+                t->mode = M_IN_FRAMESET;
+                return;
+            }
+            t->mode = M_IN_BODY;
+            return;
+        }
 
         if (t->doc->nodes[node].ns != AR_NS_HTML)
         {
@@ -3067,6 +3163,16 @@ static int ar__use_insertion_mode(const ar__tree *t, const ar_token *tok)
 {
     ar_i32 cur = ar__current(t);
 
+    /*
+     * The *adjusted* current node: in a fragment with only the synthetic root
+     * on the stack, it is the context element. That is what makes
+     * `<path/>` with an `svg svg` context an SVG element rather than an
+     * unknown HTML one.
+     */
+    if (t->ctx && t->open_n <= 2 && t->ctx_ns != AR_NS_HTML)
+    {
+        return tok->kind == AR_TOK_EOF;
+    }
     if (t->open_n <= 1 || ar__is_html(t, cur) || tok->kind == AR_TOK_EOF)
     {
         return 1;
@@ -3225,7 +3331,19 @@ static void ar__foreign(ar__tree *t, const ar_token *tok)
             {
                 ar__pop(t);
             }
-            ar__process(t, tok);
+            /*
+             * The insertion mode, not the dispatcher.
+             *
+             * §13.2.6.5 says "reprocess the token according to the rules given
+             * in the section corresponding to the current insertion mode", and
+             * the difference is not stylistic. In a fragment with an `svg
+             * path` context the adjusted current node is the context element,
+             * so the dispatcher sends the token straight back here -- and the
+             * breakout has nothing left to pop, because the only thing on the
+             * stack is the synthetic root. That is an infinite loop, and it is
+             * what foreign-fragment.dat hangs on.
+             */
+            ar__process_mode(t, tok);
             return;
         }
         {
@@ -3747,7 +3865,8 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
 /* ------------------------------------------------------------------------
  * The entry point
  * ------------------------------------------------------------------------ */
-int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap)
+static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch,
+                          ar_u32 scratch_cap, const char *ctx, ar_ns ctx_ns)
 {
     ar__tree    t;
     ar_html_tok tk;
@@ -3772,6 +3891,8 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
     t.form = -1;
     t.frameset_ok = 1;
     t.mode = M_INITIAL;
+    t.ctx = ctx;
+    t.ctx_ns = ctx_ns;
 
     ar_html_tok_init(&tk, bytes, len, scratch, scratch_cap);
 
@@ -3782,6 +3903,79 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
         return 0;
     }
     ar__push(&t, 0);
+
+    /*
+     * Fragment parsing, §13.2.6.5.
+     *
+     * A synthetic `<html>` root is created and pushed, the insertion mode is
+     * reset with the context element standing in for the bottom of the stack,
+     * and the tokenizer is put into whatever state that element implies. None
+     * of that is bookkeeping: the same bytes are a different document
+     * depending on the context, and these three lines are where the difference
+     * comes from.
+     */
+    if (ctx)
+    {
+        ar_token fake;
+        ar_i32   root;
+
+        memset(&fake, 0, sizeof fake);
+        fake.kind = AR_TOK_START;
+        fake.name.p = "html";
+        fake.name.n = 4;
+        root = ar__insert_element(&t, &fake, 0);
+        if (root < 0)
+        {
+            return 0;
+        }
+        ar__reset_mode(&t);
+
+        /*
+         * A `<title>` context makes the whole fragment RCDATA and a `<script>`
+         * context makes it script data, which is why `a<b>` inside a title is
+         * five characters of text rather than an element. `last_start` has to
+         * name the context too, or the appropriate-end-tag rule never fires
+         * and the fragment never leaves that state.
+         */
+        {
+            ar_html_state s = AR_HTML_DATA;
+
+            if (ctx_ns == AR_NS_HTML)
+            {
+                if (ar__lit_is(ctx, "title") || ar__lit_is(ctx, "textarea"))
+                {
+                    s = AR_HTML_RCDATA;
+                }
+                else if (ar__lit_is(ctx, "style") || ar__lit_is(ctx, "xmp") ||
+                         ar__lit_is(ctx, "iframe") || ar__lit_is(ctx, "noembed") ||
+                         ar__lit_is(ctx, "noframes"))
+                {
+                    s = AR_HTML_RAWTEXT;
+                }
+                else if (ar__lit_is(ctx, "script"))
+                {
+                    s = AR_HTML_SCRIPT;
+                }
+                else if (ar__lit_is(ctx, "plaintext"))
+                {
+                    s = AR_HTML_PLAINTEXT;
+                }
+            }
+            tk.state = s;
+            if (s != AR_HTML_DATA && s != AR_HTML_PLAINTEXT)
+            {
+                ar_u32 k = 0;
+
+                while (ctx[k] && k + 1 < (ar_u32)sizeof tk.last_start)
+                {
+                    tk.last_start[k] =
+                        (char)(ctx[k] >= 'A' && ctx[k] <= 'Z' ? ctx[k] + 32 : ctx[k]);
+                    ++k;
+                }
+                tk.last_start_n = k;
+            }
+        }
+    }
 
     /*
      * The loop, with a guarantee rather than a hope.
@@ -3839,6 +4033,14 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
      * An empty file is still `html(head body)` in every browser, and areole
      * returned nothing at all until the tree corpus asked.
      */
+    /* A fragment has no implied html, head or body: its answer is the
+       children of the root, and adding a body would put them somewhere else. */
+    if (ctx)
+    {
+        doc->errors += tk.errors;
+        return !doc->overflowed;
+    }
+
     /*
      * An empty file is a quirks document.
      *
@@ -3899,6 +4101,22 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
 
     doc->errors += tk.errors;
     return !doc->overflowed;
+}
+
+int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap)
+{
+    return ar__parse_core(doc, bytes, len, scratch, scratch_cap, 0, AR_NS_HTML);
+}
+
+int ar_html_parse_fragment(ar_doc *doc, const char *bytes, ar_u32 len, const char *context,
+                           ar_ns context_ns, char *scratch, ar_u32 scratch_cap)
+{
+    if (!context || !*context)
+    {
+        context = "div";
+        context_ns = AR_NS_HTML;
+    }
+    return ar__parse_core(doc, bytes, len, scratch, scratch_cap, context, context_ns);
 }
 
 ar_i32 ar_dom_root(const ar_doc *doc)
