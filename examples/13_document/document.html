@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A document</title>
+<style>
+  body { padding: 32px 40px; background: #fdfcf9; color: #23211d; }
+  h1   { font-size: 30px; color: #1a1815; }
+  h2   { font-size: 20px; color: #3a352d; padding-top: 14px; }
+  p    { padding-bottom: 10px; }
+</style>
+</head>
+<body>
+<h1>Reading a document</h1>
+<p>This page was not declared by any C in this example. It is <b>parsed</b> from HTML, styled by the user-agent stylesheet and the <i>&lt;style&gt;</i> element above it, and laid out by the same engine every other example uses.</p>
+<h2>What the parser does with it</h2>
+<p>Optional end tags are supplied, misnested markup is repaired, and character references such as &amp; and &eacute; and &mdash; become the characters they name.</p>
+<ul>
+  <li>A list whose items never close
+  <li>because the parser closes them
+  <li>which is what the specification asks for
+</ul>
+<h2>A table</h2>
+<table>
+  <tr><td>rows<td>and cells
+  <tr><td>with no<td>closing tags
+</table>
+<blockquote><p>A quotation, indented by the user-agent stylesheet and by nothing in this file.</p></blockquote>
+</body>
+</html>

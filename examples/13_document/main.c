@@ -6,6 +6,7 @@
  *     example_document page.html       a file from disk
  *     example_document --selftest      what CI runs: parse, lay out, check
  *     example_document --dump          one line per box, for a comparison
+ *     example_document --html          write the sample document out
  *
  * 0.9.0's demonstration. Every other example declares its boxes by calling
  * ar_begin and ar_text; this one reads HTML and does not declare anything.
@@ -30,11 +31,21 @@
  * second engine.
  *
  * ------------------------------------------------------------------------
- * Why the sample document is inline
+ * Why the sample document is inline, and also a file
  *
- * So the example runs from a clean checkout with no arguments and no file to
- * find, and so `--selftest` in CI is testing a document that cannot go
- * missing. A path on the command line reads that instead.
+ * Inline, so the example runs from a clean checkout with no arguments and no
+ * file to find, and so `--selftest` in CI is testing a document that cannot go
+ * missing. A path on the command line reads a different one instead.
+ *
+ * And `document.html` beside this file, written by `--html` and checked in CI
+ * against what this source produces -- the same twin discipline the layout
+ * corpora use. It exists so the document can be opened in a browser next to
+ * the window this draws, which is the only way to look at "it reads HTML" and
+ * see whether it is true.
+ *
+ * Generated rather than written twice, because two copies of a document
+ * disagree eventually and the disagreement is invisible until somebody is
+ * comparing screenshots and wondering which one is wrong.
  *
  * It is deliberately ordinary: headings, paragraphs with inline markup, a
  * list, a table, a blockquote, an entity or two. Nothing here is chosen to
@@ -304,6 +315,7 @@ int main(int argc, char **argv)
     const char *path = 0;
     int         want_selftest = 0;
     int         want_dump = 0;
+    int         want_html = 0;
     int         k;
 
     for (k = 1; k < argc; ++k)
@@ -316,6 +328,10 @@ int main(int argc, char **argv)
         {
             want_dump = 1;
         }
+        else if (strcmp(argv[k], "--html") == 0)
+        {
+            want_html = 1;
+        }
         else
         {
             path = argv[k];
@@ -323,6 +339,13 @@ int main(int argc, char **argv)
     }
 
     build_sample();
+    if (want_html)
+    {
+        /* Byte for byte what the parser is handed, so the file and the test
+           cannot drift. */
+        fwrite(g_doc, 1, g_doc_n, stdout);
+        return 0;
+    }
     bytes = g_doc;
     len = g_doc_n;
     if (path)
