@@ -527,8 +527,27 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
     return 0;
 }
 
+/*
+ * Pop through the named element, or do nothing at all if it is not open.
+ *
+ * The guard is the whole point. Every caller in the specification is
+ * preceded by "if the stack of open elements does not have an element in
+ * scope with that tag name, ignore the token" -- and without it this walks
+ * the stack to the floor, taking the html element with it.
+ *
+ * Invisible in a document, where a `<table>` is almost always open by the
+ * time anything asks. Not invisible in a *fragment*: `<table><tr>` parsed
+ * against a `table` context has no table on the stack at all, because the
+ * context element is not a node. The tree came back empty.
+ */
+static int ar__on_stack_named(const ar__tree *t, const char *tag);
+
 static void ar__pop_until(ar__tree *t, const char *tag)
 {
+    if (!ar__on_stack_named(t, tag))
+    {
+        return;
+    }
     while (t->open_n > 1)
     {
         int hit = ar__is(t, ar__current(t), tag);
@@ -1705,11 +1724,13 @@ static int ar__is_formatting(ar_span name)
 static int ar__closes_p(ar_span name)
 {
     static const char *const BLOCKS[] = {
-        "address", "article", "aside",   "blockquote", "center",     "details", "dialog",
-        "dir",     "div",     "dl",      "fieldset",   "figcaption", "figure",  "footer",
-        "form",    "h1",      "h2",      "h3",         "h4",         "h5",      "h6",
-        "header",  "hgroup",  "hr",      "main",       "menu",       "nav",     "ol",
-        "p",       "pre",     "section", "summary",    "table",      "ul",      0};
+        "address",   "article", "aside",  "blockquote", "center",   "details",
+        "dialog",    "dir",     "div",    "dl",         "fieldset", "figcaption",
+        "figure",    "footer",  "form",   "h1",         "h2",       "h3",
+        "h4",        "h5",      "h6",     "header",     "hgroup",   "hr",
+        "listing",   "main",    "menu",   "nav",        "ol",       "p",
+        "plaintext", "pre",     "search", "section",    "summary",  "table",
+        "ul",        "xmp",     0};
     return ar__name_in(name, BLOCKS);
 }
 
@@ -1961,9 +1982,22 @@ static void ar__reset_mode(ar__tree *t)
                 t->mode = M_IN_TEMPLATE;
                 return;
             }
-            if (ar__lit_is(t->ctx, "head") || ar__lit_is(t->ctx, "body") ||
-                ar__lit_is(t->ctx, "html"))
+            if (ar__lit_is(t->ctx, "html"))
             {
+                /*
+                 * Step 15 of the reset: an html context with no head element
+                 * yet is `before head`, and a fragment never has one. So
+                 * `<body><span>` parsed against `html` grows a head *and* a
+                 * body, which is what the suite asks for and what `in body`
+                 * cannot produce.
+                 */
+                t->mode = t->head < 0 ? M_BEFORE_HEAD : M_AFTER_HEAD;
+                return;
+            }
+            if (ar__lit_is(t->ctx, "head") || ar__lit_is(t->ctx, "body"))
+            {
+                /* A head context is `in body` too: step 12 wants `last` to be
+                   false and for a context element it never is. */
                 t->mode = M_IN_BODY;
                 return;
             }
@@ -2471,6 +2505,42 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
         if (!ar__adoption(t, tag))
         {
             t->doc->errors++;
+        }
+        return;
+    }
+
+    /*
+     * `</h1>` to `</h6>`, §13.2.6.4.7, and the rule is that *any* heading
+     * closes *any* heading.
+     *
+     * `<h1><div><h3><span></h1>` closes the h3, not the h1: the end tag names
+     * one level and the algorithm pops through whichever heading it finds
+     * first. Treating it as an ordinary end tag looks for an `h1` in
+     * particular, walks past the h3, and stops at the div because a div is
+     * special -- so the tag did nothing at all.
+     */
+    if (ar_span_is(tok->name, "h1") || ar_span_is(tok->name, "h2") || ar_span_is(tok->name, "h3") ||
+        ar_span_is(tok->name, "h4") || ar_span_is(tok->name, "h5") || ar_span_is(tok->name, "h6"))
+    {
+        static const char *const H[] = {"h1", "h2", "h3", "h4", "h5", "h6", 0};
+        ar_i32                   i;
+
+        for (i = t->open_n - 1; i >= 1; --i)
+        {
+            if (ar__node_name_in(t, t->open[i], H))
+            {
+                break;
+            }
+        }
+        if (i < 1)
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__implied_end_tags(t, 0);
+        while (t->open_n > i)
+        {
+            ar__pop(t);
         }
         return;
     }
@@ -3397,10 +3467,32 @@ static int ar__breaks_out(const ar__tree *t, const ar_token *tok)
     return 0;
 }
 
+/*
+ * The namespace new elements go into: the *adjusted* current node's.
+ *
+ * In a fragment with only the synthetic root on the stack that is the context
+ * element, not the root -- and the root is an html element, so taking its
+ * namespace put every child of an `svg path` context into the HTML namespace.
+ * The tree looked right and every name in it was wrong.
+ */
+static ar_ns ar__adjusted_ns(const ar__tree *t)
+{
+    ar_i32 cur;
+
+    if (t->ctx && t->open_n <= 2)
+    {
+        return t->ctx_ns;
+    }
+    cur = ar__current(t);
+    return cur >= 0 ? t->doc->nodes[cur].ns : AR_NS_HTML;
+}
+
 static void ar__foreign(ar__tree *t, const ar_token *tok)
 {
     ar_i32 cur = ar__current(t);
-    ar_ns  ns = cur >= 0 ? t->doc->nodes[cur].ns : AR_NS_HTML;
+    ar_ns  ns = ar__adjusted_ns(t);
+
+    (void)cur;
 
     switch (tok->kind)
     {
