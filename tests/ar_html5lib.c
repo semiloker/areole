@@ -1663,6 +1663,23 @@ static void run_tree_file(const char *path, const char *label)
             continue;
         }
 
+        /*
+         * Poison the scratch buffer between tests.
+         *
+         * It used to be left alone, and four cases passed when their file was
+         * run on its own and failed in the full run -- all four with unknown
+         * element names. In a fresh process the buffer is zeros and a read of
+         * a byte nothing wrote happens to find a NUL terminator; after two
+         * thousand documents it finds the previous one's markup. That is an
+         * uninitialised read in the parser, and leaving the buffer clean made
+         * the score depend on run order.
+         *
+         * 0xAA rather than zero for the same reason the fuzzer varies the
+         * capacity it reports: a buffer that is quietly valid is a buffer that
+         * tests nothing.
+         */
+        memset(g_scratch, 0xAA, sizeof g_scratch);
+
         memset(&g_doc, 0, sizeof g_doc);
         g_doc.nodes = g_nodes;
         g_doc.node_cap = DOC_NODES;
