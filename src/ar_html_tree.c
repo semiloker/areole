@@ -1750,6 +1750,45 @@ static int ar__is_void(ar_span name)
 }
 
 /* The formatting elements the adoption agency exists for. */
+/*
+ * Does this start tag put the frameset-ok flag out?
+ *
+ * The flag decides whether a `<frameset>` reaching `in body` is honoured or
+ * dropped, and the specification names the tags that clear it one at a time
+ * rather than by category -- which is why the list reads arbitrarily and why
+ * it has to be copied rather than reasoned about. `<br>` clears it and
+ * `<param>` does not; both are void. `<div>` does not clear it, so
+ * `<div><frameset>` really does throw the div away and build a frameset
+ * document.
+ *
+ * `<input>` is the one with a condition: an input clears the flag unless its
+ * `type` is `hidden`, ASCII case-insensitively. A hidden input is not visible
+ * content, so it does not commit the document to having a body.
+ */
+static int ar__clears_frameset(const ar_token *tok)
+{
+    static const char *const TAGS[] = {
+        "pre",    "listing", "li",      "dd",     "dt",     "button", "area",  "br",
+        "embed",  "img",     "hr",      "keygen", "wbr",    "select", "table", "textarea",
+        "iframe", "xmp",     "marquee", "object", "applet", 0};
+    ar_i32 i;
+
+    if (ar_span_is(tok->name, "input"))
+    {
+        for (i = 0; i < tok->attr_count; ++i)
+        {
+            if (ar_span_is(tok->attrs[i].name, "type"))
+            {
+                /* ar_span_is is already ASCII case-insensitive, which is what
+                   `type=hidDEN` needs and is easy to assume it is not. */
+                return !ar_span_is(tok->attrs[i].value, "hidden");
+            }
+        }
+        return 1; /* no type at all is a text field */
+    }
+    return ar__name_in(tok->name, TAGS);
+}
+
 static int ar__is_formatting(ar_span name)
 {
     /* `nobr` is one of these, which surprises people -- it is in the
@@ -2175,6 +2214,54 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             t->doc->errors++;
             return;
         }
+
+        /*
+         * `<frameset>` in the body, §13.2.6.4.7.
+         *
+         * A document may still become a frameset document after the body has
+         * opened, and it does so by throwing the body away: the second element
+         * on the stack is removed from its parent, everything below the root
+         * is popped, and the frameset takes the body's place. So
+         * `<div><frameset>` is a frameset document with no div in it, which
+         * looks like data loss and is what every browser does.
+         *
+         * The frameset-ok flag is what stops it once the document has
+         * committed to having content. It starts set and the tags in
+         * ar__clears_frameset put it out -- so `<br><frameset>` keeps the
+         * body and drops the frameset, while `<param><frameset>` does the
+         * opposite, and the difference between those two is a list rather
+         * than a principle.
+         *
+         * The fragment guard is the specification's own: a fragment has no
+         * body as the second element on the stack, so there is nothing to
+         * replace and the token is dropped.
+         */
+        if (ar_span_is(tok->name, "frameset"))
+        {
+            t->doc->errors++;
+
+            /*
+             * open[0] is the document and open[1] is the root html element, so
+             * the specification's "second element on the stack" is open[2] and
+             * "up to but not including the root html element" leaves two.
+             */
+            if (t->open_n < 3 || !ar__is(t, t->open[2], "body") || !t->frameset_ok)
+            {
+                return;
+            }
+            ar__detach(t, t->open[2]);
+            while (t->open_n > 2)
+            {
+                ar__pop(t);
+            }
+            ar__insert_element(t, tok, 0);
+            t->mode = M_IN_FRAMESET;
+            return;
+        }
+        if (ar__clears_frameset(tok))
+        {
+            t->frameset_ok = 0;
+        }
         if (ar_span_is(tok->name, "table"))
         {
             ar__close_p(t);
@@ -2194,8 +2281,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar_span_is(tok->name, "tr") || ar_span_is(tok->name, "tbody") ||
             ar_span_is(tok->name, "tfoot") || ar_span_is(tok->name, "thead") ||
             ar_span_is(tok->name, "caption") || ar_span_is(tok->name, "col") ||
-            ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "frame") ||
-            ar_span_is(tok->name, "frameset"))
+            ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "frame"))
         {
             t->doc->errors++;
             return;
@@ -3847,7 +3933,28 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_START)
         {
-            if (ar__is_void(tok->name))
+            /*
+             * The five void elements that are head content, and not the
+             * eleven others that merely happen to be void.
+             *
+             * This had been `ar__is_void`, which is the whole void list, so
+             * `<br>`, `<param>`, `<img>`, `<hr>` and the rest were inserted
+             * into the head and the body never opened. It looked harmless --
+             * a `<br>` in the head draws nothing either way -- until the
+             * frameset-ok flag arrived: `<br>` clears the flag in `in body`
+             * and clears nothing at all in `in head`, so `<br><frameset>`
+             * built a frameset document and threw the `<br>` into the head on
+             * the way. Six conformance cases, and the visible one is that
+             * `<param><frameset>` put a param in the head.
+             *
+             * `basefont` and `bgsound` are here because they really are head
+             * content, obsolete rather than absent, and `keygen` is not --
+             * which is why it moved out with the others.
+             */
+            static const char *const HEAD_VOID[] = {"base", "basefont", "bgsound",
+                                                    "link", "meta",     0};
+
+            if (ar__name_in(tok->name, HEAD_VOID))
             {
                 ar__insert_element(t, tok, 0);
                 ar__pop(t);
@@ -3929,6 +4036,11 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "body"))
         {
             ar__insert_element(t, tok, 0);
+
+            /* A document that says `<body>` has said what it is, so a
+               `<frameset>` after it is dropped rather than allowed to throw
+               the body away. `<body><frameset>` keeps the body. */
+            t->frameset_ok = 0;
             t->mode = M_IN_BODY;
             return;
         }

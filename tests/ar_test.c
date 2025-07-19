@@ -14590,6 +14590,75 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_the_frameset_ok_flag_decides_whether_a_body_survives(void)
+{
+    /*
+     * A `<frameset>` reaching `in body` throws the body away -- the second
+     * element on the stack is detached, everything below the root html element
+     * is popped, and the frameset takes the body's place. `<div><frameset>` is
+     * a frameset document with no div in it, which looks like data loss and is
+     * what every browser does.
+     *
+     * The frameset-ok flag is what stops it, and the list of tags that put it
+     * out reads arbitrarily because the specification names them one at a time
+     * rather than by category. `<br>` clears it and `<param>` does not; both
+     * are void, and the two documents differ in everything. `<input>` is the
+     * conditional one: a hidden input is not visible content and does not
+     * commit the document to having a body.
+     *
+     * The last two cases are here because of what fixing this found. `in head`
+     * had been accepting every void element as head content rather than the
+     * five that are, so `<br>` and `<param>` were inserted into the head and
+     * the body never opened -- which looked harmless, since a `<br>` in the
+     * head draws nothing, until it meant `<br>` cleared no flag and
+     * `<br><frameset>` built a frameset document with the `<br>` in its head.
+     *
+     * Expectations from html5lib's tests19.dat, tests6.dat and webkit01.dat.
+     */
+    static const char *const CASES[] = {"<div><frameset>",
+                                        "html(head frameset)",
+                                        "<param><frameset>",
+                                        "html(head frameset)",
+                                        "<input type=hidden><frameset>",
+                                        "html(head frameset)",
+                                        "<input type=hidDEN><frameset>",
+                                        "html(head frameset)",
+                                        "<div>x<frameset>",
+                                        "html(head body(div(#)))",
+                                        "<br><frameset>",
+                                        "html(head body(br))",
+                                        "<input><frameset>",
+                                        "html(head body(input))",
+                                        "<input type=button><frameset>",
+                                        "html(head body(input))",
+                                        "<hr><frameset>",
+                                        "html(head body(hr))",
+                                        "<body><frameset>",
+                                        "html(head body)",
+                                        "<br><p>a",
+                                        "html(head body(br p(#)))",
+                                        "<param><p>a",
+                                        "html(head body(param p(#)))",
+                                        "<meta><p>a",
+                                        "html(head(meta) body(p(#)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: frameset-ok decides whether a frameset replaces the body");
+}
+
 static void test_a_processing_instruction_target_is_narrower_than_a_name(void)
 {
     /*
@@ -15461,6 +15530,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_the_frameset_ok_flag_decides_whether_a_body_survives();
     test_a_processing_instruction_target_is_narrower_than_a_name();
     test_an_html_attribute_is_in_no_namespace();
 
