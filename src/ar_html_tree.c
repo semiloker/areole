@@ -3719,6 +3719,21 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         return;
     }
 
+    /*
+     * A `<?` construct the file ended in the middle of leaves no node.
+     *
+     * The tokenizer emits it -- the bogus comment state emits on EOF, and the
+     * tokenizer suite checks that it does -- and dropping it is this layer's
+     * job, the same division that makes a processing instruction a comment
+     * token there and a node of its own here. `<body><?start data` gets a body
+     * and nothing in it.
+     */
+    if (tok->kind == AR_TOK_COMMENT && tok->unterminated)
+    {
+        t->doc->errors++;
+        return;
+    }
+
     switch (t->mode)
     {
     case M_INITIAL:

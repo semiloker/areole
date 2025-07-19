@@ -12957,6 +12957,16 @@ static void ar__shape(const ar_doc *d, ar_i32 i, char *out, ar_u32 cap, ar_u32 *
         out[(*used)++] = '@';
         return;
     }
+    if (d->nodes[i].kind == AR_DOM_PI)
+    {
+        /* `?` rather than `!`, because which of the two a `<?...>` becomes is
+           decided by its target and that is the whole of what the checks
+           below are about. examples/12_html cannot spell the difference --
+           its browser twin renders a processing instruction as nothing at
+           all -- so the distinction is pinned here. */
+        out[(*used)++] = '?';
+        return;
+    }
     {
         ar_u32 k;
 
@@ -14580,6 +14590,74 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_a_processing_instruction_target_is_narrower_than_a_name(void)
+{
+    /*
+     * `?` is a processing instruction, `!` a comment, and nothing at all is a
+     * construct the file ended inside.
+     *
+     * Three rules, and each was wrong in a way no single lookup would have
+     * caught. A target is ASCII and narrower than an XML name -- `.` and `:`
+     * are both legal in a name and neither is legal here, which is exactly the
+     * pair a reader expects to be allowed. A target beginning `xml` in any
+     * case is reserved, and by prefix rather than by equality, so
+     * `<?xml-stylesheet>` is a comment and `<?xla->` is not.
+     *
+     * And the last one is a layering rule rather than a syntax rule: the
+     * tokenizer emits an unterminated `<?A` as a comment, because the bogus
+     * comment state emits on EOF and the tokenizer suite checks that it does,
+     * while the tree construction suite wants no node. The token carries the
+     * fact and the tree builder drops it. Both suites pass and neither is
+     * fudged.
+     *
+     * Expectations from html5lib's processing-instructions.dat.
+     */
+    static const char *const CASES[] = {"<p>a<?something?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?something good?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?xla-?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?_prefix?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?xml version=1.0?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?XML-stylesheet?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?data.v1?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?ns:tag?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?1st-place?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?a$b?>c",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?start",
+                                        "html(head body(p(#)))",
+                                        "<p>a<?start data",
+                                        "html(head body(p(#)))",
+                                        "<p>a<?",
+                                        "html(head body(p(#)))",
+                                        "<p>a<? ",
+                                        "html(head body(p(# !)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a processing instruction target is ASCII, unreserved and finished");
+}
+
 static void test_an_html_attribute_is_in_no_namespace(void)
 {
     /*
@@ -15383,6 +15461,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_a_processing_instruction_target_is_narrower_than_a_name();
     test_an_html_attribute_is_in_no_namespace();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);

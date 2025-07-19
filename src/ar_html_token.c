@@ -1006,14 +1006,38 @@ static void ar__comment(ar_html_tok *t, ar_token *out)
  * minus any whitespace at its start. `<?good?>` has empty data; `<?hey   x?>`
  * has `x`; `<?something ? >` has `? `.
  */
+/*
+ * A target is ASCII, and narrower than an XML name.
+ *
+ * XML allows `.` and `:` in a name and this does not, because a target is not
+ * an XML name here -- `<?data.v1>` and `<?namespace:tag>` are both comments.
+ * The `:` is the one worth stating: it looks like a namespace prefix and is
+ * exactly what a reader would expect to be allowed.
+ *
+ * Non-ASCII is out too, and out at the first byte rather than after decoding:
+ * a UTF-8 lead byte is >= 0x80, fails ar__h_alpha, and the target is refused.
+ * `<?٥-star>` and `<?🚀-launch>` are comments.
+ */
 static int ar__name_start(int c)
 {
-    return ar__h_alpha(c) || c == '_' || c == ':';
+    return ar__h_alpha(c) || c == '_';
 }
 
 static int ar__name_char(int c)
 {
-    return ar__h_alpha(c) || ar__h_digit(c) || c == '.' || c == '-' || c == '_' || c == ':';
+    return ar__h_alpha(c) || ar__h_digit(c) || c == '-' || c == '_';
+}
+
+/*
+ * A target beginning `xml` in any case is reserved and is not a target, so
+ * `<?xml version="1.0">` is the comment every browser makes of it rather than
+ * a node. It is a prefix rule, not an equality one: `<?xml-stylesheet>` is a
+ * comment and `<?xla->` is a processing instruction.
+ */
+static int ar__pi_reserved(const char *p, ar_u32 n)
+{
+    return n >= 3u && ar__h_lower(p[0]) == 'x' && ar__h_lower(p[1]) == 'm' &&
+           ar__h_lower(p[2]) == 'l';
 }
 
 static int ar__pi(ar_html_tok *t, ar_token *out)
@@ -1023,7 +1047,16 @@ static int ar__pi(ar_html_tok *t, ar_token *out)
     const char *dstart;
     const char *dend;
 
-    if (p >= t->end || !ar__name_start((unsigned char)*p))
+    if (p >= t->end)
+    {
+        /* `<?` and then the file ends. Nothing follows to make a target of and
+           nothing follows to terminate one, so the construct is dropped whole
+           -- the same answer §13.2.5.10 gives an unterminated tag, and the
+           reason `<? ` differs: there the space leaves these states before the
+           end of the file is reached, and an ordinary bogus comment emits. */
+        return -1;
+    }
+    if (!ar__name_start((unsigned char)*p))
     {
         return 0;
     }
@@ -1033,6 +1066,10 @@ static int ar__pi(ar_html_tok *t, ar_token *out)
         ++p;
     }
     if (p < t->end && !ar__h_space(*p) && *p != '>' && *p != '?')
+    {
+        return 0;
+    }
+    if (ar__pi_reserved(target, (ar_u32)(p - target)))
     {
         return 0;
     }
@@ -1048,12 +1085,16 @@ static int ar__pi(ar_html_tok *t, ar_token *out)
     {
         ++p;
     }
+    if (p >= t->end)
+    {
+        /* No `>` before the end of the file. Dropped whole rather than
+           emitted with whatever was read so far, so `<?start data` leaves no
+           node at all. */
+        return -1;
+    }
     dend = p;
     out->text = ar__clean(t, dstart, dend);
-    if (p < t->end)
-    {
-        ++p;
-    }
+    ++p;
     t->p = p;
     return 1;
 }
@@ -1772,14 +1813,21 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
             /* A processing instruction if the target is a name, and otherwise
                the bogus comment `<?` has always been -- which is what keeps
                `<?php` in a file served as HTML from eating the document. */
+            int pi;
+
             t->p = next + 1;
-            if (ar__pi(t, out))
+            pi = ar__pi(t, out);
+            if (pi > 0)
             {
                 return 1;
             }
             t->errors++;
             t->p = next;
             ar__bogus_comment(t, out);
+            if (pi < 0)
+            {
+                out->unterminated = 1;
+            }
             return 1;
         }
         /*
