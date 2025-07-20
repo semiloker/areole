@@ -14590,6 +14590,127 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_in_head_noscript_has_rules_of_its_own(void)
+{
+    /*
+     * With scripting disabled -- permanently, here -- `<noscript>` in the head
+     * parses its contents as ordinary head content rather than as raw text,
+     * and `in head noscript` is a real insertion mode with three answers, not
+     * one.
+     *
+     * The pair that shows it is `</p>` against `</br>`. Any other end tag is
+     * *ignored*, so the noscript stays open and a comment after it lands
+     * inside; `</br>` alone falls through to "anything else", which closes the
+     * noscript, opens a body, and puts a `<br>` in it. Treating every end tag
+     * as "anything else" gets the second right and the first wrong.
+     *
+     * And `<style>` is the one that needed a mode rather than a rule: `in
+     * head` leaves the insertion mode as `text` and records where to come back
+     * to, so restoring the mode afterwards unconditionally threw that away.
+     * The style's text never reached `text` mode, landed in the body, and grew
+     * a second body inside the head on the way out.
+     *
+     * Expectations from html5lib's noscript01.dat.
+     */
+    static const char *const CASES[] = {"<head><noscript><style>x</style></noscript>",
+                                        "html(head(noscript(style(#))) body)",
+                                        "<head><noscript><noframes>x</noframes></noscript>",
+                                        "html(head(noscript(noframes(#))) body)",
+                                        "<head><noscript></p><!--c--></noscript>",
+                                        "html(head(noscript(!)) body)",
+                                        "<head><noscript></br><!--c--></noscript>",
+                                        "html(head(noscript) body(br !))",
+                                        "<head><noscript><p>x</noscript>",
+                                        "html(head(noscript) body(p(#)))",
+                                        "<head><noscript><meta charset=utf-8></noscript>",
+                                        "html(head(noscript(meta)) body)",
+                                        "<p>a</br>b",
+                                        "html(head body(p(# br #)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: in head noscript ignores an end tag but not </br>");
+}
+
+static void test_a_second_html_or_body_merges_its_attributes(void)
+{
+    /*
+     * A document has one html element and one body element, and a second start
+     * tag for either does not make another -- but its attributes are not
+     * thrown away. Every name the first element does not already carry is
+     * added to it, and the first value wins on a clash.
+     *
+     * The corpus in examples/12_html cannot ask this: it compares tree shapes
+     * and both documents have the same shape whether the merge happened or
+     * not. It is the attributes or nothing.
+     *
+     * A node's attributes are a contiguous run in one table, so the run is
+     * copied to the end before it grows -- otherwise it would overwrite the
+     * next element's. The check below is written against a document whose body
+     * has attributes *and* something after it with attributes of its own,
+     * which is the case that catches a merge done in place.
+     */
+    ar_doc *d = ar__parse("<body class=a><p id=p><body class=b hidden>x");
+    ar_i32  body = -1;
+    ar_i32  para = -1;
+    ar_i32  k;
+    int     saw_class_a = 0;
+    int     saw_hidden = 0;
+    int     saw_class_b = 0;
+
+    for (k = 0; k < d->node_count; ++k)
+    {
+        if (d->nodes[k].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (ar_span_is(d->nodes[k].name, "body"))
+        {
+            body = k;
+        }
+        if (ar_span_is(d->nodes[k].name, "p"))
+        {
+            para = k;
+        }
+    }
+    CHECK(body >= 0 && para >= 0, "html: a second <body> makes no second body element");
+
+    for (k = 0; k < d->nodes[body].attr_count; ++k)
+    {
+        const ar_attr *a = &d->attrs[d->nodes[body].attr_first + k];
+
+        if (ar_span_is(a->name, "class") && ar_span_is(a->value, "a"))
+        {
+            saw_class_a = 1;
+        }
+        if (ar_span_is(a->name, "class") && ar_span_is(a->value, "b"))
+        {
+            saw_class_b = 1;
+        }
+        if (ar_span_is(a->name, "hidden"))
+        {
+            saw_hidden = 1;
+        }
+    }
+    CHECK(saw_hidden, "html: a second <body> adds the attributes the first lacks");
+    CHECK(saw_class_a && !saw_class_b, "html: the first value of a repeated attribute wins");
+    CHECK(d->nodes[para].attr_count == 1 &&
+              ar_span_is(d->attrs[d->nodes[para].attr_first].name, "id"),
+          "html: growing the body's attributes does not overwrite the next element's");
+}
+
 static void test_pre_swallows_one_newline(void)
 {
     /*
@@ -15625,6 +15746,8 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_in_head_noscript_has_rules_of_its_own();
+    test_a_second_html_or_body_merges_its_attributes();
     test_pre_swallows_one_newline();
     test_the_frameset_ok_flag_decides_whether_a_body_survives();
     test_a_processing_instruction_target_is_narrower_than_a_name();
