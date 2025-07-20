@@ -212,6 +212,16 @@ static const struct
     {"frameset-after-body-tag", "<body><frameset>"},
     {"frameset-after-hidden-input", "<input type=hidden><frameset>"},
     {"br-is-not-head-content", "<br><p>a"},
+
+    /* A newline straight after <pre>, <listing> or <textarea> is swallowed,
+       so these have no text node at all -- which is the whole reason the rule
+       exists, since an author's opening tag sits on its own line. */
+    {"pre-eats-one-newline", "<pre>\n</pre>"},
+    {"pre-eats-only-one", "<pre>\n\n</pre>"},
+    {"pre-cr-is-a-newline", "<pre>\r</pre>"},
+    {"listing-eats-one-newline", "<listing>\n</listing>"},
+    {"textarea-eats-one-newline", "<textarea>\n</textarea>"},
+    {"pre-keeps-a-later-newline", "<pre>x\n</pre>"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
@@ -415,8 +425,17 @@ static int run_dump(void)
     return 0;
 }
 
-/* The source, as a JavaScript string literal. Only three characters need
-   escaping for that, and the corpus contains all three. */
+/*
+ * The source, as a JavaScript string literal. Four characters need escaping
+ * for that, and the corpus contains all four.
+ *
+ * The carriage return is the one that bites. It is a line terminator in
+ * JavaScript exactly as a newline is, so writing it raw does not corrupt one
+ * case -- it ends the string literal, breaks the script, and the browser
+ * produces *no* dump at all. The comparison then reports every case as missing
+ * from the browser, which reads like the harness flakiness this tool already
+ * has and is not.
+ */
 static void emit_js_string(const char *s)
 {
     while (*s)
@@ -430,6 +449,11 @@ static void emit_js_string(const char *s)
         {
             putchar('\\');
             putchar('n');
+        }
+        else if (*s == '\r')
+        {
+            putchar('\\');
+            putchar('r');
         }
         else
         {

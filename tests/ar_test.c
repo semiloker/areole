@@ -14590,6 +14590,101 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_pre_swallows_one_newline(void)
+{
+    /*
+     * `<pre>`, `<listing>` and `<textarea>` ignore a single line feed
+     * immediately after the start tag, because an author's opening tag sits on
+     * its own line and nobody means the blank line it would otherwise produce.
+     *
+     * The rule is about *the next token* -- so it is consumed in the parse
+     * loop, where the next token is, rather than in an insertion mode. Putting
+     * it in `in body` would have missed `<textarea>` entirely, whose content
+     * arrives in `text` mode.
+     *
+     * One line feed, and only a line feed. `<pre>\r` is already `\n` by the
+     * time it arrives, since §13.2.3.5 is applied where characters are
+     * produced -- but `&#x000D;` is decoded *after* the input stream is
+     * preprocessed, so it is a real carriage return in the tree and must
+     * survive. A first attempt normalised carriage returns again in the text
+     * store and broke that one case while fixing eleven.
+     *
+     * The shapes are from html5lib's tests3.dat and plain-text-unsafe.dat; the
+     * two `&#x` cases carry their text, because the shape cannot tell one
+     * character from another.
+     */
+    static const char *const CASES[] = {"<pre>\n</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>\nfoo</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<pre>\n\n</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<pre>\r</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>\r\n</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>x\n</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<listing>\n</listing>",
+                                        "html(head body(listing))",
+                                        "<textarea>\n</textarea>",
+                                        "html(head body(textarea))",
+                                        "<div>\n</div>",
+                                        "html(head body(div(#)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: pre, listing and textarea swallow one leading newline");
+
+    /* A reference is decoded after the input stream is preprocessed, so
+       `&#x0a;` is an ordinary line feed the rule above does drop, and
+       `&#x0d;` is a carriage return that survives into the tree. */
+    d = ar__parse("<pre>&#x0a;&#x0a;A</pre>");
+    {
+        ar_i32 pre = -1;
+        ar_i32 k;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[k].name, "pre"))
+            {
+                pre = k;
+            }
+        }
+        CHECK(pre >= 0 && d->nodes[d->nodes[pre].first_child].text.n == 2,
+              "html: a decoded line feed after <pre> is dropped like a literal one");
+    }
+
+    d = ar__parse("FOO&#x000D;ZOO");
+    {
+        ar_i32 k;
+        int    saw_cr = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT && d->nodes[k].text.n &&
+                memchr(d->nodes[k].text.p, '\r', d->nodes[k].text.n))
+            {
+                saw_cr = 1;
+            }
+        }
+        CHECK(saw_cr, "html: a decoded carriage return is not preprocessed away");
+    }
+}
+
 static void test_the_frameset_ok_flag_decides_whether_a_body_survives(void)
 {
     /*
@@ -15530,6 +15625,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_pre_swallows_one_newline();
     test_the_frameset_ok_flag_decides_whether_a_body_survives();
     test_a_processing_instruction_target_is_narrower_than_a_name();
     test_an_html_attribute_is_in_no_namespace();
