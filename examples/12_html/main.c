@@ -242,6 +242,17 @@ static const struct
     {"quirks-table-nests-in-p", "<p>a<table><tr><td>b</table>"},
     {"standards-table-closes-p", "<!DOCTYPE html><p>a<table><tr><td>b</table>"},
     {"space-before-the-document", " \n x"},
+
+    /* The column group is a real insertion mode now, so a stray <col> gets a
+       group the way a stray <td> gets a row, and text inside a group is
+       fostered out rather than lost. */
+    {"col-gets-a-colgroup", "<table><col><col></table>"},
+    {"colgroup-text-fostered", "<table><colgroup>foo</table>"},
+    {"colgroup-closed-by-a-row", "<table><colgroup><col><tr><td>x</table>"},
+    {"caption-closed-by-a-cell", "<table><caption>c<td>x</table>"},
+    {"caption-closed-by-a-row", "<table><caption>c<tr><td>x</table>"},
+    {"hidden-input-stays-in-a-table", "<table><input type=hidden></table>"},
+    {"shown-input-is-fostered", "<table><input type=text></table>"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
