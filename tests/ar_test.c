@@ -14590,6 +14590,68 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_quirks_mode_changes_the_tree_not_only_the_layout(void)
+{
+    /*
+     * The one place a doctype changes tree construction rather than layout: in
+     * quirks mode a `<table>` does not close an open paragraph, so
+     * `<p><table>` nests the table inside the paragraph.
+     *
+     * Not a legacy corner. A document with no doctype at all is in quirks
+     * mode, so this is what happens to any page that forgot its first line --
+     * which is why all three quirks01 cases were about this one rule and not
+     * about the doctype table, which was already right.
+     *
+     * The last two are the whitespace rule that came out of the same file.
+     * `initial`, `before html` and `before head` ignore a whitespace character
+     * token and hand anything else on; the specification's tokens are one
+     * character each and areole's are whole runs, so ` a ` before a body was
+     * being kept whole where a browser drops the leading space. Trimming
+     * happens in the parse loop, before the mode is asked.
+     */
+    static const char *const CASES[] = {"<p>a<table><tr><td>b</table>",
+                                        "html(head body(p(# table(tbody(tr(td(#)))))))",
+                                        "<!DOCTYPE html><p>a<table><tr><td>b</table>",
+                                        "html(head body(p(#) table(tbody(tr(td(#))))))",
+                                        "<!DOCTYPE html PUBLIC \"html\"><p>a<table>",
+                                        "html(head body(p(# table)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: in quirks mode a table does not close a paragraph");
+
+    /* Leading whitespace before the document starts is dropped; whitespace
+       after it is not. */
+    d = ar__parse(" \n a ");
+    {
+        ar_i32 k;
+        ar_i32 text = -1;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT)
+            {
+                text = k;
+            }
+        }
+        CHECK(text >= 0 && d->nodes[text].text.n == 2 && d->nodes[text].text.p[0] == 'a',
+              "html: whitespace before the document starts is ignored, the rest is not");
+    }
+}
+
 static void test_in_head_noscript_has_rules_of_its_own(void)
 {
     /*
@@ -15746,6 +15808,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_quirks_mode_changes_the_tree_not_only_the_layout();
     test_in_head_noscript_has_rules_of_its_own();
     test_a_second_html_or_body_merges_its_attributes();
     test_pre_swallows_one_newline();
