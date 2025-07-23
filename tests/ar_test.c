@@ -14590,6 +14590,68 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_a_select_is_an_insertion_mode(void)
+{
+    /*
+     * `in select` and `in select in table` were the last two named insertion
+     * modes with nothing behind them -- `<select>` was an ordinary element in
+     * `in body`, and the comment in ar__reset_mode said so.
+     *
+     * What the mode buys is the short list of tags that mean something else
+     * inside a select. `<hr>` is a separator *between* groups, so it closes an
+     * open option and optgroup before it lands: `<select><option><hr>` is two
+     * siblings, not a rule inside the option. `<input>` and a second
+     * `<select>` close the select rather than nesting. And in a table the mode
+     * is `in select in table`, where a `<tr>` closes the select and belongs to
+     * the table around it.
+     *
+     * The suite that defines this is newer than the version areole was
+     * written against, and the difference is the point: the select parser
+     * relaxation means a `<div>` inside a select is *kept*, where the older
+     * rule dropped everything it did not recognise. Formatting carries in with
+     * it, so `<select><div><i></div><option>` reopens the italic around the
+     * option. Edge agrees with all of it -- the corpus in examples/12_html
+     * checks the same eight documents against the browser.
+     *
+     * What is not here, named rather than hidden: `<selectedcontent>` mirrors
+     * the selected option's text into itself, which is four cases in
+     * webkit02.dat and a feature rather than a rule.
+     */
+    static const char *const CASES[] = {"<select><option>a<hr><option>b</select>",
+                                        "html(head body(select(option(#) hr option(#))))",
+                                        "<select><optgroup><option>a<hr></select>",
+                                        "html(head body(select(optgroup(option(#)) hr)))",
+                                        "<select><div>d</div><option>a</select>",
+                                        "html(head body(select(div(#) option(#))))",
+                                        "<select><option>a<input>x",
+                                        "html(head body(select(option(#)) input #))",
+                                        "<select><option>a<select><option>b",
+                                        "html(head body(select(option(#)) option(#)))",
+                                        "<table><tr><td><select><option>a<tr><td>b</table>",
+                                        "html(head body(table(tbody(tr(td(select(option(#)))) "
+                                        "tr(td(#))))))",
+                                        "<table><select><option>a</select></table>",
+                                        "html(head body(select(option(#)) table))",
+                                        "<select><div><i></div><option>o",
+                                        "html(head body(select(div(i) i(option(#)))))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a select is an insertion mode, and a relaxed one");
+}
+
 static void test_the_table_modes_need_a_table_to_act_on(void)
 {
     /*
@@ -15866,6 +15928,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_a_select_is_an_insertion_mode();
     test_the_table_modes_need_a_table_to_act_on();
     test_quirks_mode_changes_the_tree_not_only_the_layout();
     test_in_head_noscript_has_rules_of_its_own();

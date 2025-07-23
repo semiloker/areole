@@ -133,6 +133,8 @@ enum
     M_AFTER_BODY,
     M_AFTER_AFTER_BODY,
     M_IN_HEAD_NOSCRIPT,
+    M_IN_SELECT,
+    M_IN_SELECT_IN_TABLE,
     M_IN_TEMPLATE,
     M_IN_FRAMESET,
 
@@ -588,6 +590,34 @@ static int ar__in_table_scope(const ar__tree *t, const char *const *tags)
         }
         if (ar__is(t, t->open[i], "html") || ar__is(t, t->open[i], "table") ||
             ar__is(t, t->open[i], "template"))
+        {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+/*
+ * "In select scope", §13.2.4.4, which is the inverse of every other scope:
+ * instead of listing what stops the walk it lists the two things that do not.
+ * Only `optgroup` and `option` may stand between the current node and the
+ * select; anything else means there is no select in scope.
+ */
+static int ar__in_select_scope(const ar__tree *t)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        if (t->doc->nodes[t->open[i]].ns != AR_NS_HTML)
+        {
+            return 0;
+        }
+        if (ar__is(t, t->open[i], "select"))
+        {
+            return 1;
+        }
+        if (!ar__is(t, t->open[i], "optgroup") && !ar__is(t, t->open[i], "option"))
         {
             return 0;
         }
@@ -2221,11 +2251,33 @@ static void ar__reset_mode(ar__tree *t)
         {
             continue;
         }
-        /* The specification checks for a `select` first and areole has no
-           `in select` mode to name -- `<select>` is handled inside `in
-           body`. A select on the stack therefore falls through to whatever
-           encloses it, which is the right answer for every case in the
-           suite and is a real gap for none of them. */
+        /*
+         * A select is checked first, and which select mode it resolves to
+         * depends on what is under it: a select standing inside a table
+         * resumes `in select in table`, so a table part after it still closes
+         * the select rather than being dropped. Walking down for a table is
+         * the specification's own step 4, and it stops at a template because
+         * a template's contents are their own document.
+         */
+        if (ar__is(t, node, "select"))
+        {
+            ar_i32 k;
+
+            t->mode = M_IN_SELECT;
+            for (k = i - 1; k >= 1; --k)
+            {
+                if (ar__is(t, t->open[k], "template"))
+                {
+                    break;
+                }
+                if (ar__is(t, t->open[k], "table"))
+                {
+                    t->mode = M_IN_SELECT_IN_TABLE;
+                    break;
+                }
+            }
+            return;
+        }
         if ((ar__is(t, node, "td") || ar__is(t, node, "th")) && !last)
         {
             t->mode = M_IN_CELL;
@@ -2566,6 +2618,25 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar__insert_element(t, tok, 1);
             return;
         }
+        /*
+         * `<select>` opens a mode of its own, and which one depends on where
+         * it stands: inside a table it is `in select in table`, so a stray
+         * `<tr>` afterwards closes the select and belongs to the table rather
+         * than being dropped.
+         */
+        if (ar_span_is(tok->name, "select"))
+        {
+            int in_table = t->mode == M_IN_TABLE || t->mode == M_IN_CAPTION ||
+                           t->mode == M_IN_TABLE_BODY || t->mode == M_IN_ROW ||
+                           t->mode == M_IN_CELL;
+
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 1);
+            t->frameset_ok = 0;
+            t->mode = in_table ? M_IN_SELECT_IN_TABLE : M_IN_SELECT;
+            return;
+        }
+
         /* And so do an option, an optgroup and a button. */
         if (ar_span_is(tok->name, "option") || ar_span_is(tok->name, "optgroup"))
         {
@@ -3188,6 +3259,228 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         ar__in_body(t, tok);
         return;
     }
+}
+
+/*
+ * `in select`, §13.2.6.4.16, and `in select in table`, §13.2.6.4.17.
+ *
+ * These were the last two named insertion modes with nothing behind them.
+ * `<select>` was handled as an ordinary element in `in body`, and the comment
+ * in ar__reset_mode said so: "areole has no `in select` mode to name".
+ *
+ * The mode exists because a select is a closed world. Almost nothing may be
+ * inside one -- an option, an optgroup, an `<hr>` between groups, and since
+ * the customizable-select work a `<button>` holding a `<selectedcontent>` --
+ * and *everything else is dropped* rather than nested. That is the part an
+ * ordinary element cannot express: `<select><div>x` keeps the text and throws
+ * the div away, and `<select><input>` closes the select entirely rather than
+ * putting a field inside it.
+ *
+ * `in select in table` is the same mode with one extra rule: a table part
+ * closes the select first. A select really can contain a stray `<tr>` in
+ * source and mean the row to belong to the table around it.
+ */
+static void ar__select_pop_out(ar__tree *t)
+{
+    ar__pop_until(t, "select");
+    ar__reset_mode(t);
+}
+
+static void ar__in_select(ar__tree *t, const ar_token *tok)
+{
+    if (tok->kind == AR_TOK_DOCTYPE)
+    {
+        t->doc->errors++;
+        return;
+    }
+    if (tok->kind == AR_TOK_START)
+    {
+        if (ar_span_is(tok->name, "html"))
+        {
+            ar__in_body(t, tok);
+            return;
+        }
+        if (ar_span_is(tok->name, "option"))
+        {
+            if (ar__is(t, ar__current(t), "option"))
+            {
+                ar__pop(t);
+            }
+            /* A select is ordinary content now, so formatting carries
+               into it: `<select><div><i></div><option>` reopens the
+               italic around the option. */
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 0);
+            return;
+        }
+        if (ar_span_is(tok->name, "optgroup") || ar_span_is(tok->name, "hr"))
+        {
+            /*
+             * An `<hr>` is a separator *between* groups, so it closes an open
+             * option and an open optgroup before it lands -- which is what
+             * makes `<select><option><hr>` two siblings rather than a rule
+             * inside the option.
+             */
+            if (ar__is(t, ar__current(t), "option"))
+            {
+                ar__pop(t);
+            }
+            if (ar__is(t, ar__current(t), "optgroup"))
+            {
+                ar__pop(t);
+            }
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 0);
+            if (ar_span_is(tok->name, "hr"))
+            {
+                ar__pop(t);
+            }
+            return;
+        }
+        if (ar_span_is(tok->name, "select"))
+        {
+            /* A second `<select>` closes the first rather than nesting, which
+               is why a page with an unclosed select does not swallow the rest
+               of its form. */
+            t->doc->errors++;
+            if (ar__in_scope(t, "select", 0))
+            {
+                ar__select_pop_out(t);
+            }
+            return;
+        }
+        /* `<keygen>` used to close a select and no longer does: the
+           relaxation that let a `<div>` live inside one let it in too.
+           `<input>` and `<textarea>` still close it. */
+        if (ar_span_is(tok->name, "input") || ar_span_is(tok->name, "textarea"))
+        {
+            t->doc->errors++;
+            if (!ar__in_select_scope(t))
+            {
+                return;
+            }
+            ar__select_pop_out(t);
+            ar__process(t, tok);
+            return;
+        }
+        if (ar_span_is(tok->name, "script") || ar_span_is(tok->name, "template"))
+        {
+            ar_i32 back = t->mode;
+
+            t->mode = M_IN_HEAD;
+            ar__process_mode(t, tok);
+            /* A script is raw text, so `in head` left the mode as
+               `text` and recorded where to return. Restoring the mode
+               over that loses the script's contents and the select
+               with them -- the same trap as `in head noscript`. */
+            if (t->mode == M_TEXT)
+            {
+                t->original_mode = back;
+            }
+            else if (t->mode == M_IN_HEAD)
+            {
+                t->mode = back;
+            }
+            return;
+        }
+        ar__in_body(t, tok);
+        return;
+    }
+    if (tok->kind == AR_TOK_END)
+    {
+        if (ar_span_is(tok->name, "optgroup"))
+        {
+            if (ar__is(t, ar__current(t), "option") && t->open_n >= 2 &&
+                ar__is(t, t->open[t->open_n - 2], "optgroup"))
+            {
+                ar__pop(t);
+            }
+            if (ar__is(t, ar__current(t), "optgroup"))
+            {
+                ar__pop(t);
+                return;
+            }
+            t->doc->errors++;
+            return;
+        }
+        if (ar_span_is(tok->name, "option"))
+        {
+            if (ar__is(t, ar__current(t), "option"))
+            {
+                ar__pop(t);
+                return;
+            }
+            t->doc->errors++;
+            return;
+        }
+        if (ar_span_is(tok->name, "select"))
+        {
+            if (!ar__in_select_scope(t))
+            {
+                t->doc->errors++; /* fragment case */
+                return;
+            }
+            ar__select_pop_out(t);
+            return;
+        }
+        if (ar_span_is(tok->name, "template"))
+        {
+            ar_i32 back = t->mode;
+
+            t->mode = M_IN_HEAD;
+            ar__process_mode(t, tok);
+            /* A script is raw text, so `in head` left the mode as
+               `text` and recorded where to return. Restoring the mode
+               over that loses the script's contents and the select
+               with them -- the same trap as `in head noscript`. */
+            if (t->mode == M_TEXT)
+            {
+                t->original_mode = back;
+            }
+            else if (t->mode == M_IN_HEAD)
+            {
+                t->mode = back;
+            }
+            return;
+        }
+        ar__in_body(t, tok);
+        return;
+    }
+    ar__in_body(t, tok);
+}
+
+static void ar__in_select_in_table(ar__tree *t, const ar_token *tok)
+{
+    static const char *const PARTS[] = {"caption", "table", "tbody", "tfoot", "thead",
+                                        "tr",      "td",    "th",    0};
+
+    if ((tok->kind == AR_TOK_START || tok->kind == AR_TOK_END) && ar__name_in(tok->name, PARTS))
+    {
+        t->doc->errors++;
+        if (tok->kind == AR_TOK_END)
+        {
+            char        name[16];
+            ar_u32      n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+            ar_u32      k;
+            const char *one[2];
+
+            for (k = 0; k < n; ++k)
+            {
+                name[k] = tok->name.p[k];
+            }
+            name[n] = 0;
+            one[0] = name;
+            one[1] = 0;
+            if (!ar__in_table_scope(t, one))
+            {
+                return;
+            }
+        }
+        ar__select_pop_out(t);
+        ar__process(t, tok);
+        return;
+    }
+    ar__in_select(t, tok);
 }
 
 /*
@@ -4514,6 +4807,12 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         return;
     case M_IN_COLUMN_GROUP:
         ar__in_column_group(t, tok);
+        return;
+    case M_IN_SELECT:
+        ar__in_select(t, tok);
+        return;
+    case M_IN_SELECT_IN_TABLE:
+        ar__in_select_in_table(t, tok);
         return;
     case M_IN_TABLE_BODY:
         ar__in_table_body(t, tok);
