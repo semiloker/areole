@@ -12994,6 +12994,73 @@ static void ar__shape(const ar_doc *d, ar_i32 i, char *out, ar_u32 cap, ar_u32 *
     }
 }
 
+/*
+ * A fragment's shape, with the namespace spelled out.
+ *
+ * Namespaces are the whole question these checks ask -- whether a `<figure>`
+ * parsed against `math ms` is an HTML figure or a MathML one -- and the shape
+ * helper above prints a name and no namespace, so the two answers would look
+ * identical. `svg:` and `math:` are printed here and nothing is printed for
+ * HTML, which is the common case.
+ *
+ * The context is written the way html5lib writes it: `math ms`, `svg svg`, or
+ * a bare name for HTML.
+ */
+static const char *ar__fragment_shape(const char *src, const char *ctx)
+{
+    static char buf[1024];
+    ar_u32      used = 0;
+    ar_ns       ns = AR_NS_HTML;
+    const char *name = ctx;
+    ar_i32      k;
+
+    if (strncmp(ctx, "math ", 5) == 0)
+    {
+        ns = AR_NS_MATHML;
+        name = ctx + 5;
+    }
+    else if (strncmp(ctx, "svg ", 4) == 0)
+    {
+        ns = AR_NS_SVG;
+        name = ctx + 4;
+    }
+
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse_fragment(&g_doc, src, (ar_u32)strlen(src), name, ns, g_tree_scratch,
+                           (ar_u32)sizeof g_tree_scratch);
+
+    for (k = g_doc.nodes[ar_dom_root(&g_doc)].first_child; k >= 0; k = g_doc.nodes[k].next_sibling)
+    {
+        if (g_doc.nodes[k].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (used && used + 1 < sizeof buf)
+        {
+            buf[used++] = ' ';
+        }
+        if (g_doc.nodes[k].ns == AR_NS_SVG)
+        {
+            memcpy(buf + used, "svg:", 4);
+            used += 4;
+        }
+        else if (g_doc.nodes[k].ns == AR_NS_MATHML)
+        {
+            memcpy(buf + used, "math:", 5);
+            used += 5;
+        }
+        ar__shape(&g_doc, k, buf, (ar_u32)sizeof buf, &used);
+    }
+    buf[used] = 0;
+    return buf;
+}
+
 static const char *ar__tree_shape(const char *src)
 {
     static char buf[1024];
@@ -14590,6 +14657,65 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_a_context_element_can_be_an_integration_point(void)
+{
+    /*
+     * A fragment's context element is never pushed onto the stack -- there is
+     * a synthetic html root and nothing else -- so every question the
+     * dispatcher asks about "the adjusted current node" has to be asked of the
+     * context element instead.
+     *
+     * Being in a foreign namespace was enough to answer "foreign" for every
+     * token, and it is not: a MathML text integration point is exactly where
+     * HTML resumes. `<figure>` parsed against `math ms` is an HTML figure and
+     * came out as `<math figure>`. The suite says so five times, once per
+     * MathML text element, which is what made it obvious that the fault was in
+     * the context and not in any one element.
+     *
+     * `annotation-xml` is deliberately not an integration point here: whether
+     * it is one depends on its `encoding` attribute, and a context element is
+     * a name with no attributes to read.
+     *
+     * Expectations from html5lib's foreign-fragment.dat.
+     */
+    static const char *const CASES[] = {"<figure></figure>",
+                                        "math ms",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math mi",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math mtext",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math math",
+                                        "math:figure",
+                                        "<figure></figure>",
+                                        "svg desc",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "svg svg",
+                                        "svg:figure",
+                                        0,
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 3)
+    {
+        const char *got = ar__fragment_shape(CASES[i], CASES[i + 1]);
+
+        if (strcmp(got, CASES[i + 2]) != 0)
+        {
+            printf("      %s in %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1],
+                   CASES[i + 2], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a context element that is an integration point resumes HTML");
+}
+
 static void test_a_select_is_an_insertion_mode(void)
 {
     /*
@@ -15928,6 +16054,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_a_context_element_can_be_an_integration_point();
     test_a_select_is_an_insertion_mode();
     test_the_table_modes_need_a_table_to_act_on();
     test_quirks_mode_changes_the_tree_not_only_the_layout();

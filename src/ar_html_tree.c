@@ -4162,6 +4162,27 @@ static int ar__html_point(const ar__tree *t, ar_i32 node)
  * Asked before every token, which is why it is written as one expression
  * rather than a walk: the answer for an ordinary document is the first line.
  */
+/* The same two questions asked of a context element, which is a name and a
+   namespace rather than a node. A fragment's context element is never on the
+   stack, so there is nothing to point `ar__math_text_point` at. */
+static int ar__ctx_math_text_point(const ar__tree *t)
+{
+    return t->ctx_ns == AR_NS_MATHML &&
+           (ar__lit_is(t->ctx, "mi") || ar__lit_is(t->ctx, "mo") || ar__lit_is(t->ctx, "mn") ||
+            ar__lit_is(t->ctx, "ms") || ar__lit_is(t->ctx, "mtext"));
+}
+
+static int ar__ctx_html_point(const ar__tree *t)
+{
+    /*
+     * `annotation-xml` is deliberately absent: whether it is an HTML
+     * integration point depends on its `encoding` attribute, and a context
+     * element is a name with no attributes to read.
+     */
+    return t->ctx_ns == AR_NS_SVG && (ar__lit_is(t->ctx, "foreignObject") ||
+                                      ar__lit_is(t->ctx, "desc") || ar__lit_is(t->ctx, "title"));
+}
+
 static int ar__use_insertion_mode(const ar__tree *t, const ar_token *tok)
 {
     ar_i32 cur = ar__current(t);
@@ -4171,10 +4192,38 @@ static int ar__use_insertion_mode(const ar__tree *t, const ar_token *tok)
      * on the stack, it is the context element. That is what makes
      * `<path/>` with an `svg svg` context an SVG element rather than an
      * unknown HTML one.
+     *
+     * And an integration point is still an integration point when it is the
+     * context element. `<figure>` parsed against `math ms` is an *HTML*
+     * figure, because a text integration point is where HTML resumes -- the
+     * short-circuit here used to answer "foreign" for every non-HTML context
+     * and made it `<math figure>`. Twenty-one cases, all in one file, and the
+     * repeated `<figure></figure>` against five different MathML contexts is
+     * the suite saying so five times.
      */
     if (t->ctx && t->open_n <= 2 && t->ctx_ns != AR_NS_HTML)
     {
-        return tok->kind == AR_TOK_EOF;
+        if (tok->kind == AR_TOK_EOF)
+        {
+            return 1;
+        }
+        if (ar__ctx_math_text_point(t))
+        {
+            if (tok->kind == AR_TOK_TEXT)
+            {
+                return 1;
+            }
+            if (tok->kind == AR_TOK_START && !ar_span_is(tok->name, "mglyph") &&
+                !ar_span_is(tok->name, "malignmark"))
+            {
+                return 1;
+            }
+        }
+        if (ar__ctx_html_point(t) && (tok->kind == AR_TOK_START || tok->kind == AR_TOK_TEXT))
+        {
+            return 1;
+        }
+        return 0;
     }
     if (t->open_n <= 1 || ar__is_html(t, cur) || tok->kind == AR_TOK_EOF)
     {
