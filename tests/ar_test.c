@@ -14657,6 +14657,74 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_a_frameset_document_and_the_two_end_tags_that_break_out(void)
+{
+    /*
+     * `</br>` and `</p>` are the only two end tags that break out of foreign
+     * content, and they break out the way a start tag does: pop until the
+     * current node is HTML or an integration point, then reprocess. The
+     * general end-tag loop cannot produce that -- it stops at the first HTML
+     * element *below* the foreign one and processes the token there, leaving
+     * the svg open, so `<svg></p>` put the paragraph inside the svg.
+     *
+     * The frameset cases are two rules about whole runs against single
+     * characters. A frameset keeps the whitespace between its frames and drops
+     * the words, so `<frameset> te st` has two spaces in it and no letters --
+     * truncating at the first non-whitespace character keeps the leading space
+     * and loses the middle one, which is the version that looks right. And
+     * after `</html>` a comment belongs to the *document*, beside the html
+     * element rather than inside it.
+     *
+     * Expectations from html5lib's tests26.dat, tests2.dat and tests18.dat.
+     */
+    static const char *const CASES[] = {"<svg></p><foo>",
+                                        "html(head body(svg p foo))",
+                                        "<svg></br><foo>",
+                                        "html(head body(svg br foo))",
+                                        "<math></p><foo>",
+                                        "html(head body(math p foo))",
+                                        "<frameset> te st",
+                                        "html(head frameset(#))",
+                                        "<frameset></frameset><noframes>abc",
+                                        "html(head frameset noframes(#))",
+                                        "<body>x</body>\n   <!--c-->",
+                                        "html(head body(#) !)",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: </br> and </p> break out, and a frameset keeps its spaces");
+
+    /* The comment after `</html>` is a child of the document, which the shape
+       helper cannot show because it starts at the html element. */
+    d = ar__parse("<frameset></frameset></html><!--c-->");
+    {
+        ar_i32 k;
+        int    on_document = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_COMMENT && d->nodes[k].parent == 0)
+            {
+                on_document = 1;
+            }
+        }
+        CHECK(on_document, "html: a comment after </html> is a child of the document");
+    }
+}
+
 static void test_a_context_element_can_be_an_integration_point(void)
 {
     /*
@@ -16054,6 +16122,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_a_frameset_document_and_the_two_end_tags_that_break_out();
     test_a_context_element_can_be_an_integration_point();
     test_a_select_is_an_insertion_mode();
     test_the_table_modes_need_a_table_to_act_on();
