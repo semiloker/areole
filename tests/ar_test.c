@@ -14657,6 +14657,86 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_noahs_ark_and_the_rest_of_the_table_tail(void)
+{
+    /*
+     * Four rules that between them are the last of the tree-construction gap,
+     * and three of the four are the same shape as everything else in this
+     * release: the specification acts on one character or one node and areole
+     * acts on a run or a parent.
+     *
+     * **Noah's Ark.** Three entries of a kind on the active formatting list
+     * and no more. The stack is untouched -- all four `<b>` in
+     * `<p><b><b><b><b><p>x` really are nested -- so what the clause decides is
+     * how many *reopen* after the paragraph. It exists because a page that
+     * opens the same tag in a loop would otherwise nest a thousand deep, and
+     * "of a kind" means name, namespace and attributes, so four `<b>` with
+     * different ids are four entries.
+     *
+     * **A form in a table** is inserted where it stands rather than fostered,
+     * and popped straight off, so it holds nothing and the rows that follow
+     * are still the table's. A second one is ignored because the form pointer
+     * is set. A form is the one element that may not nest and a table is where
+     * authors put one by accident most often.
+     *
+     * **Fostered text joins what is already before the table.** The
+     * specification appends to "the node immediately before the insertion
+     * position", which when foster parenting is the sibling before the table
+     * and not the parent's last child -- that is past the table.
+     * `A<table><tr> B</tr> B</table>` was three text nodes where every browser
+     * has one.
+     *
+     * **The head keeps the whitespace before the body opens**, and only that.
+     * `</style> --> x` puts the space in the head and the rest in the body.
+     */
+    static const char *const CASES[] = {"<p><b><b><b><b><p>x",
+                                        "html(head body(p(b(b(b(b)))) p(b(b(b(#))))))",
+                                        "<p><b id=a><b id=b><b id=c><b id=d><p>x",
+                                        "html(head body(p(b(b(b(b)))) p(b(b(b(b(#)))))))",
+                                        "<table><form><tr><td>x</table>",
+                                        "html(head body(table(form tbody(tr(td(#))))))",
+                                        "<table><form><form><tr><td>x</table>",
+                                        "html(head body(table(form tbody(tr(td(#))))))",
+                                        "<table><li><li></table>",
+                                        "html(head body(li li table))",
+                                        "<style>s</style> --> x",
+                                        "html(head(style(#) #) body(#))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: Noah's Ark, a form in a table, and the head's whitespace");
+
+    /* Fostered text is one node, which the shape cannot show -- `#` is `#`
+       however many nodes are behind it. */
+    d = ar__parse("A<table><tr> B</tr> B</table>");
+    {
+        ar_i32 k;
+        ar_i32 texts = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT)
+            {
+                ++texts;
+            }
+        }
+        CHECK(texts == 1, "html: fostered text joins the text already before the table");
+    }
+}
+
 static void test_a_frameset_document_and_the_two_end_tags_that_break_out(void)
 {
     /*
@@ -16122,6 +16202,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_noahs_ark_and_the_rest_of_the_table_tail();
     test_a_frameset_document_and_the_two_end_tags_that_break_out();
     test_a_context_element_can_be_an_integration_point();
     test_a_select_is_an_insertion_mode();

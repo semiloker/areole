@@ -1026,6 +1026,26 @@ static void ar__insert_text_ex(ar__tree *t, ar_span s, int foster, int rule)
             return;
         }
     }
+    else if (before >= 0)
+    {
+        /*
+         * Fostered text joins the text already before the table.
+         *
+         * The specification appends to "the node immediately before the
+         * insertion position", and when foster parenting that is the sibling
+         * before the table rather than the parent's last child. Without it
+         * `A<table><tr> B</tr> B</table>` came out as three text nodes where
+         * every browser has one: the append condition only ever looked at the
+         * end of the parent, which is past the table.
+         */
+        ar_i32 prev = t->doc->nodes[before].prev_sibling;
+
+        if (prev >= 0 && t->doc->nodes[prev].kind == AR_DOM_TEXT &&
+            ar__text_extend(t, prev, s, rule))
+        {
+            return;
+        }
+    }
     s = ar__text_store(t, s, rule);
     if (s.n == 0)
     {
@@ -1260,12 +1280,90 @@ static void ar__merge_attrs(ar__tree *t, ar_i32 node, const ar_token *tok)
     }
 }
 
+/*
+ * Two elements are the same for Noah's Ark: same name, same namespace, same
+ * attributes -- names and values, in any order.
+ */
+static int ar__fmt_alike(const ar__tree *t, ar_i32 a, ar_i32 b)
+{
+    const ar_dom_node *x = &t->doc->nodes[a];
+    const ar_dom_node *y = &t->doc->nodes[b];
+    ar_i32             i;
+
+    if (x->ns != y->ns || !ar__span_eq(x->name, y->name) || x->attr_count != y->attr_count)
+    {
+        return 0;
+    }
+    for (i = 0; i < x->attr_count; ++i)
+    {
+        const ar_attr *ax = &t->doc->attrs[x->attr_first + i];
+        ar_i32         j;
+        int            found = 0;
+
+        for (j = 0; j < y->attr_count; ++j)
+        {
+            const ar_attr *ay = &t->doc->attrs[y->attr_first + j];
+
+            if (ax->ns == ay->ns && ar__span_eq(ax->name, ay->name) &&
+                ar__span_eq(ax->value, ay->value))
+            {
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * The Noah's Ark clause, §13.2.4.3: three of a kind and no more.
+ *
+ * If the list already holds three entries with the same name, namespace and
+ * attributes since the last marker, the earliest of them is dropped before the
+ * fourth goes on. The stack of open elements is untouched -- all four `<b>`
+ * in `<p><b><b><b><b><p>x` really are nested -- so what the clause decides is
+ * how many get *reopened* after the paragraph: three, not four.
+ *
+ * It exists because reconstruction is what makes a formatting element survive
+ * a block boundary, and a page that opens the same tag in a loop would
+ * otherwise reopen it once per iteration and nest a thousand deep. `tests23`
+ * is four cases of exactly that, written with `<font size=4>`.
+ */
 static void ar__fmt_push(ar__tree *t, ar_i32 node)
 {
+    ar_i32 seen = 0;
+    ar_i32 i;
+
     if (t->fmt_n >= AR_HTML_FMT)
     {
         t->doc->errors++;
         return;
+    }
+    for (i = t->fmt_n - 1; i >= 0; --i)
+    {
+        if (t->fmt[i] < 0)
+        {
+            break; /* a marker ends the search */
+        }
+        if (ar__fmt_alike(t, t->fmt[i], node))
+        {
+            ++seen;
+            if (seen == 3)
+            {
+                ar_i32 k;
+
+                for (k = i; k + 1 < t->fmt_n; ++k)
+                {
+                    t->fmt[k] = t->fmt[k + 1];
+                }
+                --t->fmt_n;
+                break;
+            }
+        }
     }
     t->fmt[t->fmt_n++] = node;
 }
@@ -2550,7 +2648,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             {
                 ar__close_p(t);
             }
-            ar__insert_element(t, tok, 0);
+            ar__insert_element(t, tok, 1);
             t->mode = M_IN_TABLE;
             return;
         }
@@ -2593,7 +2691,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                 }
             }
             ar__close_p(t);
-            ar__insert_element(t, tok, 0);
+            ar__insert_element(t, tok, 1);
             return;
         }
         if (ar_span_is(tok->name, "dd") || ar_span_is(tok->name, "dt"))
@@ -2610,7 +2708,28 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                 }
             }
             ar__close_p(t);
-            ar__insert_element(t, tok, 0);
+            ar__insert_element(t, tok, 1);
+            return;
+        }
+        /*
+         * Head content is head content wherever it appears, §13.2.6.4.7.
+         *
+         * `<base>`, `<basefont>`, `<bgsound>`, `<link>` and `<meta>` reaching
+         * `in body` are handed to the `in head` rules rather than inserted
+         * here, and the difference is the reconstruction: the void branch
+         * below reopens the active formatting elements first, so
+         * `<a><b></a><basefont>` put the basefont inside a reopened `<a>`.
+         * `in head` does not reconstruct, and the specification is explicit
+         * that these go there.
+         *
+         * `noframes`, `script`, `style`, `template` and `title` are on the
+         * same list and already have branches of their own below.
+         */
+        if (ar_span_is(tok->name, "base") || ar_span_is(tok->name, "basefont") ||
+            ar_span_is(tok->name, "bgsound") || ar_span_is(tok->name, "link") ||
+            ar_span_is(tok->name, "meta"))
+        {
+            ar__via_head(t, tok, t->mode);
             return;
         }
         if (ar__is_void(tok->name))
@@ -2745,7 +2864,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                 ar__pop_until(t, "button");
             }
             ar__reconstruct(t);
-            ar__insert_element(t, tok, 0);
+            ar__insert_element(t, tok, 1);
             return;
         }
         /*
@@ -3261,6 +3380,28 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         {
             t->doc->errors++;
             ar__insert_element(t, tok, 0);
+            ar__pop(t);
+            return;
+        }
+
+        /*
+         * A `<form>` in a table is inserted where it stands rather than
+         * fostered out, and then popped straight off the stack -- so it holds
+         * nothing at all and the rows that follow are still the table's.
+         * A second one is ignored, because the form pointer is already set.
+         *
+         * The oddity is the specification's, not a simplification: a form is
+         * the one element that may not nest, and a table is where authors put
+         * one by accident most often.
+         */
+        if (ar_span_is(tok->name, "form"))
+        {
+            t->doc->errors++;
+            if (t->form >= 0 || ar__on_stack_named(t, "template"))
+            {
+                return;
+            }
+            t->form = ar__insert_element(t, tok, 0);
             ar__pop(t);
             return;
         }
@@ -4675,7 +4816,10 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_COMMENT)
         {
-            ar__comment_node(t, tok, 0);
+            /* The document, or the synthetic root when this is a
+               fragment -- a fragment's answer is the root's children,
+               so a comment parented on the document is invisible. */
+            ar__comment_node(t, tok, t->ctx ? ar_dom_root(t->doc) : 0);
             return;
         }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
@@ -4698,7 +4842,10 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_COMMENT)
         {
-            ar__comment_node(t, tok, 0);
+            /* The document, or the synthetic root when this is a
+               fragment -- a fragment's answer is the root's children,
+               so a comment parented on the document is invisible. */
+            ar__comment_node(t, tok, t->ctx ? ar_dom_root(t->doc) : 0);
             return;
         }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
@@ -4783,7 +4930,11 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
 
             if (ar__name_in(tok->name, HEAD_VOID))
             {
-                ar__insert_element(t, tok, 0);
+                /* Fostered when a table sent it here: `in body` routes
+                   head content to these rules, and a `<meta>` inside a
+                   table belongs before the table like anything else.
+                   In a real head there is nothing to foster past. */
+                ar__insert_element(t, tok, 1);
                 ar__pop(t);
                 return;
             }
@@ -5190,7 +5341,10 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
     case M_AFTER_AFTER_FRAMESET:
         if (tok->kind == AR_TOK_COMMENT)
         {
-            ar__comment_node(t, tok, 0);
+            /* The document, or the synthetic root when this is a
+               fragment -- a fragment's answer is the root's children,
+               so a comment parented on the document is invisible. */
+            ar__comment_node(t, tok, t->ctx ? ar_dom_root(t->doc) : 0);
             return;
         }
         if (tok->kind == AR_TOK_TEXT)
@@ -5236,7 +5390,10 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
     case M_AFTER_AFTER_BODY:
         if (tok->kind == AR_TOK_COMMENT)
         {
-            ar__comment_node(t, tok, 0);
+            /* The document, or the synthetic root when this is a
+               fragment -- a fragment's answer is the root's children,
+               so a comment parented on the document is invisible. */
+            ar__comment_node(t, tok, t->ctx ? ar_dom_root(t->doc) : 0);
             return;
         }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
@@ -5462,6 +5619,32 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
                mode treats it as whitespace and ignores it. */
         }
 
+        /*
+         * The same split again, one mode later, where the whitespace is kept
+         * rather than dropped.
+         *
+         * `in head` and `after head` both insert a whitespace character and
+         * let anything else open a body. Character by character that puts the
+         * space in `</style> --> x` inside the head and the rest in the body;
+         * run by run the whole thing went to the body and the head lost a text
+         * node every browser shows.
+         */
+        if (tok.kind == AR_TOK_TEXT && (t.mode == M_IN_HEAD || t.mode == M_AFTER_HEAD) &&
+            tok.text.n && ar__space_char(tok.text.p[0]) && !ar__all_space(tok.text))
+        {
+            ar_span lead = tok.text;
+            ar_u32  k = 0;
+
+            while (k < lead.n && ar__space_char(lead.p[k]))
+            {
+                ++k;
+            }
+            lead.n = k;
+            ar__insert_text(&t, lead, 0);
+            tok.text.p += k;
+            tok.text.n -= k;
+        }
+
         ar__process(&t, &tok);
 
         /* Note where `before` is taken: across the whole cycle, not across
@@ -5491,10 +5674,39 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
      * An empty file is still `html(head body)` in every browser, and areole
      * returned nothing at all until the tree corpus asked.
      */
-    /* A fragment has no implied html, head or body: its answer is the
-       children of the root, and adding a body would put them somewhere else. */
+    /*
+     * A fragment has no implied html, head or body: its answer is the children
+     * of the root, and adding a body would put them somewhere else.
+     *
+     * With one exception, and it is the specification's rather than a
+     * convenience: a fragment whose *context* is `html` starts in `before
+     * head`, so the same end-of-file walk that gives a document its head and
+     * body gives one to this too. `innerHTML` on the html element returns
+     * `<head></head><body></body>` in every browser, and an empty fragment
+     * against `html` returned nothing at all here.
+     */
     if (ctx)
     {
+        if (ctx_ns == AR_NS_HTML && ar__lit_is(ctx, "html"))
+        {
+            if (t.head < 0)
+            {
+                t.head = ar__insert_implied(&t, "head");
+                ar__pop(&t);
+            }
+            if (ar_dom_child_element(doc, ar_dom_root(doc), "frameset") < 0 &&
+                ar_dom_child_element(doc, ar_dom_root(doc), "body") < 0)
+            {
+                /* Back to the root first, for the reason the document path
+                   gives: `ar__insert_implied` inserts into the *current* node,
+                   which after `<frameset><span>` is the frameset. */
+                while (t.open_n > 2)
+                {
+                    ar__pop(&t);
+                }
+                ar__insert_implied(&t, "body");
+            }
+        }
         doc->errors += tk.errors;
         return !doc->overflowed;
     }

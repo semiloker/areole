@@ -199,15 +199,15 @@ jobs:
       - name: html5lib tokenizer suite
         run: ./build/ar_html5lib.exe --tokenizer --quiet
 
-      # Criterion 2 is 98% of tree construction and is NOT met: it is 52.95%,
-      # and the gap is foreign content and template contents, neither of which
-      # exists yet. This step reports the number without failing the build,
-      # because a gate that is red every single run is a gate nobody reads.
+      # 0.9.0 acceptance criterion 2: the html5lib tree construction suite at
+      # 98%. Met -- 1,884 of 1,922, with the 8 scripting cases skipped and
+      # counted, never quietly passed -- so this is a gate rather than a
+      # report. It spent the whole release as `|| true` with a comment saying
+      # it would become real the day the number arrived; this is that day.
       #
-      # It is here rather than absent so the number moves in public, and it
-      # becomes a real gate the day the two features land.
-      - name: html5lib tree construction (reported, not yet gated)
-        run: ./build/ar_html5lib.exe --tree --quiet || true
+      # ar_html5lib exits non-zero under the gate, so no `|| true`.
+      - name: html5lib tree construction
+        run: ./build/ar_html5lib.exe --tree --quiet
 
   tidy:
     name: format and static analysis

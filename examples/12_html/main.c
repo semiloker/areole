@@ -278,6 +278,24 @@ static const struct
     {"frameset-noframes-text", "<frameset></frameset><noframes>abc"},
     {"frameset-comment-after-html", "<frameset></frameset></html><!--c-->"},
     {"space-after-body-stays", "<body>x</body>\n   <!--c-->"},
+
+    /* Noah's Ark: four nested <b> are four elements and three list entries, so
+       three of them reopen after the paragraph and the fourth does not. */
+    {"noahs-ark-three-of-a-kind", "<p><b><b><b><b><p>x"},
+    {"noahs-ark-differing-attrs", "<p><b id=a><b id=b><b id=c><b id=d><p>x"},
+
+    /* A form in a table is inserted where it stands and popped at once, and a
+       second one is ignored because the pointer is set. */
+    {"form-in-a-table", "<table><form><tr><td>x</table>"},
+    {"second-form-in-a-table", "<table><form><form><tr><td>x</table>"},
+
+    /* Fostered text joins the text already before the table rather than
+       starting a node of its own. */
+    {"fostered-text-joins", "A<table><tr> B</tr> B</table>"},
+    {"fostered-li", "<table><li><li></table>"},
+
+    /* The head keeps the whitespace before the body opens, and only that. */
+    {"head-keeps-leading-space", "<style>s</style> --> x"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
