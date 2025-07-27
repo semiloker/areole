@@ -238,7 +238,18 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
  * one that uses it, and is the only one of the three anybody writes on purpose.
  */
 /*
- * `aspect-ratio`: the axis nobody stated, from the one somebody did.
+ * `aspect-ratio`: the axis nobody stated, from the one that is definite.
+ *
+ * `w_definite` says the width is settled even though the stylesheet did not
+ * state it -- which is what a grid item has once its track is sized, and what
+ * CSS means by a *definite* size rather than a specified one. Every caller
+ * outside the grid passes 0, because everywhere else a ratio only fires when
+ * the author wrote one of the two axes.
+ *
+ * Without it a grid item with a ratio and no stated width got no height at
+ * all: the row sized itself from the item's content, stretch then shrank the
+ * item to the row, and a tile declared `aspect-ratio: 3 / 2` in a four-column
+ * grid came out 193 by 8. Found by examples/14_interface on its first run.
  *
  * The ratio is width over height in thousandths, so `16 / 9` is 1777. A box
  * with a width and a ratio gets a height; a box with a height and a ratio gets
@@ -250,10 +261,10 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
  * padding-percentage trick, which is what everybody did for fifteen years and
  * which nobody could read.
  */
-void ar_apply_ratio(ar_node *n)
+void ar_apply_ratio(ar_node *n, int w_definite)
 {
     ar_i32 ratio = n->style.v[AR_P_ASPECT_RATIO];
-    int    has_w = n->style.unit[AR_P_WIDTH] != AR_UNIT_AUTO;
+    int    has_w = n->style.unit[AR_P_WIDTH] != AR_UNIT_AUTO || w_definite;
     int    has_h = n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO;
 
     if (ratio <= 0 || has_w == has_h)
@@ -566,6 +577,38 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     ar_i32 inner_w;
     ar_i32 h;
 
+    /*
+     * A grid answers it here for the same reason a table does, and it had not
+     * been answering it at all.
+     *
+     * A grid container's intrinsic height is measured as a block -- the sum of
+     * its children, because the track solve needs a width and the measure pass
+     * does not have one yet. The comment at that site calls it the
+     * conservative answer and says the track solve settles the real one at
+     * placement. It did not: placement wrote `content_h` and nothing ever put
+     * it into `rect.h`, so an automatic-height grid was whatever the block
+     * measurement had guessed.
+     *
+     * Three shapes, all wrong and all silent: `grid-template-rows: 200px` gave
+     * a container 16 tall around 200-tall items; two 150-tall items in one row
+     * gave 300, because a block sums what a grid puts side by side; and a tile
+     * with a ratio gave 16 around 100. The grid corpus never caught it because
+     * every grid in it is either given a height or is itself a grid item.
+     *
+     * This is the one hook that already means "the width is settled, now fix
+     * the height", which is why the table uses it -- and it has to be *here*
+     * rather than after placement, because a parent fixes its children's
+     * y-positions as it stacks them and a height corrected later would leave
+     * every following sibling where the wrong one had put it.
+     */
+    if (nodes && ar_is_grid(n) && n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env && env->sheet)
+    {
+        ar_i32 gh = ar_grid_content_height(nodes, (ar_i32)(n - nodes), env->sheet, env);
+
+        n->rect.h = ar_clamp(gh, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        return;
+    }
+
     if (nodes && ar_is_table(n))
     {
         ar_i32 th = ar_table_height(nodes, (ar_i32)(n - nodes), env);
@@ -594,7 +637,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      */
     if (n->style.v[AR_P_ASPECT_RATIO] > 0)
     {
-        ar_apply_ratio(n);
+        ar_apply_ratio(n, 0);
         return;
     }
 
@@ -962,7 +1005,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     /* A ratio settles the axis nobody stated, before the automatic height
        below overwrites it -- a box with a width and a ratio has a height, and
        it is not the height of its contents. */
-    ar_apply_ratio(n);
+    ar_apply_ratio(n, 0);
 
     /* An automatic height is whatever that came to. It was already measured
        intrinsically, but the children's real widths may have wrapped their
@@ -1095,7 +1138,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     {
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
         {
-            ar_position_out_of_flow(nodes, i, viewport);
+            ar_position_out_of_flow(nodes, i, viewport, env);
         }
     }
 
@@ -1121,14 +1164,14 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
             AR_WIDE(&nodes[i].style, AR_P_POSITION_ANCHOR))
         {
-            ar_position_out_of_flow(nodes, i, viewport);
+            ar_position_out_of_flow(nodes, i, viewport, env);
         }
     }
-    ar_position_try(nodes, count, viewport);
-    ar_position_relative(nodes, count, viewport);
+    ar_position_try(nodes, count, viewport, env);
+    ar_position_relative(nodes, count, viewport, env);
     ar_scroll_apply(nodes, count, env);
 
     /* Sticky last, because reacting to the scroll position is the whole of
        what it does. */
-    ar_position_sticky(nodes, count, viewport);
+    ar_position_sticky(nodes, count, viewport, env);
 }

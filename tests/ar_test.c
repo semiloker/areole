@@ -8626,15 +8626,82 @@ static void test_aspect_ratio_gives_the_axis_nobody_stated(void)
         ar_frame_end(g_ui, &s);
     }
 
-    printf("      DBGR ratio=%ld,%ld,%ld  a=%ldx%ld b=%ldx%ld c=%ldx%ld\n",
-           (long)g_ui->nodes[1].style.v[AR_P_ASPECT_RATIO],
-           (long)g_ui->nodes[2].style.v[AR_P_ASPECT_RATIO],
-           (long)g_ui->nodes[3].style.v[AR_P_ASPECT_RATIO], (long)ar__box(1).w, (long)ar__box(1).h,
-           (long)ar__box(2).w, (long)ar__box(2).h, (long)ar__box(3).w, (long)ar__box(3).h);
     CHECK(ar__box(1).h == 90, "aspect-ratio: a width and a ratio make a height");
     CHECK(ar__box(2).w == 80, "aspect-ratio: a height and a ratio make a width");
     CHECK(ar__box(3).w == 100 && ar__box(3).h == 100,
           "aspect-ratio: and a box that stated both keeps both");
+}
+
+static void test_a_grid_settles_its_own_height(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Two bugs an example found on its first run, and neither could be seen
+     * from the grid corpus: every grid in it is either given a height or is
+     * itself a grid item, so the container's automatic height never had to be
+     * right.
+     *
+     * **A grid item's width is definite once its track is sized**, even though
+     * the stylesheet never stated it -- which is what CSS means by definite
+     * rather than specified. So a ratio applies. It had not: `ar_apply_ratio`
+     * fires only when exactly one axis is *stated*, a grid item states
+     * neither, and a tile declared `aspect-ratio: 2 / 1` in a two-column grid
+     * came out 200 by 8. The row sized itself from the tile's content and
+     * stretch then shrank the tile to the row, so both were wrong together and
+     * neither looked like the cause.
+     *
+     * **And a grid container's automatic height is the track solve's answer**,
+     * not the block measurement's guess. The measure pass sizes a grid as a
+     * block because the track solve needs a width it does not have yet, and
+     * the comment there says the solve settles the real one at placement. It
+     * did not -- placement wrote `content_h` and nothing put it into `rect.h`.
+     * Three shapes were wrong and all of them silently: explicit rows, items
+     * with a stated height, and a ratio.
+     *
+     * `.b` is the one that shows it is not a ratio bug: two 150-tall items in
+     * *one row* gave a container 300 tall, because a block sums what a grid
+     * puts side by side.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:grid; grid-template-columns:repeat(2,1fr);"
+                 "     grid-template-rows:200px; width:400px; }"
+                 ".b { display:grid; grid-template-columns:repeat(2,1fr); width:400px; }"
+                 ".b div { height:150px; }"
+                 ".c { display:grid; grid-template-columns:repeat(2,1fr); width:400px; }"
+                 ".c div { aspect-ratio:2/1; }");
+    {
+        ar_input in;
+        ar_i32   k;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        for (k = 0; k < 3; ++k)
+        {
+            ar_begin(g_ui, k == 0 ? "div.a" : (k == 1 ? "div.b" : "div.c"));
+            ar_begin(g_ui, "div");
+            ar_end(g_ui);
+            ar_begin(g_ui, "div");
+            ar_end(g_ui);
+            ar_end(g_ui);
+        }
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1 = .a, 2 and 3 its items; 4 = .b, 5 and 6; 7 = .c, 8 and 9. */
+    CHECK(ar__box(1).h == 200, "grid: an explicit row decides the container's height");
+    CHECK(ar__box(2).h == 200 && ar__box(3).h == 200, "grid: and its items fill that row");
+
+    CHECK(ar__box(4).h == 150, "grid: two items in one row make a row, not a stack");
+    CHECK(ar__box(5).h == 150 && ar__box(6).h == 150, "grid: both of them keep their height");
+
+    CHECK(ar__box(8).w == 200 && ar__box(8).h == 100,
+          "grid: a track-sized width is definite, so a ratio gives the height");
+    CHECK(ar__box(7).h == 100, "grid: and the container is as tall as the row that came to");
 }
 
 static void test_safe_centring_never_starts_before_the_edge(void)
@@ -10722,6 +10789,110 @@ static void test_absolute_with_no_offsets_keeps_the_static_position(void)
     ar_frame_end(g_ui, &s);
 
     CHECK(ar__box(2).y == 10, "absolute: with no offsets it sits where the flow had got to");
+}
+
+static void test_absolute_takes_its_children_with_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `relative` and `sticky` both move a whole subtree and say so in their
+     * comments. `absolute` moved the box and left everything inside it where
+     * the static position had put it -- so a badge placed in the corner of a
+     * card drew its own rectangle in the corner and its label at the top left
+     * of the window.
+     *
+     * The layout corpora could not see it. `compare_layout.py` excludes boxes
+     * sized by their own text from its verdict, and a text node is the only
+     * child most positioned boxes have; every one of the eight corpus dumps is
+     * byte-identical with the fix and without it. examples/14_interface found
+     * it by putting a label in one.
+     *
+     * The inner box is checked rather than the outer, because the outer was
+     * always right -- which is what made it hard to see.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".rel { display:block; position:relative; width:400px; height:200px; }"
+                 ".abs { display:block; position:absolute; top:20px; left:30px;"
+                 "       padding:4px 9px; }"
+                 ".in { display:block; width:20px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.rel");
+    ar_begin(g_ui, "div.abs");
+    ar_begin(g_ui, "div.in");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 1 = .rel, 2 = .abs, 3 = .in. */
+    CHECK(ar__box(2).x == 30 && ar__box(2).y == 20, "absolute: the box lands where it was told");
+    CHECK(ar__box(3).x == 39 && ar__box(3).y == 24,
+          "absolute: and its children land inside it, not at the origin");
+}
+
+static void test_a_shifted_box_takes_its_fragments_with_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     k;
+    ar_rect    r;
+    ar_i32     n_frag;
+    int        bad = 0;
+
+    /*
+     * A box the line breaker cut is *painted* from its fragments' own
+     * rectangles rather than from `rect`, and those are absolute. So a shift
+     * that moves `rect` and leaves them behind moves everything that reads a
+     * rectangle -- hit testing, damage, the inspection API, this suite -- and
+     * moves nothing that is drawn.
+     *
+     * All four shifts had it: `relative`, `sticky`, `position-try`'s flip, and
+     * `absolute`. The visible symptom is a label drawn at the position its box
+     * was rejected from while the background is drawn where it ended up.
+     *
+     * No corpus could see it. `compare_layout.py` excludes boxes sized by
+     * their own text from its verdict, and a fragment is exactly that; all
+     * eight corpus dumps are byte-identical with the fix and without it.
+     *
+     * The check is that every fragment lies inside the box that owns it --
+     * which is true by construction when nothing moved, and false the moment
+     * something moves without them.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".rel { display:block; position:relative; width:200px; }"
+                 ".abs { display:block; position:absolute; top:40px; left:60px; width:90px; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.rel");
+    ar_begin(g_ui, "div.abs");
+    ar_text(g_ui, "span.t", "a label long enough that the breaker cuts it in two");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 2 = .abs, 3 = the label. */
+    n_frag = ar_node_frag_count(g_ui, 3);
+    r = ar__box(2);
+
+    for (k = 0; k < n_frag; ++k)
+    {
+        ar_rect f = ar_node_frag(g_ui, 3, k, 0, 0);
+
+        if (f.x < r.x || f.y < r.y || f.x + f.w > r.x + r.w + 200)
+        {
+            printf("      fragment %ld at %ld,%ld outside the box at %ld,%ld\n", (long)k, (long)f.x,
+                   (long)f.y, (long)r.x, (long)r.y);
+            ++bad;
+        }
+    }
+    CHECK(n_frag > 0, "fragments: the label was cut, so there is something to move");
+    CHECK(bad == 0, "absolute: the fragments moved with the box, not just its rect");
 }
 
 /* Both edges of an axis and no size: the box stretches between them. */
@@ -16032,6 +16203,7 @@ int main(void)
     test_intrinsic_keywords_work_on_the_height();
     test_fit_content_takes_a_cap();
     test_aspect_ratio_gives_the_axis_nobody_stated();
+    test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
     test_subgrid_lines_the_cards_up();
@@ -16106,6 +16278,8 @@ int main(void)
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
     test_absolute_with_no_offsets_keeps_the_static_position();
+    test_absolute_takes_its_children_with_it();
+    test_a_shifted_box_takes_its_fragments_with_it();
     test_absolute_stretches_between_two_edges();
     test_absolute_from_the_far_edges();
     test_fixed_uses_the_viewport();

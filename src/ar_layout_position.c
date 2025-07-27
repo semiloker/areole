@@ -333,7 +333,9 @@ void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport)
  * Mirrored about the anchor rather than merely pushed inside the viewport,
  * because a tooltip shoved sideways to fit stops pointing at anything.
  */
-void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport)
+static void ar__shift_subtree(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy);
+
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
     ar_i32 i;
 
@@ -354,17 +356,25 @@ void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport)
             continue;
         }
 
+        /*
+         * A flip moves the whole box, not just its rectangle.
+         *
+         * These four lines used to assign `n->rect` directly, so a tooltip
+         * that flipped above its anchor left its own text behind at the
+         * position it had been rejected from. Same shape as `relative` and
+         * `sticky`, which have always shifted a subtree and say so.
+         */
         if (try_mode == AR_TRY_FLIP_BLOCK || try_mode == AR_TRY_FLIP_BOTH)
         {
             ar_rect anc = nodes[a].rect;
 
             if (n->rect.y + n->rect.h > viewport.y + viewport.h)
             {
-                n->rect.y = anc.y - n->rect.h;
+                ar__shift_subtree(nodes, env, i, 0, (anc.y - n->rect.h) - n->rect.y);
             }
             else if (n->rect.y < viewport.y)
             {
-                n->rect.y = anc.y + anc.h;
+                ar__shift_subtree(nodes, env, i, 0, (anc.y + anc.h) - n->rect.y);
             }
         }
         if (try_mode == AR_TRY_FLIP_INLINE || try_mode == AR_TRY_FLIP_BOTH)
@@ -373,15 +383,17 @@ void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport)
 
             if (n->rect.x + n->rect.w > viewport.x + viewport.w)
             {
-                n->rect.x = anc.x - n->rect.w;
+                ar__shift_subtree(nodes, env, i, (anc.x - n->rect.w) - n->rect.x, 0);
             }
             else if (n->rect.x < viewport.x)
             {
-                n->rect.x = anc.x + anc.w;
+                ar__shift_subtree(nodes, env, i, (anc.x + anc.w) - n->rect.x, 0);
             }
         }
     }
 }
+
+static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy);
 
 /*
  * Places one out-of-flow box against its containing block.
@@ -389,8 +401,23 @@ void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport)
  * The box has already been through the flow passes, so its rect holds the
  * static position and its intrinsic size, and both are used as the fallbacks
  * the specification says to use.
+ *
+ * And its children come with it. `relative` and `sticky` both move a whole
+ * subtree and say so; this one moved the box and left everything inside it
+ * where the static position had put it, so a badge placed `top:14px;
+ * right:14px` in the corner of a card drew its own rectangle in the corner and
+ * its text at the top left of the window.
+ *
+ * The layout corpora could not see it: `compare_layout.py` excludes boxes
+ * sized by their own text from its verdict, and a text node is the only child
+ * most positioned boxes have. examples/14_interface found it by putting a
+ * label in one.
+ *
+ * The shift is the delta rather than the new position, which is what makes it
+ * safe to call twice -- and it is called twice, once for everything and again
+ * for the boxes hung off an anchor.
  */
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport)
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env)
 {
     ar_node *n = &nodes[i];
     ar_rect  cb = ar_containing_block(nodes, i, viewport);
@@ -407,6 +434,8 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport)
                      auto_v ? 0 : n->style.v[AR_P_MARGIN_TOP],
                      auto_v ? 0 : n->style.v[AR_P_MARGIN_BOTTOM], auto_v, n->fit[1], &y, &h);
 
+    ar__shift_kids_pos(nodes, env, i, x - n->rect.x, y - n->rect.y);
+
     n->rect.x = x;
     n->rect.y = y;
     n->rect.w = w < 0 ? 0 : w;
@@ -420,15 +449,51 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport)
  * box reaches all of them; the ancestor test is what keeps it to the subtree.
  */
 /* The children, through the child links. */
-static void ar__shift_kids_pos(ar_node *nodes, ar_i32 i, ar_i32 dx, ar_i32 dy)
+/*
+ * One box, and the fragments it was cut into.
+ *
+ * A split inline is painted from its fragments' own rectangles rather than
+ * from `rect`, and those are absolute -- so moving the box without moving
+ * them leaves the glyphs behind. `rect` is the union of the fragments, so
+ * everything that reads a rectangle agreed the box had moved and only the
+ * painting disagreed: a label inside a positioned box drew at the static
+ * position while its background drew at the real one.
+ *
+ * All three shifts had it -- `relative`, `sticky` and now `absolute` -- and
+ * no corpus could see it, because compare_layout.py excludes boxes sized by
+ * their own text from its verdict and that is exactly what a fragment is.
+ */
+static void ar__shift_node(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
+{
+    ar_i32 k;
+
+    nodes[i].rect.x += dx;
+    nodes[i].rect.y += dy;
+
+    if (!env || !env->frags || nodes[i].frag_count <= 0)
+    {
+        return;
+    }
+    for (k = 0; k < nodes[i].frag_count; ++k)
+    {
+        ar_i32 f = nodes[i].frag_first + k;
+
+        if (f >= 0 && f < env->frag_used)
+        {
+            env->frags[f].rect.x += dx;
+            env->frags[f].rect.y += dy;
+        }
+    }
+}
+
+static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
     ar_i32 c;
 
     for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        nodes[c].rect.x += dx;
-        nodes[c].rect.y += dy;
-        ar__shift_kids_pos(nodes, c, dx, dy);
+        ar__shift_node(nodes, env, c, dx, dy);
+        ar__shift_kids_pos(nodes, env, c, dx, dy);
     }
 }
 
@@ -442,17 +507,14 @@ static void ar__shift_kids_pos(ar_node *nodes, ar_i32 i, ar_i32 dx, ar_i32 dy)
  * is one sticky box per row. Ten thousand rows against fifty thousand nodes is
  * the quadratic nobody asked for.
  */
-static void ar__shift_subtree(ar_node *nodes, ar_i32 count, ar_i32 i, ar_i32 dx, ar_i32 dy)
+static void ar__shift_subtree(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
-    (void)count;
-
     if (!dx && !dy)
     {
         return;
     }
-    nodes[i].rect.x += dx;
-    nodes[i].rect.y += dy;
-    ar__shift_kids_pos(nodes, i, dx, dy);
+    ar__shift_node(nodes, env, i, dx, dy);
+    ar__shift_kids_pos(nodes, env, i, dx, dy);
 }
 
 /* The box a sticky element is pinned inside: its nearest scrolling ancestor,
@@ -575,7 +637,7 @@ static ar_i32 ar__sticky_shift(const ar_node *n, const ar_node *parent, ar_i32 p
  *
  * Runs after scrolling, because the whole point is to react to it.
  */
-void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport)
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
     ar_i32 i;
 
@@ -600,7 +662,7 @@ void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport)
                               n->rect.w, parent ? parent->style.v[AR_P_PAD_LEFT] : 0,
                               parent ? parent->style.v[AR_P_PAD_RIGHT] : 0);
 
-        ar__shift_subtree(nodes, count, i, dx, dy);
+        ar__shift_subtree(nodes, env, i, dx, dy);
     }
 }
 
@@ -615,7 +677,7 @@ void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport)
  * finished placing everything: shifting a parent before its children were
  * placed would move them twice.
  */
-void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport)
+void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
     ar_i32 i;
 
@@ -650,6 +712,6 @@ void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport)
             continue;
         }
 
-        ar__shift_subtree(nodes, count, i, dx, dy);
+        ar__shift_subtree(nodes, env, i, dx, dy);
     }
 }
