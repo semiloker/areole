@@ -15588,6 +15588,78 @@ static void test_no_node_is_ever_its_own_parent(void)
     CHECK(bad == 0, "html: a tree that runs out of nodes is still a tree");
 }
 
+static void test_a_document_past_its_budget_says_so(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 7, the second half: "parsing a document
+     * larger than the budget fails cleanly with a reported reason rather than
+     * truncating silently".
+     *
+     * The check that stood here before could not fail. It asserted
+     * `d->overflowed || d->node_count > 0` -- "either it fitted or it says it
+     * did not" -- which is true of a parser that never sets the flag at all,
+     * and true of one that sets it always. A gate that cannot go red is not
+     * known to work; this release found three of those and this is the third.
+     *
+     * So: a document that certainly exceeds each of the three budgets in turn
+     * must set `overflowed`, and the partial tree it built must still be a
+     * tree -- links in range, children owning their parent, no cycles. Silent
+     * truncation is exactly the failure the criterion is about, because a
+     * caller that does not know cannot recover.
+     */
+    ar_i32 bad = 0;
+    ar_i32 quiet = 0;
+    ar_i32 i;
+
+    /* Nodes. Forty divs against caps that cannot hold them. */
+    for (i = 4; i <= 40; i += 4)
+    {
+        ar_doc *d = ar__parse_capped("<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>",
+                                     i);
+
+        if (!d->overflowed)
+        {
+            ++quiet;
+        }
+        if (!ar__tree_links_sane(d, "node budget", i))
+        {
+            ++bad;
+        }
+    }
+    CHECK(quiet == 0, "html: a document past the node budget says so rather than truncating");
+    CHECK(bad == 0, "html: and the partial tree it built is still a tree");
+
+    /* Scratch. A character reference needs somewhere to be decoded. */
+    CHECK(ar__parse_scratch("<p>&amp;&amp;&amp;&amp;&amp;", 2u)->overflowed,
+          "html: a document past the scratch budget says so");
+
+    /* Text. The document's own byte arena, which holds decoded text. */
+    {
+        static ar_dom_node nodes[64];
+        static ar_attr     attrs[8];
+        static char        text[8];
+        static char        scratch[256];
+        ar_doc             d;
+
+        memset(&d, 0, sizeof d);
+        d.nodes = nodes;
+        d.node_cap = (ar_i32)(sizeof nodes / sizeof nodes[0]);
+        d.attrs = attrs;
+        d.attr_cap = (ar_i32)(sizeof attrs / sizeof attrs[0]);
+        d.text = text;
+        d.text_cap = (ar_u32)sizeof text;
+        ar_html_parse(&d, "<p>&amp; a good deal more text than eight bytes</p>",
+                      (ar_u32)strlen("<p>&amp; a good deal more text than eight bytes</p>"),
+                      scratch, (ar_u32)sizeof scratch);
+        CHECK(d.overflowed, "html: a document past the text budget says so");
+        CHECK(ar__tree_links_sane(&d, "text budget", d.node_cap),
+              "html: and that tree is sane too");
+    }
+}
+
 static void test_the_tokenizer_always_consumes_input(void)
 {
     /*
@@ -16194,6 +16266,7 @@ int main(void)
 
     test_the_adoption_agency_inner_loop();
     test_the_adoption_agency_terminates_on_anything();
+    test_a_document_past_its_budget_says_so();
     test_the_tokenizer_always_consumes_input();
     test_a_partial_code_point_never_reaches_the_tree();
     test_no_node_is_ever_its_own_parent();

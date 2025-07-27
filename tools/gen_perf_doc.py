@@ -348,8 +348,10 @@ def main():
             w("into the box, so rule count stopped mattering and box count did not. That is")
             w("what style sharing in 0.15.0 is for.")
             w("")
-        w("A browser user-agent stylesheet alone is around 400 rules, and `AR_MAX_RULES` is")
-        w("still a fixed 256, so a sheet that size cannot be loaded at all yet.")
+        w("A browser user-agent stylesheet alone is around 400 rules. `AR_MAX_RULES` is a")
+        w("floor rather than a cap since `ar_init_ex` took a rule count, so a sheet that size")
+        w("loads if the caller asks for it -- about 85 KB of arena on top of `AR_MEM_FIXED`,")
+        w("and only the applications that want one pay it.")
         w("")
 
     # A scroll is the case where "presented" and "painted" come apart, and the

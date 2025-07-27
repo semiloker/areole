@@ -1,29 +1,25 @@
-#areole
+# areole
 
-**A GUI library in strict C89 that uses no graphics API.*
-    *
+**A GUI library in strict C89 that uses no graphics API.**
 
-    No Direct2D.No OpenGL.No Vulkan.No SDL.No GTK
-        . `areole` rasterizes every pixel itself and hands the finished buffer to the operating
-            system in a single blit.Layout is written in **real CSS **,
-    parsed once at             startup
-        .
+No Direct2D. No OpenGL. No Vulkan. No SDL. No GTK. `areole` rasterizes every
+pixel itself and hands the finished buffer to the operating system in a single
+blit. Layout is written in **real CSS**, parsed once at startup.
 
-    ![the hello example](docs / hello.png)
+![the hello example](docs/hello.png)
 
-        Every rectangle above came out of a                  stylesheet
-        .The example that draws it does not contain a single coordinate.
+Every rectangle above came out of a stylesheet. The example that draws it does
+not contain a single coordinate.
 
-```c ar_stylesheet(
-            ui,
-            ".rail    { width:220px; display:flex; flex-direction:column; padding:16px; gap:2px; }"
-            ".nav     { padding:9px 12px; font-size:16px; color:#8a8175; }"
-            ".nav:hover { background:#f0e9db; color:#2b2b2b; }");
+```c
+ar_stylesheet(ui,
+    ".rail    { width:220px; display:flex; flex-direction:column; padding:16px; gap:2px; }"
+    ".nav     { padding:9px 12px; font-size:16px; color:#8a8175; }"
+    ".nav:hover { background:#f0e9db; color:#2b2b2b; }");
 
 ar_begin(ui, "div.rail");
-for (i = 0; i < 5; ++i)
-    if (ar_button(ui, "div.nav", pages[i]))
-        selected = i;
+    for (i = 0; i < 5; ++i)
+        if (ar_button(ui, "div.nav", pages[i])) selected = i;
 ar_end(ui);
 ```
 
@@ -159,15 +155,10 @@ against one every interface has.
 Real CSS, a subset of it. Selectors carry several classes and combinators:
 
 ```css
-.card.selected     {
-background:
-# 2b7; }   /* both classes */
-.page .card        {
-padding:
-    12px; }      /* a descendant */
-#root>.card { margin : 4px; }              /* a direct child, not a grandchild */
-.row + .row        {
-    border - top - width : 1px; }
+.card.selected     { background: #2b7; }   /* both classes */
+.page .card        { padding: 12px; }      /* a descendant */
+#root > .card      { margin: 4px; }        /* a direct child, not a grandchild */
+.row + .row        { border-top-width: 1px; }
 ```
 
 `color` and `font-size` inherit, including through a box that only inherited
@@ -337,10 +328,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 Then the two questions that matter:
 
 ```sh
-#Will it hold 60 fps on the machine I care about ?
+# Will it hold 60 fps on the machine I care about?
 ./build/ar_require --scene dashboard --fps 60 --res 640x480 --bpp 32     --results bench/baseline.json     --reference bench/profiles/reference-ryzen-8840hs.json     --target bench/profiles/pentium2-400.json
 
-#Did my change make anything slower ?
+# Did my change make anything slower?
 ./build/ar_bench --all --iters 150 --repeat 3 --compare bench/baseline.json --gate
 ```
 
@@ -413,16 +404,17 @@ Where it stands against the conformance suites, which are vendored and run offli
 | | |
 | --- | --- |
 | html5lib tokenizer | **7,026 of 7,026 — 100%**, nothing skipped, a CI gate |
-| html5lib tree construction | **1,331 of 1,726 — 77.1%**, reported and not yet gated |
+| html5lib tree construction | **1,884 of 1,922 — 98.0%**, 8 scripting cases skipped, a CI gate |
 | Named character references | all **2,231**, generated from the standard's own JSON and checked against it |
-| Browser tree corpus | **126 of 126** documents agree with Edge exactly |
+| Browser tree corpus | **183 of 183** documents agree with Edge exactly |
 | Fuzzing | **50 million** iterations, five seeds, no crash, no hang, no overrun |
 | Encoding sniffing | **50 documents**, the specification's prescan, not a search for the word |
 | Quirks mode | **34 doctypes**, agreeing with Edge on every one |
-| Parse throughput | **44.5 MB/s** on this laptop, against a 30 MB/s floor |
+| Parse throughput | **40.0 MB/s** on this laptop, against a 30 MB/s floor |
 
-What is missing is named rather than implied: `innerHTML` fragment parsing, and a real stack of
-template insertion modes. That work is 0.9.3.
+What is missing is named rather than implied: a real stack of template insertion modes, the
+`<selectedcontent>` mirror, and a tail of thirty-eight cases listed by cause in the release
+document. That work is 0.9.3.
 
 ```c
 /* Reading a document. The input is not copied and must outlive the document. */
@@ -446,7 +438,7 @@ the tree that declares no boxes at all.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 1091 checks
+./build/ar_test               # 1274 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.8.0
 ./build/example_showcase      # one long page using the whole CSS subset at once
@@ -454,7 +446,7 @@ cmake --build build
 ./build/example_block --dump  # the same, as rectangles, for the comparison
 ./build/example_tour --selftest   # every page, no window; CI runs this
 
-#on a machine with no display, the benchmarks still run
+# on a machine with no display, the benchmarks still run
 ./build/ar_bench --all --iters 150 --repeat 3
 ```
 
