@@ -167,6 +167,10 @@ if(WIN32)
     target_link_libraries(example_document PRIVATE areole_win32)
     areole_set_warnings(example_document)
 
+    add_executable(example_interface examples/14_interface/main.c)
+    target_link_libraries(example_interface PRIVATE areole_win32)
+    areole_set_warnings(example_interface)
+
     add_executable(example_html examples/12_html/main.c)
     target_link_libraries(example_html PRIVATE areole)
     areole_set_warnings(example_html)
