@@ -317,6 +317,11 @@ ar_u32 ar_stylesheet_errors(const ar_ctx *c)
     return c->sheet.errors;
 }
 
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
+{
+    return c ? c->sheet.rules_refused : 0;
+}
+
 /* ------------------------------------------------------------------------
  * Fonts
  * ------------------------------------------------------------------------ */
@@ -1738,7 +1743,18 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        toolkit does and what people expect. */
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
+        ar_i32 k;
+
         c->active = c->hot;
+
+        /* The ancestors latch with it, for the reason `:hover` has them: the
+           box under the cursor in a document is the text, and the rule that
+           says what a pressed item looks like is on its parent. */
+        c->active_chain_n = c->hot_chain_n;
+        for (k = 0; k < c->hot_chain_n; ++k)
+        {
+            c->active_chain[k] = c->hot_chain[k];
+        }
     }
     c->clicked = 0;
     if (c->mouse_released & AR_MOUSE_LEFT)
@@ -1748,6 +1764,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             c->clicked = c->active;
         }
         c->active = 0;
+        c->active_chain_n = 0;
     }
 
     /* The tree has to be contiguous to be indexed, so the whole array is
@@ -1807,6 +1824,26 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             : 0;
 }
 
+/* Is this box the hot one, or an ancestor of it? The chain is a root path, so
+   it is as long as the tree is deep and usually about eight. */
+static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (!key)
+    {
+        return 0;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        if (chain[i] == key)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------------
  * Tree building
  * ------------------------------------------------------------------------ */
@@ -1849,11 +1886,11 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     /* Hover and active come from where this box was last frame, because where
        it is this frame is not known until after layout. See ar_node.h. */
     slot = ar_ctx_slot(c, key);
-    if (key == c->hot)
+    if (ar__in_chain(c->hot_chain, c->hot_chain_n, key))
     {
         state |= AR_STATE_HOVER;
     }
-    if (key == c->active)
+    if (ar__in_chain(c->active_chain, c->active_chain_n, key))
     {
         state |= AR_STATE_ACTIVE;
     }
@@ -3052,6 +3089,26 @@ static void ar__update_hot(ar_ctx *c)
         }
     }
 
+    /*
+     * And its ancestors, because `:hover` matches them too.
+     *
+     * The hit test finds one box, the topmost. CSS matches `:hover` on that
+     * box *and every ancestor of it*, which for a hand-declared tree is
+     * usually the same thing and for a parsed document never is: every
+     * element's text is a child box, so the hit is always the child and the
+     * rule is always on the parent.
+     */
+    c->hot_chain_n = 0;
+    {
+        ar_i32 at = c->hot_index;
+
+        while (at >= 0 && c->hot_chain_n < AR_MAX_DEPTH)
+        {
+            c->hot_chain[c->hot_chain_n++] = c->nodes[at].key;
+            at = c->nodes[at].parent;
+        }
+    }
+
     /* Hover is resolved from the previous frame, so the frame that discovers
        a new box under the cursor is not the frame that can style it. A caller
        whose event pump blocks when idle would therefore show the highlight one
@@ -3187,7 +3244,7 @@ static void ar__shift_subtree(ar_ctx *c, ar_i32 root, ar_i32 dy)
     {
         if (ar__is_within(c, c->nodes[j].parent, root))
         {
-            c->nodes[j].rect.y -= dy;
+            ar_shift_node(c->nodes, c->frags, c->frag_count, j, 0, -dy);
         }
     }
 }

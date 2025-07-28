@@ -155,7 +155,7 @@ static int read_file(const char *path)
  * which is the same shape every other example has: the tree is declared fresh
  * and damage tracking decides what actually gets painted.
  */
-static void frame(ar_ctx *c, const ar_doc *d, const ar_input *in, ar_surface *surface)
+static void frame(ar_ctx *c, ar_doc *d, const ar_input *in, ar_surface *surface)
 {
     ar_frame_begin(c, in);
     ar_dom_build(c, d);

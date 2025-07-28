@@ -558,6 +558,22 @@ void ar_stylesheet(ar_ctx *c, const char *css);
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
 
+/*
+ * How many rules were refused outright, which is the number that matters.
+ *
+ * `ar_stylesheet_errors` counts every complaint, and most of them are
+ * harmless: a declaration naming a property areole has not implemented is
+ * dropped and the rule around it still applies, which is what CSS says to do
+ * and what lets a real stylesheet full of `font-family` and `box-shadow`
+ * style everything it can.
+ *
+ * This counts the other kind: a rule areole threw away entire, so nothing it
+ * said happened. A selector list longer than AR_MAX_SEL_LIST is the way to
+ * get one, and it fails silently -- the page still lays out, just not the way
+ * it was written. Assert this is zero; the other number is information.
+ */
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c);
+
 /* ------------------------------------------------------------------------
  * Fonts
  *
@@ -1246,7 +1262,7 @@ int ar_html_parse_fragment(ar_doc *doc, const char *bytes, ar_u32 len, const cha
  * Call it between ar_frame_begin and ar_frame_end, exactly where the
  * equivalent ar_begin/ar_end block would go.
  */
-void ar_dom_build(ar_ctx *c, const ar_doc *d);
+void ar_dom_build(ar_ctx *c, ar_doc *d);
 
 /*
  * Every `<style>` element in the document, handed to ar_stylesheet in tree

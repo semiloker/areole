@@ -1120,6 +1120,16 @@ static ar_rect ar__box(ar_i32 index)
     return g_ui->nodes[index].rect;
 }
 
+/* The resolved background, for checks about state rather than geometry. */
+static ar_u32 ar__box_bg(ar_i32 index)
+{
+    if (!g_ui || index < 0 || index >= g_ui->node_count)
+    {
+        return 0;
+    }
+    return (ar_u32)AR_WIDE(&g_ui->nodes[index].style, AR_P_BACKGROUND);
+}
+
 static int ar__box_is(ar_i32 index, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
 {
     ar_rect r = ar__box(index);
@@ -8632,6 +8642,57 @@ static void test_aspect_ratio_gives_the_axis_nobody_stated(void)
           "aspect-ratio: and a box that stated both keeps both");
 }
 
+static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
+{
+    ar_surface s = ar__ui_surface(700, 400);
+
+    /*
+     * A block whose children are a run of inline boxes has to be measured at
+     * the width it actually got, because that is what decides how many lines
+     * the run takes.
+     *
+     * `ar_wrap_height` handled a box carrying its own text, which is every box
+     * a hand-declared interface makes. A parsed document has none of them --
+     * `ar_dom_build` gives every element's text a child of its own -- so a
+     * `<p>` is a block with one inline child, and its height was the unwrapped
+     * one. It was stacked as a single line and its next sibling was drawn over
+     * the top of it.
+     *
+     * Nothing here could see it: every corpus either states its heights or is
+     * wide enough not to wrap, and `compare_layout.py` excludes boxes sized by
+     * their own text from its verdict. The interface example found it by being
+     * narrow enough to wrap.
+     *
+     * Still wrong, and named: a block whose children are *blocks* reports its
+     * intrinsic height, so a wrapped paragraph inside a div still misplaces
+     * whatever follows the div. That needs heights to sweep upward after
+     * widths sweep down, which is a third pass.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:300px; }"
+                 ".p { display:block; }"
+                 ".t { display:inline; }"
+                 ".after { display:block; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+    ar_begin(g_ui, "div.p");
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across two lines");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after. */
+    CHECK(ar__box(2).h > 20, "wrap: the paragraph is taller than one line");
+    CHECK(ar__box(4).y >= ar__box(2).y + ar__box(2).h,
+          "wrap: and the block after it starts below it rather than on top of it");
+    CHECK(ar__box(1).h >= ar__box(2).h + 20, "wrap: the container is as tall as what it holds");
+}
+
 static void test_a_grid_settles_its_own_height(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -15570,6 +15631,137 @@ static void test_a_processing_instruction_target_is_narrower_than_a_name(void)
     CHECK(wrong == 0, "html: a processing instruction target is ASCII, unreserved and finished");
 }
 
+static void test_hover_matches_an_ancestor_of_the_box_under_the_cursor(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+    ar_input   in;
+    ar_i32     lit_plain, lit_hover;
+
+    /*
+     * CSS: an element matches `:hover` while the pointer is over it *or over a
+     * descendant of it*. The hit test finds exactly one box, the topmost.
+     *
+     * For a hand-declared tree those are usually the same box, which is why
+     * this went unnoticed for five releases. For a parsed document they never
+     * are: `ar_dom_build` gives every element's text a child of its own, so the
+     * box under the cursor is always that child and the element the rule is
+     * written on is always its parent. `:hover` did nothing at all on an HTML
+     * page -- which is what somebody opening the interface example noticed
+     * first, and no check in the repository could have told them why.
+     *
+     * The chain is the hot box's ancestors by key, so this is one comparison
+     * per box against a path about eight long.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".item { display:block; width:100px; height:40px; background:#111111; }"
+                 ".item:hover { background:#eeeeee; }"
+                 ".label { display:block; width:100px; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.item");
+    ar_text(g_ui, "span.label", "hi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    lit_plain = (ar_i32)ar__box_bg(1);
+
+    /* Over the *text*, which is the child, twice -- hover resolves from the
+       previous frame. */
+    in.mouse_x = 10;
+    in.mouse_y = 10;
+    for (lit_hover = 0; lit_hover < 2; ++lit_hover)
+    {
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.item");
+        ar_text(g_ui, "span.label", "hi");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+    lit_hover = (ar_i32)ar__box_bg(1);
+
+    CHECK(lit_plain != lit_hover,
+          "hover: the cursor over a box's text hovers the box, as CSS says");
+}
+
+static void test_html_text_collapses_its_whitespace(void)
+{
+    /*
+     * `white-space: normal`: a run of whitespace is one space, and a newline is
+     * whitespace rather than a line break.
+     *
+     * The tree keeps the bytes exactly -- html5lib compares text node by node
+     * and 1,884 cases depend on it -- so the collapsing happens in
+     * `ar_dom_build`, on the way into a box, where CSS says it happens.
+     *
+     * It matters because markup is *written* with newlines. `<td>exact`
+     * followed by a newline and the next row's indentation was two lines of
+     * text here and one in a browser, which made every row of a table half
+     * again as tall as it should be.
+     *
+     * `<pre>` is exempt by name, since `white-space` is not a property here
+     * yet and the user-agent stylesheet cannot say so.
+     */
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_doc    *d = &g_doc;
+    ar_i32     k;
+    ar_i32     para_text = -1;
+    ar_i32     pre_text = -1;
+    ar_i32     in_pre = 0;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<p>one\ntwo   three</p><pre>four\nfive</pre>");
+
+    for (k = 0; k < d->node_count; ++k)
+    {
+        if (d->nodes[k].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[k].name, "pre"))
+        {
+            in_pre = k;
+        }
+        if (d->nodes[k].kind == AR_DOM_TEXT)
+        {
+            if (in_pre && d->nodes[k].parent == in_pre)
+            {
+                pre_text = k;
+            }
+            else if (para_text < 0)
+            {
+                para_text = k;
+            }
+        }
+    }
+    CHECK(para_text >= 0 && pre_text >= 0, "collapse: both text nodes are in the tree");
+
+    /* Before the walk, the tree holds the bytes as written. */
+    CHECK(memchr(d->nodes[para_text].text.p, '\n', d->nodes[para_text].text.n) != 0,
+          "collapse: the parser keeps the newline, because the suites compare it");
+
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, d);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(memchr(d->nodes[para_text].text.p, '\n', d->nodes[para_text].text.n) == 0,
+          "collapse: the walk turns it into a space");
+    CHECK(d->nodes[para_text].text.n == 13, "collapse: and a run of spaces into one");
+    CHECK(memchr(d->nodes[pre_text].text.p, '\n', d->nodes[pre_text].text.n) != 0,
+          "collapse: a <pre> keeps its newlines");
+}
+
 static void test_an_html_attribute_is_in_no_namespace(void)
 {
     /*
@@ -16203,6 +16395,7 @@ int main(void)
     test_intrinsic_keywords_work_on_the_height();
     test_fit_content_takes_a_cap();
     test_aspect_ratio_gives_the_axis_nobody_stated();
+    test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is();
     test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
@@ -16460,6 +16653,8 @@ int main(void)
     test_pre_swallows_one_newline();
     test_the_frameset_ok_flag_decides_whether_a_body_survives();
     test_a_processing_instruction_target_is_narrower_than_a_name();
+    test_hover_matches_an_ancestor_of_the_box_under_the_cursor();
+    test_html_text_collapses_its_whitespace();
     test_an_html_attribute_is_in_no_namespace();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
