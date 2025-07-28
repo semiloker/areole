@@ -8663,10 +8663,8 @@ static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
      * their own text from its verdict. The interface example found it by being
      * narrow enough to wrap.
      *
-     * Still wrong, and named: a block whose children are *blocks* reports its
-     * intrinsic height, so a wrapped paragraph inside a div still misplaces
-     * whatever follows the div. That needs heights to sweep upward after
-     * widths sweep down, which is a third pass.
+     * The case where those children are themselves blocks is
+     * test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it, below.
      */
     ar__ui_reset("#root { display:block; }"
                  ".w { display:block; width:300px; }"
@@ -8693,6 +8691,82 @@ static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
     CHECK(ar__box(1).h >= ar__box(2).h + 20, "wrap: the container is as tall as what it holds");
 }
 
+static void test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it(void)
+{
+    ar_surface s = ar__ui_surface(700, 400);
+    ar_i32     bare, nested;
+
+    /*
+     * The general case, and the one every page on the web is made of.
+     *
+     * Widths are settled on the way down and heights are only knowable on the
+     * way back up, so a box that stacks other boxes cannot know how tall it is
+     * until its own width is known -- and its parent needs that height while
+     * it is still stacking, because the box after this one goes directly
+     * below. `ar_wrap_height` is where the two directions meet.
+     *
+     * It used to meet them only for a box whose children were inline, because
+     * letting the placement reach another block would recurse. It has to
+     * recurse: `<div><p>two lines</p></div>` is the ordinary shape of a
+     * document, and the div reported the height of a single line, so whatever
+     * followed was drawn *inside* the paragraph.
+     *
+     * The check is the one a browser answers the same way: wrapping a
+     * paragraph in a div must not move what comes after it. Edge puts the
+     * following block 52 pixels below the paragraph's top whether or not the
+     * div is there; areole said 79 bare and 37 wrapped. Stated as an equality
+     * between the two rather than as a pixel count, so it holds whatever the
+     * test face measures -- and `.one` is the reference that proves the long
+     * paragraph really did wrap, rather than passing because it did not.
+     *
+     * Deliberately not checked here: that the div ends up as tall as its
+     * paragraph, or that the container ends up tall enough to hold it. Both
+     * are true even with the rule removed -- the forward sweep settles every
+     * box's own height afterwards -- so both are checks that cannot go red.
+     * The damage was never to the div's final height; it was to the siblings
+     * its parent had already stacked underneath it.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:120px; }"
+                 ".card { display:block; }"
+                 ".p { display:block; }"
+                 ".t { display:inline; }"
+                 ".after { display:block; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+
+    ar_begin(g_ui, "div.p"); /* 2: one line, for comparison */
+    ar_text(g_ui, "span.t", "one");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.p"); /* 4: the same paragraph, bare */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after"); /* 6 */
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card"); /* 7: and again, wrapped in a div */
+    ar_begin(g_ui, "div.p");    /* 8 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after"); /* 10 */
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(4).h > ar__box(2).h, "blocks: the long paragraph took more than one line");
+
+    bare = ar__box(6).y - ar__box(4).y;
+    nested = ar__box(10).y - ar__box(8).y;
+    CHECK(bare == nested, "blocks: wrapping a paragraph in a div does not move what follows it");
+    CHECK(ar__box(10).y >= ar__box(8).y + ar__box(8).h,
+          "blocks: and what follows starts below the paragraph, not inside it");
+}
 static void test_a_grid_settles_its_own_height(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -16396,6 +16470,7 @@ int main(void)
     test_fit_content_takes_a_cap();
     test_aspect_ratio_gives_the_axis_nobody_stated();
     test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is();
+    test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it();
     test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();

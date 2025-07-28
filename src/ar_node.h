@@ -144,6 +144,25 @@ typedef struct ar_node
        that on every frame it is queried. */
     ar_i32 content_w;
 
+    /*
+     * The inner width this box's height was last settled at, or -1.
+     *
+     * Heights sweep up while widths sweep down, so a box that stacks
+     * other boxes cannot know how tall it is until its own width is
+     * known -- and its parent needs that height to place whatever comes
+     * after it. The answer is to lay the subtree out early, from
+     * ar_wrap_height, and this is what stops that costing 2^depth: the
+     * parent's stack measures a child, the forward sweep then places the
+     * same child for real, and without a memo each of those two visits
+     * would measure the whole subtree again.
+     *
+     * Paired with `content_h`, which is the height that was arrived at.
+     * Two fields would not fit -- ar_node has exactly four bytes of
+     * headroom against AR_BYTES_PER_BOX -- and `content_h` is already
+     * that number, so only the width it was true for is new.
+     */
+    ar_i32 measured_w;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
