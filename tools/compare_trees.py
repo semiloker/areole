@@ -133,6 +133,15 @@ def main(argv):
             print('  %s' % k)
         print()
 
+    if len(order) == len(missing):
+        # Nothing matched, so nothing was compared -- and "all 0 agree exactly"
+        # reads like a pass. The browser dump comes back empty on roughly one
+        # run in three; that is a run to repeat, not a result to record.
+        print('TREES')
+        print('  NOTHING WAS COMPARED -- the browser matched 0 cases.')
+        print('  This is not a pass. Run it again on its own.')
+        return 2
+
     if not differ:
         print('TREES')
         print('  all %d agree exactly' % (len(order) - len(missing)))
