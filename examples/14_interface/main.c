@@ -854,6 +854,78 @@ static int selftest(ar_ctx *c, ar_doc *d)
         }
     }
 
+    /*
+     * Every piece of text is drawn inside the box that owns it.
+     *
+     * The check this page most needed and did not have. A release went out
+     * where the whole sidebar drew its labels piled on top of each other at
+     * the top of the window -- and every rectangle was right, so `--labels`
+     * and `--dump` and the geometry comparison all agreed with the browser
+     * while the page was unreadable. What had moved was the boxes; what had
+     * not was the fragments the text is actually painted from.
+     *
+     * Nothing that looks at rectangles can see that. This looks at where the
+     * text *is*: a fragment has to be inside the element that holds it, and
+     * when a box moves without taking its text along, it is not.
+     */
+    {
+        ar_i32 i, stray = 0, checked = 0;
+
+        for (i = 0; i < ar_node_count(c); ++i)
+        {
+            const char *t = ar_node_text(c, i);
+            ar_i32      parent, k, nf;
+            ar_rect     box;
+
+            if (!t || !t[0])
+            {
+                continue;
+            }
+            parent = ar_node_parent(c, i);
+            if (parent < 0)
+            {
+                continue;
+            }
+            box = ar_node_rect(c, parent);
+            if (box.w <= 0 || box.h <= 0)
+            {
+                continue;
+            }
+
+            nf = ar_node_frag_count(c, i);
+            for (k = 0; k < (nf > 0 ? nf : 1); ++k)
+            {
+                ar_rect f = nf > 0 ? ar_node_frag(c, i, k, 0, 0) : ar_node_rect(c, i);
+
+                ++checked;
+                if (f.y + f.h <= box.y || f.y >= box.y + box.h || f.x + f.w <= box.x ||
+                    f.x >= box.x + box.w)
+                {
+                    if (stray == 0)
+                    {
+                        printf("FAIL  text drawn outside its own box: \"%s\" at %ld,%ld "
+                               "but its box is at %ld,%ld %ldx%ld\n",
+                               t, (long)f.x, (long)f.y, (long)box.x, (long)box.y, (long)box.w,
+                               (long)box.h);
+                    }
+                    ++stray;
+                }
+            }
+        }
+
+        if (stray)
+        {
+            printf("FAIL  %ld of %ld text pieces are outside the box that owns them\n", (long)stray,
+                   (long)checked);
+            ++bad;
+        }
+        else
+        {
+            printf("ok    all %ld pieces of text are inside the box that owns them\n",
+                   (long)checked);
+        }
+    }
+
     printf("%s\n", bad ? "selftest FAILED" : "selftest passed");
     return bad ? 1 : 0;
 }
