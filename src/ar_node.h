@@ -791,6 +791,10 @@ void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
  */
 void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy);
 
+/* The same, for the box and everything beneath it. */
+void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
+                      ar_i32 dy);
+
 void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
