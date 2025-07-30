@@ -1317,6 +1317,35 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
          */
         ar_apply_ratio(it, 1);
         ar_wrap_height(nodes, it, 1, 0, env);
+
+        /*
+         * And what the item's contents come to at that column width, which is
+         * what the row has to be sized from.
+         *
+         * ar_wrap_height will not answer for an item that is going to be
+         * stretched -- it is about to be told its height, so measuring its
+         * content would be measuring something it is not going to keep. That
+         * is right for the item and wrong for the *row*: the row's size is the
+         * contributions of its items, the stretch happens afterwards to fill
+         * it, and `align-items: stretch` is the default, so this was every
+         * ordinary grid.
+         *
+         * fit[1] is where the contribution is read from and it holds the
+         * max-content height, so a tile of prose contributed one line's worth
+         * and the row came out one line tall with three lines of text hanging
+         * out of it. Raising it here is not a lie about what fit[1] means: the
+         * column is settled, and this is what the contents come to now that it
+         * is.
+         */
+        {
+            ar_i32 iw = it->rect.w - it->style.v[AR_P_PAD_LEFT] - it->style.v[AR_P_PAD_RIGHT];
+            ar_i32 ch = ar_content_height(nodes, index[k], iw, env);
+
+            if (ch > it->fit[1])
+            {
+                it->fit[1] = ch;
+            }
+        }
     }
 
     ar__solve_axis(nodes, sheet, i, place, index, items, row, rows, 1, inner_h,

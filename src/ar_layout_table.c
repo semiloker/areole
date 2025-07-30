@@ -1137,14 +1137,16 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
  *
  * ponytail: a cell's own text is re-measured at the settled width, and a cell
  * whose content is other boxes falls back to the max-content height the
- * measure sweep produced. That is right for the common cell -- text, or one
- * block of text -- and too tall for a cell whose children would themselves
- * wrap. Closing it needs a measure(subtree, width) entry point, which layout
- * does not have for anything: `ar__wrap_height` answers for one node. That
- * entry point is worth building for its own sake, since grid will want it too.
+ * measure sweep produced. That was right for the common cell -- text, or one
+ * block of text -- and too short for a cell whose children would themselves
+ * wrap, because fit[1] is the height nothing wrapping would give.
+ *
+ * `ar_content_height` is the measure(subtree, width) entry point this comment
+ * used to ask for. Grid wanted it too, and asks the same way.
  */
-static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
+static ar_i32 ar__cell_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env)
 {
+    ar_node *n = &nodes[i];
     /*
      * A border box, from whichever of the two answers is larger.
      *
@@ -1160,6 +1162,18 @@ static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
     if (stated > h)
     {
         h = stated;
+    }
+
+    /* A cell holding boxes rather than words: lay them out at the column width
+       and take what they came to. This is the row height a browser gives. */
+    if (n->first_child >= 0)
+    {
+        ar_i32 sub = ar_content_height(nodes, i, inner_w, env) + ar__cell_border_y(n);
+
+        if (sub > h)
+        {
+            h = sub;
+        }
     }
 
     if (n->text && env && env->wrap)
@@ -1343,7 +1357,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
                             nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
-                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+                ar_i32 ch = ar__cell_height(nodes, e, cw < 0 ? 0 : cw, env);
 
                 if (assign)
                 {
@@ -1496,7 +1510,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 ar_i32 inner = w - ar__cell_border_x(&nodes[c]) - nodes[c].style.v[AR_P_PAD_LEFT] -
                                nodes[c].style.v[AR_P_PAD_RIGHT];
 
-                h = ar__cell_height(&nodes[c], inner < 0 ? 0 : inner, env);
+                h = ar__cell_height(nodes, c, inner < 0 ? 0 : inner, env);
             }
 
             if (closed)
@@ -1644,7 +1658,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
                             nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
-                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+                ar_i32 ch = ar__cell_height(nodes, e, cw < 0 ? 0 : cw, env);
 
                 if (assign)
                 {

@@ -745,8 +745,17 @@ int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 availab
    Does nothing when there is no ratio, or when both axes were stated. */
 void ar_apply_ratio(ar_node *n, int w_definite);
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
-void ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n);
-int  ar_is_table_cell(const ar_node *n);
+
+/*
+ * What a box's contents come to at a width, in the units fit[1] is in.
+ *
+ * For the sizing algorithms that have to know how tall an item will be
+ * before they can decide the track, row or line it sits in. A measurement
+ * only: the box is left needing to be placed again, and saying so.
+ */
+ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env);
+void   ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n);
+int    ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
    they give the table box. No width exists yet, so nothing is placed. */

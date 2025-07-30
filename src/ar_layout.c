@@ -528,7 +528,8 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
     {
         /* No writing modes, so a grid's cross axis is always the block one. */
     }
-    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) && ar_axis_main(p) == 0)
+    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) &&
+             !ar_is_table_block(p) && ar_axis_main(p) == 0)
     {
         /* A flex row: the cross axis is the block axis here too. A column's
            cross axis is horizontal and its stretch settles widths, which this
@@ -608,9 +609,32 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      */
     if (nodes && ar_is_grid(n) && n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env && env->sheet)
     {
-        ar_i32 gh = ar_grid_content_height(nodes, (ar_i32)(n - nodes), env->sheet, env);
+        ar_i32 gh;
+
+        /*
+         * Answered already, at this very width.
+         *
+         * Without this the solve runs again on every visit, and a container
+         * inside a container inside a container costs 2^depth of them -- the
+         * same trap the block branch has a memo for, sprung the same way. The
+         * test suite stopped finishing.
+         */
+        if (n->measured_w == n->rect.w)
+        {
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            return;
+        }
+
+        gh = ar_grid_content_height(nodes, (ar_i32)(n - nodes), env->sheet, env);
 
         n->rect.h = ar_clamp(gh, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        /* That was a placement, not a measurement -- ar_grid_content_height
+           runs the whole track solve and positions every item. Saying so is
+           what lets the forward sweep skip it instead of running a second
+           identical solve, and what makes the stack move the settled subtree
+           rather than leaving it behind. */
+        n->measured_w = n->rect.w;
         return;
     }
 
@@ -1177,6 +1201,95 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     }
 }
 
+/*
+ * What this box's contents come to at a width it has not been given yet.
+ *
+ * The `measure(subtree, width)` entry point three places have wanted and none
+ * could build: the table names it in ar__cell_height and says grid will want
+ * it too, and grid wants it in ar__item_contribution. Both had to answer from
+ * `fit[1]`, which is the max-content height -- what the box would be if
+ * nothing wrapped. For a cell or a tile holding one line that is exact, and
+ * for one holding a paragraph it is a guess that is always too short.
+ *
+ * What was missing is now here: laying a subtree out at a stated width is what
+ * ar__place_block does, and `content_h` is the number it arrives at, in the
+ * same units as `fit[1]` -- padding included, border not.
+ *
+ * It is a measurement and leaves nothing behind. The subtree it places is at
+ * the wrong width for the box's final rectangle and at whatever origin the box
+ * held at the time, so `measured_w` is cleared to say exactly that: this box
+ * has to be placed again, and the forward sweep will. The fragments are
+ * rewound for the same reason -- unlike the settled placement in
+ * ar_wrap_height, nothing here is being kept.
+ *
+ * Answers `fit[1]` unchanged for anything the block placer does not lay out,
+ * which is a grid, a flex container, a table, and any leaf. Those size
+ * themselves and asking this about them would be asking the wrong algorithm.
+ */
+/*
+ * Throw away everything a measurement left on a subtree.
+ *
+ * ar_content_height places a subtree to find out how tall it is and then
+ * rewinds the fragments, because none of that layout is being kept. The memo
+ * has to go with them, and not only on the box that was asked: a descendant
+ * whose memo still matches is one the forward sweep will *skip*, so its
+ * fragment indices are never rewritten -- and they point into the rewound
+ * region, where other boxes' fragments now live. Moving that box then moves
+ * text belonging to something else. The interface example caught it exactly
+ * that way: one wheel notch moved a box by 90 pixels and its text by 720.
+ *
+ * The counts are cleared as well as the memo, so a box is a box with no
+ * fragments until it is placed again rather than a box pointing at somebody
+ * else's.
+ */
+static void ar__forget_measurement(ar_node *nodes, ar_i32 i)
+{
+    ar_i32 c;
+
+    nodes[i].measured_w = -1;
+    nodes[i].frag_first = 0;
+    nodes[i].frag_count = 0;
+    for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar__forget_measurement(nodes, c);
+    }
+}
+
+ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   saved_w, saved_h, mark, h;
+
+    if (!env || !env->wrap || inner_w <= 0 || n->first_child < 0)
+    {
+        return n->fit[1];
+    }
+    if (ar_is_grid(n) || ar_is_table(n) || ar_is_table_internal(n))
+    {
+        return n->fit[1];
+    }
+    if (!ar_is_block(n) && !ar_is_table_block(n))
+    {
+        return n->fit[1];
+    }
+
+    saved_w = n->rect.w;
+    saved_h = n->rect.h;
+    mark = env->frag_used;
+
+    n->rect.w =
+        inner_w + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT] + ar_scroll_gutter(n);
+    ar__place_block(nodes, i, env);
+    h = n->content_h;
+
+    n->rect.w = saved_w;
+    n->rect.h = saved_h;
+    env->frag_used = mark;
+    ar__forget_measurement(nodes, i);
+
+    return h;
+}
+
 static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
 {
     ar_i32 i;
@@ -1215,6 +1328,10 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
         }
         if (ar_is_grid(n))
         {
+            if (n->measured_w == n->rect.w)
+            {
+                continue;
+            }
             ar_grid_place(nodes, i, env->sheet, env);
             continue;
         }
