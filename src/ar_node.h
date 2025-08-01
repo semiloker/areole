@@ -804,6 +804,21 @@ void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i
 void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
                       ar_i32 dy);
 
+/*
+ * Move a box to the rectangle just written into it, taking its subtree along.
+ *
+ * `was` is where the box stood before the caller assigned its new position.
+ * Every algorithm that positions a box -- block flow, a grid track, a flex
+ * line, a table row -- must call this after writing the rectangle. A box whose
+ * contents were already laid out is *moved*, never repositioned; assigning
+ * without this leaves everything inside it where it was, which is a page with
+ * every rectangle correct and all of its text in the top-left corner.
+ *
+ * Does nothing for a box with no settled subtree, so it is always safe to call
+ * and never needs a condition at the call site.
+ */
+void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was);
+
 void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);

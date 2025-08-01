@@ -571,31 +571,26 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env);
  *
  * The memo means two things at once: this subtree is settled, so the forward
  * sweep may skip it -- and whoever positions this box has to shift the subtree
- * with it, because nothing else is going to. Block flow does: every path out
- * of ar__place_child_at goes through ar__settle_at.
+ * with it, because nothing else is going to.
  *
- * The other placers do not. A grid assigns its items `cx, cy` outright, and so
- * do flex and the table. Setting the memo under one of those is a box that
- * moves while everything inside it stays behind, and then is skipped so it is
- * never put right: the interface example's whole sidebar drew its labels
- * piled up at the top of the window with every rectangle correct.
+ * All four placers do that now. Block flow always did, through
+ * ar__place_child_at; the grid track, the flex line and the table row each
+ * assigned a rectangle and walked away, which is a box that moves while
+ * everything inside it stays behind -- and then is skipped, so it is never put
+ * right. That shipped once, and drew an entire sidebar's labels piled at the
+ * top of the window with every rectangle correct.
  *
- * So the memo is only claimed where block flow owns the movement. Under the
- * other three a box is placed the old way, twice, which is what the perf note
- * in the previous commit meant by "still placed twice, and named" -- it is a
- * correctness bound, not only a speed one, until those placers shift settled
- * subtrees the way the block stack does.
+ * The rule that replaced it is one line long and belongs to every placer:
+ * **write the rectangle, then call ar_settle_at.** With all four obeying it the
+ * only box left out is the root, which nothing moves.
+ *
+ * Kept as a named predicate rather than deleted, because it is the question to
+ * ask when a fifth thing learns to position a box.
  */
 static int ar__parent_moves_subtree(const ar_node *nodes, const ar_node *n)
 {
-    const ar_node *p;
-
-    if (n->parent < 0)
-    {
-        return 0;
-    }
-    p = &nodes[n->parent];
-    return ar_is_block(p) || ar_is_table_block(p);
+    (void)nodes;
+    return n->parent >= 0;
 }
 
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
@@ -902,7 +897,7 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
 }
 
 /*
- * Move a child to where the stack decided it goes, taking its subtree along.
+ * Move a box to where its parent decided it goes, taking its subtree along.
  *
  * A box whose height was settled by the measure pass has already had its whole
  * subtree laid out, at whatever origin it happened to hold at the time -- so
@@ -910,13 +905,20 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
  * moving everything under it. `was` is where it stood before the caller
  * assigned its new position; this puts it back and shifts the lot.
  *
+ * Public, because every algorithm that positions a box has to obey it and
+ * three of them are in other files. Block flow, a grid track, a flex line and
+ * a table row all decide where a box goes, and all four now say so the same
+ * way: write the rectangle, then call this. A placer that assigns and does not
+ * call it strands whatever was already laid out inside -- which is a page with
+ * every rectangle correct and all of its text in the top-left corner.
+ *
  * The memo doing double duty is what keeps this honest. Anything that changes
  * the box's width after it was measured -- a formatting context narrowing
  * beside a float, a float shrinking to fit -- makes `measured_w` stop matching
  * on its own, and then this does nothing and the forward sweep places the box
  * again the old way. No path has to remember to say so.
  */
-static void ar__settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was)
+void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was)
 {
     ar_node *ch = &nodes[i];
     ar_i32   dx, dy;
@@ -949,7 +951,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
     {
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
-        ar__settle_at(su->nodes, su->env, index, was);
+        ar_settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -961,7 +963,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ch->rect.x = su->left;
         ch->rect.y = su->top + y;
-        ar__settle_at(su->nodes, su->env, index, was);
+        ar_settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -997,7 +999,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
         }
     }
 
-    ar__settle_at(su->nodes, su->env, index, was);
+    ar_settle_at(su->nodes, su->env, index, was);
 }
 
 static ar_i32 ar__clear_to(void *ud, ar_i32 y, ar_i32 which)
@@ -1150,7 +1152,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 
             at.x = was.x;
             at.y = ch->rect.y;
-            ar__settle_at(nodes, env, c, at);
+            ar_settle_at(nodes, env, c, at);
         }
     }
 
