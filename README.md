@@ -89,7 +89,7 @@ Per unit, which is what scales to a slower machine:
 The glyph figure used to be the bad one. The blitter tied with GDI on text
 while beating it three to ten times on everything else, which is how we learned
 it was about fifteen times slower than it should be; rewriting it to work in
-spans rather than per bit made it 10.7x faster and turned that tie into 9.3x.
+spans rather than per bit made it 10.7x faster and turned that tie into 10.4x.
 
 Averages are not reported. A UI that is smooth apart from one stall every two
 seconds has an excellent average and is unusable.
@@ -265,44 +265,51 @@ so a Latin face plus a CJK face renders both rather than one and a row of tofu.
 Same machine, same process, same output buffer, alternating one frame each so
 neither engine sits on a warmer chip. A ratio above 1.00 means areole is faster.
 
-| case | rival | areole | rival | ratio | areole layout | ratio | read |
-| --- | --- | --: | --: | --: | --: | --: | --- |
-| `clear_uncached` | Win32 GDI | 80 us | 83 us | **1.04x** | - | - | **tie** |
-| `fill_opaque` | Win32 GDI | 343 us | 1288 us | **3.76x** | - | - | solid |
-| `fill_blend` | Win32 GDI | 2056 us | 12592 us | **6.12x** | - | - | solid |
-| `latin_paragraph` | Win32 GDI | 787 us | 823 us | **1.04x** | - | - | **tie** |
-| `hairlines` | Win32 GDI | 31 us | 336 us | **10.90x** | - | - | solid |
-| `flat_1k` | Clay | 109 us | 259 us | **2.37x** | 23 us | **11.25x** | solid |
-| `flat_8k` | Clay | 967 us | 2170 us | **2.24x** | 194 us | **11.19x** | solid |
-| `flat_1k` | microui | 95 us | 10 us | **0.11x** | 21 us | **0.48x** | solid |
-| `flat_8k` | microui | 855 us | 80 us | **0.09x** | 184 us | **0.43x** | solid |
+| case | rival | areole | rival | ratio | read |
+| --- | --- | --: | --: | --: | --- |
+| `clear_uncached` | Win32 GDI | 79 us | 83 us | **1.05x** | solid |
+| `fill_opaque` | Win32 GDI | 308 us | 1225 us | **3.98x** | solid |
+| `fill_blend` | Win32 GDI | 2515 us | 14803 us | **5.89x** | solid |
+| `latin_paragraph` | Win32 GDI | 98 us | 1015 us | **10.40x** | solid |
+| `hairlines` | Win32 GDI | 36 us | 421 us | **11.77x** | solid |
+| `flat_1k` | Clay | 664 us | 335 us | *0.51x* | marginal |
+| `flat_8k` | Clay | 7556 us | 2973 us | *0.39x* | solid |
+| `flat_1k` | microui | 723 us | 14 us | *0.02x* | marginal |
+| `flat_8k` | microui | 6336 us | 104 us | *0.02x* | solid |
 
 `read` is whether the ratio survives the noise it was measured in: **solid**
-when the effect is more than twice the combined per-epoch spread, **tie** when
-it is not. A tie is published as a tie whatever the ratio column says.
+when the effect is more than twice the combined per-epoch spread, **marginal**
+when it is not. Regenerate the whole table with `ar_compare --all --json` and
+`tools/gen_compare_doc.py`; the full version with every caveat is
+[docs/COMPARISON.md](docs/COMPARISON.md).
 
 **What this actually says, in three lines.**
 
-*Filling and blending: areole wins comfortably.* 3.8x GDI on opaque rectangles,
-6.1x on translucent ones, 10.9x on hairlines where per-call overhead dominates.
+*Rasterizing: areole wins comfortably.* 4.0x GDI on opaque rectangles, 5.9x on
+translucent ones, 11.8x on hairlines where per-call overhead dominates.
 `fill_blend` is flattered -- GDI's `AlphaBlend` must read a source surface areole
-does not need -- and `clear_uncached` is a tie because at 3 MB per pass both
-engines are simply waiting on memory, which is the correct answer.
+does not need -- and `clear_uncached` is nearly a tie because at 3 MB per pass
+both engines are simply waiting on memory, which is the correct answer.
 
-*Layout: areole beats the direct competitor and pays for what it buys.* Its
-layout phase is **11x faster than Clay's entire frame** at both sizes. Against
-microui it is 0.43x, and that is the expected price: microui advances a row
-cursor, areole runs two passes per axis over a retained tree so grow and shrink
-can be solved. Real flexbox for 2x a cursor is cheap.
+*Text: 10.4x, and it used to be a tie.* That tie was the most useful number the
+comparison ever produced. A bitmap blitter has no business being level with
+hinted, kerned, antialiased outlines rendered through the system font stack, and
+it was not the outlines that were slow -- the span blitter was writing a pixel
+at a time. Per-span rather than per-bit made it 10.7x faster.
 
-*Text: 9.31x, and it used to be a tie.* That tie was the most useful number the
-comparison produced. A bitmap blitter has no business being level with hinted,
-kerned, antialiased outlines rendered through the system font stack, and it was
-not: the blitter was doing two rectangle intersections and a call to write one
-pixel, once per set bit. In spans it is 10.7x faster, at 46 ns per glyph --
-inside the 30 to 50 ns the measurement release predicted a span blitter would
-reach. Still not a fair comparison, because GDI is producing far better output;
-it becomes one when 0.2.0 brings outlines.
+*Layout: areole loses to both immediate-mode libraries, and the gap has grown.*
+Clay lays out `flat_8k` 2.5x faster and microui 60x. **This table used to claim
+the opposite**, from figures measured when areole's layout was a single pass over
+boxes that stated their own sizes. It is now two passes per axis over a retained
+tree that solves grow and shrink, floats, margin collapsing, grid tracks, table
+columns and line breaking -- and it costs what that costs. microui advances a row
+cursor; the comparison is real but it is not like for like, and the honest
+summary is that **areole buys CSS layout and pays for it.**
+
+Whether it should pay *this much* is an open question and 0.15.0's, and the
+figure that will answer it is not in this table: it is how much of the frame is
+layout at all. On the interface example that is 12 us of a 30 us frame.
+
 
 The caveats are not footnotes -- Clay takes its configuration inline while areole
 resolves a stylesheet per box, so areole is doing strictly more work in the
@@ -416,6 +423,23 @@ What is missing is named rather than implied: a real stack of template insertion
 `<selectedcontent>` mirror, and a tail of thirty-eight cases listed by cause in the release
 document. That work is 0.9.3.
 
+**Reading real documents changed the layout engine more than it changed the parser.** A page whose
+boxes come from markup is not shaped like one a program declares, and eleven bugs only that
+difference could expose came out of a single example:
+
+- **A block is as tall as the blocks inside it.** Heights sweep up while widths sweep down, and
+  `<div><p>two lines</p></div>` — the ordinary shape of every page — reported one line, so what
+  followed was drawn inside the paragraph.
+- **A grid track and a table row are as tall as what wrapped inside them**, measured at the
+  settled column width rather than at max-content.
+- **Each box is laid out once**, not once to measure and once to place. `inline_wrap` −45%,
+  `float_gallery` −41%, `grid_20x20` −20%.
+- **`:hover` matches the ancestors of the box under the cursor**, which is every styled element on
+  a parsed page, because the text is always in a child.
+- **Whitespace collapses on the way into a box**, not in the tree, where html5lib compares bytes.
+
+A flex container's automatic height is still wrong and is the one named exception; it is 0.9.1's.
+
 ```c
 /* Reading a document. The input is not copied and must outlive the document. */
 ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
@@ -488,7 +512,7 @@ can be asked to lay out the same thing:
 python tools/compare_layout.py --run ./build/example_tour.exe
 ```
 
-**Six corpora are checked against a browser, box by box, and five of them agree exactly:**
+**Seven corpora are checked against a browser, box by box, and five of them agree exactly:**
 
 | corpus | what it checks | result |
 | --- | --- | --- |
@@ -497,13 +521,16 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `06_sticky` | `position: sticky` against its containing block | **355 / 355** |
 | `07_env` | `env()` and the safe area | **28 / 28** |
 | `08_anchor` | anchor positioning and the flip | **168 / 168** |
+| `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `09_table` | tables: anonymous boxes, collapse, spans | 416 / 624 |
 
 The table corpus is the honest exception and is not gated: **208 of its 624 boxes still land
 somewhere a browser does not**, and the disagreements are listed rather than compensated for.
+The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
 
-**Flex, grid and subgrid have no corpus at all.** Every layout release since 0.5.0 got one; 0.8.x
-did not, and that is the next thing being built rather than a claim being made.
+**Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped
+without, and grid's arrived late; flex's has not arrived at all. It is the next one to build, and
+0.9.1's gallery is where it belongs.
 
 The first run needed six compensating rules to get there, and two of the six were bugs worth
 fixing rather than documenting: **text never wrapped** — `ar_text_wrap` had implemented UAX #14

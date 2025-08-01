@@ -290,11 +290,11 @@ that way rather than dropped.
 
 | case | areole | Win32 GDI | ratio | spread | read |
 | --- | --: | --: | --: | --: | --- |
-| `clear_uncached` | 85.0 us | 94.1 us | **1.11x** | 7/6% | noise |
-| `fill_opaque` | 510.3 us | 1455.7 us | **2.85x** | 15/8% | solid |
-| `fill_blend` * | 3006.1 us | 14786.5 us | **4.92x** | 4/3% | solid |
-| `latin_paragraph` * | 103.5 us | 914.5 us | **8.84x** | 35/28% | solid |
-| `hairlines` | 44.1 us | 367.1 us | **8.32x** | 14/19% | solid |
+| `clear_uncached` | 79.4 us | 83.4 us | **1.05x** | 1/1% | solid |
+| `fill_opaque` | 307.7 us | 1224.7 us | **3.98x** | 3/2% | solid |
+| `fill_blend` * | 2515.0 us | 14803.4 us | **5.89x** | 11/9% | solid |
+| `latin_paragraph` * | 97.6 us | 1014.9 us | **10.40x** | 18/15% | solid |
+| `hairlines` | 35.8 us | 421.2 us | **11.77x** | 8/9% | solid |
 
 \* `fill_blend`: GDI has no solid-colour alpha fill, so AlphaBlend reads a source surface
   areole does not need. GDI is doing strictly more work here.
@@ -310,8 +310,8 @@ that way rather than dropped.
 
 | case | areole | Clay | ratio | areole layout | ratio | spread | read |
 | --- | --: | --: | --: | --: | --: | --: | --- |
-| `flat_1k` * | 644.3 us | 295.4 us | **0.46x** | 271.0 us | **1.09x** | 17/16% | marginal |
-| `flat_8k` * | 7528.8 us | 2874.3 us | **0.38x** | 2662.0 us | **1.08x** | 3/1% | solid |
+| `flat_1k` * | 663.6 us | 335.2 us | **0.51x** | 288.0 us | **1.16x** | 13/12% | marginal |
+| `flat_8k` * | 7556.4 us | 2973.3 us | **0.39x** | 2622.0 us | **1.13x** | 9/5% | solid |
 
 \* `flat_1k`, `flat_8k`: areole resolves a stylesheet for every box and keeps damage
   bookkeeping per box; Clay takes its configuration inline, already resolved, and tracks
@@ -324,8 +324,8 @@ that way rather than dropped.
 
 | case | areole | microui | ratio | areole layout | ratio | spread | read |
 | --- | --: | --: | --: | --: | --: | --: | --- |
-| `flat_1k` * | 591.2 us | 11.0 us | **0.02x** | 268.0 us | **0.04x** | 18/3% | solid |
-| `flat_8k` * | 6324.0 us | 89.8 us | **0.01x** | 2506.0 us | **0.04x** | 7/6% | solid |
+| `flat_1k` * | 722.7 us | 14.4 us | **0.02x** | 296.0 us | **0.05x** | 30/27% | marginal |
+| `flat_8k` * | 6336.2 us | 103.9 us | **0.02x** | 2601.0 us | **0.04x** | 3/2% | solid |
 
 \* `flat_1k`, `flat_8k`: microui builds no tree, resolves no style and tracks no damage:
   mu_layout_next advances a row cursor and returns a rectangle. areole runs two passes per axis
