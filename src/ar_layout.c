@@ -670,6 +670,47 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
         return;
     }
 
+    /*
+     * A flex container's automatic height is what its lines came to.
+     *
+     * The same hole the grid had, in the same place, with the same cause: the
+     * flex algorithm knew the answer and nothing asked it.
+     * `ar_flex_content_cross` was written for exactly this, declared in the
+     * header, and had no callers at all -- so a `display: flex` row with no
+     * stated height took the block measure pass's guess, which is the tallest
+     * item's *max-content* height. A row of prose came out one line tall and
+     * whatever followed it was drawn through the middle of it.
+     *
+     * Only a row. A column's cross axis is horizontal, so `cross_total` is a
+     * width there and answering with it would be answering the wrong axis; a
+     * column's automatic height is the sum of its items' main sizes, which is
+     * a different question and is not this one. Named rather than guessed at.
+     */
+    if (nodes && env && n->first_child >= 0 && n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && ar_axis_main(n) == 0)
+    {
+        ar_i32 idx = (ar_i32)(n - nodes);
+
+        /*
+         * Answered already, at this very width. Without this the solve runs
+         * again on every visit and a container inside a container costs
+         * 2^depth of them -- the same trap the block branch has a memo for,
+         * sprung the same way. The test suite stopped finishing.
+         */
+        if (n->measured_w == n->rect.w)
+        {
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            return;
+        }
+
+        ar_flex_place_auto(nodes, idx, env);
+        n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                             AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->measured_w = n->rect.w;
+        return;
+    }
+
     if (nodes && ar_is_table(n))
     {
         ar_i32 th = ar_table_height(nodes, (ar_i32)(n - nodes), env);
@@ -1422,6 +1463,12 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
          * because CSS gives every one an automatic one whether or not anybody
          * wrote it.
          */
+        /* Placed once: the height branch in ar_wrap_height already ran the
+           whole solve and positioned every item, and said so with the memo. */
+        if (n->measured_w == n->rect.w)
+        {
+            continue;
+        }
         ar_flex_place(nodes, i, env);
     }
 }

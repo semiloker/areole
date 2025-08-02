@@ -724,6 +724,9 @@ ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free);
 void   ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 
+/* Places a flex container whose cross size is whatever its lines come to. */
+void ar_flex_place_auto(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
 /* ------------------------------------------------------------------------
  * The grid formatting context, in ar_layout_grid.c
  *
