@@ -110,3 +110,45 @@ python tools/fetch_html5lib.py
 
 Test data only. Nothing here is linked into areole, and no shipping build
 contains any of it.
+
+## The real-document corpus
+
+`examples/15_real/`
+
+Ten pages saved from the web for 0.9.0 acceptance criterion 9, which asks for
+**real** markup on purpose: real markup is malformed in ways hand-written
+markup never is, and every other corpus in this repository was written by the
+person who wrote the engine and agrees with it by construction.
+
+Chosen so that every one of them may be redistributed. Saved on **2026-08-29**
+with `tools/save_page.py`, which records exactly what it changed -- scripts,
+external stylesheets and images are removed so both engines are asked the same
+question, and **nothing else is**. The tag soup is kept exactly as served.
+
+| file | source | licence |
+| --- | --- | --- |
+| `mdn-flex.html` | https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/flex | **CC-BY-SA 2.5** |
+| `mdn-table.html` | https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/table | **CC-BY-SA 2.5** |
+| `wikipedia-css.html` | https://en.wikipedia.org/wiki/Cascading_Style_Sheets | **CC-BY-SA 4.0** |
+| `wikipedia-status-codes.html` | https://en.wikipedia.org/wiki/List_of_HTTP_status_codes | **CC-BY-SA 4.0** |
+| `wikipedia-ja-html.html` | https://ja.wikipedia.org/wiki/HTML | **CC-BY-SA 4.0** |
+| `w3c-css21-tables.html` | https://www.w3.org/TR/CSS21/tables.html | **W3C Document Licence** |
+| `whatwg-syntax.html` | https://html.spec.whatwg.org/multipage/syntax.html | **CC-BY 4.0** |
+| `rfc2616.html` | https://www.rfc-editor.org/rfc/rfc2616.html | **IETF Trust / BCP 78** |
+| `nasa.html` | https://www.nasa.gov/ | **public domain** (US Government work) |
+| `weather-gov.html` | https://www.weather.gov/ | **public domain** (US Government work) |
+
+MDN's prose is CC-BY-SA 2.5, Wikipedia's CC-BY-SA 4.0, and both require
+attribution and share-alike -- which this table is. The W3C and WHATWG
+documents are redistributable under their own licences. US Government works are
+not subject to copyright in the United States.
+
+Test data only, exactly like the html5lib suites: nothing here is linked into
+areole and no shipping build contains any of it. Re-fetch any one with
+
+```sh
+python tools/save_page.py <url> examples/15_real/<name>.html
+```
+
+and note that the pages are living documents -- a refetch will differ, which is
+why the saved bytes are committed rather than a script that downloads them.

@@ -69,9 +69,26 @@
  * ------------------------------------------------------------------------
  */
 static const char *const AR__UA[] = {
-    /* The document skeleton. `head` and everything in it draws nothing --
-       which is what stops a stylesheet's own text appearing on the page. */
-    "html { display:block; }"
+    /*
+     * The document skeleton. `head` and everything in it draws nothing --
+     * which is what stops a stylesheet's own text appearing on the page.
+     *
+     * `html` is painted white, and that is not what CSS says: the initial
+     * background is `transparent`, and what makes a page white is the browser
+     * painting its canvas before anything else. areole has no canvas -- it
+     * draws into whatever surface it is handed -- so a document that declares
+     * no background of its own came out on top of last frame's pixels, which
+     * for the corpus harness meant black. Every example in the tree declares a
+     * background and none of them showed it; ten real documents, which mostly
+     * do not, showed it immediately.
+     *
+     * Put here rather than in the examples because it is the rule a document
+     * is written against: an author who sets no background expects white and
+     * every engine gives them white. An application that wants otherwise
+     * overrides `html`, which now works because there is something to
+     * override.
+     */
+    "html { display:block; background:#ffffff; }"
     "body { display:block; margin:8px; }",
 
     "head, style, script, title { display:none; }"
