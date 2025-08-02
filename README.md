@@ -400,7 +400,7 @@ toolkit breaks that circle.
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
-### 0.9.0, in progress
+### 0.9.0, complete
 
 The parser is real and it is public. `ar_html_parse_into` builds a document, `ar_dom_build` walks
 it into the box tree through the same calls a hand-written interface makes, and everything after
@@ -418,6 +418,7 @@ Where it stands against the conformance suites, which are vendored and run offli
 | Encoding sniffing | **50 documents**, the specification's prescan, not a search for the word |
 | Quirks mode | **34 doctypes**, agreeing with Edge on every one |
 | Parse throughput | **40.0 MB/s** on this laptop, against a 30 MB/s floor |
+| Real documents | **10 saved from the web**, nine recognisable, the tenth named |
 
 What is missing is named rather than implied: a real stack of template insertion modes, the
 `<selectedcontent>` mirror, and a tail of thirty-eight cases listed by cause in the release
@@ -438,7 +439,21 @@ difference could expose came out of a single example:
   a parsed page, because the text is always in a child.
 - **Whitespace collapses on the way into a box**, not in the tree, where html5lib compares bytes.
 
-A flex container's automatic height is still wrong and is the one named exception; it is 0.9.1's.
+Two more came out of the same work and are fixed here: a grid track and a table row were
+sized from unwrapped text, and a flex container's automatic height was never settled at all.
+
+**And then ten real documents, which is the release's last acceptance criterion.**
+`examples/15_real` is ten pages saved from the web -- MDN, Wikipedia, a W3C specification,
+RFC 2616, two US Government sites -- every licence permitting redistribution, every one
+attributed. Nine render recognisably. `rfc2616` does not, because `white-space: pre` line
+breaking is 0.5.1's; the Japanese Wikipedia article lays out correctly and draws tofu,
+because selecting a face by `font-family` needs a font database and that is 0.2.1's. Both
+are named in the release document beside what they need, along with the three inline-layout
+faults the corpus turned up.
+
+It found one bug worth having: areole had **no default canvas colour**, so a document that
+declares no background rendered on whatever was already in the surface. Every example in
+this tree declares one, which is exactly why five releases never saw it.
 
 ```c
 /* Reading a document. The input is not copied and must outlive the document. */
@@ -522,6 +537,7 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `07_env` | `env()` and the safe area | **28 / 28** |
 | `08_anchor` | anchor positioning and the flip | **168 / 168** |
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
+| `15_real` | ten documents saved from the web | by eye, 9 / 10 |
 | `09_table` | tables: anonymous boxes, collapse, spans | 416 / 624 |
 
 The table corpus is the honest exception and is not gated: **208 of its 624 boxes still land
