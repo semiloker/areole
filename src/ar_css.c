@@ -3290,7 +3290,23 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         {
             if (sheet->count >= sheet->capacity)
             {
-                ar__fail(&z);
+                /*
+                 * The table is full, so this rule does not exist. That is a
+                 * refusal and not merely an error, and calling it an error was
+                 * wrong in the direction that matters: `rules_refused` is the
+                 * number a caller is told to assert on -- "a rule areole threw
+                 * away entire, so nothing it said happened" -- and a rule with
+                 * nowhere to be stored is the most complete example there is.
+                 * It was counted only in `errors`, beside the harmless ones,
+                 * where an assertion on refusals could never see it.
+                 *
+                 * A stylesheet that outgrows its table is silent otherwise:
+                 * the page lays out, and the rules that fell off the end are
+                 * the last ones written, which in a user-agent sheet are the
+                 * least common elements. Exactly the failure that looks like
+                 * everything working.
+                 */
+                ar__fail_rule(&z);
                 break;
             }
             /* Everything except the selector is the same, and rule[0] is the

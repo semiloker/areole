@@ -158,6 +158,99 @@ static const char *const AR__UA[] = {
     "input, button, select, textarea { display:inline-block; }"
     "output, progress, meter { display:inline-block; }",
 
+    /*
+     * ------------------------------------------------------------------
+     * The rest of the element set, 0.9.1
+     * ------------------------------------------------------------------
+     *
+     * The sheet above was the elements a document usually has. This is the
+     * elements a document may have, from the HTML specification's rendering
+     * section, and the difference showed the moment ten real pages were
+     * rendered: an element with no rule at all falls to the initial `display`,
+     * which in this engine makes it a flex container. A `<del>` inside a
+     * paragraph became a flex box in the middle of a line.
+     *
+     * That is the whole reason this is worth doing element by element rather
+     * than waiting for a document to complain. There is no such thing as an
+     * unstyled element here -- only one styled by accident.
+     */
+
+    /* Block-level, in fours. `summary` is `list-item` in the specification and
+       block here, because markers are 0.5.3. */
+    "details, summary, dialog, search { display:block; }"
+    "optgroup, option, legend, center { display:block; }",
+
+    "xmp, listing, plaintext, marquee { display:block; }"
+    "dir, frameset, noframes, fieldset { display:block; }",
+
+    /* Inline-level. `del` and `ins` are the pair that showed the flex-box
+       default: both are inline in every browser and neither had a rule. */
+    "del, ins, strike, big { display:inline; }"
+    "tt, bdi, bdo, data { display:inline; }",
+
+    "ruby, rt, rp, slot { display:inline; }"
+    "map, canvas, video, audio { display:inline; }",
+
+    "iframe, embed, object, picture { display:inline; }",
+
+    /* Drawn by nobody: metadata, and elements whose content is not rendered. */
+    "template, datalist, param, track { display:none; }"
+    "source, area, frame, noscript { display:none; }",
+
+    /*
+     * Margins the block rules above gave a display but no box.
+     *
+     * `dl` had `display:block` and no margin, so a definition list sat flush
+     * against the paragraph before it. `pre` and its three legacy spellings
+     * are the same shape.
+     */
+    "dl, hgroup { margin:16px 0px; }"
+    "pre, xmp, listing, plaintext { margin:16px 0px; }",
+
+    /*
+     * A nested list has no margin of its own.
+     *
+     * Four selectors exactly, which is AR_MAX_SEL_LIST -- a fifth would be
+     * refused whole and silently, so this rule is at the limit by arithmetic
+     * rather than by luck. `dir` is left out on purpose for that reason.
+     */
+    "ol ol, ol ul, ul ol, ul ul { margin:0px; }",
+
+    /* `fieldset` and `legend`, which are the only elements whose default box
+       is a border rather than a margin. The specification's border is
+       `2px groove`; per-side widths and border styles are not implemented, so
+       this is a flat two pixels and says so. */
+    "fieldset { margin:0px 2px; padding:5px 10px 10px 10px;"
+    "           border-width:2px; border-color:#c0c0c0; }"
+    "legend { padding-left:2px; padding-right:2px; }",
+
+    "center { text-align:center; }",
+
+    /*
+     * Not expressible yet, and named here rather than left to be discovered:
+     *
+     *   - `dialog` is `display:none` until it has the `open` attribute, which
+     *     needs an attribute selector. There are none, so a dialog is always
+     *     drawn. The top layer and `::backdrop` have existed since 0.6.3 and
+     *     are waiting for it.
+     *   - `pre`, `xmp`, `listing`, `plaintext` and `textarea` need
+     *     `white-space: pre` and a monospace family. Both are missing, which
+     *     is why RFC 2616 is the one document in the real corpus that does not
+     *     render recognisably.
+     *   - `b`, `strong`, `th` and every heading want `font-weight: bold`;
+     *     `i`, `em`, `cite`, `var`, `dfn` and `address` want
+     *     `font-style: italic`. Neither property exists, so nothing on a page
+     *     is bold or italic.
+     *   - `sub` and `sup` want `vertical-align: sub / super` and a smaller
+     *     size. `vertical-align` has four keywords and none of them is these.
+     *   - `a:link` wants a colour and an underline. `text-decoration` does not
+     *     exist.
+     *
+     * Each is a missing property rather than a missing rule, which is why they
+     * are listed together: the sheet is ahead of the engine, and the sheet is
+     * the cheap half.
+     */
+
     0};
 
 void ar_ua_stylesheet(ar_ctx *c)
