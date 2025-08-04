@@ -114,13 +114,33 @@ static const char *const AR__UA[] = {
      * `em`, because relative units are 0.4.1. They match a browser exactly at
      * that root and are wrong at any other, which is the honest state of it.
      */
-    "h1 { display:block; font-size:32px; margin:21px 0px; }"
-    "h2 { display:block; font-size:24px; margin:20px 0px; }"
-    "h3 { display:block; font-size:19px; margin:18px 0px; }",
+    "h1 { display:block; font-size:32px; margin:21px 0px; font-weight:bold; }"
+    "h2 { display:block; font-size:24px; margin:20px 0px; font-weight:bold; }"
+    "h3 { display:block; font-size:19px; margin:18px 0px; font-weight:bold; }",
 
-    "h4 { display:block; font-size:16px; margin:21px 0px; }"
-    "h5 { display:block; font-size:13px; margin:22px 0px; }"
-    "h6 { display:block; font-size:11px; margin:24px 0px; }",
+    "h4 { display:block; font-size:16px; margin:21px 0px; font-weight:bold; }"
+    "h5 { display:block; font-size:13px; margin:22px 0px; font-weight:bold; }"
+    "h6 { display:block; font-size:11px; margin:24px 0px; font-weight:bold; }",
+
+    /*
+     * Bold and italic, which the sheet could not say until 0.9.1.
+     *
+     * These are the rules that make a document read as a document: a heading
+     * that is heavier than its paragraph, a `<strong>` that is stronger, an
+     * `<em>` that is emphasised. Every one of them was a plain roman before,
+     * and ten real pages made that the most obvious thing wrong with them.
+     *
+     * Whether the difference is *drawn* depends on the application having
+     * given areole a face for the weight and style -- `ar_font_load_styled`.
+     * With one face loaded the cascade is still correct and the text still
+     * comes out roman, which is what a browser does with a family that has no
+     * bold: the rule applies, the face is the closest available.
+     */
+    "b, strong, th { font-weight:bold; }"
+    "i, em, cite, var { font-style:italic; }",
+
+    "dfn, address { font-style:italic; }"
+    "optgroup, legend { font-weight:bold; }",
 
     /* Lists. No markers: `list-style` and `::marker` are 0.5.3, so these
        indent and show nothing. */

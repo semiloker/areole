@@ -213,6 +213,10 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
     s->v[AR_P_LINE_HEIGHT] = 0;
     s->unit[AR_P_LINE_HEIGHT] = AR_UNIT_KEYWORD; /* `normal` */
+    s->v[AR_P_FONT_WEIGHT] = AR_WEIGHT_NORMAL;
+    s->unit[AR_P_FONT_WEIGHT] = AR_UNIT_NUMBER;
+    s->v[AR_P_FONT_STYLE] = AR_FONT_STYLE_NORMAL;
+    s->unit[AR_P_FONT_STYLE] = AR_UNIT_KEYWORD;
 
     /*
      * The offsets default to `auto`, not to zero.
@@ -403,6 +407,8 @@ int ar_prop_inherits(ar_i32 prop)
     case AR_P_COLOR:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
+    case AR_P_FONT_WEIGHT:
+    case AR_P_FONT_STYLE:
     /* `visibility` inherits, and that is what makes `collapse` on a row worth
        writing: the row goes and every cell in it goes too, without any of them
        being named. A cell can say `visibility: visible` to come back, which is
@@ -428,8 +434,9 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,      AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
-                                      AR_P_VISIBILITY, AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,  AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -732,6 +739,8 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"line-height", AR_P_LINE_HEIGHT},
+                                          {"font-weight", AR_P_FONT_WEIGHT},
+                                          {"font-style", AR_P_FONT_STYLE},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
@@ -999,6 +1008,11 @@ static const ar__kw AR_KEYWORDS[] = {
        face's own arithmetic. Zero, because the property is a length or a
        multiplier everywhere else and neither can be zero. */
     {"normal", AR_P_LINE_HEIGHT, 0},
+    {"normal", AR_P_FONT_WEIGHT, AR_WEIGHT_NORMAL},
+    {"bold", AR_P_FONT_WEIGHT, AR_WEIGHT_BOLD},
+    {"normal", AR_P_FONT_STYLE, AR_FONT_STYLE_NORMAL},
+    {"italic", AR_P_FONT_STYLE, AR_FONT_STYLE_ITALIC},
+    {"oblique", AR_P_FONT_STYLE, AR_FONT_STYLE_ITALIC},
     {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
 
     {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
