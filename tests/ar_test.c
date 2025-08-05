@@ -7361,6 +7361,53 @@ static void test_a_collapsed_edge_is_in_the_paint_digest(void)
     CHECK(before != after, "collapse: but its digest did, because its neighbour's border did");
 }
 
+static void test_a_collapsed_tables_outer_line_is_inside_its_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Where a collapsed table's grid starts, and how wide its box is.
+     *
+     * In the collapsed model a border is a line *between* two boxes, split in
+     * half between them. The table's outermost lines are shared with nothing,
+     * so each is split the same way anyway: the near half lies inside the
+     * table and pushes the grid in, and the far half is the table's own outer
+     * edge. `width` on the table sets the grid -- the content -- and the box
+     * comes out wider by both halves.
+     *
+     * Nothing here did any of that. Rows, groups and cells all began at the
+     * padding edge and the box was exactly its columns, so **every one of the
+     * 208 disagreeing boxes in the table corpus was this**, on all twenty-six
+     * pages that set `border-collapse: collapse`. Fixing it left 81.
+     *
+     * A 300px grid with a 6px collapsed border: the first cell starts at
+     * half_near(6) = 3, and the box is 300 + 3 + half_far(6) = 306.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; border:6px #b03030; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == 3, "table: the grid starts at the near half of the leading line");
+    CHECK(ar__box(1).w == 306, "table: and the box is wider than the grid by both outer halves");
+    CHECK(ar__box(3).w + ar__box(4).w == 300,
+          "table: while the columns still share exactly the width that was asked for");
+    CHECK(ar__box(2).x == 3, "table: a row starts where its cells do");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -7381,19 +7428,42 @@ static void test_a_collapsed_line_is_drawn_once(void)
      */
     ar__collapse_scene(&s, "#root { background:#ffffff; } .b { border:2px #0000ff; }");
 
-    /* 3=a at x 0..149, 4=b at x 150..299, both 2px wide at the outer edges and
-       sharing one 2px line down the middle. */
-    CHECK(ar__box(3).x == 0 && ar__box(3).w == 150 && ar__box(4).x == 150,
+    /*
+     * 3=a at x 1..150, 4=b at x 151..300, both 2px at the outer edges and
+     * sharing one 2px line down the middle.
+     *
+     * **Every coordinate here moved right by one when the table's own outer
+     * line was put inside its box**, which is a change of geometry and not of
+     * painting: the grid starts at the near half of the leading line -- one
+     * pixel for a 2px border -- and the table's box is two pixels wider than
+     * its columns. A browser reports the same, and the change took the table
+     * corpus from 208 disagreeing boxes to 81.
+     *
+     * The pattern below is untouched and is what this test is actually for: a
+     * shared line drawn once, as two halves, by the two cells that meet at it,
+     * with nothing either side.
+     */
+    CHECK(ar__box(3).x == 1 && ar__box(3).w == 150 && ar__box(4).x == 151,
           "collapse: the pixel test's cells are where it thinks they are");
 
-    CHECK(ar__pixel_at(0, 6) == 0xFF0000u,
+    CHECK(ar__pixel_at(1, 6) == 0xFF0000u,
           "collapse: the end cell draws its half of the outer line");
-    CHECK(ar__pixel_at(1, 6) == 0xFFFFFFu, "collapse: and stops there");
+    CHECK(ar__pixel_at(2, 6) == 0xFFFFFFu, "collapse: and stops there");
 
-    CHECK(ar__pixel_at(148, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
-    CHECK(ar__pixel_at(149, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
-    CHECK(ar__pixel_at(150, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
-    CHECK(ar__pixel_at(151, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+    CHECK(ar__pixel_at(149, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
+    CHECK(ar__pixel_at(150, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
+    CHECK(ar__pixel_at(151, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
+    CHECK(ar__pixel_at(152, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+
+    /*
+     * Not asserted, and named instead: the table's own outermost pixel, x=0,
+     * is not painted by anything. The cells draw the halves they own and the
+     * table draws no border of its own, so the far half of the outer line is
+     * missing. It was missing before this change too -- the cells simply
+     * started at x=0 and covered it up -- and it is a paint gap rather than a
+     * geometry one, which is why the browser comparison, which reads
+     * rectangles, cannot see it.
+     */
 }
 
 static void test_a_roomy_table_gives_the_surplus_to_the_wide_column(void)
@@ -16830,6 +16900,7 @@ int main(void)
     test_border_spacing_means_nothing_when_collapsed();
     test_a_separate_table_is_untouched_by_any_of_this();
     test_a_collapsed_edge_is_in_the_paint_digest();
+    test_a_collapsed_tables_outer_line_is_inside_its_box();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
