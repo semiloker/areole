@@ -538,14 +538,14 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `08_anchor` | anchor positioning and the flip | **168 / 168** |
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `15_real` | ten documents saved from the web | by eye, 9 / 10 |
-| `09_table` | tables: anonymous boxes, collapse, spans | 543 / 624 |
+| `09_table` | tables: anonymous boxes, collapse, spans | 560 / 624 |
 
-The table corpus is the honest exception and is not gated: **81 of its 624 boxes still land
-somewhere a browser does not**, down from 208. All 208 were one model error -- a collapsed
-table's outer border belongs inside its box -- and the 81 that remain are a second, narrower
-one: the widths of the lines *between* columns are not folded into the column sizes, so a
-table with an unusually wide border on one column splits the space evenly where a browser
-does not. Listed rather than compensated for.
+The table corpus is the honest exception and is not gated: **64 of its 624 boxes still land
+somewhere a browser does not**, down from 208. Two model errors in the collapsed border
+account for the 144 that went: a table's outer border belongs *inside* its box, and a middle
+column's border is not the table's edge. What is left is narrower again -- how a shared line's
+two halves are rounded into the two column widths beside it, and the same question for a row
+group on the vertical axis. Listed rather than compensated for.
 The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
 
 **Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped

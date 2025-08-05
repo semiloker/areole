@@ -214,6 +214,34 @@ static ar_i32 ar__scan_rows(const ar_node *nodes, ar_i32 at, ar_i32 p)
  * gets its bottom edge exactly rather than approximately, which is where the
  * corner cases in collapsed borders were always going to be.
  */
+/*
+ * What a row contributes to the table's left and right edges.
+ *
+ * Its own border and its group's, and **not** its cells'. A vertical line at
+ * the table's edge is a conflict between the table, the row, the row group,
+ * the first or last column, and the cells *in that column* -- CSS 17.6.2 lists
+ * exactly those. A cell in the middle of the row does not touch either side
+ * edge and has no business widening it.
+ *
+ * ar__row_border_max below does include the cells, and is right to: it answers
+ * the *horizontal* question, where every cell in the row sits on the line
+ * above and the line below. Using it for both was one function answering two
+ * questions, and it made a wide border on any column widen the table on both
+ * sides -- `col-one-wider` put five pixels on the first column of a pair and
+ * the table came out five wider on the right as well.
+ */
+static ar_i32 ar__row_frame_border(const ar_node *nodes, ar_i32 row)
+{
+    ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
+
+    if (nodes[row].parent >= 0 && ar__is_group(&nodes[nodes[row].parent]) &&
+        nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH] > m)
+    {
+        m = nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH];
+    }
+    return m;
+}
+
 static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
 {
     ar_i32 c = nodes[row].first_child;
@@ -432,7 +460,7 @@ static ar_i32 ar__lines(const ar_node *nodes, ar_i32 table, ar_i32 *vline)
     {
         ar_i32 c = nodes[row].first_child;
         ar_i32 at = 0;
-        ar_i32 rb = ar__row_border_max(nodes, row);
+        ar_i32 rb = ar__row_frame_border(nodes, row);
 
         if (rb > outer)
         {
@@ -1899,7 +1927,6 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     {
         t->rect.w += lead_x + ar__half_far(vline[ncol > 0 ? ncol : 0]);
     }
-
     return y + t->style.v[AR_P_PAD_BOTTOM];
 }
 

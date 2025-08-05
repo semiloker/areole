@@ -7408,6 +7408,58 @@ static void test_a_collapsed_tables_outer_line_is_inside_its_box(void)
     CHECK(ar__box(2).x == 3, "table: a row starts where its cells do");
 }
 
+static void test_a_middle_columns_border_is_not_the_tables_edge(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * Three columns, and only the middle one has a thick border.
+     *
+     * The table's left and right edges are conflicts between the table, the
+     * row, the row group, the first or last column and the cells *in that
+     * column* -- CSS 17.6.2 lists exactly those, and a cell in the middle of
+     * the row is in none of them. It touches the two lines beside it and
+     * neither side of the table.
+     *
+     * One function was answering two questions. The row's contribution to the
+     * *horizontal* lines does include its cells -- every cell in a row sits on
+     * the line above it and the line below -- and the same function was being
+     * asked for the vertical edges, so a wide border anywhere in the row
+     * widened the table on both sides. `col-one-wider` in the table corpus put
+     * five pixels on one column of a pair and the table came out five wider on
+     * the far side, where the browser adds one.
+     *
+     * The middle cell here is 9px against 1px neighbours: the table's edges
+     * should be the 1px lines, so the grid starts at half_near(1) = 1 and the
+     * box is 300 + 1 + half_far(1) = 301. If the edges took the middle
+     * column's border the box would be 300 + 5 + 4 = 309.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; border:1px #b03030; }"
+                 ".mid { display:table-cell; border:9px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mid"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 301,
+          "table: a middle column's border does not widen the table's own edges");
+    CHECK(ar__box(3).x == 1, "table: so the grid starts at the near half of the *edge* line");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -16901,6 +16953,7 @@ int main(void)
     test_a_separate_table_is_untouched_by_any_of_this();
     test_a_collapsed_edge_is_in_the_paint_digest();
     test_a_collapsed_tables_outer_line_is_inside_its_box();
+    test_a_middle_columns_border_is_not_the_tables_edge();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
