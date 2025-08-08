@@ -7511,20 +7511,82 @@ static void test_a_row_groups_border_is_its_own_two_edges(void)
     /*
      * Each row is its content plus a share of the group's border, not its
      * content plus the whole of it. With the group counted on every row both
-     * came to 20 + 9; they are 24 and 25, which is the nine split between the
-     * group's two edges.
+     * came to 20 + 9.
      *
-     * Stated as a bound rather than as the two exact numbers on purpose. How
-     * the halves of a shared line are divided between the boxes either side of
-     * it is the part of the collapsed model this engine still gets wrong by a
-     * pixel, and pinning 24 and 25 here would be pinning today's rounding
-     * rather than the rule.
+     * Each is 25: its twenty of content and five, which is the half of nine
+     * that the row's own box rounds up to. The *pitch* is not 25 -- the first
+     * row's next-row-starts-here is 24, four of the line above it and twenty
+     * of content and none of the nothing below -- and the two numbers being
+     * different is the point. A row's box rounds its two halves together;
+     * the tiling adds them apart.
      */
-    gap = ar__box(3).h;
-    CHECK(gap < 20 + 9, "table: a row is not its content plus the whole group border");
-    CHECK(ar__box(5).h < 20 + 9, "table: and neither is the one below it");
-    CHECK(ar__box(3).h > 20 && ar__box(5).h > 20,
-          "table: but each does carry some of it, at the edge it touches");
+    gap = ar__box(5).y - ar__box(3).y;
+    CHECK(gap == 4 + 20, "table: a row's pitch is the far half above it and its content");
+    CHECK(ar__box(3).h == 20 + 5 && ar__box(5).h == 20 + 5,
+          "table: and its box is its content and the halves rounded together");
+    CHECK(ar__box(2).h == 9 + 20 + 20 + 9 - 5 - 4,
+          "table: the group is the grid between the table's two outer halves");
+}
+
+static void test_a_collapsed_table_is_its_lines_and_its_rows(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A 4px table around 1px cells: three lines of 4, 1, 4 and two rows of 10.
+     *
+     * Every one of those eleven pixels is somewhere, and the table is 29 tall.
+     * It used to be 27, because the first line was opened with its near half
+     * and then never closed: the second row was started by adding the whole
+     * line between the rows to a `y` that was still short of the far half of
+     * the line above it. Two pixels, on every collapsed table whose outer
+     * border is wider than its cells' -- which is most of them.
+     *
+     * The three numbers below are three different sums and have to stay that
+     * way:
+     *
+     *   - the first row's top is the table's own outer half, 2 of the 4.
+     *   - the pitch to the next row is the *far* half above (2), the content
+     *     (10), and the near half below (1) -- 13. Rows tile.
+     *   - the row's own box is the content and the two halves rounded
+     *     together: 10 + ceil((1 + 4) / 2) = 13 for the second row, where
+     *     adding the halves apart gives 12. The pixel of difference is the
+     *     one the row overlaps the row below it by, and a browser reports the
+     *     same overlap.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; border-collapse:collapse; border:4px #806040; }"
+                 ".g { display:table-row-group; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; border:1px #b03030; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.g"); /* 2 */
+    ar_begin(g_ui, "div.r"); /* 3 */
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r"); /* 5 */
+    ar_begin(g_ui, "div.c"); /* 6 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 4 + 10 + 1 + 10 + 4,
+          "collapse: a table is its lines and its rows, all of both");
+    CHECK(ar__box(3).y - ar__box(1).y == 2,
+          "collapse: the first row opens inside the table's own outer half");
+    CHECK(ar__box(5).y - ar__box(3).y == 2 + 10 + 1,
+          "collapse: and the next row begins exactly where that one's band ends");
+    CHECK(ar__box(5).h == 10 + 3,
+          "collapse: a row's box rounds its two halves together, not one at a time");
+    CHECK(ar__box(2).h == 4 + 10 + 1 + 10 + 4 - 2 - 2,
+          "collapse: and the group is the grid, without the table's outer halves");
 }
 
 static void test_a_collapsed_line_lives_inside_the_columns_it_separates(void)
@@ -17076,6 +17138,7 @@ int main(void)
     test_a_collapsed_tables_outer_line_is_inside_its_box();
     test_a_middle_columns_border_is_not_the_tables_edge();
     test_a_row_groups_border_is_its_own_two_edges();
+    test_a_collapsed_table_is_its_lines_and_its_rows();
     test_a_collapsed_line_lives_inside_the_columns_it_separates();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
