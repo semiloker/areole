@@ -232,6 +232,9 @@ static ar_i32 ar__scan_rows(const ar_node *nodes, ar_i32 at, ar_i32 p)
  */
 static ar_i32 ar__row_frame_border(const ar_node *nodes, ar_i32 row)
 {
+    /* The group stays here: it spans the whole width, so it does meet both of
+       the table's side edges -- unlike the horizontal case, where it meets only
+       its own first and last line. */
     ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
 
     if (nodes[row].parent >= 0 && ar__is_group(&nodes[nodes[row].parent]) &&
@@ -242,16 +245,54 @@ static ar_i32 ar__row_frame_border(const ar_node *nodes, ar_i32 row)
     return m;
 }
 
+/*
+ * A row group's border, and only where the group has an edge.
+ *
+ * A `tbody` with a border draws it around the *group*, not around every row in
+ * it -- so it meets the horizontal line above its first row and the one below
+ * its last, and none of the lines in between. Counting it on every row made a
+ * five-pixel group border into a five-pixel line between each of its rows, and
+ * every row in `col-group-alone` came out two pixels taller than a browser
+ * makes it.
+ *
+ * The same shape as the vertical fix beside it: a border belongs to the edges
+ * the box actually has.
+ */
+static ar_i32 ar__group_edge(const ar_node *nodes, ar_i32 row, int top)
+{
+    ar_i32 g = nodes[row].parent;
+    ar_i32 r, first = -1, last = -1;
+
+    if (g < 0 || !ar__is_group(&nodes[g]))
+    {
+        return 0;
+    }
+    for (r = nodes[g].first_child; r >= 0; r = nodes[r].next_sibling)
+    {
+        if (!ar__is_row(&nodes[r]) || nodes[r].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (first < 0)
+        {
+            first = r;
+        }
+        last = r;
+    }
+    if (row != (top ? first : last))
+    {
+        return 0;
+    }
+    return nodes[g].style.v[AR_P_BORDER_WIDTH];
+}
+
+/* The row and its cells. The group is asked for separately, by
+   ar__group_edge, because it has two edges and not one per row. */
 static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
 {
     ar_i32 c = nodes[row].first_child;
     ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
 
-    if (nodes[row].parent >= 0 && ar__is_group(&nodes[nodes[row].parent]) &&
-        nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH] > m)
-    {
-        m = nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH];
-    }
     for (; c >= 0; c = nodes[c].next_sibling)
     {
         if (ar__is_cell(&nodes[c]) && nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
@@ -1464,9 +1505,24 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         if (collapse)
         {
+            ar_i32 gt = ar__group_edge(nodes, row, 1);
+            ar_i32 gb = ar__group_edge(nodes, row, 0);
+
             mine = ar__row_border_max(nodes, row);
             hl = mine > prev_bot ? mine : prev_bot;
+            if (gt > hl)
+            {
+                hl = gt; /* the group's top line, if this row is its first */
+            }
             hb = last ? t->style.v[AR_P_BORDER_WIDTH] : ar__row_border_max(nodes, nxt);
+            if (!last && ar__group_edge(nodes, nxt, 1) > hb)
+            {
+                hb = ar__group_edge(nodes, nxt, 1); /* and the next group's top */
+            }
+            if (gb > hb)
+            {
+                hb = gb; /* the group's bottom line, if this row is its last */
+            }
             if (mine > hb)
             {
                 hb = mine;

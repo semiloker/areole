@@ -7460,6 +7460,73 @@ static void test_a_middle_columns_border_is_not_the_tables_edge(void)
     CHECK(ar__box(3).x == 1, "table: so the grid starts at the near half of the *edge* line");
 }
 
+static void test_a_row_groups_border_is_its_own_two_edges(void)
+{
+    ar_surface s = ar__ui_surface(500, 500);
+    ar_i32     gap;
+
+    /*
+     * A `tbody` with a border draws it around the *group*, not around every
+     * row in it.
+     *
+     * So it meets the horizontal line above its first row and the one below
+     * its last, and none of the lines in between. Counting it on every row
+     * turned a nine-pixel group border into a nine-pixel line between each of
+     * its rows, and the rows in `col-group-alone` came out two pixels taller
+     * apiece than a browser makes them, with the table five taller.
+     *
+     * The same shape as the fix beside it -- a border belongs to the edges the
+     * box actually has -- and the opposite answer on the other axis: a group
+     * spans the whole width, so it *does* meet both of the table's side edges,
+     * which is why `ar__row_frame_border` keeps it and `ar__row_border_max`
+     * does not.
+     *
+     * The check is the gap between two rows inside the group. The cells carry
+     * no border, so the line between them is nothing at all and the second row
+     * begins exactly where the first one ends.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; border-collapse:collapse; }"
+                 ".g { display:table-row-group; border:9px #6a4080; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.g"); /* 2 */
+    ar_begin(g_ui, "div.r"); /* 3 */
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r"); /* 5 */
+    ar_begin(g_ui, "div.c"); /* 6 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /*
+     * Each row is its content plus a share of the group's border, not its
+     * content plus the whole of it. With the group counted on every row both
+     * came to 20 + 9; they are 24 and 25, which is the nine split between the
+     * group's two edges.
+     *
+     * Stated as a bound rather than as the two exact numbers on purpose. How
+     * the halves of a shared line are divided between the boxes either side of
+     * it is the part of the collapsed model this engine still gets wrong by a
+     * pixel, and pinning 24 and 25 here would be pinning today's rounding
+     * rather than the rule.
+     */
+    gap = ar__box(3).h;
+    CHECK(gap < 20 + 9, "table: a row is not its content plus the whole group border");
+    CHECK(ar__box(5).h < 20 + 9, "table: and neither is the one below it");
+    CHECK(ar__box(3).h > 20 && ar__box(5).h > 20,
+          "table: but each does carry some of it, at the edge it touches");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -16954,6 +17021,7 @@ int main(void)
     test_a_collapsed_edge_is_in_the_paint_digest();
     test_a_collapsed_tables_outer_line_is_inside_its_box();
     test_a_middle_columns_border_is_not_the_tables_edge();
+    test_a_row_groups_border_is_its_own_two_edges();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
