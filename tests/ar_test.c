@@ -7527,6 +7527,60 @@ static void test_a_row_groups_border_is_its_own_two_edges(void)
           "table: but each does carry some of it, at the edge it touches");
 }
 
+static void test_a_collapsed_line_lives_inside_the_columns_it_separates(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+    ar_i32     a, b;
+
+    /*
+     * Two columns holding the same thing, in a table with room to spare.
+     *
+     * The columns partition the table's width, and a collapsed grid line
+     * straddles the boundary between two of them -- so the line is already
+     * *inside* the columns it separates. It is not something either of them
+     * needs extra room for, and adding half of it to each made every column
+     * claim to want more than the space it occupies.
+     *
+     * That was worse than it sounds, because the surplus a roomy table hands
+     * out is shared in proportion to what the columns claim to want. One pixel
+     * of difference between two borders came out as **four** pixels of
+     * difference between two column widths, and the wider the table the worse
+     * it got: `col-row-alone` in the corpus is two identical cells and a 3px
+     * row border, and it was 118 and 122 where a browser gives 120 and 120.
+     *
+     * Equality is the check, not a tolerance. Identical content in a table
+     * with room to spare gets identical columns whatever the borders around
+     * them are doing, and if that stops being exactly true it is worth
+     * knowing.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; border:7px #40806a; }"
+                 ".c { display:table-cell; }"
+                 ".x { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_text(g_ui, "span.x", "same");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 5 */
+    ar_text(g_ui, "span.x", "same");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    a = ar__box(3).w;
+    b = ar__box(5).w;
+
+    CHECK(a + b == 300, "table: the two columns partition the width they were given");
+    CHECK(a == b, "table: and identical content gets identical columns, borders regardless");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -17022,6 +17076,7 @@ int main(void)
     test_a_collapsed_tables_outer_line_is_inside_its_box();
     test_a_middle_columns_border_is_not_the_tables_edge();
     test_a_row_groups_border_is_its_own_two_edges();
+    test_a_collapsed_line_lives_inside_the_columns_it_separates();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();

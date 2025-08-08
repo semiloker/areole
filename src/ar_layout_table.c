@@ -51,7 +51,8 @@
 typedef struct ar__col
 {
     ar_i32 min, max; /* content constraints, accumulated over the column */
-    ar_i32 w, x;     /* what it got, and where it starts */
+
+    ar_i32 w, x; /* what it got, and where it starts */
     /* Whether any cell in this column stated a width. A column that did keeps
        what it asked for when there is room to spare; the surplus goes to the
        columns that did not, which is where a browser puts it. */
@@ -706,18 +707,27 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
             if (collapse && vline)
             {
                 /*
-                 * Half the line at each end, which is what this cell's own box
-                 * has to be wide enough to hold.
+                 * Nothing. The lines live *inside* the columns.
                  *
-                 * The lines are not subtracted from the table's width -- the
-                 * columns partition the whole of it and the lines straddle the
-                 * boundaries between them. Taking the lines out *and* handing
-                 * each cell its share back paid for them twice, which is what
-                 * made every collapsed case in the corpus come out narrow.
+                 * The columns partition the table's width and the grid lines
+                 * straddle the boundaries between them, so a line is already
+                 * inside the two columns it separates -- it is not something
+                 * either of them needs extra room for. Adding half of each end
+                 * to a column's min and max made the column wider than the
+                 * space it occupies, and because the surplus a roomy table
+                 * hands out is shared in proportion to those maxima, one pixel
+                 * of difference between two borders came out as four pixels of
+                 * difference between two column widths.
+                 *
+                 * `col-row-alone` is the plainest case: two identical cells and
+                 * a three-pixel border on the row, which a browser lays out as
+                 * 120 and 120 and this made 118 and 122.
+                 *
+                 * A cell whose *own* border is wider than its content is not a
+                 * counter-example. In this model the cell has no border of its
+                 * own -- it has become the grid line.
                  */
-                ar_i32 rk = at + cs <= AR_MAX_COLUMNS ? at + cs : AR_MAX_COLUMNS;
-
-                chrome += ar__half_far(vline[at]) + ar__half_near(vline[rk]);
+                (void)vline;
             }
 
             if (cs == 1)
@@ -905,19 +915,9 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
 
             if (collapse && vline)
             {
-                /*
-                 * Half the line at each end, which is what this cell's own box
-                 * has to be wide enough to hold.
-                 *
-                 * The lines are not subtracted from the table's width -- the
-                 * columns partition the whole of it and the lines straddle the
-                 * boundaries between them. Taking the lines out *and* handing
-                 * each cell its share back paid for them twice, which is what
-                 * made every collapsed case in the corpus come out narrow.
-                 */
-                ar_i32 rk = at + cs <= AR_MAX_COLUMNS ? at + cs : AR_MAX_COLUMNS;
-
-                chrome += ar__half_far(vline[at]) + ar__half_near(vline[rk]);
+                /* The lines live inside the columns; see the same branch in
+                   the grid pass above for why nothing is added here. */
+                (void)vline;
             }
             want_min = nodes[c].min_w + chrome;
             want_max = nodes[c].fit[0] + chrome;
