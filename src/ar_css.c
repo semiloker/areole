@@ -3446,6 +3446,60 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
     return 1;
 }
 
+/*
+ * The important band: a second cascade over only the `!important` declarations.
+ *
+ * CSS resolves `!important` by running the cascade twice, so an important
+ * declaration of low specificity beats a normal one of high specificity. A
+ * second pass in the same order is exactly what the specification describes,
+ * and is cheaper than sorting on a compound key -- the rules are already in
+ * the right order for both.
+ *
+ * Its own function because an inline style has to be able to run it again.
+ * Inline declarations sit above every selector and below `!important`, so a
+ * box with a `style=""` attribute resolves in three merges rather than one:
+ * the cached cascade, then inline's normal declarations, then this band on top
+ * of them, then inline's own important ones last. Without the third merge a
+ * plain `style="color:red"` would beat `p { color: blue !important }`, which
+ * is the one thing authors write `!important` to prevent.
+ */
+static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+
+        if (!ar_pset_any(r->important) || r->nctx > 0)
+        {
+            continue;
+        }
+        if (r->tag && r->tag != tag)
+        {
+            continue;
+        }
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
+        {
+            continue;
+        }
+        if (r->id && r->id != id)
+        {
+            continue;
+        }
+        if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
+        ar_style_merge(out, &r->style, r->important);
+    }
+}
+
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                  ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
 {
@@ -3506,44 +3560,71 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     }
 
     /*
-     * The important band, after everything normal.
-     *
-     * CSS resolves !important by running a second cascade over only the
-     * important declarations, so an important rule of low specificity beats a
-     * normal rule of high specificity. A second pass in the same order is
-     * exactly what the specification describes, and is cheaper than sorting on
-     * a compound key -- the rules are already in the right order for both.
+     * The important band, after everything normal. See ar__important_band.
      */
-    for (i = 0; i < (ar_i32)sheet->count; ++i)
-    {
-        const ar_rule *r = &sheet->rules[i];
+    ar__important_band(sheet, tag, klass, id, state, out);
+}
 
-        if (!ar_pset_any(r->important) || r->nctx > 0)
-        {
-            continue;
-        }
-        if (r->tag && r->tag != tag)
-        {
-            continue;
-        }
-        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
-        {
-            continue;
-        }
-        if (r->id && r->id != id)
-        {
-            continue;
-        }
-        if (r->state && (state & r->state) != r->state)
-        {
-            continue;
-        }
-        if (!ar__functional_matches(r, tag, klass, id, state))
-        {
-            continue;
-        }
-        ar_style_merge(out, &r->style, r->important);
+void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                              ar_u16 state, ar_style *out)
+{
+    if (!sheet || !klass || !out)
+    {
+        return;
     }
+    ar__important_band(sheet, tag, klass, id, state, out);
+}
+
+/*
+ * A declaration list with no selector and no braces -- what a `style=""`
+ * attribute holds, and what the presentational-hint mapping builds.
+ *
+ * The same `ar__parse_decl` the block parser uses, so `style="color:red"` and
+ * `p { color: red }` cannot disagree about what red is, about shorthands, or
+ * about what a malformed value does. Errors land in the sheet's tally like any
+ * other, which is how a document with broken inline CSS is diagnosable at all.
+ *
+ * The rule it fills in has no selector: it is a carrier for `set`,
+ * `important` and `style`, and the caller merges those three in the order the
+ * cascade wants. Returns non-zero if anything at all was set.
+ */
+int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule)
+{
+    ar__scan z;
+
+    if (!sheet || !rule)
+    {
+        return 0;
+    }
+    memset(rule, 0, sizeof *rule);
+    ar_style_defaults(&rule->style);
+    rule->set = ar_pset_none();
+    rule->important = ar_pset_none();
+
+    if (!decls || !*decls)
+    {
+        return 0;
+    }
+
+    z.base = decls;
+    z.p = decls;
+    z.end = decls + strlen(decls);
+    z.sheet = sheet;
+
+    for (;;)
+    {
+        ar__skip_ws(&z);
+        if (z.p >= z.end)
+        {
+            break;
+        }
+        /* A stray `}` is the shape a truncated attribute leaves behind. The
+           block parser stops at one; here there is no block to end, so it is
+           skipped like any other character that cannot start a property --
+           ar__parse_decl guarantees progress on anything. */
+        ar__parse_decl(&z, rule, sheet);
+    }
+    return ar_pset_any(rule->set);
 }
 
 int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id)

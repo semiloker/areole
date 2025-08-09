@@ -66,6 +66,25 @@ sorted once at parse time, so resolution is a single forward pass.
 **`!important`** wins over any declaration that is not, whatever the
 specificity.
 
+**Inline declarations.** A box may carry a declaration list of its own --
+`ar_begin_styled(ui, "div.card", "color:#f00; width:40px")`, and what an HTML
+`style=""` attribute becomes. No selector, no braces, read by the same parser a
+rule body is.
+
+It sits above every selector however specific, and below every `!important`:
+
+| | |
+| --- | --- |
+| `div { color: blue }` | loses |
+| `#a.b.c { color: blue }` | loses |
+| `style="color:red"` | wins against both |
+| `p { color: green !important }` | wins against that |
+| `style="color:red !important"` | wins against everything |
+
+Because the style cache is keyed on tag, classes, id and state, and an inline
+declaration is none of those, it is applied after the cache rather than inside
+it -- the same place `env()` and inheritance are resolved.
+
 **Inheritance.** `color` and `font-size` inherit from the parent box. Any
 property can be asked to with `inherit`, and `initial`, `unset` and `revert`
 are accepted too. `unset` is inherit or initial depending on the property;

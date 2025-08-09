@@ -477,9 +477,9 @@ typedef ar_i32 ar_scroll_pos;
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 528u
-#else
 #define AR_BYTES_PER_BOX 536u
+#else
+#define AR_BYTES_PER_BOX 544u
 #endif
 
 /*
@@ -775,8 +775,30 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in);
 void ar_begin(ar_ctx *c, const char *selector);
 void ar_end(ar_ctx *c);
 
+/*
+ * A box with its own declaration list, which is what an HTML `style=""`
+ * attribute is: `ar_begin_styled(c, "div.card", "color:red; width:40px")`.
+ *
+ * No selector, no braces, the same syntax and the same parser a stylesheet
+ * body uses -- so `style="color:red"` and `.card { color: red }` cannot
+ * disagree about what red is or about what a malformed value does. Errors are
+ * counted in the sheet's tally like any other.
+ *
+ * Where it sits in the cascade is the whole of its meaning: above every
+ * selector however specific, and below every `!important`. `style="color:red"`
+ * beats `#a.b.c { color: blue }` and loses to `p { color: green !important }`.
+ * An `!important` inside the declaration list beats both.
+ *
+ * The string is copied into the frame arena, so a stack buffer is fine. Pass
+ * null or "" and this is exactly ar_begin.
+ */
+void ar_begin_styled(ar_ctx *c, const char *selector, const char *style);
+
 /* A leaf box containing text. */
 void ar_text(ar_ctx *c, const char *selector, const char *text);
+
+/* ar_text with a declaration list of its own; see ar_begin_styled. */
+void ar_text_styled(ar_ctx *c, const char *selector, const char *text, const char *style);
 
 /* Returns non-zero on the frame the button is released, having been pressed
    on the same box. */

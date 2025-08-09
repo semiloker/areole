@@ -62,6 +62,23 @@ typedef struct ar_node
 
     ar_style    style;
     const char *text;
+
+    /*
+     * This box's own declaration list -- what a `style=""` attribute holds --
+     * or null, which is every box in an interface and most in a document.
+     *
+     * Kept on the node rather than passed through and forgotten, because
+     * ar__resolve_late resolves a second time for any box whose :last-child,
+     * :only-child or :empty state turned out differently once its parent
+     * closed. That second resolve starts from the cascade again, so without
+     * the string here it would quietly throw the inline style away -- and only
+     * for the last child of something, only in a sheet that asks about it.
+     *
+     * It points into the frame arena, copied there by ar_begin_styled, so the
+     * caller may pass a stack buffer and the pointer stays good until the next
+     * ar_frame_begin.
+     */
+    const char *inline_style;
     ar_i32      scale; /* bitmap font scale derived from font-size */
 
     /* Measured while the tree is built, because that is where the loaded face
