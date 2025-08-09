@@ -451,6 +451,19 @@ static ar_i32 ar__cell_stated_h(const ar_node *n)
  * ar_i32. Dividing first when it would costs a pixel of precision and is
  * always right, which is the better trade for a layout nobody can see.
  */
+static ar_i32 ar__scale_round(ar_i32 a, ar_i32 b, ar_i32 d)
+{
+    if (a <= 0 || b <= 0 || d <= 0)
+    {
+        return 0;
+    }
+    if (a <= (2147483647 - d / 2) / b)
+    {
+        return (a * b + d / 2) / d;
+    }
+    return (a / d) * b;
+}
+
 static ar_i32 ar__scale(ar_i32 a, ar_i32 b, ar_i32 d)
 {
     if (a <= 0 || b <= 0 || d <= 0)
@@ -707,27 +720,22 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
             if (collapse && vline)
             {
                 /*
-                 * Nothing. The lines live *inside* the columns.
+                 * Half the line at each end, which is what this cell's box has
+                 * to hold on top of what is written in it.
                  *
-                 * The columns partition the table's width and the grid lines
-                 * straddle the boundaries between them, so a line is already
-                 * inside the two columns it separates -- it is not something
-                 * either of them needs extra room for. Adding half of each end
-                 * to a column's min and max made the column wider than the
-                 * space it occupies, and because the surplus a roomy table
-                 * hands out is shared in proportion to those maxima, one pixel
-                 * of difference between two borders came out as four pixels of
-                 * difference between two column widths.
-                 *
-                 * `col-row-alone` is the plainest case: two identical cells and
-                 * a three-pixel border on the row, which a browser lays out as
-                 * 120 and 120 and this made 118 and 122.
+                 * The two halves come to exactly the line -- half_far and
+                 * half_near of the same number always do -- so the columns
+                 * together claim every pixel of every interior line and half
+                 * of each outer one, and the table's box carries the other two
+                 * halves outside them. Nothing is counted twice.
                  *
                  * A cell whose *own* border is wider than its content is not a
                  * counter-example. In this model the cell has no border of its
                  * own -- it has become the grid line.
                  */
-                (void)vline;
+                ar_i32 rk = at + cs <= AR_MAX_COLUMNS ? at + cs : AR_MAX_COLUMNS;
+
+                chrome += ar__half_near(vline[at] + vline[rk]);
             }
 
             if (cs == 1)
@@ -915,9 +923,10 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
 
             if (collapse && vline)
             {
-                /* The lines live inside the columns; see the same branch in
-                   the grid pass above for why nothing is added here. */
-                (void)vline;
+                /* Half the line at each end; see the grid pass above. */
+                ar_i32 rk = at + cs <= ncol ? at + cs : ncol;
+
+                chrome += ar__half_near(vline[at] + vline[rk]);
             }
             want_min = nodes[c].min_w + chrome;
             want_max = nodes[c].fit[0] + chrome;
@@ -1149,7 +1158,7 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
             }
             else if (pool > 0)
             {
-                share = ar__scale(col[i].max, surplus, pool);
+                share = ar__scale_round(col[i].max, surplus, pool);
             }
             else
             {
