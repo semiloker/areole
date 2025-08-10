@@ -70,6 +70,11 @@ static ar_span ar__attr_of(const ar_doc *d, ar_i32 node, const char *name)
    half of one, so what survives is always something the parser can read. */
 #define AR_DOM_STYLE 256
 
+/* And for the declarations built from an element's legacy attributes. Every
+   one of them is short -- a colour, a length, a keyword -- and no element
+   carries more than a handful. */
+#define AR_DOM_HINTS 160
+
 static void ar__put(char *buf, ar_u32 *used, ar_u32 cap, char c)
 {
     if (*used + 1 < cap)
@@ -257,6 +262,312 @@ static int ar__preformatted(ar_span name)
  *
  * Returns the buffer, or null if there was nothing to copy.
  */
+/* ------------------------------------------------------------------------
+ * Presentational hints
+ *
+ * The attributes HTML had before it had CSS: `<td bgcolor=red>`,
+ * `<table border=1 cellspacing=4>`, `<font size=5>`, `<p align=center>`,
+ * `<img width=200>`. The specification defines each of them as a declaration,
+ * and every browser still obeys them, because a great deal of the web was
+ * written before 1998 and has not been touched since.
+ *
+ * They are a **band of the cascade**, not a `style` attribute. Above the
+ * user-agent stylesheet, below every author rule -- so a page that says
+ * `td { background: white }` gets white however many `bgcolor`s the markup
+ * carries, and a page that says nothing gets the markup's colour. Getting that
+ * order wrong in either direction is visible on real documents: hints below
+ * the UA sheet do nothing at all, and hints above the author's make a
+ * restyled table impossible.
+ * ------------------------------------------------------------------------ */
+
+/* The digits of a legacy length: `width="200"` is pixels, `width="50%"` is a
+   percentage, and anything else is not a length at all. Returns the number of
+   characters used, or 0 -- and `pct` says which of the two it was. */
+static ar_u32 ar__legacy_len(ar_span v, ar_i32 *out, int *pct)
+{
+    ar_u32 i = 0;
+    ar_i32 n = 0;
+
+    *pct = 0;
+    while (i < v.n && (v.p[i] == ' ' || v.p[i] == '\t' || v.p[i] == '\n' || v.p[i] == '\r'))
+    {
+        ++i;
+    }
+    if (i >= v.n || v.p[i] < '0' || v.p[i] > '9')
+    {
+        return 0;
+    }
+    while (i < v.n && v.p[i] >= '0' && v.p[i] <= '9')
+    {
+        if (n < 100000)
+        {
+            n = n * 10 + (v.p[i] - '0');
+        }
+        ++i;
+    }
+    if (i < v.n && v.p[i] == '%')
+    {
+        *pct = 1;
+        ++i;
+    }
+    *out = n;
+    return i;
+}
+
+static void ar__put_str(char *buf, ar_u32 *used, ar_u32 cap, const char *s)
+{
+    while (*s)
+    {
+        ar__put(buf, used, cap, *s++);
+    }
+}
+
+static void ar__put_num(char *buf, ar_u32 *used, ar_u32 cap, ar_i32 n)
+{
+    char   tmp[12];
+    ar_i32 i = 0;
+
+    if (n <= 0)
+    {
+        ar__put(buf, used, cap, '0');
+        return;
+    }
+    while (n > 0 && i < 11)
+    {
+        tmp[i++] = (char)('0' + n % 10);
+        n /= 10;
+    }
+    while (i > 0)
+    {
+        ar__put(buf, used, cap, tmp[--i]);
+    }
+}
+
+/*
+ * `width="200"` -> `width:200px`, `width="50%"` -> `width:50%`.
+ *
+ * A value that is not a legacy length writes nothing rather than writing
+ * something the parser will reject: `width="auto"` is not a hint, it is
+ * markup a browser ignores, and turning it into a parse error would make the
+ * sheet's error tally lie about the page.
+ */
+static void ar__hint_len(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_i32 n = 0;
+    int    pct = 0;
+
+    if (v.n == 0 || ar__legacy_len(v, &n, &pct) == 0)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    ar__put_num(buf, used, AR_DOM_HINTS, n);
+    ar__put_str(buf, used, AR_DOM_HINTS, pct ? "%;" : "px;");
+}
+
+/*
+ * A legacy colour, which is not a CSS colour.
+ *
+ * `bgcolor=red`, `bgcolor="#f00"` and `bgcolor=FF0000` are all legal HTML and
+ * all mean the same thing. Only the second is legal CSS, so this is a
+ * translation and not a copy -- and it is HTML's job rather than the style
+ * parser's, because these are HTML's own rules and apply to nothing else.
+ *
+ * What is handled: the sixteen colour keywords HTML names, a hash colour of
+ * three or six digits, and a bare hex triple or sextet with the hash left off.
+ * That is what markup contains. The specification's full algorithm goes
+ * further -- it pads, truncates and reinterprets anything at all into a
+ * colour, so `bgcolor="hello world"` is a real colour in a browser -- and the
+ * rest of it is deliberately not here: it turns typing mistakes into colours,
+ * and a page relying on that is not a page this engine has to match.
+ *
+ * Anything not recognised writes nothing at all, rather than writing a value
+ * the CSS parser will refuse. A refusal would be counted in the sheet's error
+ * tally, and that tally is what tells anyone whether a page's *CSS* is broken.
+ */
+static const char *const AR__HTML_COLORS[] = {
+    "black",   "#000000", "silver",  "#c0c0c0", "gray",    "#808080", "white",
+    "#ffffff", "maroon",  "#800000", "red",     "#ff0000", "purple",  "#800080",
+    "fuchsia", "#ff00ff", "green",   "#008000", "lime",    "#00ff00", "olive",
+    "#808000", "yellow",  "#ffff00", "navy",    "#000080", "blue",    "#0000ff",
+    "teal",    "#008080", "aqua",    "#00ffff", 0,         0};
+
+static void ar__hint_color(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_u32 i;
+    int    hex;
+
+    if (v.n == 0)
+    {
+        return;
+    }
+    for (i = 0; AR__HTML_COLORS[i]; i += 2)
+    {
+        if (ar_span_is(v, AR__HTML_COLORS[i]))
+        {
+            ar__put_str(buf, used, AR_DOM_HINTS, prop);
+            ar__put(buf, used, AR_DOM_HINTS, ':');
+            ar__put_str(buf, used, AR_DOM_HINTS, AR__HTML_COLORS[i + 1]);
+            ar__put(buf, used, AR_DOM_HINTS, ';');
+            return;
+        }
+    }
+
+    hex = 1;
+    for (i = (v.p[0] == '#' ? 1u : 0u); i < v.n; ++i)
+    {
+        char c = v.p[i];
+
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        {
+            hex = 0;
+            break;
+        }
+    }
+    if (!hex)
+    {
+        return;
+    }
+    i = v.p[0] == '#' ? v.n - 1u : v.n;
+    if (i != 3 && i != 6)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    if (v.p[0] != '#')
+    {
+        ar__put(buf, used, AR_DOM_HINTS, '#');
+    }
+    ar__put_span(buf, used, AR_DOM_HINTS, v);
+    ar__put(buf, used, AR_DOM_HINTS, ';');
+}
+
+/* `align` is text-align on a block and on a cell, and the two extra values
+   HTML has for it are spellings of the two CSS has. */
+static void ar__hint_align(char *buf, ar_u32 *used, ar_span v)
+{
+    const char *css = 0;
+
+    if (ar_span_is(v, "left"))
+    {
+        css = "left";
+    }
+    else if (ar_span_is(v, "right"))
+    {
+        css = "right";
+    }
+    else if (ar_span_is(v, "center") || ar_span_is(v, "middle"))
+    {
+        css = "center";
+    }
+    else if (ar_span_is(v, "justify"))
+    {
+        css = "justify";
+    }
+    if (css)
+    {
+        ar__put_str(buf, used, AR_DOM_HINTS, "text-align:");
+        ar__put_str(buf, used, AR_DOM_HINTS, css);
+        ar__put(buf, used, AR_DOM_HINTS, ';');
+    }
+}
+
+/*
+ * Every presentational hint this element carries, as a declaration list.
+ *
+ * Which attributes are hints depends on the element -- `border` is a border on
+ * a table and on an image and nothing at all on a `<div>`, and `width` is a
+ * width on the handful of elements that ever had it. Attributes are read by
+ * name rather than walked, because an element has few of these and the walk is
+ * over every attribute it has.
+ */
+static const char *ar__hints(const ar_doc *d, ar_i32 node, char *buf)
+{
+    ar_span name = d->nodes[node].name;
+    ar_u32  used = 0;
+    int     table = ar_span_is(name, "table");
+    int     cell = ar_span_is(name, "td") || ar_span_is(name, "th");
+    int row = ar_span_is(name, "tr") || ar_span_is(name, "thead") || ar_span_is(name, "tbody") ||
+              ar_span_is(name, "tfoot");
+    int sized = table || cell || ar_span_is(name, "img") || ar_span_is(name, "col") ||
+                ar_span_is(name, "hr") || ar_span_is(name, "canvas") || ar_span_is(name, "video") ||
+                ar_span_is(name, "iframe") || ar_span_is(name, "embed") ||
+                ar_span_is(name, "object");
+
+    if (table || cell || row || ar_span_is(name, "body"))
+    {
+        ar__hint_color(buf, &used, "background", ar__attr_of(d, node, "bgcolor"));
+    }
+    if (ar_span_is(name, "body"))
+    {
+        ar__hint_color(buf, &used, "color", ar__attr_of(d, node, "text"));
+    }
+    if (ar_span_is(name, "font"))
+    {
+        ar__hint_color(buf, &used, "color", ar__attr_of(d, node, "color"));
+    }
+    if (sized)
+    {
+        ar__hint_len(buf, &used, "width", ar__attr_of(d, node, "width"));
+        ar__hint_len(buf, &used, "height", ar__attr_of(d, node, "height"));
+    }
+    if (table)
+    {
+        /* `border=1` is a one-pixel border on the table, and `border=0` is the
+           way a page that used tables for layout said so. */
+        ar__hint_len(buf, &used, "border-width", ar__attr_of(d, node, "border"));
+        ar__hint_len(buf, &used, "border-spacing", ar__attr_of(d, node, "cellspacing"));
+    }
+    if (cell)
+    {
+        /*
+         * `cellpadding` and `border` are written on the *table* and land on
+         * its cells, which is the one hint that is not about the element
+         * carrying it. `<table cellpadding=8>` is how every table on the old
+         * web set its padding, and reading the attribute off the cell -- where
+         * it never appears -- would have made this whole mapping look like it
+         * worked while doing nothing.
+         *
+         * The table is found by walking up rather than by remembering it,
+         * because a cell is three or four links below its table and the walk
+         * happens once per cell.
+         */
+        ar_i32 up = d->nodes[node].parent;
+
+        while (up >= 0 && !ar_span_is(d->nodes[up].name, "table"))
+        {
+            up = d->nodes[up].parent;
+        }
+        if (up >= 0)
+        {
+            ar_i32  px = 0;
+            int     pct = 0;
+            ar_span b = ar__attr_of(d, up, "border");
+
+            ar__hint_len(buf, &used, "padding", ar__attr_of(d, up, "cellpadding"));
+            /* And a table with a border gives its cells one pixel, whatever
+               number it asked for itself -- which is what `border=5` looks
+               like in a browser and why it does not look like five. */
+            if (b.n > 0 && ar__legacy_len(b, &px, &pct) > 0 && px > 0)
+            {
+                ar__put_str(buf, &used, AR_DOM_HINTS, "border-width:1px;");
+            }
+        }
+    }
+    if (ar_span_is(name, "img"))
+    {
+        ar__hint_len(buf, &used, "border-width", ar__attr_of(d, node, "border"));
+        ar__hint_len(buf, &used, "margin-left", ar__attr_of(d, node, "hspace"));
+        ar__hint_len(buf, &used, "margin-top", ar__attr_of(d, node, "vspace"));
+    }
+    ar__hint_align(buf, &used, ar__attr_of(d, node, "align"));
+
+    buf[used] = 0;
+    return used > 0 ? buf : 0;
+}
+
 static const char *ar__inline_style(const ar_doc *d, ar_i32 node, char *buf)
 {
     ar_span style = ar__attr_of(d, node, "style");
@@ -282,6 +593,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
     char   style[AR_DOM_STYLE];
+    char   hints[AR_DOM_HINTS];
     ar_i32 child;
 
     if (node < 0)
@@ -315,7 +627,13 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     }
 
     ar__selector(d, node, sel);
-    ar_begin_styled(c, sel, ar__inline_style(d, node, style));
+    {
+        /* Both lists are built before the box is opened, because ar_begin
+           copies them and neither buffer survives this frame's recursion. */
+        const char *h = ar__hints(d, node, hints);
+
+        ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
+    }
     for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {
         ar__walk(c, d, child, pre);

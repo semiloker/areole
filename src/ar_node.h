@@ -50,6 +50,16 @@ typedef struct ar_node
     ar_u32 key;   /* stable across frames, for state and hit testing */
     ar_u16 state; /* hover, active, focus, and the structural pseudo-classes */
 
+    /*
+     * Where the inline declarations start inside `hints`, or 0 for none.
+     *
+     * The two lists live in one arena block, NUL-terminated one after the
+     * other, because they are always written together and a second pointer
+     * would cost eight bytes a box where this costs none -- it fits in the
+     * hole the compiler was already leaving beside `state`.
+     */
+    ar_u16 inline_at;
+
     /* What the caller declared, kept because a combinator asks about an
        ancestor or a sibling and the answer is a property of that box rather
        than of this one. Only rules with combinators read it, so a stylesheet
@@ -77,8 +87,12 @@ typedef struct ar_node
      * It points into the frame arena, copied there by ar_begin_styled, so the
      * caller may pass a stack buffer and the pointer stays good until the next
      * ar_frame_begin.
+     *
+     * The block starts with the *presentational hints* -- what `<td bgcolor>`
+     * and `<font size>` mean, which is a different band of the cascade -- and
+     * `inline_at` says where they end and the inline declarations begin.
      */
-    const char *inline_style;
+    const char *hints;
     ar_i32      scale; /* bitmap font scale derived from font-size */
 
     /* Measured while the tree is built, because that is where the loaded face

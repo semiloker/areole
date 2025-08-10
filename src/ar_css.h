@@ -1157,9 +1157,24 @@ typedef struct ar_rule
     ar_i32        nalt;
     ar_u16        state; /* required state bits, 0 means any */
 
-    ar_u16  specificity;
-    ar_u16  order; /* source position, to break specificity ties */
-    ar_pset set;   /* which properties this rule sets */
+    ar_u16 specificity;
+    ar_u16 order; /* source position, to break specificity ties */
+
+    /*
+     * 0 for the user agent's rules, 1 for the page's.
+     *
+     * The first sort key, ahead of specificity, because an origin outranks it:
+     * `td { padding: 0 }` written by a page beats `td { padding: 1px }`
+     * written by html.css whatever the two selectors look like. Sorting on it
+     * rather than checking it per box means the array is UA rules and then
+     * author rules, which is what lets a presentational hint be an index.
+     *
+     * In practice it reorders nothing today -- every rule in the UA sheet is a
+     * type selector and is parsed first, so it already lost every tie. What it
+     * buys is the boundary.
+     */
+    ar_u8   origin;
+    ar_pset set; /* which properties this rule sets */
 
     /* Which of them were marked !important. Per declaration rather than per
        rule, because that is what CSS says and because a rule mixing the two is
@@ -1257,6 +1272,25 @@ typedef struct ar_sheet
     ar_rule *rules;
     ar_u16   count;
     ar_u16   capacity;
+
+    /*
+     * How many of those rules came from the user-agent stylesheet, which is
+     * the boundary a presentational hint sits on.
+     *
+     * `<td bgcolor=red>` loses to `td { background: blue }` written by the
+     * author and beats `td { background: blue }` written by the user agent --
+     * that is the whole of what the "presentational hints origin" means, and
+     * it is expressible here as an index because rules are stored in source
+     * order and the UA sheet is loaded first.
+     *
+     * Zero when nobody called ar_sheet_mark_ua, which puts hints below
+     * everything and is the right answer for a sheet with no UA half.
+     */
+    ar_u16 ua_count;
+
+    /* Whether rules parsed right now belong to the user agent. Set for the
+       length of ar_ua_stylesheet and at no other time. */
+    ar_u8 in_ua;
 
     /* Every track list every rule in this sheet declared, laid end to end.
        See the comment beside AR_P_GRID_COLS. */
@@ -1430,6 +1464,24 @@ typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index
  * `!important`, so they cannot simply be merged on top of a resolved style:
  * the band has to run again above them. See ar__important_band.
  */
+/*
+ * Brackets the user-agent stylesheet: every rule parsed between these two
+ * calls is the user agent's, and every other rule is the page's. Called by
+ * ar_ua_stylesheet and by nobody else.
+ */
+void ar_sheet_begin_ua(ar_sheet *sheet);
+void ar_sheet_mark_ua(ar_sheet *sheet);
+
+/*
+ * Resolve with a presentational-hint rule merged at the UA/author boundary.
+ *
+ * Never cached: the cache key is tag, classes, id and state, and a hint is
+ * none of those. A box without hints goes through ar_sheet_resolve and is
+ * cached exactly as before.
+ */
+void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, const ar_rule *hints, ar_style *out);
+
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
                               ar_u16 state, ar_style *out);
 

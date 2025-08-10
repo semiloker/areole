@@ -794,6 +794,22 @@ void ar_end(ar_ctx *c);
  */
 void ar_begin_styled(ar_ctx *c, const char *selector, const char *style);
 
+/*
+ * A box with presentational hints as well as an inline style.
+ *
+ * Hints are what HTML's legacy attributes mean -- `<td bgcolor=red>` is
+ * `background:#ff0000`, `<font size=5>` is a font-size -- and they are a band
+ * of the cascade rather than a declaration list on top of it: above the
+ * user-agent stylesheet, below every author rule, and below `style=""`. A page
+ * can restyle `<font>` and be obeyed, which is the whole point of the
+ * distinction.
+ *
+ * Both strings are declaration lists and both may be null. Neither is cached,
+ * so a box with hints costs a full cascade walk; a box without them is
+ * resolved exactly as before.
+ */
+void ar_begin_hinted(ar_ctx *c, const char *selector, const char *hints, const char *style);
+
 /* A leaf box containing text. */
 void ar_text(ar_ctx *c, const char *selector, const char *text);
 
