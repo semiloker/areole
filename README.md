@@ -451,6 +451,10 @@ because selecting a face by `font-family` needs a font database and that is 0.2.
 are named in the release document beside what they need, along with the three inline-layout
 faults the corpus turned up.
 
+`./build/example_real` opens the first of them in a window; left and right walk the other
+nine. `--dump` prints the corpus table instead, and `--ppm <path>` writes the page as an
+image.
+
 It found one bug worth having: areole had **no default canvas colour**, so a document that
 declares no background rendered on whatever was already in the surface. Every example in
 this tree declares one, which is exactly why five releases never saw it.
