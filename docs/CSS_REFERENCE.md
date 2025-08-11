@@ -129,10 +129,22 @@ the style parser. `width="200"` is pixels and `width="50%"` is a percentage;
 anything that is not one of those writes nothing at all, rather than writing a
 value the parser would refuse and count as an error.
 
+Checked against a browser rather than against a reading of the specification:
+`tests/ar_hints.c` is forty-three cases and
+
+```sh
+python tools/compare_computed.py --run ./build/ar_hints.exe tests/hints.html
+```
+
+compares what each one computes to. **42 of 43 agree.** The one that does not
+is `align="justify"`, because `justify` is not one of this engine's three
+`text-align` values -- so the attribute maps to nothing rather than to a
+declaration the parser would refuse.
+
 Not mapped, and each because the property does not exist yet: `nowrap`
 (`white-space`), `valign` (`vertical-align` on a row), `type` on a list
-(`list-style-type`), and the `rules` and `frame` attributes of `<table>`
-(`border-style`).
+(`list-style-type`), `align="justify"`, and the `rules` and `frame` attributes
+of `<table>` (`border-style`).
 
 **One known ordering divergence:** rules carrying a combinator are resolved in
 a pass after the cached one, so a combinator rule beats a simple rule of higher

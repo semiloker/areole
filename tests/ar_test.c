@@ -14599,6 +14599,46 @@ static void test_a_style_attribute_beats_a_hint_on_the_same_element(void)
     }
 }
 
+static void test_the_two_attributes_that_belong_to_body_alone(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `bgcolor` and `text` on `<body>`, which are the two hints the corpus in
+     * tests/ar_hints.c cannot check.
+     *
+     * Forty-three cases share one page there, and a document has one body. Put
+     * in a div instead -- which the first version of that corpus did -- a
+     * browser correctly ignores both, because they are body's alone, and the
+     * case reports a disagreement about the twin rather than about areole.
+     * Here every scene is its own document and the question can be asked
+     * directly.
+     *
+     * `text` is `color` and not `background`, which is the whole reason it has
+     * a name of its own rather than being a third spelling of `bgcolor`.
+     */
+    ar__render_html(&s, "<html><body bgcolor=\"red\" text=\"blue\"><p>t</p></body></html>", 0);
+    {
+        ar_i32 b = ar__first_tag("body");
+        ar_i32 p = ar__first_tag("p");
+
+        CHECK(b >= 0 && p >= 0, "hints: the body and its paragraph came out of the markup");
+        CHECK(ar__box_bg(b) == 0xffff0000u, "hints: bgcolor on body is a background");
+        CHECK((ar_u32)AR_WIDE(ar__box_style(b), AR_P_COLOR) == 0xff0000ffu,
+              "hints: and text on body is a colour");
+        /* Inherited rather than set: the attribute is on the body and the
+           paragraph is what has words in it. */
+        CHECK(AR_WIDE(ar__box_style(p), AR_P_COLOR) == AR_WIDE(ar__box_style(b), AR_P_COLOR),
+              "hints: which the paragraph inside it inherits");
+    }
+
+    /* And an author rule still beats both, the way it beats every hint. */
+    ar__render_html(&s, "<html><body bgcolor=\"red\"><p>t</p></body></html>",
+                    "body { background:#00ff00; }");
+    CHECK(ar__box_bg(ar__first_tag("body")) == 0xff00ff00u,
+          "hints: and the page's own stylesheet beats bgcolor like any other hint");
+}
+
 static void test_a_legacy_colour_is_not_a_css_colour(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -17917,6 +17957,7 @@ int main(void)
     test_the_style_attribute_reaches_the_box();
     test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author();
     test_a_style_attribute_beats_a_hint_on_the_same_element();
+    test_the_two_attributes_that_belong_to_body_alone();
     test_a_legacy_colour_is_not_a_css_colour();
     test_a_legacy_length_is_pixels_or_a_percentage_or_nothing();
     test_font_weight_and_style_are_properties_that_inherit();

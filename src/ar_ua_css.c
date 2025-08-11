@@ -167,7 +167,13 @@ static const char *const AR__UA[] = {
     "td { display:table-cell; padding:1px; }"
     "th { display:table-cell; padding:1px; text-align:center; }"
     "caption { display:table-caption; text-align:center; }"
-    "colgroup, col { display:table-column; }",
+    /* Two displays, not one. A `colgroup` written as `table-column` is a
+       column itself rather than a box holding columns, so it takes a slot
+       of its own and every `col` inside it describes the wrong column --
+       which made `<col width=70>` do nothing at all, silently, because a
+       column that describes nothing has no width to be wrong about. */
+    "colgroup { display:table-column-group; }"
+    "col { display:table-column; }",
 
     /* Rules. `hr` has an inset border in a browser and a flat one here,
        because per-side border widths are not implemented. */

@@ -208,6 +208,20 @@ jobs:
           ./build/example_html.exe --html > /tmp/cases.html
           diff -u examples/12_html/cases.html /tmp/cases.html
 
+      # 0.9.1 acceptance criterion 2: what HTML's legacy attributes compute to.
+      # The browser half of it needs a browser and runs locally, the way every
+      # other corpus comparison does. What runs here is the half that can: the
+      # dump has to be produced without crashing, and the twin has to still be
+      # the twin -- a generated file that drifts is a corpus reporting
+      # agreement about cases that are no longer the same cases.
+      - name: Presentational hint dumps
+        run: ./build/ar_hints.exe > /dev/null
+
+      - name: The hint twin is up to date
+        run: |
+          ./build/ar_hints.exe --html > /tmp/hints.html
+          diff -u tests/hints.html /tmp/hints.html
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,
