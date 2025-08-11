@@ -10,7 +10,7 @@
 
   Each case is a container the size of areole's body, holding the same
   fragment, with the same author stylesheet scoped to it. The reported
-  value is getComputedStyle of the element marked id=x.
+  values are getComputedStyle of the element marked id=x.
 -->
 
 <style>
@@ -71,12 +71,12 @@ const CASES = [
 
 const host = document.getElementById('cases');
 const out = [];
-for (const [name, css, html, prop] of CASES) {
+for (const [name, css, html, props] of CASES) {
   const box = document.createElement('div');
   box.className = 'case';
   box.dataset.page = name;
   if (css) {
-    /* Scoped, so forty stylesheets can share one page. */
+    /* Scoped, so every case's stylesheet can share one page. */
     const st = document.createElement('style');
     st.textContent = css.replace(/(^|\})\s*([^{}]+)\{/g,
       (m, brace, sel) => brace + sel.split(',')
@@ -87,13 +87,14 @@ for (const [name, css, html, prop] of CASES) {
   host.appendChild(box);
 }
 
-for (const [name, css, html, prop] of CASES) {
+for (const [name, css, html, props] of CASES) {
   const box = host.querySelector('[data-page="' + name + '"]');
-  const el = box.querySelector('#x') ||
-             (box.firstElementChild && box.firstElementChild.id === 'x'
-               ? box.firstElementChild : null);
+  const el = box.querySelector('#x');
   out.push('# case ' + name);
-  out.push(prop + ' ' + (el ? getComputedStyle(el).getPropertyValue(prop) : '?'));
+  for (const prop of props.split(/\s+/).filter(Boolean)) {
+    out.push(prop + ' ' +
+      (el ? getComputedStyle(el).getPropertyValue(prop) : '?'));
+  }
 }
 
 const t = document.getElementById('out');

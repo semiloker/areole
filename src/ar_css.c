@@ -841,6 +841,7 @@ typedef struct ar__kw
 static const ar__kw AR_KEYWORDS[] = {
     {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
+    {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
