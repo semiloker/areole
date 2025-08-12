@@ -15070,6 +15070,127 @@ static void test_only_a_stylesheet_link_is_a_stylesheet(void)
     CHECK(g_link_count == 1, "link: and `StyleSheet` is `stylesheet`");
 }
 
+static void test_a_wrapping_flex_container_has_a_gap_between_its_lines(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `gap: 10px` is `row-gap: 10px; column-gap: 10px`, and a flex container
+     * has two axes to spend them on: in a row, the column gap separates the
+     * items and the row gap separates the wrapped lines.
+     *
+     * Only the first was applied. The comment in the line loop said `gap` was
+     * main-axis only "until row-gap exists, at 0.8.1" -- and row-gap has
+     * existed since 0.8.1, resolved correctly by the grid two files over the
+     * whole time. A wrapping container put its second line flush against its
+     * first and came out one gap short for every line it wrapped.
+     *
+     * Four 130px items in a 300px container: two lines of two.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".f { display:flex; flex-wrap:wrap; width:300px; gap:10px; }"
+                 ".i { width:130px; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.f"); /* 1 */
+    ar_begin(g_ui, "div.i"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == ar__box(2).x + 130 + 10, "flex: the gap separates two items on a line");
+    CHECK(ar__box(4).y == ar__box(2).y + 30 + 10,
+          "flex: and separates the line below from the one above it");
+    CHECK(ar__box(1).h == 30 + 10 + 30,
+          "flex: and the container is as tall as both lines and the gap between");
+    /* Before the first line and after the last, there is none. */
+    CHECK(ar__box(2).y == ar__box(1).y, "flex: with no gap before the first line");
+
+    /*
+     * And the two gaps are not interchangeable. `gap` sets both to the same
+     * number, so a container written that way cannot tell which axis got
+     * which -- it passes whichever way round the two are read. Stated
+     * separately, it can: in a row, `column-gap` is between the items and
+     * `row-gap` is between the lines.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".f { display:flex; flex-wrap:wrap; width:300px;"
+                 "     column-gap:10px; row-gap:24px; }"
+                 ".i { width:130px; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.f"); /* 1 */
+    ar_begin(g_ui, "div.i"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == ar__box(2).x + 130 + 10,
+          "flex: in a row it is column-gap that separates the items");
+    CHECK(ar__box(4).y == ar__box(2).y + 30 + 24, "flex: and row-gap that separates the lines");
+}
+
+static void test_a_collapsed_table_shrinks_to_its_grid(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * A collapsed table with no width of its own.
+     *
+     * `border-spacing` has no meaning in the collapsed model -- the gap
+     * between two cells is the shared line and nothing else -- and the solve
+     * has always known that. `ar_table_measure`, which answers what the table
+     * wants *before* it has a width, did not: it read the property straight
+     * off the style. So the intrinsic width carried a gap per column that the
+     * laid-out width did not, and a shrink-to-fit table came out wider than
+     * its own cells.
+     *
+     * The user-agent sheet is what made it matter: `table { border-spacing:2px }`
+     * applies to every table in every document, whether or not the page ever
+     * mentions spacing. Two 80px cells came to 166 where a browser gives 160.
+     *
+     * The table corpus could not see it, because every table in it is given a
+     * width -- the intrinsic number is computed and then thrown away.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; border-collapse:collapse; border-spacing:2px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:80px; height:30px; padding:0px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 160, "table: a collapsed table shrinks to its columns");
+    CHECK(ar__box(3).w == 80 && ar__box(4).w == 80,
+          "table: and its cells are the width they asked for");
+    CHECK(ar__box(4).x == ar__box(3).x + 80,
+          "table: with nothing between them, because a collapsed line is nothing");
+}
+
 static void test_a_document_reads_at_sixteen_pixels(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -18449,6 +18570,8 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_a_wrapping_flex_container_has_a_gap_between_its_lines();
+    test_a_collapsed_table_shrinks_to_its_grid();
     test_a_document_reads_at_sixteen_pixels();
     test_an_external_stylesheet_comes_from_the_embedder();
     test_external_sheets_arrive_in_document_order();

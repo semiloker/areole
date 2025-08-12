@@ -96,6 +96,11 @@ target_include_directories(ar_quirks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_quirks PRIVATE areole)
 areole_set_warnings(ar_quirks)
 
+add_executable(ar_gallery tests/ar_gallery.c)
+target_include_directories(ar_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_gallery PRIVATE areole)
+areole_set_warnings(ar_gallery)
+
 # --- the fuzzer ---------------------------------------------------------------
 # HTML is the one input this library takes that somebody else wrote, so the
 # parser gets a gate rather than an exercise. Links against the plain library:

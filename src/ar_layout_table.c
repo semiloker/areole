@@ -715,7 +715,22 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
                 cs = AR_MAX_COLUMNS - at;
             }
 
-            chrome = ar__cell_border_x(&nodes[c]);
+            /*
+             * A collapsed cell has no border of its own to pay for.
+             *
+             * It became the grid line -- that is what collapsing is -- and the
+             * halves of that line are added below. Counting both charged the
+             * border twice and made every cell in a collapsed table wider than
+             * a browser's by its own border: `td { width:80px; border:2px }`
+             * came to 85 where Chrome gives 82.
+             *
+             * Nothing else in this engine had noticed, because the table
+             * corpus gives every cell the same border and a mistake every
+             * column makes equally moves no boundary between them. It took a
+             * demo with a stated cell width, where the wrong number has
+             * nowhere to hide.
+             */
+            chrome = collapse ? 0 : ar__cell_border_x(&nodes[c]);
 
             if (collapse && vline)
             {
@@ -919,7 +934,8 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
                 continue;
             }
 
-            chrome = ar__cell_border_x(&nodes[c]);
+            /* No border of its own when collapsed; see the grid pass. */
+            chrome = collapse ? 0 : ar__cell_border_x(&nodes[c]);
 
             if (collapse && vline)
             {
@@ -2138,8 +2154,23 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
     ar_i32   vline[AR_MAX_COLUMNS + 1];
     ar_i32   ncol, i, sum_min = 0, sum_max = 0;
     ar_node *t = &nodes[table];
-    ar_i32   spacing = t->style.v[AR_P_BORDER_SPACING];
-    ar_i32   chrome = t->style.v[AR_P_PAD_LEFT] + t->style.v[AR_P_PAD_RIGHT];
+    int      collapse = ar__collapsed(t);
+    /*
+     * The same rule the solve uses, and it was not being used here.
+     *
+     * `border-spacing` has no meaning in the collapsed model -- the gap
+     * between two cells is the shared line and nothing else -- and the solve
+     * says so. This function did not ask, so a collapsed table's *intrinsic*
+     * width carried a gap per column that its laid-out width did not: a
+     * shrink-to-fit table of two 80px cells came out 166 wide and put its
+     * cells at 83, where a browser gives 160 and 80.
+     *
+     * The table corpus could not see it. Every table in it is given a width,
+     * so the intrinsic number is computed and then discarded; it took a demo
+     * with no width on the table and a width on the cells.
+     */
+    ar_i32 spacing = collapse ? 0 : t->style.v[AR_P_BORDER_SPACING];
+    ar_i32 chrome = t->style.v[AR_P_PAD_LEFT] + t->style.v[AR_P_PAD_RIGHT];
 
     ar_i32 cap_min = 0, cap_max = 0;
     ar_i32 e;
@@ -2173,6 +2204,13 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
         sum_max += col[i].max;
     }
     chrome += spacing * (ncol + 1);
+    /*
+     * The two outer half-lines are deliberately *not* added here. This is the
+     * grid's width and the solve grows the box by them at the end, so a table
+     * whose width came from this number would carry them twice -- which is
+     * what the first version of this fix did, and it made every shrink-to-fit
+     * collapsed table two pixels wide of a browser's.
+     */
 
     t->min_w = sum_min + chrome;
     t->fit[0] = sum_max + chrome;
