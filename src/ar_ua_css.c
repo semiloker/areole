@@ -333,7 +333,21 @@ static const char *const AR__UA[] = {
        further up the sheet. Adding `hgroup { margin:0 }` above this line
        did nothing, which is what a sheet resolved in source order does. */
     "dl { margin:16px 0px; }"
-    "pre, xmp, listing, plaintext { margin:16px 0px; }",
+    /*
+     * The monospace elements, at the size a browser gives them.
+     *
+     * Not a size rule anywhere else: it is `font-family: monospace`, and a
+     * browser's `medium` is sixteen pixels for a proportional face and
+     * thirteen for a monospace one. There are no font families here until
+     * 0.2.1, so what is written is the consequence rather than the cause --
+     * the same bargain the headings make with `em`, and wrong in the same way
+     * if a page sets a size of its own on them.
+     *
+     * The margins follow from it: `pre` is `1em 0`, and the em is the
+     * thirteen.
+     */
+    "pre, xmp, listing, plaintext { margin:13px 0px; font-size:13px; }"
+    "code, kbd, samp, tt { font-size:13px; }",
 
     /*
      * A nested list has no margin of its own.

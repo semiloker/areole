@@ -49,6 +49,7 @@ with both. Four is the limit on a rule and on a box alike.
 
 | Form | Matches |
 | --- | --- |
+| `*` | anything, and adds nothing to specificity |
 | `.panel .btn` | a descendant, anywhere below |
 | `.panel > .btn` | an immediate child |
 | `.a + .b` | the sibling immediately before |

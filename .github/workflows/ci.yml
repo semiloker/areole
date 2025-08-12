@@ -240,6 +240,19 @@ jobs:
           ./build/ar_elements.exe --html > /tmp/elements.html
           diff -u tests/elements.html /tmp/elements.html
 
+      # 0.9.1 acceptance criterion 3: what a document with no doctype does
+      # differently. Its twin has no doctype either -- that is what puts it in
+      # quirks mode -- and the twin reports document.compatMode so a page that
+      # quietly slipped into standards fails loudly rather than agreeing about
+      # the wrong thing.
+      - name: Quirks-mode dumps
+        run: ./build/ar_quirks.exe > /dev/null
+
+      - name: The quirks twin is up to date
+        run: |
+          ./build/ar_quirks.exe --html > /tmp/quirks.html
+          diff -u tests/quirks.html /tmp/quirks.html
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,

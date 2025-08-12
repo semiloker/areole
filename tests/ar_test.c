@@ -1054,6 +1054,13 @@ static void test_selector_split(void)
     CHECK(ar_selector_split(".card", &tag, &klass, &id), "selector: a bare class splits");
     CHECK(tag == 0 && id == 0, "selector: absent parts come back as zero");
 
+    /* `*` is a selector and not a typo. It sets no tag, which is exactly what
+       it means -- but it has to be *accepted*, and it was not: `*` is not an
+       identifier character, so the compound came out empty and was refused.
+       The guard written to allow it sat after the loop that had already
+       failed and could never fire. */
+    CHECK(ar_selector_split("*", &tag, &klass, &id), "selector: a universal selector splits");
+    CHECK(tag == 0 && klass.n == 0 && id == 0, "selector: and names nothing in particular");
     CHECK(!ar_selector_split("", &tag, &klass, &id), "selector: an empty selector is rejected");
     CHECK(!ar_selector_split(".", &tag, &klass, &id), "selector: a lone dot is rejected");
     CHECK(!ar_selector_split(0, &tag, &klass, &id), "selector: a null selector is rejected");
@@ -14717,6 +14724,189 @@ static void test_a_legacy_length_is_pixels_or_a_percentage_or_nothing(void)
     }
 }
 
+/*
+ * A document with a doctype and one without, whole.
+ *
+ * The author's CSS goes *inside* the document rather than beside it, which is
+ * the difference from ar__render_html and the reason this exists: the doctype
+ * decides how a page's own stylesheets are read, and only ar_doc_stylesheets
+ * is in a position to know both. A sheet handed to ar_stylesheet before the
+ * parse has no document behind it and is read the lenient way, which is
+ * correct for an interface and would have made every check below pass for the
+ * wrong reason.
+ */
+static void ar__render_modes(ar_surface *s, const char *body, const char *author, int quirks)
+{
+    char     buf[900];
+    ar_input in;
+
+    strcpy(buf, quirks ? "" : "<!doctype html>");
+    strcat(buf, "<html><head><style>");
+    strcat(buf, author ? author : "");
+    strcat(buf, "</style></head><body>");
+    strcat(buf, body);
+    strcat(buf, "</body></html>");
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse(buf);
+    ar_doc_stylesheets(g_ui, &g_doc);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_the_universal_selector(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `*` matches anything, sets no tag, and adds nothing to specificity.
+     *
+     * It did not parse at all. `*` is not an identifier character, so the
+     * branch that reads a tag name never saw it and the whole compound was
+     * refused as malformed -- which means every rule written with a universal
+     * selector was dropped whole and silently, and
+     * `* { box-sizing: border-box }` is in a large fraction of the stylesheets
+     * on the web. The check that was supposed to catch it sat *after* the loop
+     * that had already failed, so it could never fire.
+     *
+     * The specificity is the half worth checking as well as the matching: a
+     * universal selector has to lose to a type selector, which is what makes
+     * it usable as a reset.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "* { width:30px; height:10px; }"
+                 "span { width:50px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "span"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->sheet.errors == 0, "css: a universal selector parses");
+    CHECK(ar__box(1).w == 30, "css: and matches a box no other rule names");
+    CHECK(ar__box(2).w == 50, "css: and loses to a type selector, which is what a reset needs");
+}
+
+static void test_a_length_needs_its_unit_in_standards_mode(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `width: 100` is a hundred pixels in quirks mode and an *invalid*
+     * declaration in standards, where a browser drops it and the width stays
+     * `auto`. This engine took it as pixels in both, which is the wrong half
+     * of the two to be lenient in: a page with a doctype and a unitless width
+     * lays out one way in every browser and another way here.
+     *
+     * The declaration is dropped rather than zeroed. That distinction is the
+     * whole of it -- the property keeps what the cascade gave it, so a rule
+     * before this one still holds and the box is not suddenly nothing wide.
+     */
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "div { width:200px; } #x { width:100; }", 0);
+    CHECK(ar__box(ar__first_tag("div")).w == 200,
+          "quirks: a unitless length is dropped with a doctype, not taken as pixels");
+
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "div { width:200px; } #x { width:100; }", 1);
+    CHECK(ar__box(ar__first_tag("div")).w == 100, "quirks: and taken as pixels without one");
+
+    /* Zero is exempt in both, because CSS says so everywhere and it is most
+       of what anybody writes. */
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "#x { margin:0; width:70px; }", 0);
+    CHECK(ar__box_style(ar__first_tag("div"))->v[AR_P_MARGIN_TOP] == 0 &&
+              ar__box(ar__first_tag("div")).w == 70,
+          "quirks: zero needs no unit in either mode");
+}
+
+static void test_an_interface_stylesheet_is_not_a_document(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The strictness above applies to documents and to nothing else, and that
+     * is deliberate rather than an oversight.
+     *
+     * An interface's stylesheet has no doctype to read a mode from, nobody
+     * validates it, and `gap: 8` in one is what somebody meant -- which is
+     * the argument the original code made for taking a bare number as pixels,
+     * and it is still right for the case it was made about. What changed is
+     * that areole now reads documents, where the distinction is observable.
+     */
+    ar__ui_reset("#root { display:block; } .a { width:60; height:20; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 60 && ar__box(1).h == 20,
+          "quirks: an interface stylesheet still takes a bare number as pixels");
+}
+
+static void test_a_table_does_not_inherit_its_font_in_quirks(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * What browsers did before CSS and still do for a page that asks for
+     * quirks: a table starts its font again rather than inheriting the one
+     * around it. A page that says `body { font-size:30px }` gets a table at
+     * sixteen, and a page written that way rendered with the table inheriting
+     * is wrong everywhere there is a table -- which on the old web is most
+     * pages.
+     */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; }", 1);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 16,
+          "quirks: a table starts its font again rather than inheriting");
+
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; }", 0);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 30,
+          "quirks: and with a doctype it inherits like anything else");
+
+    /* A default, so the page can still say otherwise. */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; } table { font-size:24px; }", 1);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 24,
+          "quirks: and a page that says otherwise is obeyed");
+
+    /*
+     * And obeyed even when what it says is *less specific* than the rule it
+     * is overruling, which is the half that needs the origin.
+     *
+     * `table { font-size:16px }` is a type selector and beats a universal one
+     * on specificity alone. It has to lose anyway, because it is the user
+     * agent's and the other is the page's -- an origin outranks specificity.
+     * With the two in one origin the check above passes on source order and
+     * says nothing, which is what the first version of it did.
+     */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; } * { font-size:21px; }", 1);
+    /*
+     * On the *table*, which is the only box both rules reach.
+     *
+     * The cell is set directly by the universal rule and would say 21 whatever
+     * the origins were, so asking it proves nothing -- which is what the first
+     * version of this check did, and it stayed green with the origin taken
+     * out. The table is where `table { font-size:16px }` and
+     * `* { font-size:21px }` both apply and the order has to decide.
+     */
+    CHECK(ar__box_style(ar__first_tag("table"))->v[AR_P_FONT_SIZE] == 21,
+          "quirks: even by a rule less specific than the default it overrules");
+}
+
 static void test_a_document_reads_at_sixteen_pixels(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -18097,6 +18287,10 @@ int main(void)
     test_the_tree_builder_survives_anything();
 
     test_a_document_reads_at_sixteen_pixels();
+    test_the_universal_selector();
+    test_a_length_needs_its_unit_in_standards_mode();
+    test_an_interface_stylesheet_is_not_a_document();
+    test_a_table_does_not_inherit_its_font_in_quirks();
     test_the_elements_the_corpus_found();
     test_a_list_item_lays_out_as_a_block();
     test_the_style_attribute_reaches_the_box();
