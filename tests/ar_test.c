@@ -14907,6 +14907,169 @@ static void test_a_table_does_not_inherit_its_font_in_quirks(void)
           "quirks: even by a rule less specific than the default it overrules");
 }
 
+/* What the loader below was asked for, in the order it was asked. */
+static char   g_link_asked[8][64];
+static ar_i32 g_link_count;
+
+static const char *ar__link_loader(void *user, const char *href)
+{
+    (void)user;
+    if (g_link_count < 8)
+    {
+        strncpy(g_link_asked[g_link_count], href, 63);
+        g_link_asked[g_link_count][63] = 0;
+    }
+    ++g_link_count;
+
+    if (strcmp(href, "a.css") == 0)
+    {
+        return "p { width:40px; height:11px; }";
+    }
+    if (strcmp(href, "b.css") == 0)
+    {
+        return "p { width:70px; }";
+    }
+    return 0; /* the loader declines, which is a link that did not arrive */
+}
+
+static void ar__render_linked(ar_surface *s, const char *src, int with_loader)
+{
+    ar_input in;
+
+    ar__ui_reset("");
+    g_link_count = 0;
+    ar_set_stylesheet_loader(g_ui, with_loader ? ar__link_loader : 0, 0);
+    ar_ua_stylesheet(g_ui);
+    ar__parse(src);
+    ar_doc_stylesheets(g_ui, &g_doc);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_an_external_stylesheet_comes_from_the_embedder(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * areole does no networking and no file IO, in this release or any other,
+     * so `<link rel=stylesheet>` is the one thing a document can ask for that
+     * this library cannot go and get. The embedder can: it knows the base URL,
+     * the cache, and what is allowed.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 1 && strcmp(g_link_asked[0], "a.css") == 0,
+          "link: the loader is asked for the href the document wrote");
+    CHECK(ar__box(ar__first_tag("p")).w == 40 && ar__box(ar__first_tag("p")).h == 11,
+          "link: and what it hands back is a stylesheet");
+}
+
+static void test_external_sheets_arrive_in_document_order(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Order is the cascade. `<link>` then `<style>` then `<link>` is three
+     * sheets in that order, and a sheet that arrives out of order wins the
+     * wrong arguments -- which is why links are collected in the same walk as
+     * `<style>` rather than in a pass of their own before or after it.
+     *
+     * All three rules here have the same specificity, so the last one wins and
+     * the answer says which one that was.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "<style>p { width:55px; }</style>"
+                      "<link rel=\"stylesheet\" href=\"b.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar__box(ar__first_tag("p")).w == 70,
+          "link: the last sheet in document order wins, whichever kind it is");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"b.css\">"
+                      "<style>p { width:55px; }</style>"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar__box(ar__first_tag("p")).w == 55, "link: and a <style> after a <link> beats it");
+}
+
+static void test_a_link_that_did_not_arrive_is_counted(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * A page whose whole design is in one external sheet renders as unstyled
+     * text whether the sheet was declined or the page never had one, and the
+     * difference between those two is the first question anybody asks. So it
+     * is a number rather than a silence.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"missing.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar_doc_links_skipped(g_ui) == 1, "link: a loader that declines is counted");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      0);
+    CHECK(ar_doc_links_skipped(g_ui) == 1 && g_link_count == 0,
+          "link: and so is a document with links and no loader at all");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar_doc_links_skipped(g_ui) == 0, "link: a sheet that arrived is not counted as missing");
+}
+
+static void test_only_a_stylesheet_link_is_a_stylesheet(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `rel` is a space-separated list of keywords, and most of what is in it
+     * on a real page is not a stylesheet: `icon`, `preconnect`, `canonical`.
+     * Asking the embedder to fetch every one of them would be a request per
+     * link on every page.
+     *
+     * `alternate stylesheet` *is* a stylesheet and is still not loaded: it is
+     * one the reader may choose, and nothing has chosen it.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"icon\" href=\"a.css\">"
+                      "<link rel=\"preconnect\" href=\"a.css\">"
+                      "<link rel=\"alternate stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 0, "link: a link that is not a stylesheet is not fetched");
+    CHECK(ar_doc_links_skipped(g_ui) == 0, "link: nor counted as one that failed to arrive");
+
+    /* And the spelling does not have to match: HTML keywords are ASCII
+       case-insensitive and real markup uses every casing there is. */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"StyleSheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 1, "link: and `StyleSheet` is `stylesheet`");
+}
+
 static void test_a_document_reads_at_sixteen_pixels(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -18287,6 +18450,10 @@ int main(void)
     test_the_tree_builder_survives_anything();
 
     test_a_document_reads_at_sixteen_pixels();
+    test_an_external_stylesheet_comes_from_the_embedder();
+    test_external_sheets_arrive_in_document_order();
+    test_a_link_that_did_not_arrive_is_counted();
+    test_only_a_stylesheet_link_is_a_stylesheet();
     test_the_universal_selector();
     test_a_length_needs_its_unit_in_standards_mode();
     test_an_interface_stylesheet_is_not_a_document();

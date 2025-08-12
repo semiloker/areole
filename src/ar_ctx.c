@@ -303,6 +303,22 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void))
     c->clock = clock_us;
 }
 
+void ar_set_stylesheet_loader(ar_ctx *c, const char *(*load)(void *user, const char *href),
+                              void   *user)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->link_load = load;
+    c->link_user = user;
+}
+
+ar_i32 ar_doc_links_skipped(const ar_ctx *c)
+{
+    return c ? c->links_skipped : 0;
+}
+
 void ar_stylesheet(ar_ctx *c, const char *css)
 {
     ar_sheet_parse(&c->sheet, css);

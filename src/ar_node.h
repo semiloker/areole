@@ -265,6 +265,12 @@ struct ar_ctx
 {
     ar_arena arena;
 
+    /* Where <link rel=stylesheet> gets its bytes, and what to hand back to
+       whoever set it. See ar_set_stylesheet_loader. */
+    const char *(*link_load)(void *user, const char *href);
+    void  *link_user;
+    ar_i32 links_skipped;
+
     /* What the caller reserved for a parsed document at init, so
        ar_html_parse_into does not have to be told twice. */
     ar_u32   doc_budget;

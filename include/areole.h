@@ -571,6 +571,43 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes);
    parsing happens once and the frame only resolves. */
 void ar_stylesheet(ar_ctx *c, const char *css);
 
+/*
+ * Where `<link rel=stylesheet>` gets its bytes.
+ *
+ * areole does no networking and no file IO, by design and in every release --
+ * so an external stylesheet is the one thing a document can ask for that this
+ * library cannot go and get. The embedder can: it knows what the document's
+ * base URL is, whether the resource is cached, whether it is allowed, and what
+ * to do when it is none of those.
+ *
+ * `load` is called once per `<link rel=stylesheet>`, in document order,
+ * interleaved with the `<style>` elements around it -- because that order is
+ * the cascade, and a sheet that arrives out of order is a sheet that wins the
+ * wrong arguments. Return the CSS as a NUL-terminated string, or null for a
+ * link that cannot be resolved; the string is parsed before the call returns
+ * and need not outlive it.
+ *
+ * `href` is NUL-terminated and is whatever the attribute said, unresolved. A
+ * relative one is relative to the document the embedder handed over, which the
+ * embedder knows and this library does not.
+ *
+ * Without a loader, `<link rel=stylesheet>` is skipped and counted -- see
+ * ar_doc_links_skipped, which is how a page that renders unstyled says why.
+ */
+void ar_set_stylesheet_loader(ar_ctx *c, const char *(*load)(void *user, const char *href),
+                              void   *user);
+
+/*
+ * How many `<link rel=stylesheet>` elements the last ar_doc_stylesheets could
+ * not resolve -- because there was no loader, or because the loader declined.
+ *
+ * A number rather than a silence. A document whose whole design is in one
+ * external sheet renders as unstyled text either way, and the difference
+ * between "this page has no CSS" and "this page's CSS did not arrive" is the
+ * first question anyone asks.
+ */
+ar_i32 ar_doc_links_skipped(const ar_ctx *c);
+
 /* Non-zero if the stylesheet had anything wrong with it. Parsing never aborts,
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
