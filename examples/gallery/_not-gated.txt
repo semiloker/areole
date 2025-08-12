@@ -45,3 +45,9 @@ html/hints/align         font: the centred line is sized by its words
 html/hints/bgcolor       font: cells are sized by their words
 html/hints/cellpadding   font: cells are sized by their words
 html/hints/width         font: the cell is sized by its words
+
+# ------------------------------------------------------------------------
+# Two more, each with a cause that is not layout.
+
+css/display/inline-block font: an inline-block sits on a baseline, and the line box is as tall as the strut the font gives it
+css/display/contents     engine: a display:contents box still has a rectangle here, and generates none in a browser

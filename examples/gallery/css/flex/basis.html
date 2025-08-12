@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>flex: flex-basis</title>
+<style>
+  html { font: 16px/1.4 sans-serif; }
+  body { margin: 0; padding: 16px; background: #fff; }
+  .box { background: #cfe3f5; }
+  .alt { background: #f5d9cf; }
+</style>
+<style>
+.f { display:flex; width:400px; }
+.f > div { height:30px; }
+.box { flex-basis:100px; } .alt { flex-basis:250px; }
+</style>
+<div class="f"><div class="box"></div><div class="alt"></div></div>

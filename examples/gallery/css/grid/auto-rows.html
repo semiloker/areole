@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>grid: implicit rows</title>
+<style>
+  html { font: 16px/1.4 sans-serif; }
+  body { margin: 0; padding: 16px; background: #fff; }
+  .box { background: #cfe3f5; }
+  .alt { background: #f5d9cf; }
+</style>
+<style>
+.g { display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:40px;     gap:6px; width:300px; }
+</style>
+<div class="g"><div class="box"></div><div class="alt"></div><div class="box"></div></div>

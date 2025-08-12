@@ -6717,23 +6717,45 @@ static void test_a_rowspan_holds_its_column_open(void)
     CHECK(ar__box(6).x > ar__box(3).x, "table: which is not the one the spanning cell holds");
 }
 
-static void test_fixed_layout_ignores_what_cells_want(void)
+static void test_fixed_layout_reads_the_first_row_and_nothing_else(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
 
-    /* `fixed` is the affordable option on a slow machine precisely because it
-       does not look at the cells: equal columns, one pass, whatever they say
-       they need. */
+    /*
+     * What `table-layout: fixed` saves is looking past the first row -- not
+     * looking at all.
+     *
+     * CSS 2.1 17.5.2.1: a column that states a width gets it, and the rest
+     * share what is left equally. This engine gave every column `avail / ncol`
+     * and ignored a stated width outright, so `<td width=250>` in a 300px
+     * table came out 100 and a fixed-layout table could not be laid out at
+     * all -- which is the one thing anybody chooses `fixed` in order to do.
+     *
+     * The test that stood here asserted the wrong behaviour in as many words:
+     * "equal columns whatever a cell asks for". It was written from the
+     * implementation rather than from the specification, and it kept the bug
+     * alive through four releases. A demo in the gallery, compared against a
+     * browser, disagreed on the first run.
+     */
     ar__table_scene(&s,
                     ".t { table-layout: fixed; }"
-                    ".k0 { width:250px; }",
+                    ".k0 { width:150px; }",
                     2, 3);
-    CHECK(ar__box(3).w == 100 && ar__box(4).w == 100 && ar__box(5).w == 100,
-          "table: fixed layout gives equal columns whatever a cell asks for");
+    CHECK(ar__box(3).w == 150, "table: fixed layout gives a column the width it stated");
+    CHECK(ar__box(4).w == ar__box(5).w,
+          "table: and the columns that stated none share what is left, equally");
+    CHECK(ar__box(3).w + ar__box(4).w + ar__box(5).w == 300,
+          "table: and the three of them come to the table's width exactly");
 
-    /* And the control: the same sheet on automatic honours the request. */
+    /* With nothing stated it is equal columns, which is what it always was. */
+    ar__table_scene(&s, ".t { table-layout: fixed; }", 2, 3);
+    CHECK(ar__box(3).w == 100 && ar__box(4).w == 100 && ar__box(5).w == 100,
+          "table: a fixed table that is told nothing divides itself evenly");
+
+    /* And the control: the same request on automatic is honoured too, by a
+       different route -- the constraint solve rather than the first row. */
     ar__table_scene(&s, ".k0 { width:250px; }", 2, 3);
-    CHECK(ar__box(3).w >= 250, "table: automatic layout does not ignore it");
+    CHECK(ar__box(3).w >= 250, "table: automatic layout does not ignore it either");
 }
 
 static void test_a_table_stacks_like_any_other_box(void)
@@ -15070,6 +15092,94 @@ static void test_only_a_stylesheet_link_is_a_stylesheet(void)
     CHECK(g_link_count == 1, "link: and `StyleSheet` is `stylesheet`");
 }
 
+static void test_auto_margins_centre_a_block(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `margin: 0 auto` on a box with a width, which is how every centred page
+     * on the web is centred, and which did nothing at all: an auto margin was
+     * read as zero and the box stayed against the left edge.
+     *
+     * CSS 2.1 10.3.3. Two auto margins take equal shares of what is left; one
+     * takes all of it, which is how a box is pushed right.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:400px; }"
+                 ".both { display:block; width:100px; height:10px; margin:0px auto; }"
+                 ".right { display:block; width:100px; height:10px;"
+                 "         margin-left:auto; margin-right:0px; }"
+                 ".plain { display:block; width:100px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");    /* 1 */
+    ar_begin(g_ui, "div.both"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.right"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.plain"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x - ar__box(1).x == 150, "margin: two auto margins centre the box");
+    CHECK(ar__box(3).x - ar__box(1).x == 300, "margin: one pushes it all the way over");
+    CHECK(ar__box(4).x == ar__box(1).x, "margin: and a box with neither stays where it was");
+}
+
+static void test_a_span_attribute_reaches_the_cell(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `colspan` and `rowspan` are structure rather than style -- they say
+     * which cells of the grid a cell occupies -- and no stylesheet has ever
+     * been able to say it. areole carries both as properties, and nothing
+     * mapped the attributes onto them, so a `<table>` written in HTML had
+     * every span silently ignored: a two-row `rowspan` laid out as one cell of
+     * one row, and the row below it started in the column the span was still
+     * holding.
+     *
+     * The mapping writes `colspan:2` and not `colspan:2px`, which is a matter
+     * of the declaration saying what it means rather than of anything
+     * breaking: the parser stores the number and the layout reads it without
+     * asking what unit came with it, so both spellings happen to work today.
+     */
+    ar__render_html(&s,
+                    "<table><tr><td rowspan=\"2\" id=\"s\"></td><td></td></tr>"
+                    "<tr><td></td></tr></table>",
+                    "td { width:40px; height:20px; padding:0px; }"
+                    "table { border-collapse:separate; border-spacing:0px; }");
+    {
+        ar_i32 c[4];
+        ar_i32 n = ar__tags("td", c, 4);
+
+        CHECK(n == 3, "html: three cells came out of the markup");
+        CHECK(ar__box_style(c[0])->v[AR_P_ROWSPAN] == 2,
+              "html: a rowspan attribute reaches the cell as a property");
+        CHECK(ar__box(c[0]).h == 40, "html: so the cell is as tall as the rows it covers");
+        CHECK(ar__box(c[2]).x == ar__box(c[1]).x,
+              "html: and the row below starts in the column the span left free");
+    }
+
+    ar__render_html(&s,
+                    "<table><tr><td colspan=\"2\" id=\"s\"></td></tr>"
+                    "<tr><td></td><td></td></tr></table>",
+                    "td { width:40px; height:20px; padding:0px; }"
+                    "table { border-collapse:separate; border-spacing:0px; }");
+    {
+        ar_i32 c[4];
+
+        ar__tags("td", c, 4);
+        CHECK(ar__box_style(c[0])->v[AR_P_COLSPAN] == 2,
+              "html: and a colspan attribute reaches it too");
+        CHECK(ar__box(c[0]).w == ar__box(c[1]).w + ar__box(c[2]).w,
+              "html: so the cell is as wide as the columns it covers");
+    }
+}
+
 static void test_a_wrapping_flex_container_has_a_gap_between_its_lines(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -18285,7 +18395,7 @@ int main(void)
     test_rows_stack_and_the_table_is_as_tall_as_them();
     test_a_colspan_covers_its_columns();
     test_a_rowspan_holds_its_column_open();
-    test_fixed_layout_ignores_what_cells_want();
+    test_fixed_layout_reads_the_first_row_and_nothing_else();
     test_a_table_stacks_like_any_other_box();
     test_cell_padding_is_not_counted_twice();
     test_a_rowspan_cell_is_as_tall_as_the_rows_it_spans();
@@ -18570,6 +18680,8 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_auto_margins_centre_a_block();
+    test_a_span_attribute_reaches_the_cell();
     test_a_wrapping_flex_container_has_a_gap_between_its_lines();
     test_a_collapsed_table_shrinks_to_its_grid();
     test_a_document_reads_at_sixteen_pixels();

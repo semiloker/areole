@@ -1052,11 +1052,58 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
 
     if (fixed_layout)
     {
-        /* Every column the same share, which is what `fixed` buys: one pass
-           and no dependence on any cell past the first row. */
+        /*
+         * A column that stated a width gets it; the rest share what is left,
+         * equally.
+         *
+         * That is what `table-layout: fixed` buys and it is not what this used
+         * to do: every column got `avail / ncol` and a stated width was
+         * ignored outright, so `<td width=100>` in a 300px table came out 150.
+         * The saving is that nothing past the first row is consulted, not that
+         * nothing is consulted at all -- CSS 2.1 17.5.2.1 says the first row's
+         * widths are exactly what decides it.
+         *
+         * Stated widths that come to more than the table has are honoured and
+         * overflow, which is also what a browser does: `fixed` means the
+         * author is deciding, including deciding wrong.
+         */
+        ar_i32 stated_total = 0, autos = 0, rest, share;
+
         for (i = 0; i < ncol; ++i)
         {
-            col[i].w = (i == ncol - 1) ? avail - given : avail / ncol;
+            if (col[i].fixed)
+            {
+                stated_total += col[i].min;
+            }
+            else
+            {
+                ++autos;
+            }
+        }
+        rest = avail - stated_total;
+        if (rest < 0)
+        {
+            rest = 0;
+        }
+        share = autos > 0 ? rest / autos : 0;
+
+        for (i = 0; i < ncol; ++i)
+        {
+            if (i == ncol - 1)
+            {
+                /* The last column absorbs the rounding, so the columns come to
+                   the table's width exactly rather than a pixel or two short
+                   of it. */
+                col[i].w = avail - given;
+                if (col[i].w < 0)
+                {
+                    col[i].w = 0;
+                }
+            }
+            else
+            {
+                col[i].w = col[i].fixed ? col[i].min : share;
+            }
             given += col[i].w;
         }
     }
