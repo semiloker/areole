@@ -15092,6 +15092,32 @@ static void test_only_a_stylesheet_link_is_a_stylesheet(void)
     CHECK(g_link_count == 1, "link: and `StyleSheet` is `stylesheet`");
 }
 
+static void test_a_drawing_states_its_own_size(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `<svg width="120" height="40">` had no rule in the user-agent sheet and
+     * no entry in the attribute mapping, so it fell to the initial display --
+     * a flex container -- and came out the full width of the page and none of
+     * its height. A drawing on a page was a full-width nothing.
+     *
+     * Two halves and both were missing: a display, because `svg` is a replaced
+     * element that sits on a line, and the size, because a drawing states it
+     * in attributes exactly as an image does.
+     */
+    ar__render_html(&s, "<p>a</p><svg width=\"120\" height=\"40\"></svg><p>b</p>", 0);
+    {
+        ar_i32 g = ar__first_tag("svg");
+
+        CHECK(g >= 0, "svg: the element came out of the markup");
+        CHECK(ar__box(g).w == 120 && ar__box(g).h == 40,
+              "svg: and is the size its attributes asked for");
+        CHECK(ar__box_style(g)->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK,
+              "svg: on a line rather than as a flex container");
+    }
+}
+
 static void test_auto_margins_centre_a_block(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -18680,6 +18706,7 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_a_drawing_states_its_own_size();
     test_auto_margins_centre_a_block();
     test_a_span_attribute_reaches_the_cell();
     test_a_wrapping_flex_container_has_a_gap_between_its_lines();

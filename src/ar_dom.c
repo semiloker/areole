@@ -521,10 +521,13 @@ static const char *ar__hints(const ar_doc *d, ar_i32 node, char *buf)
     int     cell = ar_span_is(name, "td") || ar_span_is(name, "th");
     int row = ar_span_is(name, "tr") || ar_span_is(name, "thead") || ar_span_is(name, "tbody") ||
               ar_span_is(name, "tfoot");
+    /* `svg` belongs on this list and was missing from it: a drawing states its
+       size in attributes exactly as an image does, and with no rule and no
+       hint it came out the full width of the page and none of its height. */
     int sized = table || cell || ar_span_is(name, "img") || ar_span_is(name, "col") ||
                 ar_span_is(name, "hr") || ar_span_is(name, "canvas") || ar_span_is(name, "video") ||
                 ar_span_is(name, "iframe") || ar_span_is(name, "embed") ||
-                ar_span_is(name, "object");
+                ar_span_is(name, "object") || ar_span_is(name, "svg");
 
     if (table || cell || row || ar_span_is(name, "body"))
     {

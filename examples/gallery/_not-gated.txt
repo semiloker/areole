@@ -51,3 +51,5 @@ html/hints/width         font: the cell is sized by its words
 
 css/display/inline-block font: an inline-block sits on a baseline, and the line box is as tall as the strut the font gives it
 css/display/contents     engine: a display:contents box still has a rectangle here, and generates none in a browser
+html/parsing/foreign-svg font: the svg is an inline-block, and the line it sits on is as tall as the font's strut
+html/parsing/cdata       font: the svg is an inline-block, and the line it sits on is as tall as the font's strut

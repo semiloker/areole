@@ -298,7 +298,14 @@ static const char *const AR__UA[] = {
     "rt { font-size:8px; }"
     "map, canvas, video, audio { display:inline; }",
 
-    "iframe, embed, object, picture { display:inline; }",
+    "iframe, embed, object, picture { display:inline; }"
+    /* `svg` had no rule at all, so it fell to the initial display and a
+       drawing became a flex container: full width and no height. It is a
+       replaced element in a browser, with a size of its own and a place on
+       the line -- `inline-block` is the closest thing this engine has to
+       that, and with the width and height attributes mapped beside it the
+       box comes out where a browser puts it. */
+    "svg { display:inline-block; }",
 
     /* Drawn by nobody: metadata, and elements whose content is not rendered. */
     "template, datalist, param { display:none; }"
