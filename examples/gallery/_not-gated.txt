@@ -1,55 +1,61 @@
 # Demos whose geometry is not gated, and why.
 #
 # One id per line, then a reason. A demo is on this list because something
-# other than layout decides its rectangles, and a gate that included it would
-# be red for a reason nobody can fix by fixing layout.
+# other than the feature under test decides its rectangles, and a gate that
+# included it would be red for something nobody can fix by fixing that feature.
 #
 # Every line here is a debt, not an exemption. The reason is the thing to go
-# and remove.
+# and remove, and the list only ever shrinks on purpose.
 #
 # ------------------------------------------------------------------------
-# font: a box sized by text
+# It used to be twenty-four, and every one of them said `font`
 #
-# areole draws with its own face and Chrome with whatever `sans-serif` resolves
-# to on the machine, so any box whose width or height comes from the words in
-# it differs by the difference between two fonts. That is not layout and no
-# amount of layout work will close it.
+# areole drew with its own bitmap face and a browser drew with whatever
+# `sans-serif` resolved to, so any box sized by words differed by the
+# difference between two fonts. That is gone: `tools/gen_gallery_font.py`
+# converts font8x8 -- public domain, and already the face areole draws with --
+# into TrueType, and every demo inlines it. Thirteen of the twenty-four went
+# green the moment both engines were drawing the same outlines.
 #
-# The gallery design says how to fix it -- rule 4, one permissively licensed
-# face bundled with the gallery as a data URI, loaded by both engines, so the
-# comparison measures rasterizers rather than font substitution. Nothing is
-# vendored yet, so nothing is bundled yet, and until it is these are reported
-# and not gated.
+# What is left is five real causes, each named below, and none of them is the
+# font any more.
+
+# ---- the line box is as tall as the whole paragraph --------------------
 #
-# The pixel numbers for these are still published, and they are the useful
-# half: a demo that goes from 4% to 40% has broken even though its geometry
-# was never gated.
+# ar__close_line takes each line's height from `n->rect.h` of the nodes in it,
+# and for a text node that wrapped, `rect.h` is the union of all its fragments
+# -- the height of the whole paragraph. So every line is as tall as the
+# paragraph, and a five-line paragraph comes out five paragraphs tall.
+#
+# The line *breaking* is correct: instrumented, the break loop produces the
+# right pieces at the right places at every width. It is the height alone.
+# See docs/roadmap/0.9.x-coverage.md for the measurements.
 
-css/table/basic          font: cells are sized by their words
-css/table/collapse       font: cells are sized by their words
-css/table/colspan        font: cells are sized by their words
-css/table/spacing        font: cells are sized by their words
-css/table/widths         font: the second column is sized by its words
-css/text/align           font: every box here is a line of text
-css/text/font-size       font: every box here is a line of text
-css/text/line-height     font: the paragraph's height is its line count
-css/text/weight          font: bold and italic have their own advances
-css/text/wrap            font: where the line breaks decides the height
-html/elements/blockquote font: the quote is sized by its words
-html/elements/headings   font: six headings, all sized by their words
-html/elements/hr         font: the rule sits under a line of text
-html/elements/list       font: three items, all sized by their words
-html/elements/paragraph  font: two paragraphs, sized by their words
-html/elements/pre        font: monospace, and there is no font-family here yet
-html/hints/align         font: the centred line is sized by its words
-html/hints/bgcolor       font: cells are sized by their words
-html/hints/cellpadding   font: cells are sized by their words
-html/hints/width         font: the cell is sized by its words
+css/text/wrap            engine: a wrapped paragraph is as many times too tall as it has lines
+css/text/line-height     engine: the same, with a line-height multiplier on top
+css/text/weight          engine: inline spans on one line, so the line box is measured the same wrong way
+css/display/inline-block engine: the line an inline-block sits on is measured the same wrong way
+html/parsing/foreign-svg engine: the svg is an inline-block and sits on such a line
+html/parsing/cdata       engine: the svg is an inline-block and sits on such a line
+html/elements/headings   engine: h6 alone, by two pixels, from the same line-box arithmetic
 
-# ------------------------------------------------------------------------
-# Two more, each with a cause that is not layout.
+# ---- a border reserves no space ----------------------------------------
+#
+# `ar_used_size` gives a border no room, here and everywhere. An `<hr>` is
+# nothing *but* a border, so it comes out zero pixels tall where a browser
+# gives it two.
 
-css/display/inline-block font: an inline-block sits on a baseline, and the line box is as tall as the strut the font gives it
+html/elements/hr         engine: a border reserves no space, and an hr is only a border
+
+# ---- half-pixels -------------------------------------------------------
+#
+# The same ones the table corpus has left. A browser splits a collapsed line
+# into halves it can hold and this engine cannot: 303 where a browser says
+# 300, from columns each half a pixel out.
+
+css/table/collapse       engine: half-pixels, the same ones the table corpus has left
+
+# ---- values this engine does not have ----------------------------------
+
 css/display/contents     engine: a display:contents box still has a rectangle here, and generates none in a browser
-html/parsing/foreign-svg font: the svg is an inline-block, and the line it sits on is as tall as the font's strut
-html/parsing/cdata       font: the svg is an inline-block, and the line it sits on is as tall as the font's strut
+html/elements/pre        engine: `font-family: monospace` is 0.2.1, so pre is drawn in the one face there is
