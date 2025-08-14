@@ -9292,11 +9292,84 @@ static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    /* 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after. */
-    CHECK(ar__box(2).h > 20, "wrap: the paragraph is taller than one line");
+    /*
+     * 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after.
+     *
+     * Against the text's own single-line height and not against a number.
+     * `> 20` was what stood here, and it passed for the wrong reason: a
+     * fragment used to take its height from a rectangle that was still being
+     * grown into the union of the fragments before it, so the second line was
+     * two lines tall and the third was four. Twenty was comfortably clear of
+     * a correct two-line paragraph and comfortably inside a compounding one.
+     */
+    CHECK(ar__box(2).h > g_ui->nodes[3].text_h,
+          "wrap: the paragraph is taller than one line of its own text");
+    CHECK(ar__box(2).h == 2 * g_ui->nodes[3].text_h,
+          "wrap: and exactly two lines tall, not two lines plus the first one again");
     CHECK(ar__box(4).y >= ar__box(2).y + ar__box(2).h,
           "wrap: and the block after it starts below it rather than on top of it");
     CHECK(ar__box(1).h >= ar__box(2).h + 20, "wrap: the container is as tall as what it holds");
+
+    {
+        /*
+         * And the same text in half the width is at most twice as tall.
+         *
+         * Two lines is not enough to catch the compounding -- the first line
+         * was right and the second took the first one's height, which is the
+         * same answer. It needs a third line to diverge, and by six lines the
+         * paragraph was eleven lines tall. Halving the width and bounding the
+         * height is the invariant that says so without pinning a line count
+         * that depends on what the face measures.
+         */
+        ar_i32 wide = ar__box(2).h;
+        ar_i32 line = g_ui->nodes[3].text_h;
+
+        ar__ui_reset("#root { display:block; }"
+                     ".w { display:block; width:150px; }"
+                     ".p { display:block; }"
+                     ".t { display:inline; }");
+        ar__ui_begin();
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.w");
+        ar_begin(g_ui, "div.p");
+        ar_text(g_ui, "span.t", "a sentence long enough that it has to break across two lines");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+
+        CHECK(ar__box(2).h <= 2 * wide + line,
+              "wrap: and half the width is at most twice the height, plus a line");
+
+        /*
+         * And every line of it is the same height, which is the property that
+         * actually broke.
+         *
+         * A fragment took its height from `n->rect.h` while that field was
+         * being grown into the union of the fragments already emitted, so each
+         * line was as tall as all the lines above it: 1, 1, 2, 4, 8. Two lines
+         * cannot see it -- the second takes the first one's height and that is
+         * the right answer -- and a bound on the total is too loose to catch
+         * three. Comparing the fragments to each other needs neither a line
+         * count nor a threshold.
+         */
+        {
+            ar_i32 k, n = ar_node_frag_count(g_ui, 3);
+            ar_i32 from, to;
+            ar_i32 first = n > 0 ? ar_node_frag(g_ui, 3, 0, &from, &to).h : 0;
+            int    same = 1;
+
+            for (k = 1; k < n; ++k)
+            {
+                if (ar_node_frag(g_ui, 3, k, &from, &to).h != first)
+                {
+                    same = 0;
+                }
+            }
+            CHECK(n >= 3, "wrap: the narrow paragraph is at least three lines");
+            CHECK(same, "wrap: and every one of them is the same height");
+        }
+    }
 }
 
 static void test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it(void)

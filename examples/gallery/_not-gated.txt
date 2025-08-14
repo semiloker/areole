@@ -18,26 +18,40 @@
 # green the moment both engines were drawing the same outlines.
 #
 # What is left is five real causes, each named below, and none of them is the
-# font any more.
+# font any more. `css/text/line-height` came off this list a second time when
+# the line-box compounding below was fixed.
 
-# ---- the line box is as tall as the whole paragraph --------------------
+# ---- a line box has no strut -------------------------------------------
 #
-# ar__close_line takes each line's height from `n->rect.h` of the nodes in it,
-# and for a text node that wrapped, `rect.h` is the union of all its fragments
-# -- the height of the whole paragraph. So every line is as tall as the
-# paragraph, and a five-line paragraph comes out five paragraphs tall.
+# A browser's line box is at least as tall as the containing block's own font
+# would make it, whether or not any text is on that line -- the "strut". This
+# engine's line is only as tall as the tallest thing actually on it, so a line
+# holding one 30px inline-block is 30 tall where a browser gives 36, and the
+# last line of a paragraph is short by the font's descent.
 #
-# The line *breaking* is correct: instrumented, the break loop produces the
-# right pieces at the right places at every width. It is the height alone.
-# See docs/roadmap/0.9.x-coverage.md for the measurements.
+# It is a feature and not a bug: the arithmetic here is self-consistent and
+# every one of these is short by a fixed amount rather than wrong in a way that
+# compounds. That distinguishes it from what used to be on this list.
+#
+# (What used to be here -- a wrapped paragraph as many times too tall as it had
+# lines -- is fixed. A fragment took its height from `n->rect.h` while that
+# field was still being grown into the union of the fragments before it, so the
+# second line was two lines tall and the third was four. `css/text/line-height`
+# went green and `css/text/wrap` went from 24% of its pixels differing to 2%.)
 
-css/text/wrap            engine: a wrapped paragraph is as many times too tall as it has lines
-css/text/line-height     engine: the same, with a line-height multiplier on top
-css/text/weight          engine: inline spans on one line, so the line box is measured the same wrong way
-css/display/inline-block engine: the line an inline-block sits on is measured the same wrong way
-html/parsing/foreign-svg engine: the svg is an inline-block and sits on such a line
-html/parsing/cdata       engine: the svg is an inline-block and sits on such a line
-html/elements/headings   engine: h6 alone, by two pixels, from the same line-box arithmetic
+css/text/wrap            engine: no strut, so the last line is short by the font's descent
+css/display/inline-block engine: no strut, so a line holding only an inline-block is short by it
+html/parsing/foreign-svg engine: the svg is an inline-block on such a line
+html/parsing/cdata       engine: the svg is an inline-block on such a line
+html/elements/headings   engine: h6 alone, by two pixels, from the same missing strut
+
+# ---- there is one face, and it is neither bold nor italic ---------------
+#
+# `ar_font_load_styled` exists and the gallery renderer loads no styled face,
+# so `<b>` and `<i>` are drawn in the one face there is, with its advances,
+# while a browser synthesises a heavier and a slanted one and gets wider ones.
+
+css/text/weight          engine: no bold or italic face is loaded, so their advances are the roman ones
 
 # ---- a border reserves no space ----------------------------------------
 #
