@@ -12696,6 +12696,47 @@ static void test_line_height_comes_from_the_baselines(void)
     CHECK(ar__box(2).y == 2, "baseline: the shallower one drops to meet it");
 }
 
+/*
+ * The strut: the block's own font is on every line, whether or not text is.
+ *
+ * CSS 2.1 10.8.1. A line box starts with a zero-width inline box carrying the
+ * containing block's font and line-height, and its ascent and descent join the
+ * maxima like any item's. Leave it out and a line is only as tall as the
+ * tallest thing actually on it -- which is right until nothing on the line is
+ * text, and then the half-leading below the baseline goes missing.
+ *
+ * Here the item is taller than the strut's ascent, so the line's top comes
+ * from the item and its bottom comes from the strut. That is the arrangement
+ * that separates this from the two implementations that look the same on
+ * easier input: without a strut the line is 40, and with the line merely
+ * floored at `line-height` it is also 40, because the item is taller than 32.
+ * Only a strut that contributes a descent gets 48.
+ */
+static void test_a_line_is_never_shorter_than_the_block_s_own_font(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; font-size:16px; line-height:32px; }"
+                 ".i { display:inline-block; width:20px; height:40px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The face is 16 tall at this size, so a 32px line leaves 8 of leading
+       above the ascent and 8 below the baseline. The item has no text and so
+       sits with its bottom edge on the baseline: 40 above it, and the strut's
+       8 below. */
+    CHECK(ar__box(2).h == 40, "strut: the item is the tallest thing above the baseline");
+    CHECK(ar__box(1).h == 48, "strut: and the block's own font is still under it");
+}
+
 /* vertical-align:top ignores the baseline and pins to the line's top edge. */
 static void test_vertical_align_top_and_bottom(void)
 {
@@ -18669,6 +18710,7 @@ int main(void)
     test_inline_wraps_to_a_new_line();
     test_inline_margins_take_room_on_the_line();
     test_line_height_comes_from_the_baselines();
+    test_a_line_is_never_shorter_than_the_block_s_own_font();
     test_vertical_align_top_and_bottom();
     test_text_align_moves_the_line();
     test_an_inline_run_takes_its_place_in_the_stack();
