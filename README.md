@@ -396,7 +396,8 @@ toolkit breaks that circle.
 - **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid ✅
 - **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment ✅
 - **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
-- **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet 🚧
+- **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet ✅
+- **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -475,6 +476,62 @@ ar_frame_end(c, &surface);
 
 `examples/13_document` is exactly that in a window, and is the only example in
 the tree that declares no boxes at all.
+
+### 0.9.1, complete
+
+0.9.0 could read a document. 0.9.1 is about whether what it computes from one is *right*, and the
+only honest answer to that is a browser's. Four corpora arrived, all measured rather than recalled:
+
+| | |
+| --- | --- |
+| Every element's defaults | **1,066 of 1,071** values, 119 elements against nine properties each |
+| Presentational hints | **42 of 43** cases -- `width`, `bgcolor`, `align`, `cellpadding`, `colspan` |
+| Quirks mode | **39 of 39** cases, against a corpus asked to be thirty |
+| The demo gallery | **111 of 111 gated demos** agree at one pixel on every edge, 7 more reported |
+
+`tools/compare_computed.py` drives the first three: the same markup to both engines,
+`getComputedStyle` on one side and `ar_computed` on the other. The gallery is
+`tools/gallery.py` -- both engines given the same file, geometry from each, pixels diffed by a
+PNG reader built out of `zlib`, and a golden gate that runs with no browser at all, which is the
+one CI uses.
+
+Five of the 1,071 differ and each is named rather than unknown: `audio` wants
+`audio:not([controls])` and there are no attribute selectors yet; `ruby`, `rt` and `rp` want
+display values this engine does not have; and `svg` is `inline-block` here against a browser's
+`inline`, which is a *choice* -- the closest thing to a replaced inline in an engine with no
+replaced elements.
+
+**Comparing against a browser is how you find out what you got wrong.** Every one of these was
+invisible to a test suite written by the same person who wrote the engine:
+
+- **The document root was 8px**, because nothing had ever said `html { font-size: 16px }` -- so
+  every `em` on a parsed page was half what it should have been.
+- **The universal selector did not parse.** `*` was guarded for, after a loop that had already
+  failed on it.
+- **`margin: 0 auto` centred nothing**, which is the way almost every page on the web is centred.
+- **`colspan` and `rowspan` were never mapped**, so every table with a merged cell was wrong.
+- **`table-layout: fixed` ignored the widths it was given**, which is the entire point of it.
+- **A flex line had no cross gap**, and a collapsed table's intrinsic width was its uncollapsed one.
+- **`line-height` was resolved against the wrong number**, and a wrapped paragraph came out as
+  many times too tall as it had lines, because a fragment took its height from a field still
+  being grown into the union of the fragments before it.
+- **A line box had no strut.** CSS 2.1 10.8.1 starts every line with the containing block's own
+  font whether or not text is on it; without that, a line holding only an inline-block was short
+  by the font's descent, and so was the last line of every paragraph.
+
+Seven demos are reported rather than gated, each with a written cause in
+`examples/gallery/_not-gated.txt`. Two of them are the same residual the table corpus is down to:
+a browser lays out in 1/64ths and this engine is integers all the way down, so a six-line
+paragraph is 134 there and 132 here. That one is not a bug to fix but a coordinate system to
+change, and it is written down as such.
+
+**What it cost.** Style resolution roughly doubled on a parsed document -- `html_render` went
+from 467 to 962 microseconds of style on the same 1,488 nodes, with layout and raster unmoved --
+which is the price of a real user-agent stylesheet, a presentational-hint cascade band, and an
+origin as the first sort key on every declaration. `table_1k_rows` paid 19% of the same. Two
+scenes went the other way on the place-once work: `offscreen_90pc` −29% and `top_layer_off`
+−23%. All 52 scenes are in `docs/PERFORMANCE.md`, stability column included, because a
+number this machine cannot reproduce is not a number.
 
 ## Building
 
