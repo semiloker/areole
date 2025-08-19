@@ -993,9 +993,10 @@ static void test_an_at_rule_is_skipped_whole(void)
     CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
           "at-rule: and the rule after the block still parses");
 
-    /* Two levels, which is the shape `@media` inside `@supports` makes. The
-       sibling is outside the inner block and inside the outer one. */
-    ar__sheet("@supports (display: block) { @media screen { .deep { width: 7px; } }"
+    /* Two levels. Both are `@media`, which is not evaluated yet and so is
+       skipped whole; the sibling sits outside the inner block and inside the
+       outer one, which is exactly what a brace count gets wrong. */
+    ar__sheet("@media screen { @media print { .deep { width: 7px; } }"
               " .sibling { width: 8px; } }"
               ".after { width: 42px; }");
     CHECK(ar__css_value(".sibling", 0, AR_P_WIDTH) != 8,
@@ -1018,6 +1019,73 @@ static void test_an_at_rule_is_skipped_whole(void)
     CHECK(g_sheet.errors == 0, "at-rule: a brace inside a string does not close the block");
     CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
           "at-rule: and the rule after it is untouched");
+}
+
+/*
+ * @supports answers from the parser, never from a table.
+ *
+ * A property is supported when this engine's own declaration parser accepts
+ * it and sets something. A hand-maintained list of supported properties is a
+ * claim that drifts the moment anything changes, and `@supports` is precisely
+ * the tool a page uses to decide whether to trust us -- so claiming support
+ * for something parsed and ignored would be the most damaging lie available.
+ *
+ * Which is why the corpus for this is generated from the catalogue rather
+ * than written: see tools/gen_supports_corpus.py.
+ */
+static void test_supports_asks_the_parser(void)
+{
+    /* Supported, so the block applies. */
+    ar__sheet("@supports (display: block) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: a property the parser accepts");
+
+    /* Not supported, so it does not -- and asking was not an error. */
+    ar__sheet("@supports (flibbertigibbet: 3px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: a property it does not");
+    CHECK(g_sheet.errors == 0, "supports: a question whose answer is no is not an error");
+
+    ar__sheet("@supports not (flibbertigibbet: 3px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: not");
+
+    ar__sheet("@supports (display: block) and (width: 1px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: and, both true");
+    ar__sheet("@supports (display: block) and (flibbertigibbet: 1px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: and, one false");
+
+    ar__sheet("@supports (flibbertigibbet: 1px) or (display: block) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: or");
+
+    /* `and` and `or` cannot be mixed without brackets. The condition is
+       invalid, which makes it false rather than something to guess at. */
+    ar__sheet("@supports (display: block) and (width: 1px) or (height: 1px)"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: mixing and with or is refused");
+
+    /* Bracketed, the same thing is legal and true. */
+    ar__sheet("@supports ((display: block) and (width: 1px)) or (flibbertigibbet: 1px)"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: brackets give it a meaning");
+
+    /* Four levels, which is what the release asks for. */
+    ar__sheet("@supports (not (not ((display: block) and (width: 1px))))"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: nested four deep");
+
+    /* selector() asks the selector parser the same way. `::before` is refused
+       by ar__parse_compound, so this engine does not claim it. */
+    ar__sheet("@supports selector(.a > .b) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: a selector it parses");
+    ar__sheet("@supports selector(.a::before) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: a pseudo-element it does not");
+
+    /* An unknown function is general enclosed: false, and not an error. */
+    ar__sheet("@supports whatever(1) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: an unknown function is false");
+
+    /* A rule after the block is untouched whichever way the answer went. */
+    ar__sheet("@supports (flibbertigibbet: 1px) { .a { width: 5px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42, "supports: and the sheet carries on");
 }
 
 /* The parser must terminate on any input at all.
@@ -18467,6 +18535,7 @@ int main(void)
     test_css_comments_and_whitespace();
     test_css_survives_malformed_input();
     test_an_at_rule_is_skipped_whole();
+    test_supports_asks_the_parser();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();

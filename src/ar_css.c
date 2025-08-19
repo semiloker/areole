@@ -3395,25 +3395,282 @@ static void ar__skip_at_rule(ar__scan *z)
     }
 }
 
-void ar_sheet_parse(ar_sheet *sheet, const char *css)
-{
-    ar__scan z;
+/*
+ * @supports, answered from the parser and never from a table.
+ *
+ * A property is supported when this engine's own declaration parser accepts
+ * it and sets something. That is the only answer that cannot drift: a table
+ * saying `grid` is supported is a claim maintained by hand, and `@supports`
+ * is precisely the tool a page uses to decide whether to trust us. Claiming
+ * something parsed and ignored would be the most damaging lie available here.
+ *
+ * The probe runs the real `ar__parse_decl` over the text between the
+ * parentheses, on a scanner bounded there so it stops at the closing bracket
+ * rather than running into the rest of the sheet. Its bookkeeping is put back
+ * afterwards: asking whether something is supported is not an error when the
+ * answer is no, and a track consumed by a probe is a track a real rule cannot
+ * have.
+ */
+#define AR__COND_MAX_DEPTH 8
 
-    if (!css)
+/* From the opening bracket to the one that closes it, or null. Brackets inside
+   strings do not count, and neither does the one in `url("a)b")`. */
+static const char *ar__match_paren(const char *p, const char *end)
+{
+    ar_i32 depth = 0;
+
+    while (p < end)
     {
-        return;
+        if (*p == '"' || *p == '\'')
+        {
+            char quote = *p++;
+
+            while (p < end && *p != quote)
+            {
+                if (*p == '\\' && p + 1 < end)
+                {
+                    p++;
+                }
+                p++;
+            }
+            if (p >= end)
+            {
+                return 0;
+            }
+        }
+        else if (*p == '(')
+        {
+            depth++;
+        }
+        else if (*p == ')')
+        {
+            if (--depth == 0)
+            {
+                return p;
+            }
+        }
+        p++;
+    }
+    return 0;
+}
+
+/* Does this engine act on `prop: value`? The parser is asked, not a list. */
+static int ar__supports_decl(ar_sheet *sheet, const char *text, const char *end)
+{
+    ar__scan sub;
+    ar_rule  scratch;
+    ar_u32   errors = sheet->errors;
+    ar_u32   refused = sheet->rules_refused;
+    ar_u32   offset = sheet->first_error_offset;
+    ar_u16   tracks = sheet->track_count;
+    int      ok;
+
+    memset(&scratch, 0, sizeof scratch);
+    ar_style_defaults(&scratch.style);
+    scratch.set = ar_pset_none();
+
+    sub.base = text;
+    sub.p = text;
+    sub.end = end;
+    sub.sheet = sheet;
+    ar__parse_decl(&sub, &scratch, sheet);
+    ok = ar_pset_any(scratch.set);
+
+    sheet->errors = errors;
+    sheet->rules_refused = refused;
+    sheet->first_error_offset = offset;
+    sheet->track_count = tracks;
+    return ok;
+}
+
+/* Does this engine's selector parser accept it? Same principle. */
+static int ar__supports_selector(ar_sheet *sheet, const char *text, const char *end)
+{
+    ar__scan sub;
+    ar_rule  scratch;
+    ar_u32   errors = sheet->errors;
+    ar_u32   refused = sheet->rules_refused;
+    ar_u32   offset = sheet->first_error_offset;
+    int      ok;
+
+    memset(&scratch, 0, sizeof scratch);
+    ar_style_defaults(&scratch.style);
+    scratch.set = ar_pset_none();
+
+    sub.base = text;
+    sub.p = text;
+    sub.end = end;
+    sub.sheet = sheet;
+    ok = ar__parse_selector(&sub, &scratch);
+    if (ok)
+    {
+        /* Trailing rubbish means the parser stopped early rather than
+           understood the whole thing: `selector(.a !!)` is not support. */
+        ar__skip_ws(&sub);
+        ok = sub.p >= sub.end;
     }
 
-    /* New rules can change any answer already cached, and there is no cheap
-       way to know which. Dropping all of it is correct and costs nothing,
-       because adding a stylesheet is a startup operation. */
-    ar_sheet_cache_clear(sheet);
+    sheet->errors = errors;
+    sheet->rules_refused = refused;
+    sheet->first_error_offset = offset;
+    return ok;
+}
 
-    z.base = css;
-    z.p = css;
-    z.end = css + strlen(css);
-    z.sheet = sheet;
+static int ar__supports_condition(ar__scan *z, ar_sheet *sheet, ar_i32 depth);
 
+/*
+ * One `( ... )`, which is a nested condition, a declaration, or something
+ * this engine has never heard of.
+ *
+ * General enclosed -- an unknown function, or brackets holding something that
+ * is not a declaration -- is false rather than an error, which is what the
+ * specification asks for and what makes a stylesheet written for a browser
+ * degrade here instead of breaking.
+ */
+static int ar__supports_in_parens(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+{
+    const char *close;
+    const char *kw;
+    ar_i32      klen;
+    int         result;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end || depth >= AR__COND_MAX_DEPTH)
+    {
+        return 0;
+    }
+
+    /* `selector(...)`, and any other function, which is general enclosed. */
+    if (ar__is_ident(*z->p))
+    {
+        const char *save = z->p;
+
+        klen = ar__ident(z, &kw);
+        if (z->p >= z->end || *z->p != '(')
+        {
+            z->p = save;
+            return 0; /* a bare identifier is not a condition */
+        }
+        close = ar__match_paren(z->p, z->end);
+        if (!close)
+        {
+            z->p = z->end;
+            return 0;
+        }
+        result = klen > 0 && ar__same(kw, klen, "selector") &&
+                 ar__supports_selector(sheet, z->p + 1, close);
+        z->p = close + 1;
+        return result;
+    }
+
+    if (*z->p != '(')
+    {
+        return 0;
+    }
+    close = ar__match_paren(z->p, z->end);
+    if (!close)
+    {
+        z->p = z->end;
+        return 0;
+    }
+
+    {
+        const char *inner = z->p + 1;
+
+        while (inner < close && ar__is_space(*inner))
+        {
+            inner++;
+        }
+        /* `( ( ... ) ...)` and `( not ... )` are conditions; anything else in
+           brackets is a declaration, which is the common case by far. */
+        if (inner < close &&
+            (*inner == '(' || (close - inner >= 3 && ar__same(inner, 3, "not") &&
+                               (inner + 3 == close || ar__is_space(inner[3]) || inner[3] == '('))))
+        {
+            ar__scan sub;
+
+            sub.base = z->base;
+            sub.p = inner;
+            sub.end = close;
+            sub.sheet = sheet;
+            result = ar__supports_condition(&sub, sheet, depth + 1);
+        }
+        else
+        {
+            result = ar__supports_decl(sheet, inner, close);
+        }
+    }
+    z->p = close + 1;
+    return result;
+}
+
+/*
+ * A condition: `not X`, or a chain of `and` or `or`.
+ *
+ * The two cannot be mixed without brackets -- `(a) and (b) or (c)` has no
+ * meaning in CSS -- and a condition that mixes them is invalid, which makes
+ * the whole `@supports` false and its block skipped. Refusing it is safer
+ * than picking an associativity nobody wrote down.
+ */
+static int ar__supports_condition(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+{
+    int    result;
+    char   joiner = 0;
+    ar_i32 guard = 0;
+
+    ar__skip_ws(z);
+    if (depth >= AR__COND_MAX_DEPTH)
+    {
+        return 0;
+    }
+    if (z->end - z->p >= 3 && ar__same(z->p, 3, "not") &&
+        (z->p + 3 >= z->end || ar__is_space(z->p[3]) || z->p[3] == '('))
+    {
+        z->p += 3;
+        return !ar__supports_in_parens(z, sheet, depth + 1);
+    }
+
+    result = ar__supports_in_parens(z, sheet, depth + 1);
+    for (;;)
+    {
+        const char *kw;
+        ar_i32      klen;
+        int         rhs;
+
+        ar__skip_ws(z);
+        if (z->p >= z->end || !ar__is_ident(*z->p) || ++guard > AR_MAX_SEL_LIST)
+        {
+            break;
+        }
+        klen = ar__ident(z, &kw);
+        if (klen == 3 && ar__same(kw, klen, "and"))
+        {
+            if (joiner == 'o')
+            {
+                return 0;
+            }
+            joiner = 'a';
+        }
+        else if (klen == 2 && ar__same(kw, klen, "or"))
+        {
+            if (joiner == 'a')
+            {
+                return 0;
+            }
+            joiner = 'o';
+        }
+        else
+        {
+            return 0; /* an identifier that is neither: the condition is junk */
+        }
+        rhs = ar__supports_in_parens(z, sheet, depth + 1);
+        result = joiner == 'a' ? (result && rhs) : (result || rhs);
+    }
+    return result;
+}
+
+static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+{
     for (;;)
     {
         /*
@@ -3428,19 +3685,45 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         ar_i32  sel_count = 0;
         ar_i32  k;
 
-        ar__skip_ws(&z);
-        if (z.p >= z.end)
+        ar__skip_ws(z);
+        if (z->p >= z->end)
         {
             break;
         }
 
-        /* An at-rule is not a selector and must not be recovered from as
-           though it were one. None is understood yet, so all of them are
-           skipped whole -- but skipped correctly, which is what lets the
-           conditional ones be understood without moving this code again. */
-        if (*z.p == '@')
+        /* A nested call ends at the brace that closes the block it was
+           entered for. At the top level a stray `}` is not ours, and falls
+           through to the selector parser to be counted as the error it is. */
+        if (depth > 0 && *z->p == '}')
         {
-            ar__skip_at_rule(&z);
+            z->p++;
+            return;
+        }
+
+        /* An at-rule is not a selector and must not be recovered from as
+           though it were one. A conditional one whose condition holds is
+           descended into; everything else is skipped whole. */
+        if (*z->p == '@')
+        {
+            const char *at = z->p;
+            ar_i32      klen;
+            const char *kw;
+
+            z->p++;
+            klen = ar__ident(z, &kw);
+            if (klen > 0 && ar__same(kw, klen, "supports") && depth < AR__COND_MAX_DEPTH &&
+                ar__supports_condition(z, sheet, 0))
+            {
+                ar__skip_ws(z);
+                if (z->p < z->end && *z->p == '{')
+                {
+                    z->p++;
+                    ar__parse_rules(z, sheet, depth + 1);
+                    continue;
+                }
+            }
+            z->p = at;
+            ar__skip_at_rule(z);
             continue;
         }
 
@@ -3448,18 +3731,18 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         ar_style_defaults(&rule[0].style);
         rule[0].set = ar_pset_none();
 
-        if (!ar__parse_selector(&z, &rule[0]))
+        if (!ar__parse_selector(z, &rule[0]))
         {
-            ar__fail(&z);
+            ar__fail(z);
             /* Resynchronise on the next block, so one bad selector costs one
                rule rather than the remainder of the stylesheet. */
-            while (z.p < z.end && *z.p != '}')
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
@@ -3469,16 +3752,16 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
            its own rule; they differ in nothing else. */
         for (;;)
         {
-            ar__skip_ws(&z);
-            if (z.p >= z.end || *z.p != ',')
+            ar__skip_ws(z);
+            if (z->p >= z->end || *z->p != ',')
             {
                 break;
             }
-            z.p++;
+            z->p++;
             /* ar__parse_compound starts on the first character of a compound,
                not on the whitespace before one -- the main loop above has
                always skipped it for the first selector. */
-            ar__skip_ws(&z);
+            ar__skip_ws(z);
             if (sel_count >= AR_MAX_SEL_LIST)
             {
                 sel_count = 0; /* longer than the array holds; refuse the lot */
@@ -3487,7 +3770,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             memset(&rule[sel_count], 0, sizeof rule[0]);
             ar_style_defaults(&rule[sel_count].style);
             rule[sel_count].set = ar_pset_none();
-            if (!ar__parse_selector(&z, &rule[sel_count]))
+            if (!ar__parse_selector(z, &rule[sel_count]))
             {
                 sel_count = 0;
                 break;
@@ -3496,46 +3779,46 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         }
         if (sel_count == 0)
         {
-            ar__fail_rule(&z);
-            while (z.p < z.end && *z.p != '}')
+            ar__fail_rule(z);
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
 
-        ar__skip_ws(&z);
-        if (z.p >= z.end || *z.p != '{')
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p != '{')
         {
-            ar__fail_rule(&z);
-            while (z.p < z.end && *z.p != '}')
+            ar__fail_rule(z);
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
-        z.p++;
+        z->p++;
 
         for (;;)
         {
-            ar__skip_ws(&z);
-            if (z.p >= z.end || *z.p == '}')
+            ar__skip_ws(z);
+            if (z->p >= z->end || *z->p == '}')
             {
                 break;
             }
-            ar__parse_decl(&z, &rule[0], sheet);
+            ar__parse_decl(z, &rule[0], sheet);
         }
-        if (z.p < z.end)
+        if (z->p < z->end)
         {
-            z.p++; /* the closing brace */
+            z->p++; /* the closing brace */
         }
 
         if (!ar_pset_any(rule[0].set))
@@ -3563,7 +3846,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
                  * least common elements. Exactly the failure that looks like
                  * everything working.
                  */
-                ar__fail_rule(&z);
+                ar__fail_rule(z);
                 break;
             }
             /* Everything except the selector is the same, and rule[0] is the
@@ -3579,6 +3862,28 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             sheet->rules[sheet->count++] = rule[k];
         }
     }
+}
+
+void ar_sheet_parse(ar_sheet *sheet, const char *css)
+{
+    ar__scan z;
+
+    if (!css)
+    {
+        return;
+    }
+
+    /* New rules can change any answer already cached, and there is no cheap
+       way to know which. Dropping all of it is correct and costs nothing,
+       because adding a stylesheet is a startup operation. */
+    ar_sheet_cache_clear(sheet);
+
+    z.base = css;
+    z.p = css;
+    z.end = css + strlen(css);
+    z.sheet = sheet;
+
+    ar__parse_rules(&z, sheet, 0);
 
     ar__sort_rules(sheet);
     ar__note_contextual(sheet);
