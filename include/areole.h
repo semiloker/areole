@@ -206,6 +206,34 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
 #define AR_MOUSE_RIGHT  0x02u
 #define AR_MOUSE_MIDDLE 0x04u
 
+/*
+ * What a media query is answered against.
+ *
+ * Three numbers, because three is what a windowed application actually knows:
+ * the client area and the display's scale. `aspect-ratio` and `orientation`
+ * are computed from the first two rather than stored, so they cannot disagree
+ * with them. Every other media feature reports a documented default until a
+ * backend can answer it -- see docs/roadmap/responsive-and-adaptive.md, which
+ * names the version each one is wired up in.
+ *
+ * Set this before the boxes that depend on it are declared. Style is resolved
+ * in `ar_begin`, not in `ar_frame_end`, so a media state given after the tree
+ * is built applies to the next frame and not this one.
+ */
+typedef struct ar_media
+{
+    ar_i32 width;  /* client area, px */
+    ar_i32 height; /* client area, px */
+
+    /*
+     * Device pixels per CSS pixel, in thousandths: 1000 is an ordinary
+     * display, 2000 is a doubled one. Thousandths rather than a float because
+     * layout has no floating point, and `min-resolution: 1.5dppx` is a real
+     * thing to write.
+     */
+    ar_i32 resolution;
+} ar_media;
+
 typedef struct ar_input
 {
     ar_i32 mouse_x, mouse_y;
