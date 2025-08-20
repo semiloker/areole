@@ -3219,17 +3219,26 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->cache_hits = 0;
     sheet->cache_misses = 0;
     sheet->queries_evaluated = 0;
+    sheet->queries = 0;
+    sheet->query_count = 0;
+    sheet->query_cap = 0;
+    sheet->qtext = 0;
+    sheet->qtext_used = 0;
+    sheet->qtext_cap = 0;
     sheet->media.width = 0;
     sheet->media.height = 0;
     sheet->media.resolution = 1000;
 }
 
-void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media)
+void ar_sheet_set_queries(ar_sheet *sheet, ar_mq *storage, ar_u16 capacity, char *text,
+                          ar_u16 text_capacity)
 {
-    if (media)
-    {
-        sheet->media = *media;
-    }
+    sheet->queries = storage;
+    sheet->query_cap = capacity;
+    sheet->query_count = 0;
+    sheet->qtext = text;
+    sheet->qtext_cap = text_capacity;
+    sheet->qtext_used = 0;
 }
 
 void ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity)
@@ -4499,7 +4508,106 @@ static int ar__supports_condition(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
     return result;
 }
 
-static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+/*
+ * Re-evaluate the queries a change could have moved, and nothing else.
+ *
+ * `changed` is which parts of ar_media are different from last time. A query
+ * whose `used` mask does not intersect it cannot have changed its answer, so
+ * it is not asked -- which is the whole of acceptance criterion 4, and the
+ * counter beside it is the evidence.
+ *
+ * `active` is computed in table order because a nested block is always stored
+ * after the one around it, so a parent's answer is settled before its child
+ * needs it.
+ */
+static void ar__mq_refresh(ar_sheet *sheet, ar_u32 changed)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->query_count; ++i)
+    {
+        ar_mq *q = &sheet->queries[i];
+
+        if ((q->used & changed) != 0)
+        {
+            ar_u32 used = 0;
+
+            q->result = (ar_u8)ar_media_eval(sheet->qtext + q->at, sheet->qtext + q->at + q->len,
+                                             &sheet->media, &used);
+            q->used = used;
+            sheet->queries_evaluated++;
+        }
+        q->active = (ar_u8)(q->result && (q->parent == 0 || sheet->queries[q->parent - 1].active));
+    }
+}
+
+/* Copy a prelude into the sheet and evaluate it once. 0 if there is no room,
+   which refuses the rules it guards rather than admitting them unguarded. */
+static ar_u16 ar__mq_intern(ar_sheet *sheet, const char *text, const char *end, ar_u16 parent)
+{
+    ar_i32 len = (ar_i32)(end - text);
+    ar_mq *q;
+    ar_u32 used = 0;
+    ar_i32 i;
+
+    if (!sheet->queries || !sheet->qtext || sheet->query_count >= sheet->query_cap || len < 0 ||
+        (ar_i32)sheet->qtext_used + len > (ar_i32)sheet->qtext_cap)
+    {
+        return 0;
+    }
+    q = &sheet->queries[sheet->query_count];
+    q->at = sheet->qtext_used;
+    q->len = (ar_u16)len;
+    q->parent = parent;
+    for (i = 0; i < len; ++i)
+    {
+        sheet->qtext[sheet->qtext_used + i] = text[i];
+    }
+    sheet->qtext_used = (ar_u16)(sheet->qtext_used + len);
+
+    q->result = (ar_u8)ar_media_eval(text, end, &sheet->media, &used);
+    q->used = used;
+    sheet->queries_evaluated++;
+    q->active = (ar_u8)(q->result && (parent == 0 || sheet->queries[parent - 1].active));
+    sheet->query_count++;
+    return sheet->query_count;
+}
+
+void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media)
+{
+    ar_u32 changed = 0;
+
+    if (!media)
+    {
+        return;
+    }
+    if (media->width != sheet->media.width)
+    {
+        changed |= AR__MM_W;
+    }
+    if (media->height != sheet->media.height)
+    {
+        changed |= AR__MM_H;
+    }
+    if (media->resolution != sheet->media.resolution)
+    {
+        changed |= AR__MM_RES;
+    }
+    sheet->media = *media;
+    if (changed && sheet->query_count)
+    {
+        ar__mq_refresh(sheet, changed);
+        ar_sheet_cache_clear(sheet);
+    }
+}
+
+/* Is this rule's guard satisfied right now? */
+static int ar__rule_on(const ar_sheet *sheet, const ar_rule *r)
+{
+    return r->query == 0 || (r->query <= sheet->query_count && sheet->queries[r->query - 1].active);
+}
+
+static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 query)
 {
     for (;;)
     {
@@ -4552,12 +4660,20 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
                 {
                     z->p++;
                 }
-                sheet->queries_evaluated++;
-                if (ar_media_eval(pre, z->p, &sheet->media, 0) && z->p < z->end)
                 {
-                    z->p++;
-                    ar__parse_rules(z, sheet, depth + 1);
-                    continue;
+                    ar_u16 inner = ar__mq_intern(sheet, pre, z->p, query);
+
+                    /* Descended into whatever the answer is, because the
+                       rules inside have to exist for a resize to turn them
+                       on. Without storage there is nowhere to put the guard,
+                       so the block is skipped and its rules never appear --
+                       refused rather than admitted unguarded. */
+                    if (inner != 0 && z->p < z->end)
+                    {
+                        z->p++;
+                        ar__parse_rules(z, sheet, depth + 1, inner);
+                        continue;
+                    }
                 }
                 z->p = at;
                 ar__skip_at_rule(z);
@@ -4570,7 +4686,7 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
                 if (z->p < z->end && *z->p == '{')
                 {
                     z->p++;
-                    ar__parse_rules(z, sheet, depth + 1);
+                    ar__parse_rules(z, sheet, depth + 1, query);
                     continue;
                 }
             }
@@ -4710,6 +4826,7 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
                place every rule passes through: the selector list is parsed
                into its own slots and each of them is zeroed on the way in. */
             rule[k].origin = (ar_u8)(sheet->in_ua ? 0 : 1);
+            rule[k].query = query;
             rule[k].order = sheet->count;
             sheet->rules[sheet->count++] = rule[k];
         }
@@ -4735,7 +4852,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
     z.end = css + strlen(css);
     z.sheet = sheet;
 
-    ar__parse_rules(&z, sheet, 0);
+    ar__parse_rules(&z, sheet, 0, 0);
 
     ar__sort_rules(sheet);
     ar__note_contextual(sheet);
@@ -4835,6 +4952,12 @@ static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_class
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         if (!ar_pset_any(r->important) || r->nctx > 0)
         {
             continue;
@@ -4877,6 +5000,12 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         /*
          * A rule with a combinator is the contextual pass's business alone.
          *
@@ -5136,6 +5265,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         if (r->nctx == 0)
         {
             continue;

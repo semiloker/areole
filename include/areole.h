@@ -833,6 +833,14 @@ void ar_style_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses);
    everything else still works. */
 void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
 
+/*
+ * Device pixels per CSS pixel, in thousandths: 1000 is an ordinary display,
+ * 2000 a doubled one. What `@media (min-resolution: 2dppx)` is answered
+ * against, and the only part of the media state a window does not report --
+ * width and height come from the surface areole is drawn into.
+ */
+void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths);
+
 void ar_frame_begin(ar_ctx *c, const ar_input *in);
 
 /* Opens a box. The selector is the same syntax the stylesheet uses:
