@@ -14,6 +14,7 @@
 #include "ar_shape.h"
 #include "ar_indic.h"
 #include "ar_css.h"
+#include "ar_supports_props.h"
 #include "ar_node.h"
 #include "ar_html.h"
 
@@ -1287,6 +1288,161 @@ static void test_a_resize_re_evaluates_only_what_moved(void)
     CHECK(ar__css_value(".both", 0, AR_P_WIDTH) == 9, "resize: nested, both true");
     ar__resize(400, 600, 1000);
     CHECK(ar__css_value(".both", 0, AR_P_WIDTH) != 9, "resize: nested, the outer one false");
+}
+
+/*
+ * The @supports corpus: generated, so it cannot fall behind the parser.
+ *
+ * For every property the declaration parser knows -- the list comes straight
+ * out of `AR_PROPS`, see tools/gen_supports_corpus.py -- ask two questions and
+ * require the same answer:
+ *
+ *   does a rule writing `prop: value` actually set anything?
+ *   does `@supports (prop: value)` say so?
+ *
+ * They are different code paths. The first parses a real declaration block;
+ * the second runs `ar__parse_decl` on a scanner bounded by the closing bracket
+ * and puts the sheet's bookkeeping back afterwards. The entire value of
+ * `@supports` rests on them never disagreeing, and nothing but this notices
+ * when they do.
+ *
+ * Several candidate values per property because one value cannot fit them all;
+ * the property is exercised if any of them sets something.
+ */
+static void test_supports_agrees_with_the_parser_on_every_property(void)
+{
+    static const char *const VALUES[] = {"block",  "10px", "1",       "auto",
+                                         "center", "row",  "#ff0000", "none"};
+    ar_i32                   i, v;
+    ar_i32                   checked = 0;
+    ar_i32                   disagreed = 0;
+
+    for (i = 0; i < AR_SUPPORTS_PROP_N; ++i)
+    {
+        for (v = 0; v < (ar_i32)(sizeof VALUES / sizeof VALUES[0]); ++v)
+        {
+            char rule_css[192];
+            char supp_css[192];
+            int  by_rule;
+            int  by_supports;
+
+            /* Does writing it change anything? */
+            strcpy(rule_css, ".x { ");
+            strcat(rule_css, AR_SUPPORTS_PROPS[i]);
+            strcat(rule_css, ": ");
+            strcat(rule_css, VALUES[v]);
+            strcat(rule_css, "; }");
+            ar__sheet(rule_css);
+            by_rule = g_sheet.count > 0;
+
+            /* Does @supports say it would? */
+            strcpy(supp_css, "@supports (");
+            strcat(supp_css, AR_SUPPORTS_PROPS[i]);
+            strcat(supp_css, ": ");
+            strcat(supp_css, VALUES[v]);
+            strcat(supp_css, ") { .y { width: 5px; } }");
+            ar__sheet(supp_css);
+            by_supports = ar__css_value(".y", 0, AR_P_WIDTH) == 5;
+
+            checked++;
+            if (by_rule != by_supports)
+            {
+                disagreed++;
+            }
+        }
+    }
+
+    CHECK(checked == AR_SUPPORTS_PROP_N * 8, "supports corpus: every property, every value");
+    CHECK(disagreed == 0, "supports corpus: @supports agrees with the parser on all of them");
+}
+
+/*
+ * The range syntax and the legacy prefixes are one grammar, not two.
+ *
+ * `min-width: 600px` is `width >= 600px` against the same feature, so the two
+ * forms have to give the same answer at every window -- including at the
+ * boundary, which is where an off-by-one in either lives. Sixty cases: five
+ * features, four widths, and both spellings of each of min and max.
+ */
+static void test_range_and_legacy_syntax_agree(void)
+{
+    static const struct
+    {
+        const char *feature;
+        const char *value;
+    } CASES[] = {{"width", "600px"},
+                 {"width", "800px"},
+                 {"height", "400px"},
+                 {"height", "600px"},
+                 {"resolution", "2dppx"}};
+    static const ar_i32 W[] = {400, 600, 800, 1200};
+    ar_i32              c, k;
+    ar_i32              checked = 0;
+    ar_i32              disagreed = 0;
+
+    for (c = 0; c < (ar_i32)(sizeof CASES / sizeof CASES[0]); ++c)
+    {
+        for (k = 0; k < (ar_i32)(sizeof W / sizeof W[0]); ++k)
+        {
+            char   legacy[128];
+            char   range[128];
+            ar_i32 res = 1000 + (k == 3 ? 1000 : 0);
+
+            /* min- is >= */
+            strcpy(legacy, "(min-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            strcpy(range, "(");
+            strcat(range, CASES[c].feature);
+            strcat(range, " >= ");
+            strcat(range, CASES[c].value);
+            strcat(range, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+
+            /* max- is <= */
+            strcpy(legacy, "(max-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            strcpy(range, "(");
+            strcat(range, CASES[c].feature);
+            strcat(range, " <= ");
+            strcat(range, CASES[c].value);
+            strcat(range, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+
+            /* and the value-first form of the same thing */
+            strcpy(range, "(");
+            strcat(range, CASES[c].value);
+            strcat(range, " <= ");
+            strcat(range, CASES[c].feature);
+            strcat(range, ")");
+            strcpy(legacy, "(min-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+        }
+    }
+
+    CHECK(checked == 60, "range corpus: sixty cases, as the release asks for");
+    CHECK(disagreed == 0, "range corpus: the two spellings agree on every one");
 }
 
 /* The parser must terminate on any input at all.
@@ -18739,6 +18895,8 @@ int main(void)
     test_supports_asks_the_parser();
     test_media_queries_answer_from_the_window();
     test_a_resize_re_evaluates_only_what_moved();
+    test_supports_agrees_with_the_parser_on_every_property();
+    test_range_and_legacy_syntax_agree();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
