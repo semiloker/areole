@@ -841,6 +841,21 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
  */
 void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths);
 
+/*
+ * What media queries are answered against, stated rather than inferred.
+ *
+ * Without this the size comes from the viewport the last frame was drawn
+ * into, which is right for a program that draws continuously and wrong twice:
+ * on the very first frame, where there is no last viewport and every
+ * `min-width` query is therefore false, and on the frame a resize happens,
+ * where it is one frame behind.
+ *
+ * A program that renders a single frame -- a screenshot, a test, a document
+ * to an image -- has to call this, because for it every frame is the first
+ * one. Passing null hands the decision back to the viewport.
+ */
+void ar_set_media(ar_ctx *c, const ar_media *media);
+
 void ar_frame_begin(ar_ctx *c, const ar_input *in);
 
 /* Opens a box. The selector is the same syntax the stylesheet uses:
