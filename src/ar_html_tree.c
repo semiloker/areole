@@ -3238,7 +3238,8 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
      * a paragraph from closing the div and everything between -- thirty
      * conformance cases turned red at once and said so.
      */
-    if (ar__closes_p(tok->name) && !ar_span_is(tok->name, "p") && !ar_span_is(tok->name, "form") &&
+    if ((ar__closes_p(tok->name) || ar_span_is(tok->name, "button")) &&
+        !ar_span_is(tok->name, "p") && !ar_span_is(tok->name, "form") &&
         !ar_span_is(tok->name, "table") && !ar_span_is(tok->name, "hr"))
     {
         char   name[32];
@@ -3430,6 +3431,11 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
             ar__insert_element(t, tok, 0);
             ar__fmt_marker(t);
             t->original_mode = M_IN_TABLE;
+            /* The second place a template is inserted, and the one that was
+               missing its push: without it the mode stack is a rule behind
+               the element stack, and every `in template` rule inside a table
+               fired against an empty stack and changed nothing. */
+            ar__tmpl_push(t, M_IN_TEMPLATE);
             t->mode = M_IN_TEMPLATE;
             return;
         }
