@@ -2388,6 +2388,22 @@ static void ar__reset_mode(ar__tree *t)
                 t->mode = M_IN_BODY;
                 return;
             }
+            if (ar__lit_is(t->ctx, "select"))
+            {
+                /*
+                 * Step 4 of the mode reset, and the one context that was
+                 * missing. A select fragment began in `in body`, where every
+                 * rule that makes a select a select is absent: `<input>` was
+                 * inserted instead of ignored, because "ignore it when there
+                 * is no select in select scope" is a rule of `in select` and
+                 * nothing was reading it.
+                 *
+                 * Never the in-table variant: the context element is not on
+                 * the stack, so there is nothing below it to be a table.
+                 */
+                t->mode = M_IN_SELECT;
+                return;
+            }
             if (ar__lit_is(t->ctx, "td") || ar__lit_is(t->ctx, "th"))
             {
                 t->mode = M_IN_BODY; /* a cell context parses as body content */
@@ -3841,9 +3857,50 @@ static void ar__in_select_in_table(ar__tree *t, const ar_token *tok)
  */
 static void ar__in_column_group(ar__tree *t, const ar_token *tok)
 {
-    if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
+    if (tok->kind == AR_TOK_TEXT)
     {
-        ar__insert_text(t, tok->text, 0);
+        /*
+         * 13.2.6.4.12 takes the whitespace and hands the rest back, which
+         * means splitting the token: the tokenizer emits `" foo"` as one
+         * character run, and only its leading spaces belong in the column
+         * group. Treating it as indivisible fostered the spaces out with the
+         * word, so `<colgroup> foo</colgroup>` lost the one character that
+         * was in the right place already.
+         */
+        ar_u32 lead = 0;
+
+        while (lead < tok->text.n && (tok->text.p[lead] == 0 || ar__space_char(tok->text.p[lead])))
+        {
+            lead++;
+        }
+        if (lead > 0)
+        {
+            ar_span space;
+
+            space.p = tok->text.p;
+            space.n = lead;
+            ar__insert_text(t, space, 0);
+        }
+        if (lead == tok->text.n)
+        {
+            return;
+        }
+        /* The rest closes the group and is reprocessed in `in table`, which
+           is where it gets fostered out to the body. */
+        if (!ar__is(t, ar__current(t), "colgroup"))
+        {
+            t->doc->errors++;
+            return;
+        }
+        {
+            ar_token rest = *tok;
+
+            rest.text.p = tok->text.p + lead;
+            rest.text.n = tok->text.n - lead;
+            ar__pop(t);
+            t->mode = M_IN_TABLE;
+            ar__process(t, &rest);
+        }
         return;
     }
     if (tok->kind == AR_TOK_COMMENT)
@@ -4078,6 +4135,49 @@ static void ar__in_cell(ar__tree *t, const ar_token *tok)
            `<thead><tr><td>h<tbody>` two row groups rather than a tbody inside
            a cell -- the tree the corpus found when only td, th and tr were
            listed here. */
+        ar__implied_end_tags(t, 0);
+        while (t->open_n > 1 && !ar__is(t, ar__current(t), "td") &&
+               !ar__is(t, ar__current(t), "th"))
+        {
+            ar__pop(t);
+        }
+        ar__pop(t);
+        ar__fmt_clear_to_marker(t);
+        t->mode = M_IN_ROW;
+        ar__process(t, tok);
+        return;
+    }
+    if (tok->kind == AR_TOK_END &&
+        (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "tr")))
+    {
+        /*
+         * A row-group or row end tag closes the cell and is then reprocessed,
+         * 13.2.6.4.15 -- but only if there is one of them in table scope,
+         * because a stray `</tbody>` in a cell that is not in a tbody must
+         * not tear the cell down around it.
+         *
+         * Without this the tag reached `in body`, which found nothing to
+         * close and dropped it, and the cell stayed open: `<table><td></tbody>A`
+         * put the A in the cell where a browser fosters it out of the table.
+         */
+        char        name[16];
+        ar_u32      n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32      k;
+        const char *one[2];
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        one[0] = name;
+        one[1] = 0;
+        if (!ar__in_table_scope(t, one))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__implied_end_tags(t, 0);
         while (t->open_n > 1 && !ar__is(t, ar__current(t), "td") &&
                !ar__is(t, ar__current(t), "th"))
@@ -5200,13 +5300,28 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
                 ar__push(t, t->head);
                 t->mode = M_IN_HEAD;
                 ar__process_mode(t, tok);
-                /* The head comes back off unless the token opened something
-                   inside it, in which case the mode it switched to owns the
-                   stack now. */
+                /*
+                 * The head comes off again whatever happened. It was pushed
+                 * only so the `in head` rules had somewhere to insert, and
+                 * 13.2.6.4.5 removes it in the same breath -- before the
+                 * element's own content is tokenized, not after.
+                 *
+                 * Leaving it on when the token opened a text element was the
+                 * bug: `<head></head><style></style><!-- -->` put the comment
+                 * inside the head, because `</style>` came back to a stack
+                 * that still had one. `ar__pop_index` takes it out from under
+                 * the style, which is exactly what it is for.
+                 */
+                ar__pop_index(t, t->head);
                 if (t->mode == M_IN_HEAD)
                 {
-                    ar__pop_index(t, t->head);
                     t->mode = M_AFTER_HEAD;
+                }
+                else if (t->original_mode == M_IN_HEAD)
+                {
+                    /* `in head` was borrowed; the mode to return to when the
+                       text ends is the one we were really in. */
+                    t->original_mode = M_AFTER_HEAD;
                 }
                 return;
             }
@@ -5523,6 +5638,16 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
         {
             ar__via_head(t, tok, M_AFTER_AFTER_FRAMESET);
+            return;
+        }
+        /* A second `<html>` is still the same html element, and its
+           attributes are merged onto the one that exists -- 13.2.6.4.22
+           routes it to `in body`, which is where that merge lives. Dropping
+           it lost `<html a=b>` written after `</html>`, which is exactly the
+           shape a template engine emits when it closes the document twice. */
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "html"))
+        {
+            ar__in_body(t, tok);
             return;
         }
         t->doc->errors++;
