@@ -3866,6 +3866,27 @@ static void ar__in_select(ar__tree *t, const ar_token *tok)
             ar__via_head(t, tok, t->mode);
             return;
         }
+        /*
+         * A formatting end tag is dropped rather than run.
+         *
+         * 13.2.6.4.16 ignores every end tag but these three, and areole
+         * deliberately does not -- a `<div>` is allowed to live inside a
+         * select here, and it needs its `</div>` to close it. But the
+         * adoption agency is a different thing from closing an element: it
+         * reparents across whatever is between, and a select is exactly the
+         * boundary it should not reach across.
+         *
+         * `<font><select><option>a</option></font>` ran it for the font,
+         * which found the select as its furthest block and moved a clone of
+         * the font *inside* the select with the option under it -- a tree no
+         * browser produces, out of a page that only forgot to close a tag in
+         * order.
+         */
+        if (ar__is_formatting(tok->name))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__in_body(t, tok);
         return;
     }
@@ -4070,7 +4091,35 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
         (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
          ar_span_is(tok->name, "thead")))
     {
-        ar__pop_until(t, "tbody");
+        /*
+         * 13.2.6.4.13 closes the group the tag *names*, and this closed
+         * `tbody` whatever arrived. `</thead>` therefore found no tbody on the
+         * stack and did nothing at all -- silently, because `ar__pop_until`
+         * returns when the tag it is given is absent -- so the head group
+         * stayed open and everything after it was built inside it.
+         *
+         * Invisible in an ordinary table, where the group is a tbody and the
+         * hardcoded name happens to be right.
+         */
+        char        name[16];
+        ar_u32      n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32      k;
+        const char *one[2];
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        one[0] = name;
+        one[1] = 0;
+        if (!ar__in_table_scope(t, one))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__clear_to_table_body(t);
+        ar__pop(t);
         t->mode = M_IN_TABLE;
         return;
     }
