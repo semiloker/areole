@@ -5341,6 +5341,122 @@ static void test_units_resolve(void)
 }
 
 /*
+ * The viewport family, against a viewport this test states.
+ *
+ * Here rather than in the units corpus, and the reason is worth keeping: that
+ * corpus renders into a fixed surface while the browser lays its twin out in
+ * a headless window neither side chooses, so `50vw` is a different number on
+ * each and both are right. A comparison needs one viewport, and a test is
+ * where there is one.
+ */
+static void test_units_viewport_family(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".w { width:50vw; }"
+                 ".h { height:50vh; }"
+                 ".mn { width:10vmin; }"
+                 ".mx { width:10vmax; }"
+                 ".i { width:50vi; }"
+                 ".b { height:50vb; }"
+                 ".sv { width:50svw; }"
+                 ".lv { width:50lvw; }"
+                 ".dv { width:50dvw; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.h");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mn");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mx");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.sv");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.lv");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dv");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] == 150, "units: vw is one per cent of the width");
+    CHECK(g_ui->nodes[2].style.v[AR_P_HEIGHT] == 100, "units: vh is one per cent of the height");
+    /* 300x200, so vmin follows the height and vmax the width. Two units that
+       agree at every square viewport and only differ off one. */
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] == 20, "units: vmin takes the shorter axis");
+    CHECK(g_ui->nodes[4].style.v[AR_P_WIDTH] == 30, "units: vmax takes the longer one");
+    CHECK(g_ui->nodes[5].style.v[AR_P_WIDTH] == 150, "units: vi is the inline axis, so the width");
+    CHECK(g_ui->nodes[6].style.v[AR_P_HEIGHT] == 100, "units: and vb the block axis");
+
+    /*
+     * The three families answer the same, and that is the specified answer
+     * rather than a shortcut: they differ only for a browser whose chrome
+     * retracts during a scroll, and areole draws into a window that is one
+     * size. The check is here so that the day a backend does have a
+     * retracting panel, this is what goes red.
+     */
+    CHECK(g_ui->nodes[7].style.v[AR_P_WIDTH] == 150, "units: svw equals vw with no retracting UI");
+    CHECK(g_ui->nodes[8].style.v[AR_P_WIDTH] == 150, "units: and lvw");
+    CHECK(g_ui->nodes[9].style.v[AR_P_WIDTH] == 150, "units: and dvw");
+}
+
+/*
+ * The font metrics whose fallback depends on what the face carries.
+ *
+ * The units corpus cannot ask a browser about these -- Edge reads a real
+ * x-height where the bitmap face here has none, so the two disagree about
+ * `ex` for a reason that is about fonts rather than units. What can be
+ * checked is that the fallbacks are the ones CSS names.
+ */
+static void test_units_font_metrics(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:20px; }"
+                 ".ex { width:4ex; }"
+                 ".ch { width:4ch; }"
+                 ".cap { width:10cap; }"
+                 ".ic { width:2ic; }"
+                 ".lh { height:2lh; line-height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.ex");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.ch");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.cap");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.ic");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.lh");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Half an em each, which is what the specification says to use when the
+       face does not carry sxHeight or a zero glyph. */
+    CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] == 40, "units: ex falls back to half an em");
+    CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 40, "units: ch falls back to half an em");
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] == 140, "units: cap falls back to seven tenths");
+    /* ic has no stated fallback and takes a whole em, which is the one that
+       makes an ideograph square. */
+    CHECK(g_ui->nodes[4].style.v[AR_P_WIDTH] == 40, "units: ic falls back to a whole em");
+    /* lh is the element's own line box, so it reads line-height rather than
+       font-size -- the one metric of the six that is not about the face. */
+    CHECK(g_ui->nodes[5].style.v[AR_P_HEIGHT] == 60,
+          "units: lh is two of the element's line boxes");
+}
+
+/*
  * `em` in a media query is the initial font size, not any element's.
  *
  * A query is answered once for the document and before a box exists, so it
@@ -19439,6 +19555,8 @@ int main(void)
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
     test_units_resolve();
+    test_units_viewport_family();
+    test_units_font_metrics();
     test_units_in_media_queries();
     test_inheritance_is_not_in_the_style_cache();
     test_style_cache_agrees_with_the_resolver();
