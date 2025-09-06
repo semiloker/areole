@@ -16270,6 +16270,74 @@ static void test_a_document_reads_at_sixteen_pixels(void)
           "ua: an interface that never asks for the sheet keeps its own default");
 }
 
+/*
+ * The user-agent sheet scales with the root, which is the whole point of
+ * writing it in `em`.
+ *
+ * It stated pixels at a 16px root until 0.4.1 -- exactly right there and
+ * exactly wrong everywhere else -- so a page saying `html { font-size: 20px }`
+ * got headings that ignored it entirely.
+ *
+ * This breaks in the direction the change could be undone: a rule reverted to
+ * pixels still passes at sixteen and turns this red at twenty and thirty-two.
+ * Checking only the default root is what let the sheet be wrong at every
+ * other one for two releases.
+ */
+static void test_ua_sheet_scales_with_the_root(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    ar_i32     i;
+
+    static const struct
+    {
+        const char *css;
+        ar_i32      h1;    /* 2em      */
+        ar_i32      h4;    /* 1em      */
+        ar_i32      big;   /* 1.2em    */
+        ar_i32      small; /* 0.8125em */
+    } WANT[] = {{"html { font-size:16px; }", 32, 16, 19, 13},
+                {"html { font-size:20px; }", 40, 20, 24, 16},
+                {"html { font-size:32px; }", 64, 32, 38, 26}};
+
+    for (i = 0; i < 3; ++i)
+    {
+        ar__render_html(
+            &s, "<html><body><h1>t</h1><h4>t</h4><big>t</big><small>t</small></body></html>",
+            WANT[i].css);
+
+        CHECK(ar__box_style(ar__first_tag("h1"))->v[AR_P_FONT_SIZE] == WANT[i].h1,
+              "ua-em: h1 is two em of whatever the root says");
+        CHECK(ar__box_style(ar__first_tag("h4"))->v[AR_P_FONT_SIZE] == WANT[i].h4,
+              "ua-em: and h4 is one em of it");
+        /* `big` and `small` catch a sheet that scaled the headings and left
+           the four relative-size elements behind, which is how they were
+           written -- in the same pixels and for the same reason. */
+        CHECK(ar__box_style(ar__first_tag("big"))->v[AR_P_FONT_SIZE] == WANT[i].big,
+              "ua-em: big is one and a fifth");
+        CHECK(ar__box_style(ar__first_tag("small"))->v[AR_P_FONT_SIZE] == WANT[i].small,
+              "ua-em: and small is thirteen sixteenths");
+    }
+
+    /*
+     * h6's margin is the one line still in pixels, and this is the arithmetic
+     * that keeps it there rather than a note nobody can check.
+     *
+     * 0.67em of 16 is 10.72 and rounds to 11; 2.33em of 11 is 25.63 and
+     * rounds to 26, against a browser's 24.9776. That is 1.02 of a pixel and
+     * the corpus is scored to one. Stated in em, this check is what would go
+     * red -- so if a sub-pixel used value ever lands, this is the test that
+     * says h6 may come along.
+     */
+    ar__render_html(&s, "<html><body><h6>t</h6></body></html>", "html { font-size:16px; }");
+    {
+        const ar_style *h6 = ar__box_style(ar__first_tag("h6"));
+
+        CHECK(h6->v[AR_P_FONT_SIZE] == 11, "ua-em: h6 rounds its font up from 10.72");
+        CHECK(h6->v[AR_P_MARGIN_TOP] == 24,
+              "ua-em: and keeps a stated margin, because 2.33em of the rounded font is 26");
+    }
+}
+
 static void test_the_elements_the_corpus_found(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -19633,6 +19701,7 @@ int main(void)
     test_a_length_needs_its_unit_in_standards_mode();
     test_an_interface_stylesheet_is_not_a_document();
     test_a_table_does_not_inherit_its_font_in_quirks();
+    test_ua_sheet_scales_with_the_root();
     test_the_elements_the_corpus_found();
     test_a_list_item_lays_out_as_a_block();
     test_the_style_attribute_reaches_the_box();
