@@ -5457,6 +5457,46 @@ static void test_units_font_metrics(void)
 }
 
 /*
+ * `lh` and `rlh` on a box whose line box is not the root's.
+ *
+ * Two bugs live here and both were written before this test was. `rlh` took
+ * the root's font size and the *element's* line-height, which is neither unit
+ * -- invisible while every box inherits the root's line-height, which is
+ * almost always. And `lh` was resolved by a loop in property order, so a box
+ * saying both `line-height: 1.5em` and `height: 2lh` got whichever sat lower
+ * in the property table: a bug that depends on the order an enum was written
+ * in and would move the day somebody inserted a property above it.
+ */
+static void test_units_line_height_relative(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:16px; line-height:20px; }"
+                 ".own { font-size:10px; line-height:30px; height:2lh; }"
+                 ".root { font-size:10px; line-height:30px; height:2rlh; }"
+                 ".em { font-size:20px; line-height:1.5em; height:2lh; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.own");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.root");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.em");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_HEIGHT] == 60, "units: lh is the box's own line box");
+    /* The same shape, asking for the root's instead: 2 x 20, not 2 x 30. */
+    CHECK(g_ui->nodes[2].style.v[AR_P_HEIGHT] == 40, "units: rlh is the root's, not the box's own");
+    /* line-height stated in em has to become a number before lh measures
+       against it: 1.5em of 20 is 30, so two line boxes are 60. */
+    CHECK(g_ui->nodes[3].style.v[AR_P_HEIGHT] == 60,
+          "units: and lh reads a line-height that was itself an em");
+}
+
+/*
  * `em` in a media query is the initial font size, not any element's.
  *
  * A query is answered once for the document and before a box exists, so it
@@ -19625,6 +19665,7 @@ int main(void)
     test_units_resolve();
     test_units_viewport_family();
     test_units_font_metrics();
+    test_units_line_height_relative();
     test_units_in_media_queries();
     test_inheritance_is_not_in_the_style_cache();
     test_style_cache_agrees_with_the_resolver();

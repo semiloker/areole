@@ -1250,9 +1250,15 @@ static ar_i32 ar__font_basis(const ar_ctx *c, const ar_node *n, ar_i32 metric, a
     }
     if (metric == 5)
     {
-        /* lh -- the element's own line box. line-height is a multiplier when
-           its unit is a number and a length when it is not, which is the same
-           question ar__line_height asks. */
+        /*
+         * lh -- a line box of `n`, which is the root for `rlh` and the
+         * element itself for `lh`. The caller decides which node this is, and
+         * that is the whole reason it passes one: `rlh` taking the root's
+         * font size and the *element's* line-height would be neither unit.
+         *
+         * line-height is a multiplier when its unit is a number and a length
+         * when it is not, which is the same question ar__line_height asks.
+         */
         ar_i32 lh = n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER
                         ? (font_px * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000
                         : n->style.v[AR_P_LINE_HEIGHT];
@@ -1420,7 +1426,13 @@ static ar_i32 ar__resolve_one(const ar_ctx *c, const ar_node *n, ar_u8 u, ar_i32
         ar_i32 metric = k % AR_UNIT_METRIC_COUNT;
         ar_i32 rooted = k / AR_UNIT_METRIC_COUNT;
 
-        return ar__from_font(v, ar__font_basis(c, n, metric, rooted ? root_px : font_px));
+        /* The root supplies both halves of a root-relative unit -- its font
+           size *and* the face and line box the metrics come off. Taking the
+           size from one box and the metric from another would produce a
+           number that is neither `lh` nor `rlh`. */
+        const ar_node *src = rooted && c->node_count > 0 ? &c->nodes[0] : n;
+
+        return ar__from_font(v, ar__font_basis(c, src, metric, rooted ? root_px : font_px));
     }
 }
 
@@ -1540,6 +1552,25 @@ static void ar__resolve_units(ar_ctx *c, ar_i32 i)
         n->style.unit[AR_P_FONT_SIZE] = AR_UNIT_PX;
     }
     font_px = n->style.v[AR_P_FONT_SIZE];
+
+    /*
+     * line-height second, for the same reason font-size went first: `lh` is a
+     * line box, and a line box stated as `1.5em` has to be a number before
+     * anything measures against it.
+     *
+     * Without this the loop below would resolve them in property-index order,
+     * so `height: 2lh` on a box that also said `line-height: 1.5em` would read
+     * whichever of the two happened to sit lower in the table -- a bug that
+     * depends on the order the enum was written in and would move the day a
+     * property was inserted above it.
+     */
+    if (n->style.unit[AR_P_LINE_HEIGHT] >= AR_UNIT_REL_FIRST &&
+        n->style.unit[AR_P_LINE_HEIGHT] < AR_UNIT_VIEW_FIRST)
+    {
+        n->style.v[AR_P_LINE_HEIGHT] = (ar_i16)ar__resolve_one(
+            c, n, n->style.unit[AR_P_LINE_HEIGHT], n->style.v[AR_P_LINE_HEIGHT], font_px, root_px);
+        n->style.unit[AR_P_LINE_HEIGHT] = AR_UNIT_PX;
+    }
 
     /*
      * The rest, over the properties this box actually stated. Stepping a whole
