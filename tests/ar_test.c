@@ -5494,6 +5494,27 @@ static void test_units_line_height_relative(void)
        against it: 1.5em of 20 is 30, so two line boxes are 60. */
     CHECK(g_ui->nodes[3].style.v[AR_P_HEIGHT] == 60,
           "units: and lh reads a line-height that was itself an em");
+
+    /*
+     * The one line-height that cannot be resolved before `lh` asks: a viewport
+     * one, which waits for the surface.
+     *
+     * `2lh` beside `line-height: 5vh` is a combination nobody has written, and
+     * the check is that it produces a line box rather than a pixel count of
+     * the hundredths still sitting in the slot -- 5vh is carried as 500, so an
+     * unguarded read gives a box a thousand pixels tall instead of forty.
+     */
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:20px; }"
+                 ".vp { line-height:5vh; height:2lh; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.vp");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_HEIGHT] == 40,
+          "units: lh falls back to an em rather than reading an unresolved viewport line-height");
 }
 
 /*
