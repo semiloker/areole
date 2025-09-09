@@ -883,6 +883,35 @@ static void test_css_absolute_units(void)
 }
 
 /*
+ * A number longer than an int, which a stylesheet is free to contain.
+ *
+ * `width: 99999999999px` overflowed the accumulator that reads it, and signed
+ * overflow in C89 is undefined rather than merely large -- the gate compiles
+ * this file with -pedantic-errors and cannot see it, and the fuzzer varies the
+ * capacity a parse is told about rather than the text it is given, so neither
+ * could have found it.
+ *
+ * The clamp is inside the digit loop rather than after it, which is the only
+ * place it works: after the loop the damage is already done.
+ */
+static void test_css_absurd_numbers(void)
+{
+    ar__sheet(".a { width: 99999999999px; }"
+              ".b { width: 123456789012345678901234567890px; }"
+              ".c { width: 0.99999999999em; }"
+              ".d { grid-template-columns: 99999999999px 1fr; }"
+              ".e { width: 40px; }");
+
+    /* The point is not what these come to, it is that the parser survives
+       them and the declaration after them is still read correctly. */
+    CHECK(ar__css_value(".e", 0, AR_P_WIDTH) == 40,
+          "units: a number too big for an int does not derail the rule after it");
+    /* Clamped rather than wrapped: a huge length is huge, never negative. */
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) > 0, "units: an absurd length stays positive");
+    CHECK(ar__css_value(".b", 0, AR_P_WIDTH) > 0, "units: however many digits it has");
+}
+
+/*
  * The relative units, which cannot convert until there is a box.
  *
  * The parse side only: what is stored is the unit and the number in
@@ -19323,6 +19352,7 @@ int main(void)
     test_css_units();
     test_css_absolute_units();
     test_css_relative_units_parse();
+    test_css_absurd_numbers();
     test_css_colors();
     test_css_specificity();
     test_css_source_order_breaks_ties();
