@@ -547,7 +547,27 @@ def main(argv):
             note = ''
             if r['truncated']:
                 note = '  TRUNCATED'
-            if r['geometry_bad']:
+            #
+            # A browser that answered with nothing is not a browser that
+            # agreed.
+            #
+            # The comparison skips any path the browser did not report, so an
+            # empty dump leaves no bad boxes and the demo prints `ok` with
+            # areole's own box count beside it -- indistinguishable from a
+            # real pass, and green. That is how `css/text/weight` came back
+            # agreeing in one batch and six boxes off when it was run on its
+            # own, with the same eleven boxes and the same pixel difference
+            # both times.
+            #
+            # Worse than the flakiness already known, which reads as a total
+            # mismatch and is at least loud. This is the quiet direction, so
+            # it is a failure with a name rather than a silent pass.
+            #
+            if browser and r['boxes'] > 0 and r['matched'] == 0:
+                failed += 1
+                print('%-34s %3d boxes  NO BROWSER GEOMETRY -- not a pass%s%s'
+                      % (r['demo'], r['boxes'], gold, note))
+            elif r['geometry_bad']:
                 why = exempt.get(r['demo'])
                 if why:
                     reported += 1
