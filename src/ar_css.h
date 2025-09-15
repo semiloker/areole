@@ -489,6 +489,23 @@ typedef enum ar_unit
      */
     AR_UNIT_ANCHOR,
 
+    /*
+     * `calc()` and the maths functions, as an index into the sheet's program
+     * pool rather than a number.
+     *
+     * A unit for the third time in this enum, and for the same reason `env()`
+     * and `em` are: the number is not known when the sheet is parsed.
+     * `calc(2.75rem + 2px)` needs a font size, `calc(50vw / 3)` needs a
+     * surface, and neither exists yet.
+     *
+     * **Deliberately below AR_UNIT_REL_FIRST and AR_UNIT_ENV_FIRST.** Both of
+     * those are range tests -- `u >= AR_UNIT_REL_FIRST` means "a relative
+     * length" -- so a calc placed above them would be read as one and sent
+     * into the font-metric path with a pool index in its value slot. That is
+     * a box sized by whatever the index happened to be.
+     */
+    AR_UNIT_CALC,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -1375,6 +1392,53 @@ typedef struct ar_track
    tracks follow it. Index 0 is never a header, so zero means "no list". */
 #define AR_TRACK_POOL 512
 
+/* ------------------------------------------------------------------------
+ * calc(), as a program
+ *
+ * A maths expression is compiled once, into postfix, into a pool on the
+ * stylesheet -- the same shape a track list takes and for the same reason: a
+ * style slot is sixteen bits and an expression is a tree.
+ *
+ * Postfix rather than a tree because evaluating one needs a stack and nothing
+ * else: no pointers, no recursion at frame time, and the whole program is a
+ * contiguous run a cache line at a time. The parser does the recursion, once,
+ * where depth is bounded by the text.
+ *
+ * A PUSH carries its unit, so the expression stays unresolved until something
+ * knows what a `rem` is. That is the point: `calc(2.75rem + 2px)` cannot be a
+ * number at parse time and must not be flattened into one.
+ * ------------------------------------------------------------------------ */
+enum
+{
+    AR_CALC_LEN = 0, /* header: `v` is how many ops follow */
+    AR_CALC_PUSH,
+    AR_CALC_ADD,
+    AR_CALC_SUB,
+    AR_CALC_MUL,
+    AR_CALC_DIV,
+    AR_CALC_MIN,
+    AR_CALC_MAX,
+    AR_CALC_CLAMP,
+    AR_CALC_ABS,
+    AR_CALC_SIGN
+};
+
+typedef struct ar_calc_op
+{
+    ar_u8  op;
+    ar_u8  unit; /* PUSH only: what `v` is measured in */
+    ar_i16 v;    /* PUSH only: the number, in that unit's own scale */
+} ar_calc_op;
+
+/* Programs are short -- the longest in the ten real pages saved under
+   examples/15_real is nine operations -- and a sheet has few of them. */
+#define AR_CALC_POOL 512
+
+/* How deep the evaluator's stack goes. `clamp()` needs three operands live at
+   once and nesting multiplies that; sixteen is past anything a stylesheet
+   contains and is checked rather than assumed. */
+#define AR_CALC_STACK 16
+
 /* Every `@media` prelude in every stylesheet, and the bytes to keep them in.
    Both are small because a prelude is short and a sheet has few: the whole of
    the user-agent stylesheet has none at all. */
@@ -1439,6 +1503,17 @@ typedef struct ar_sheet
     ar_track *tracks;
     ar_u16    track_count;
     ar_u16    track_cap;
+
+    /* Every `calc()` in every rule in this sheet, compiled end to end. See
+       ar_calc_op. */
+    ar_calc_op *calcs;
+    ar_u16      calc_count;
+    ar_u16      calc_cap;
+
+    /* Whether any declaration in this sheet is a maths function, on the same
+       terms as has_grid and has_rel_units: a sheet with no `calc()` in it
+       never runs the pass that evaluates one. */
+    int has_calc;
     /* Whether any rule says `display: grid`, on the same terms as has_table:
        a sheet without one never runs the grid pass. */
     int has_grid;
@@ -1576,7 +1651,36 @@ int ar_prop_inherits(ar_i32 prop);
    Returns NULL when the property said nothing. */
 const ar_track *ar_sheet_tracks(const ar_sheet *sheet, ar_i32 index, ar_i32 *out_count);
 void            ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity);
-void            ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
+
+void ar_sheet_set_calcs(ar_sheet *sheet, ar_calc_op *storage, ar_u16 capacity);
+
+/*
+ * What a compiled expression needs to know before it can be a number.
+ *
+ * Everything here is per box except the viewport, and all of it is settled by
+ * the time ar_frame_end runs the evaluation -- which is why that is where it
+ * runs rather than during style resolution, where the surface is a frame old.
+ */
+typedef struct ar_calc_env
+{
+    ar_i32 font_px;  /* the element's own, for em/ex/ch/cap/ic */
+    ar_i32 root_px;  /* the root's, for the r-prefixed six */
+    ar_i32 line_px;  /* the element's line box, for lh */
+    ar_i32 rline_px; /* the root's, for rlh */
+    ar_i32 view_w;
+    ar_i32 view_h;
+} ar_calc_env;
+
+/*
+ * Evaluates the program at `index` to whole pixels.
+ *
+ * Returns 0 and sets *ok to 0 when the expression cannot be a length -- a
+ * bare number where a length was wanted, a division by zero, a stack that ran
+ * deeper than AR_CALC_STACK. A caller that gets that keeps whatever the
+ * cascade already gave the property, which is what CSS asks for.
+ */
+ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env, int *ok);
+void   ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
 
