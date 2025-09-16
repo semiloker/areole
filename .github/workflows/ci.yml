@@ -266,6 +266,20 @@ jobs:
           ./build/ar_units.exe --html > /tmp/units.html
           diff -u tests/units.html /tmp/units.html
 
+      # 0.4.3 acceptance criterion 2: what calc() and var() compute to. The
+      # cases are generated, so the generator is checked here too -- a corpus
+      # that can be hand-edited is a corpus that can be quietly narrowed.
+      - name: The calc corpus is generated, not edited
+        run: python tools/gen_calc_corpus.py --check
+
+      - name: Calc dumps
+        run: ./build/ar_calc.exe > /dev/null
+
+      - name: The calc twin is up to date
+        run: |
+          ./build/ar_calc.exe --html > /tmp/calc.html
+          diff -u tests/calc.html /tmp/calc.html
+
       # 0.9.1 acceptance criterion 4: the gallery harness, end to end. The
       # browser half needs a browser and runs locally like every other
       # comparison; what runs here is the half that can, which is that every
