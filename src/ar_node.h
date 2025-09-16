@@ -194,6 +194,22 @@ typedef struct ar_node
      */
     ar_i32 measured_w;
 
+    /*
+     * Which set of custom properties this box can see: an index into the
+     * context's scope table, or -1.
+     *
+     * An index and not a copy, because a box that declares none points at its
+     * parent's scope and most boxes declare none. The chain is short by
+     * construction -- each scope names the nearest declaring ancestor rather
+     * than the parent box -- so a lookup walks declarations, not depth.
+     *
+     * Sixteen bits and not thirty-two, and that is arithmetic rather than
+     * thrift: ar_node is 488 bytes and ar_slot is 52, against a per-box
+     * budget of 544. Four bytes fit and eight do not, and the assertion in
+     * ar_ctx.c said so on the first build. AR_VAR_SCOPES is 256.
+     */
+    ar_i16 var_scope;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
@@ -245,6 +261,16 @@ typedef struct ar_slot
  * One merged rectangle per frame. See ar_damage.c for why that is the whole
  * of stage one and what its known failure mode is.
  * ------------------------------------------------------------------------ */
+/* One box's worth of custom property declarations, and the scope enclosing
+   it. `parent` is the nearest *declaring* ancestor rather than the parent box,
+   so a lookup walks declarations and not tree depth. */
+typedef struct ar_var_scope
+{
+    ar_i32 parent;
+    ar_u16 first;
+    ar_u16 count;
+} ar_var_scope;
+
 typedef struct ar_damage
 {
     ar_rect r[AR_DAMAGE_RECTS];
@@ -273,7 +299,22 @@ struct ar_ctx
 
     /* What the caller reserved for a parsed document at init, so
        ar_html_parse_into does not have to be told twice. */
-    ar_u32   doc_budget;
+    ar_u32 doc_budget;
+    /*
+     * Custom property scopes, one per box that declares any.
+     *
+     * Two arrays rather than a list per box: `var_scopes` says where a box's
+     * declarations start and which scope encloses it, and `var_entries` holds
+     * the declarations themselves end to end. A box that declares nothing
+     * costs nothing -- it points at the scope its parent pointed at.
+     */
+    ar_var_scope *var_scopes;
+    ar_u16        var_scope_count;
+    ar_u16        var_scope_cap;
+    ar_var_decl  *var_entries;
+    ar_u16        var_entry_count;
+    ar_u16        var_entry_cap;
+
     ar_sheet sheet;
 
     /* What the backend has said about the display it is drawing on: the

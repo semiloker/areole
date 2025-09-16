@@ -15715,6 +15715,23 @@ static ar_i32 ar__first_tag(const char *tag)
     return ar__tags(tag, one, 1) == 1 ? one[0] : -1;
 }
 
+/* The box carrying `id="..."`, or -1. `ar__tags` cannot answer this: a
+   document's boxes are mostly divs and the id is what tells them apart. */
+static ar_i32 ar__first_tag_id(const char *id)
+{
+    ar_u32 h = ar_hash(id, (ar_u32)strlen(id));
+    ar_i32 i;
+
+    for (i = 0; i < g_ui->node_count; ++i)
+    {
+        if (g_ui->nodes[i].sel_id == h)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -16609,6 +16626,97 @@ static void test_ua_sheet_scales_with_the_root(void)
         CHECK(h6->v[AR_P_MARGIN_TOP] == 24,
               "ua-em: and keeps a stated margin, because 2.33em of the rounded font is 26");
     }
+}
+
+/*
+ * Custom properties, through a document.
+ *
+ * Through a document and not through the parser, because three of the four
+ * bugs in the first version of this were nowhere near the parser: a rule that
+ * declared only custom properties was discarded before it reached the table,
+ * the pass that substitutes them was gated on flags that did not include
+ * them, and the scope arrays were never allocated at all.
+ */
+static void test_custom_properties(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div>"
+                    "<div class=\"scope\"><div id=\"e\"></div></div>"
+                    "</body></html>",
+                    "html { font-size:16px; }"
+                    ":root { --w: 300px; --gap: 2rem; }"
+                    "#a { width:var(--w); }"
+                    "#b { width:var(--gap); }"
+                    "#c { width:var(--nope, 120px); }"
+                    "#d { width:var(--nope); }"
+                    ".scope { --w: 90px; }"
+                    "#e { width:var(--w); }");
+
+    /*
+     * `:root { --w: 300px }` is the commonest way anyone declares one, and it
+     * was the case that did not work: a rule whose only declarations are
+     * custom properties sets no property bits, and the parser threw away
+     * every rule with an empty property set before storing it. The
+     * declaration parsed, the pool entry was written, and the rule pointing
+     * at it never existed.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 300,
+          "var: a custom property declared on :root reaches a box");
+    /* Holding a relative unit, which is resolved in a different pass from the
+       one that substitutes it -- so this is the check that the substitution
+       hands its result on rather than stopping. */
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 32,
+          "var: and one holding 2rem is still two rem");
+    /* The fallback is most of what var() does on real pages: half the
+       references in the Wikipedia documents under examples/15_real name a
+       property defined in a stylesheet that was never saved. */
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 120,
+          "var: an undefined name takes its fallback");
+    /* No value and no fallback is invalid at computed-value time, which is
+       not the same as zero. */
+    CHECK(ar__box_style(ar__first_tag_id("d"))->unit[AR_P_WIDTH] == AR_UNIT_AUTO,
+          "var: an undefined name with no fallback is invalid, not zero");
+    /* And the reason a scope chain exists at all: the inner box sees the
+       nearer declaration. */
+    CHECK(ar__box_style(ar__first_tag_id("e"))->v[AR_P_WIDTH] == 90,
+          "var: a nearer declaration shadows the root's");
+}
+
+/* `calc(var(--x) * 2)` -- the two features as they are actually written
+   together. Five of the nine calc expressions in the ten documents under
+   examples/15_real name a custom property inside one. */
+static void test_custom_properties_in_calc(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div>"
+                    "</body></html>",
+                    "html { font-size:16px; }"
+                    ":root { --size: 40px; --half: 0.5; }"
+                    "#a { width:calc(var(--size) * 2); }"
+                    "#b { width:calc(var(--size) / 2); }"
+                    "#c { width:calc(var(--size) + 10px); }"
+                    "#d { width:calc(var(--missing) + 10px); }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 80,
+          "var: a custom property multiplies inside calc");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 20, "var: and divides");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 50, "var: and adds");
+    /*
+     * A name with no value and no fallback poisons the whole expression
+     * rather than just its own term. CSS is explicit about that, and the
+     * tempting alternative -- treat the missing term as zero -- turns a page
+     * that is missing a stylesheet into a page that is subtly mis-sized.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("d"))->unit[AR_P_WIDTH] == AR_UNIT_AUTO,
+          "var: an unresolvable name invalidates the expression, not just the term");
 }
 
 static void test_the_elements_the_corpus_found(void)
@@ -19980,6 +20088,8 @@ int main(void)
     test_an_interface_stylesheet_is_not_a_document();
     test_a_table_does_not_inherit_its_font_in_quirks();
     test_ua_sheet_scales_with_the_root();
+    test_custom_properties();
+    test_custom_properties_in_calc();
     test_the_elements_the_corpus_found();
     test_a_list_item_lays_out_as_a_block();
     test_the_style_attribute_reaches_the_box();
