@@ -401,6 +401,7 @@ toolkit breaks that circle.
 - **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
 - **0.9.3** *It parses the awkward third* — the stack of template insertion modes, foster parenting, and twenty insertion-mode rules ✅
 - **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant — **landed, version stamp pending**
+- **0.9.5** *It does arithmetic* — `calc()` and the maths functions, custom properties and `var()` — **landed, version stamp pending**
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -724,6 +725,113 @@ unit through resolution and rounded once at the end, so the error is never more 
 and never accumulates -- but it is why `h6` kept its margin, and it is the same residual the table
 corpus and the gallery's text demos are down to.
 
+### 0.9.5, landed — the second release waiting on a quiet machine
+
+**This is the roadmap's 0.4.3**, and it ships under 0.9.5's number for the reason 0.4.1's content
+ships under 0.9.4's: a version may not move backwards.
+
+| | |
+| --- | --- |
+| calc corpus vs Edge | **109 of 109 — 100%** computed values |
+| Demos | **18 new**, 18 of 18 gated; 176 in the gallery |
+| Checks | **1,634**, from 1,594 |
+| Binary | `ar_css.c.obj` **+6,736 bytes** of the 20 KB this release asked for |
+
+**`calc()` did not fail. It answered.** That is why it was the first thing this release did:
+
+```
+calc(100px + 50px)        100    want 150
+calc(50% - 10px)          200    want 190
+calc(2 * 100px)           100    want 200
+clamp(100px, 50%, 300px)  100    want 200
+min(200px, 300px)         200    right, and by luck
+```
+
+Every maths function took its first term and discarded the rest. That is worse than the `em` 0.4.1
+fixed: a dropped declaration leaves a box visibly the wrong size, and a plausible number leaves a
+page that looks laid out and is not. Six of the ten documents in `examples/15_real` use these, two
+of them 725 times.
+
+**An expression is compiled to postfix, into a pool on the sheet, and evaluated at**
+**`ar_frame_end`.** The pool is the shape a track list already takes and for the same reason — a
+style slot is sixteen bits and an expression is a tree. Postfix, because evaluating one then needs
+a stack and nothing else: no pointers, no recursion at frame time. Frame end, because that is the
+one moment both halves are known: the font size was settled during style resolution and the
+surface is the argument to the pass.
+
+**Custom properties are scoped, not global, and that was decided by measurement.** The obvious
+shortcut — one value per name for the whole document — would have been wrong on the first page
+looked at: MDN declares its custom properties on `.button[data-variant=primary]` and on `:hover`,
+not on `:root`. A box that declares none points at the scope its parent pointed at, and the chain
+names the nearest *declaring* ancestor rather than the parent box, so a document with one `:root`
+block has a chain of one however deep the tree gets.
+
+### Seven bugs, and one of them was in the parser
+
+- **The term loop ate the whitespace a sum needs.** CSS requires space around `+` and `-` because
+  `-2px` is one token, and that byte is how the two are told apart. Eating it refused every sum —
+  and a refused value is not a dropped declaration: the declaration parser recovers by reading the
+  next number it finds, which is why `calc(100px + 50px)` came out **fifty**. The second operand.
+- **A refused expression left its own text behind** for that same recovery to walk into.
+  `calc(50% - 10px)` came out ten and `calc(1px -2px)` came out zero, both looking like an engine
+  that had understood something.
+- **`:root { --brand: #c02 }` never reached the rule table.** A rule whose only declarations are
+  custom properties sets no property bits, and the parser discards a rule with an empty property
+  set. The declaration parsed, the pool entry was written, and the rule pointing at it did not
+  exist — the commonest way anyone declares one.
+- **The substitution pass was gated on flags that did not include it**, so it never ran for a sheet
+  whose only reason to run it was a `var()`.
+- **The scope tables were never allocated.** The patch that should have added them aborted on an
+  unrelated assertion in a different file and reported success for the half it had done.
+- **A selector list carried its custom properties only on the first selector.**
+- **A custom property holding `2rem` reached layout as a unit layout does not know**, because the
+  pass that substitutes it runs after the pass that resolves font-relative lengths.
+
+### Two budgets moved, both on the commit that spent them
+
+`AR_BYTES_PER_BOX` 544 → 552, for the one field a box needs: which set of custom properties it can
+see. Eight bytes for a sixteen-bit index, which is alignment rather than waste — `ar_node` holds a
+pointer, so it is eight-aligned and was exactly 488, and narrowing the field from thirty-two bits
+changed nothing at all. **The assertion in `ar_ctx.c` refused three attempts before this one**, on
+the build rather than in review.
+
+`AR_MEM_FIXED` 192 → 208 KB for the five new pools, measured rather than rounded: 208,968 of
+212,992, itemised in the header. The assertion now counts every persistent block — including the
+calc pool this release added a commit earlier and forgot to put inside it.
+
+And the CSS size budget fired **on the commit that spent the money**, 60 → 80 KB. `check_size.py`
+had predicted this release would raise it and demanded a reason; that is the first time either
+budget has fired before the fact rather than after.
+
+### What this release does not do
+
+**A percentage inside `calc()` is refused.** `calc(50% - 5px)` is three of the nine expressions in
+the ten real documents, and it cannot be a number where the others are: a percentage resolves
+against a containing block that layout knows and the evaluator does not, so the honest answer is a
+length *and* a per cent, and a style slot holds one sixteen-bit number. Refused rather than
+approximated — which is what the engine used to do, and it returned a flat fifty per cent.
+
+**A custom property holds a value, not a token sequence.** `--pad: 4px 8px` is legal CSS and
+becomes a shorthand when substituted; that needs the value parser to run again at frame time over
+text, and this one parses declarations once. Such a property is stored and marked unusable, and a
+`var()` naming it is invalid — the same answer CSS reaches for every use except the one that was
+going to work.
+
+**The trigonometric and exponential functions are not built**, and the reason is not effort: `sin()`
+takes an angle and returns a number, and there is no property in this engine that takes an angle
+for it to feed. They ship with `transform`.
+
+### And a corpus that could not ask about `:root`
+
+The calc corpus disagreed with the browser on thirteen rows, with areole right on every one. The
+twin shares one page between every case and keeps them apart by rewriting each case's selectors to
+sit under `[data-page="..."]` — which turns `:root` into `[data-page="x"] :root`, matching nothing,
+because the root element is not inside the case box.
+
+**A corpus that isolates its cases cannot ask anything about the thing that encloses them.** The
+declarations moved to a wrapper class, and `:root` is covered in `ar_test` and in the `vars/*`
+demos, where the document is a whole document.
+
 ## Building
 
 ```sh
@@ -794,8 +902,9 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `ar_elements` | what every element's defaults compute to | 1066 / 1071 |
 | `ar_quirks` | what a document with no doctype does differently | 39 / 39 |
 | `ar_units` | what every CSS length unit computes to | **35 / 35** |
+| `ar_calc` | what calc() and var() compute to | **109 / 109** |
 | `media` | 300 media queries, both engines, four viewports | **1200 / 1200** |
-| `gallery` | one standalone page per feature, both engines | 145 / 145 gated, 13 reported |
+| `gallery` | one standalone page per feature, both engines | 163 / 163 gated, 13 reported |
 | `09_table` | tables: anonymous boxes, collapse, spans | 616 / 624 |
 
 The table corpus is the honest exception and is not gated: **8 of its 624 boxes still land
