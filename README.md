@@ -400,7 +400,7 @@ toolkit breaks that circle.
 - **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
 - **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
 - **0.9.3** *It parses the awkward third* — the stack of template insertion modes, foster parenting, and twenty insertion-mode rules ✅
-- **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant — **landed, version stamp pending**
+- **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -637,26 +637,45 @@ expects the element to be inserted and the rule that covers `input`, `keygen` *a
 to ignore it. That one is written down rather than papered over by special-casing a tag to match a
 test.
 
-### 0.9.4, landed — with its version stamp still to come
+### 0.9.4, complete
 
 **This is the content the roadmap files under 0.4.1**, and it ships under 0.9.4's number for the
 same reason 0.4.2's content shipped as 0.9.2: a version may not move backwards. The roadmap number
 says what the work is; the version says when it landed.
 
-**`AR_VERSION_STRING` is still 0.9.3, deliberately, and this is the honest half of the release.**
-The version and `bench/baseline.json` move together — `gen_perf_doc.py --check` ties them, so that
-no published number can be labelled with an engine it was not measured on. Regenerating the
-baseline needs a quiet machine, and the one this was written on was not: three attempts came in at
-**21.9%** and **16.3%** median stability, with 47 of 52 and 21 of 23 scenes past the 3% a gate
-needs. 0.9.3's baseline was taken at 3.8%.
+**`AR_VERSION_STRING` is 0.9.4, and the baseline under it is the best-measured one in the
+repository.** The version and `bench/baseline.json` move together -- `gen_perf_doc.py --check` ties
+them, so that no published number can be labelled with an engine it was not measured on. The stamp
+waited two releases for a quiet machine, and the reason it never came was not the browser or the
+editor. **It was the power plan.**
 
-Those are the numbers 0.9.2 discarded rather than published, and for the reason it gave: a baseline
-is the gate every later change is judged against, and one made of noise quietly fails everything or
-nothing. So the release is complete and the stamp waits. One command finishes it:
+| | this baseline | 0.9.3 | the three discarded attempts |
+| --- | --- | --- | --- |
+| Median spread | **2.41%** | 3.8% | 16.3% -- 21.9% |
+| Scenes above 3% | **18 of 52** | 27 of 52 | 41 of 52 |
+
+One run on **Balanced** measured 16.9% median with 41 of 52 scenes past the 3% a gate needs. The
+same binary, on the same machine, minutes later on **High performance**: 2.41% and 18 of 52.
+Nothing else was closed. A balanced governor clocks up and down *during* the timed window, which is
+indistinguishable from noise in a spread column and is not noise at all.
+
+**Which closes a question 0.9.2 left open and 0.9.3 could only suspect.** 0.9.2's baseline had
+`clear_uncached` and `flat_8k` mysteriously slow; 0.9.3 found them 50% and 40% faster without
+either release touching them, and wrote down "a degraded power state and not a regression, exactly
+as that commit suspected but could not show." This is the showing. The governor was the variable
+all along, and it is now the first thing to check rather than the last.
+
+**Three scenes above 3% here are not noise either, and the tool says so itself.**
+`opposite_corners` reports 100% spread on a **0.1 us** p50 with `below_timer_floor` set;
+`corners_tree` and `html_small` are 2 us scenes where one microsecond of timer quantisation reads
+as 40%. The genuinely variable ones are the large allocating scenes -- `flat_8k` at 10%,
+`table_auto_10k` at 5.6% -- which is where 0.9.3 had them too.
+
+The two commands, for the next release that needs them:
 
 ```sh
 ./build/ar_bench --all --iters 150 --repeat 3 --json > bench/baseline.json
-python tools/gen_perf_doc.py            # then bump AR_VERSION_* to 0.9.4
+python tools/gen_perf_doc.py            # after bumping AR_VERSION_* in include/areole.h
 ```
 
 The release that was skipped. 0.4.2 was built out of order because 0.9.2 turned out to be blocked
