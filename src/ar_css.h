@@ -515,6 +515,20 @@ typedef enum ar_unit
      */
     AR_UNIT_VAR,
 
+    /*
+     * `currentColor`, which is the value of `color` on the same box.
+     *
+     * A unit rather than a value, for the reason `inherit` is one: it says
+     * where the colour comes from and not what it is. It cannot resolve at
+     * parse time because `color` is not known then, and it cannot resolve
+     * during the cascade either, because `color` may itself be a `var()` that
+     * only settles at frame end.
+     *
+     * It never appears on `color` itself. CSS says currentColor there means
+     * `inherit`, and the parser writes that instead -- exact, and free.
+     */
+    AR_UNIT_CURRENTCOLOR,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -1430,7 +1444,23 @@ typedef struct ar_track
 typedef struct ar_var_decl
 {
     ar_u32 name; /* hash of the name, `--` and all */
-    ar_i16 v;
+
+    /*
+     * Thirty-two bits, and it was sixteen until 0.4.4 asked it to hold a
+     * colour.
+     *
+     * A length fits a signed sixteen-bit slot and every value in `ar_style`
+     * narrow enough to live in v[] does too, so this matched the rest of the
+     * engine and was wrong for one reason: a colour is 0xAARRGGBB and does not
+     * narrow. `--brand: #c02040` stored 0x2040, which is not a broken value
+     * but a different colour with no alpha -- transparent, and therefore
+     * invisible rather than wrong-looking.
+     *
+     * It shipped that way in 0.4.3 and was found by 0.4.4's currentColor test,
+     * which copied the truncated value faithfully and failed for what looked
+     * like an ordering bug in a different file.
+     */
+    ar_i32 v;
     ar_u8  unit;
     ar_u8  ok; /* clear when the text was not a single value */
 } ar_var_decl;
@@ -1441,7 +1471,11 @@ typedef struct ar_var_decl
 typedef struct ar_var_ref
 {
     ar_u32 name;
-    ar_i16 fallback_v;
+
+    /* Widened with ar_var_decl's, and for the same reason: `var(--brand,
+       #c02040)` is the commonest shape a fallback takes on a real page, and a
+       sixteen-bit fallback loses exactly what the declaration lost. */
+    ar_i32 fallback_v;
     ar_u8  fallback_unit;
     ar_u8  has_fallback;
 } ar_var_ref;

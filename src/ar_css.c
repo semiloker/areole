@@ -3827,6 +3827,24 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
 
         /*
+         * `currentColor`. On `color` itself it means `inherit` -- the
+         * specification says so outright -- and writing that here rather than
+         * carrying a self-reference through to frame end costs nothing and
+         * removes the one case where the deferred unit could refer to itself.
+         *
+         * Case-folding, unlike `transparent` beside it, because the name is
+         * spelled with a capital in every stylesheet anyone has ever written
+         * and CSS keywords are case-insensitive regardless.
+         */
+        if (ar__same_fold(name, len, "currentcolor"))
+        {
+            out.unit = (ar_u8)(prop == AR_P_COLOR ? AR_UNIT_INHERIT : AR_UNIT_CURRENTCOLOR);
+            out.v = 0;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
          * env(name) and env(name, fallback).
          *
          * The fallback is parsed rather than kept as text: it is always a
@@ -7047,7 +7065,7 @@ static void ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
         {
-            d->v = (ar_i16)val.v;
+            d->v = val.v;
             d->unit = val.unit;
             d->ok = 1;
         }
@@ -7119,7 +7137,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
         {
             return 0;
         }
-        r->fallback_v = (ar_i16)fb.v;
+        r->fallback_v = fb.v;
         r->fallback_unit = fb.unit;
         r->has_fallback = 1;
         ar__skip_ws(z);

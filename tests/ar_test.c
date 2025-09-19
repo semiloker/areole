@@ -17090,6 +17090,58 @@ static void test_calc_round_mod_rem(void)
  * the pass that substitutes them was gated on flags that did not include
  * them, and the scope arrays were never allocated at all.
  */
+/*
+ * `currentColor`, which is the one colour value that cannot be answered while
+ * the stylesheet is being read.
+ *
+ * Every other notation in 0.4.4 becomes eight bits per channel at parse time.
+ * This one names `color` on the same box, and `color` is not known until the
+ * cascade has run -- and may itself be a var() that only settles at frame end,
+ * which is why the resolution sits at the end of that pass rather than in the
+ * cascade.
+ */
+static void test_current_color(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div>"
+                    "<div id=\"b\"><div id=\"c\"></div></div>"
+                    "<div id=\"d\"></div>"
+                    "<div id=\"e\"></div>"
+                    "</body></html>",
+                    ":root { --ink: #c02040; }"
+                    "#a { color:#3366cc; background:currentColor; }"
+                    "#b { color:#11aa22; }"
+                    "#c { background:currentColor; }"
+                    "#d { color:var(--ink); background:currentColor; }"
+                    "#e { color:currentColor; }");
+
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_BACKGROUND) == 0xFF3366CCu,
+          "currentColor: takes the colour declared on the same box");
+
+    /* Inherited rather than declared, which is the commonest way it is used:
+       an icon that takes the text colour of whatever it is dropped into. */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c")), AR_P_BACKGROUND) == 0xFF11AA22u,
+          "currentColor: takes an inherited colour");
+
+    /*
+     * And the ordering case that decides where the resolution goes. `color` is
+     * a var() here, so a currentColor resolved during the cascade would copy
+     * an unsubstituted slot. It runs after the substitution pass instead, on
+     * the same walk.
+     */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("d")), AR_P_BACKGROUND) == 0xFFC02040u,
+          "currentColor: copies a colour that was itself a var()");
+
+    /* On `color` itself the specification says currentColor means `inherit`,
+       and the parser writes that instead -- which also removes the only case
+       where the deferred unit could refer to itself. */
+    CHECK(ar__box_style(ar__first_tag_id("e"))->unit[AR_P_COLOR] != AR_UNIT_CURRENTCOLOR,
+          "currentColor: on color itself it is inherit, not a self-reference");
+}
+
 static void test_custom_properties(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20551,6 +20603,7 @@ int main(void)
     test_a_table_does_not_inherit_its_font_in_quirks();
     test_ua_sheet_scales_with_the_root();
     test_calc_round_mod_rem();
+    test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
     test_the_elements_the_corpus_found();
