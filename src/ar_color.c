@@ -762,6 +762,121 @@ int ar_color_named(const char *name, ar_u32 len, ar_u32 *out)
     return 0;
 }
 
+/* --- system colours ------------------------------------------------------
+ *
+ * Two tables, light and dark, in the order of ar_sys_color. These are the
+ * fallback a backend that reports no theme gets, and they are also what the
+ * built-in demos are gated against, so they are fixed numbers rather than
+ * whatever a developer's desktop happens to be set to.
+ *
+ * The light set is the classic Windows/Chrome default rendering; the dark set
+ * is Chrome's dark UA theme. Both are stated rather than derived: inverting the
+ * light set gives grey text on grey and is what a naive dark mode looks like.
+ */
+static const ar_u32 AR_SYS_LIGHT[AR_SYS_COUNT] = {
+    0xFFFFFFFFu, /* Canvas */
+    0xFF000000u, /* CanvasText */
+    0xFF0000EEu, /* LinkText */
+    0xFF551A8Bu, /* VisitedText */
+    0xFFEE0000u, /* ActiveText */
+    0xFFEFEFEFu, /* ButtonFace */
+    0xFF000000u, /* ButtonText */
+    0xFF767676u, /* ButtonBorder */
+    0xFFFFFFFFu, /* Field */
+    0xFF000000u, /* FieldText */
+    0xFF0078D7u, /* Highlight */
+    0xFFFFFFFFu, /* HighlightText */
+    0xFF0078D7u, /* SelectedItem */
+    0xFFFFFFFFu, /* SelectedItemText */
+    0xFFFFFF00u, /* Mark */
+    0xFF000000u, /* MarkText */
+    0xFF808080u, /* GrayText */
+    0xFF0078D7u, /* AccentColor */
+    0xFFFFFFFFu  /* AccentColorText */
+};
+
+static const ar_u32 AR_SYS_DARK[AR_SYS_COUNT] = {
+    0xFF121212u, /* Canvas */
+    0xFFFFFFFFu, /* CanvasText */
+    0xFF9E9EFFu, /* LinkText */
+    0xFFD0ADF0u, /* VisitedText */
+    0xFFFF9E9Eu, /* ActiveText */
+    0xFF6B6B6Bu, /* ButtonFace */
+    0xFFFFFFFFu, /* ButtonText */
+    0xFF858585u, /* ButtonBorder */
+    0xFF3B3B3Bu, /* Field */
+    0xFFFFFFFFu, /* FieldText */
+    0xFF2E5FA3u, /* Highlight */
+    0xFFFFFFFFu, /* HighlightText */
+    0xFF2E5FA3u, /* SelectedItem */
+    0xFFFFFFFFu, /* SelectedItemText */
+    0xFFFFFF00u, /* Mark */
+    0xFF000000u, /* MarkText */
+    0xFFAAAAAAu, /* GrayText */
+    0xFF2E5FA3u, /* AccentColor */
+    0xFFFFFFFFu  /* AccentColorText */
+};
+
+/* Sorted, so this bisects like the named table. Lower case, because the
+   comparison folds. */
+static const struct
+{
+    const char *name;
+    ar_u8       idx;
+} AR_SYS_NAMES[] = {{"accentcolor", AR_SYS_ACCENTCOLOR},
+                    {"accentcolortext", AR_SYS_ACCENTCOLORTEXT},
+                    {"activetext", AR_SYS_ACTIVETEXT},
+                    {"buttonborder", AR_SYS_BUTTONBORDER},
+                    {"buttonface", AR_SYS_BUTTONFACE},
+                    {"buttontext", AR_SYS_BUTTONTEXT},
+                    {"canvas", AR_SYS_CANVAS},
+                    {"canvastext", AR_SYS_CANVASTEXT},
+                    {"field", AR_SYS_FIELD},
+                    {"fieldtext", AR_SYS_FIELDTEXT},
+                    {"graytext", AR_SYS_GRAYTEXT},
+                    {"highlight", AR_SYS_HIGHLIGHT},
+                    {"highlighttext", AR_SYS_HIGHLIGHTTEXT},
+                    {"linktext", AR_SYS_LINKTEXT},
+                    {"mark", AR_SYS_MARK},
+                    {"marktext", AR_SYS_MARKTEXT},
+                    {"selecteditem", AR_SYS_SELECTEDITEM},
+                    {"selecteditemtext", AR_SYS_SELECTEDITEMTEXT},
+                    {"visitedtext", AR_SYS_VISITEDTEXT}};
+
+int ar_sys_color_by_name(const char *name, ar_u32 len)
+{
+    ar_u32 lo = 0, hi = (ar_u32)(sizeof(AR_SYS_NAMES) / sizeof(AR_SYS_NAMES[0]));
+
+    while (lo < hi)
+    {
+        ar_u32 mid = (lo + hi) / 2;
+        int    cmp = ar__cstrcmp(name, len, AR_SYS_NAMES[mid].name);
+
+        if (cmp == 0)
+        {
+            return (int)AR_SYS_NAMES[mid].idx;
+        }
+        if (cmp < 0)
+        {
+            hi = mid;
+        }
+        else
+        {
+            lo = mid + 1;
+        }
+    }
+    return -1;
+}
+
+ar_u32 ar_sys_color_default(int which, int dark)
+{
+    if (which < 0 || which >= AR_SYS_COUNT)
+    {
+        return 0xFF000000u;
+    }
+    return dark ? AR_SYS_DARK[which] : AR_SYS_LIGHT[which];
+}
+
 /* --- packing ------------------------------------------------------------- */
 
 static ar_i32 ar__clamp_unit(ar_i32 v)

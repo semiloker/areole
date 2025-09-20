@@ -171,4 +171,42 @@ void ar_color_unpack(ar_u32 rgba, ar_u8 space, ar_color_val *out);
    parser, not here. */
 ar_u32 ar_color_mix(ar_u32 a, ar_u32 b, ar_i32 w, ar_u8 space, ar_u8 hue_method);
 
+/* --- system colours ------------------------------------------------------
+ *
+ * The CSS system colours, which are the ones that make a form control look
+ * native on Windows 98 and on Windows 11 from one stylesheet. They are an
+ * enumeration here and a lookup at frame end, never a literal: the theme they
+ * name can change while the program runs.
+ */
+typedef enum ar_sys_color
+{
+    AR_SYS_CANVAS = 0,
+    AR_SYS_CANVASTEXT,
+    AR_SYS_LINKTEXT,
+    AR_SYS_VISITEDTEXT,
+    AR_SYS_ACTIVETEXT,
+    AR_SYS_BUTTONFACE,
+    AR_SYS_BUTTONTEXT,
+    AR_SYS_BUTTONBORDER,
+    AR_SYS_FIELD,
+    AR_SYS_FIELDTEXT,
+    AR_SYS_HIGHLIGHT,
+    AR_SYS_HIGHLIGHTTEXT,
+    AR_SYS_SELECTEDITEM,
+    AR_SYS_SELECTEDITEMTEXT,
+    AR_SYS_MARK,
+    AR_SYS_MARKTEXT,
+    AR_SYS_GRAYTEXT,
+    AR_SYS_ACCENTCOLOR,
+    AR_SYS_ACCENTCOLORTEXT,
+    AR_SYS_COUNT
+} ar_sys_color;
+
+/* Name to index. Returns -1 for anything that is not one. */
+int ar_sys_color_by_name(const char *name, ar_u32 len);
+
+/* The built-in light and dark themes, which are what a backend that reports
+   nothing falls back to. `dark` selects the second set. */
+ar_u32 ar_sys_color_default(int which, int dark);
+
 #endif /* AR_COLOR_H */
