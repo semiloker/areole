@@ -17,7 +17,7 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 5
+#define AR_VERSION_PATCH 6
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.5"
+#define AR_VERSION_STRING "0.9.6"
 
 /* ------------------------------------------------------------------------
  * Fixed width types

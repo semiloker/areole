@@ -887,27 +887,55 @@ what every later release is judged against: a number that goes in unremarked is 
 never fire again. `html_render` at +0.3% is the reason it is recorded rather than treated as
 blocking -- a real page parses, styles and lays out, and pays none of this.
 
-### 0.9.6, landed — with its version stamp still to come
+### 0.9.6, complete
 
-**`AR_VERSION_STRING` is still 0.9.5, deliberately.** The version and `bench/baseline.json` move
-together -- `gen_perf_doc.py --check` ties them -- and three attempts measured **24.66%** and
-**26.21%** median spread against the **2.41%** and **2.20%** the last two releases were taken at.
+**`AR_VERSION_STRING` is 0.9.6, and the baseline under it is the best-measured one in the
+repository.**
 
-The cause is known and is not the power plan this time, which is already on High performance: Lenovo
-Vantage is sweeping its add-ins, and sampling four seconds apart gives 0%, 74%, 181%, 69% of a core.
-Intermittent load ruins a spread far more thoroughly than steady load does, because the benchmark
-measures disagreement between epochs and a sweep lands in some of them and not others.
+| | this baseline | 0.9.5 | 0.9.4 | 0.9.3 |
+| --- | --- | --- | --- | --- |
+| Median spread | **1.90%** | 2.20% | 2.41% | 3.8% |
+| Scenes above 3% | **16 of 52** | 19 | 18 | 27 |
 
-Those are the numbers 0.9.2 discarded rather than published, for the reason it gave: a baseline is
-the gate every later change is judged against, and one made of noise quietly fails everything or
-nothing. Quit Lenovo Vantage, keep the power plan on High performance, and two commands finish it:
+It took four attempts and the first three are worth writing down, because the cause was different
+from 0.9.4's and the same in shape. That release found the power plan; this one found **Lenovo
+Vantage sweeping its add-ins** — sampled four seconds apart it gave 0%, 74%, 181% and 69% of a core,
+and three runs came in at 24.66%, 26.21% and 4.72% median. Intermittent load ruins a spread far more
+thoroughly than steady load does, because the benchmark measures disagreement *between epochs*: a
+sweep lands in some of them and not others, so the noise it adds does not cancel, it widens.
 
-```sh
-./build/ar_bench --all --iters 150 --repeat 3 --json > bench/baseline.json
-python tools/gen_perf_doc.py            # after bumping AR_VERSION_* in include/areole.h
-```
+Only one of six Vantage processes could be stopped without elevation, and that was enough — the
+remaining five sat at 0% for the rest of the session. The run after it measured 1.90%.
 
-**This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
+**Two runs minutes apart disagreed by a factor of two and a half**, 4.72% against 1.90%, which is the
+argument for looking at the number rather than accepting the first one that clears the bar.
+
+### And 0.9.5's regression went away
+
+0.9.5 shipped a reproducible **10% slowdown in malformed HTML parsing** without touching a line of
+the HTML parser, and the surviving hypothesis was second-order memory layout: `AR_MEM_FIXED` had
+grown 16 KB and every box had grown eight bytes, and the malformed path re-walks the open element
+stack on every implied end tag, so it is the scene most exposed to a working set that moved.
+
+0.9.6 grew the box by another eight bytes and the fixed block by another eight kilobytes.
+
+| | `html_malformed` p50 |
+| --- | --- |
+| 0.9.4, both binaries alternating | 147.4, 147.7, 147.3 |
+| 0.9.5 | 162.9, 164.6, 165.9 |
+| **0.9.6, three runs** | **146.6, 144.8, 148.1** |
+
+It is back where 0.9.4 had it, to within the noise. Nothing was done about it: no profiling, no
+change to the parser, no change to the layout of anything the scene touches. More memory moved and
+the cost moved with it.
+
+That is not proof — the test that would settle it is still the one 0.9.5 named, padding
+`AR_MEM_FIXED` on the 0.9.4 binary and watching for the regression with no 0.4.3 code present, and
+it has still not been run. But three releases now line up with the layout explanation and none of
+them lines up with an algorithmic one, and a regression that vanishes when unrelated memory grows is
+not a regression in the code it appeared in.
+
+**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
 ships under 0.9.5's: a version may not move backwards.
 
 | | |
