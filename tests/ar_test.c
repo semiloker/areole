@@ -17155,6 +17155,37 @@ static void test_system_colors_and_color_scheme(void)
           "syscolor: a system colour folds case");
 }
 
+/*
+ * `border: 1px solid <deferred colour>`, which is how both of the deferred
+ * kinds are actually written.
+ *
+ * The shorthand picks the colour out of its value run by asking which one is
+ * AR_UNIT_COLOR, and neither currentColor nor a system colour is -- they carry
+ * a unit that says where the colour comes from. Matching only the literal left
+ * the border with no colour *and* left the value in the run for the width to be
+ * read from, so the border changed size instead of changing colour. Two gallery
+ * demos disagreed with the browser on geometry and none on pixels, which is a
+ * combination that points away from colour entirely.
+ */
+static void test_border_shorthand_takes_a_deferred_colour(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"a\"></div><div id=\"b\"></div></body></html>",
+                    "#a { color:#3366cc; border:4px solid currentColor; }"
+                    "#b { color-scheme:dark; border:4px solid CanvasText; }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_BORDER_WIDTH] == 4,
+          "border: a currentColor in the shorthand does not eat the width");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_BORDER_COLOR) == 0xFF3366CCu,
+          "border: and resolves to the box's own colour");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_BORDER_WIDTH] == 4,
+          "border: a system colour in the shorthand does not eat the width either");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("b")), AR_P_BORDER_COLOR) == 0xFFFFFFFFu,
+          "border: and follows the dark scheme");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20659,6 +20690,7 @@ int main(void)
     test_ua_sheet_scales_with_the_root();
     test_calc_round_mod_rem();
     test_system_colors_and_color_scheme();
+    test_border_shorthand_takes_a_deferred_colour();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

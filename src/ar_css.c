@@ -4432,9 +4432,22 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         ar__set(rule, AR_P_BORDER_WIDTH, vals[0].v, AR_UNIT_PX);
         for (i = 0; i < n; ++i)
         {
-            if (vals[i].unit == AR_UNIT_COLOR)
+            /*
+             * Three units are a colour here, not one.
+             *
+             * `border: 6px solid currentColor` and `border: 1px solid
+             * ButtonBorder` are how both of those are actually written, and
+             * they arrive carrying a unit that says where the colour comes
+             * from rather than what it is. Matching only AR_UNIT_COLOR left
+             * the declaration with no colour *and* left the value in the run
+             * for the width to be read from -- so the border changed size
+             * rather than changing colour, which is why two gallery demos
+             * disagreed with the browser on geometry and none on pixels.
+             */
+            if (vals[i].unit == AR_UNIT_COLOR || vals[i].unit == AR_UNIT_CURRENTCOLOR ||
+                vals[i].unit == AR_UNIT_SYSCOLOR)
             {
-                ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, AR_UNIT_COLOR);
+                ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, vals[i].unit);
             }
         }
     }
