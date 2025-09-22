@@ -412,6 +412,21 @@ enum
     AR_SCHEME_LIGHT_DARK
 };
 
+/*
+ * Three words, ninety-six properties, and ninety-four of them are spent.
+ *
+ * The next release to need a ninety-seventh must make this four, and the price
+ * has been measured so that it does not have to be guessed at: ar_style goes
+ * 316 -> 320 bytes, the ceiling goes 96 -> 128, and three benchmark passes
+ * against the 0.9.6 baseline flagged one scene once, which is the noise floor
+ * rather than a cost. AR_BYTES_PER_BOX at 560 absorbs it without moving.
+ *
+ * It is left at three anyway. Capacity added before it is needed is capacity
+ * nobody has to justify, and the two remaining slots are the thing that made
+ * 0.4.4 defer `accent-color` to the release that can actually use it --
+ * which was the right call for reasons that had nothing to do with room.
+ * ar__prop_mask_fits below stops the build when the ninety-seventh arrives.
+ */
 #define AR_PSET_WORDS 3
 
 typedef struct ar_pset
