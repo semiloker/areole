@@ -910,32 +910,61 @@ remaining five sat at 0% for the rest of the session. The run after it measured 
 **Two runs minutes apart disagreed by a factor of two and a half**, 4.72% against 1.90%, which is the
 argument for looking at the number rather than accepting the first one that clears the bar.
 
-### And 0.9.5's regression went away
+### And 0.9.5's regression, found — it was an uninitialised flag
 
 0.9.5 shipped a reproducible **10% slowdown in malformed HTML parsing** without touching a line of
-the HTML parser, and the surviving hypothesis was second-order memory layout: `AR_MEM_FIXED` had
-grown 16 KB and every box had grown eight bytes, and the malformed path re-walks the open element
-stack on every implied end tag, so it is the scene most exposed to a working set that moved.
+the HTML parser. It named memory layout as the surviving hypothesis and named the test that would
+settle it. The test has now been run, and **the hypothesis was wrong.**
 
-0.9.6 grew the box by another eight bytes and the fixed block by another eight kilobytes.
+Four builds of the *same* 0.9.4 source, differing only in two constants that are pure sizes -- no
+struct changes, no code changes, only where things land:
 
-| | `html_malformed` p50 |
+| | `AR_MEM_FIXED` | `AR_BYTES_PER_BOX` | `html_malformed` p50 |
+| --- | --- | --- | --- |
+| 0.9.4 as shipped | 196,608 | 544 | 148.5, 145.6, 146.6 |
+| + the fixed block only | 212,992 | 544 | 144.2, 145.8, 145.0 |
+| + the per-box growth only | 196,608 | 552 | 146.0, 148.3, 145.4 |
+| 0.9.5's layout, 0.9.4's code | 212,992 | 552 | 146.5, 147.1, 145.0 |
+
+All four are the same number. Giving 0.9.4 exactly 0.9.5's memory layout costs nothing at all.
+
+**The cause was `has_calc`, which nothing ever set to zero.** It arrived with `calc()` in 0.4.3, and
+`ar_sheet_init` sets every other field in the sheet by name -- so the omission read as deliberate
+rather than as missing. A stale non-zero made the gate
+
+```c
+if (c->sheet.has_view_units || c->sheet.has_calc || c->sheet.varref_count > 1)
+```
+
+fire on documents that needed none of it, and behind that gate is a full walk of every node and
+every property, every frame. `html_malformed` builds a large DOM and needs no deferred values at
+all, which is exactly the shape that pays the most and benefits the least.
+
+Measured on 0.9.5's own tree, one change, two lines:
+
+| 0.9.5 | `html_malformed` p50 |
 | --- | --- |
-| 0.9.4, both binaries alternating | 147.4, 147.7, 147.3 |
-| 0.9.5 | 162.9, 164.6, 165.9 |
-| **0.9.6, three runs** | **146.6, 144.8, 148.1** |
+| as shipped | 161.5, 162.6, 158.6 |
+| `+ sheet->has_calc = 0; sheet->has_view_units = 0;` | **146.9, 145.8, 146.5** |
 
-It is back where 0.9.4 had it, to within the noise. Nothing was done about it: no profiling, no
-change to the parser, no change to the layout of anything the scene touches. More memory moved and
-the cost moved with it.
+That is the whole of it.
 
-That is not proof — the test that would settle it is still the one 0.9.5 named, padding
-`AR_MEM_FIXED` on the 0.9.4 binary and watching for the regression with no 0.4.3 code present, and
-it has still not been run. But three releases now line up with the layout explanation and none of
-them lines up with an algorithmic one, and a regression that vanishes when unrelated memory grows is
-not a regression in the code it appeared in.
+**0.9.6 fixed this by accident**, tidying three uninitialised flags while adding a fourth, and the
+commit that did it called them *"harmless only by luck: a stale 1 costs an unnecessary pass and a
+stale 0 costs a feature."* The stale 1 was not harmless. It was the ten per cent, and it had been
+shipped and measured and written up twice as something else.
 
-**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
+**One line held two separate faults.** The gate fired when it should not have, because a flag was
+uninitialised; and it failed to fire when it should have, because system colours were not named in
+it. The second was found by six failing tests in 0.9.6 and the first by no test at all -- a pass that
+runs when it needn't produces exactly the right answer, only slower.
+
+**This section replaces a wrong one.** The commit that stamped 0.9.6 said three releases lined up
+with the layout explanation and none with an algorithmic one. The first half was a coincidence and
+the second was false: 0.9.6 removed the cost because it happened to fix the bug, not because it
+moved memory again.
+
+**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
 ships under 0.9.5's: a version may not move backwards.
 
 | | |

@@ -983,6 +983,39 @@ static void test_css_colors(void)
  * and the strict gate enforces it -- which is the kind of limit that only
  * exists on the toolchains this project says it supports.
  */
+/*
+ * ar_sheet_init leaves no field behind, and this is checked on dirty memory
+ * rather than on a fresh struct.
+ *
+ * `has_calc` arrived with calc() in 0.4.3 and nothing ever set it to zero.
+ * ar_sheet_init sets every other field by name, so the omission read as
+ * deliberate. A stale non-zero made the deferred-value gate fire on documents
+ * that need none of it, and behind that gate is a walk of every node and every
+ * property, every frame -- which cost 0.9.5 ten per cent of its malformed
+ * parse and was written up twice as a memory-layout effect before anyone
+ * measured it.
+ *
+ * No test could have caught it by asking about behaviour: a pass that runs
+ * when it need not produces exactly the right answer, only slower. So the test
+ * is about the initialiser, and it fills the struct with 0xFF first, because on
+ * a fresh static every missing assignment already reads as zero and passes.
+ */
+static void test_sheet_init_leaves_no_field_behind(void)
+{
+    ar_sheet dirty;
+
+    memset(&dirty, 0xFF, sizeof dirty);
+    ar_sheet_init(&dirty, g_rules, 64);
+
+    CHECK(dirty.has_calc == 0, "sheet: has_calc is initialised");
+    CHECK(dirty.has_view_units == 0, "sheet: has_view_units is initialised");
+    CHECK(dirty.has_late_color == 0, "sheet: has_late_color is initialised");
+    CHECK(dirty.has_contextual == 0, "sheet: has_contextual is initialised");
+    CHECK(dirty.has_late_state == 0, "sheet: has_late_state is initialised");
+    CHECK(dirty.count == 0, "sheet: the rule count is initialised");
+    CHECK(dirty.errors == 0, "sheet: the error tally is initialised");
+}
+
 static void test_css_color_notations(void)
 {
     ar__sheet(".named{background:red}"
@@ -20236,6 +20269,7 @@ int main(void)
     test_css_relative_units_parse();
     test_css_absurd_numbers();
     test_css_colors();
+    test_sheet_init_leaves_no_field_behind();
     test_css_color_notations();
     test_css_wide_gamut_and_mixing();
     test_css_color_refusals_cost_only_themselves();
