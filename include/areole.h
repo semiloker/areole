@@ -297,8 +297,20 @@ enum
        modifier tracking here, so a backend that wants the second one sets
        AR_KEY_PAGE_UP itself -- which is the honest split: the platform knows
        about shift and this does not. */
-    AR_KEY_SPACE = 1u << 8
+    AR_KEY_SPACE = 1u << 8,
+
+    /*
+     * Tab, and Tab the other way.
+     *
+     * Two bits rather than one bit and a modifier, which is the same split the
+     * comment above makes for shift-space: the platform knows about Shift and
+     * this does not. A backend sets AR_KEY_TAB_BACK when Shift was held, and
+     * the core never learns what a modifier is.
+     */
+    AR_KEY_TAB = 1u << 9,
+    AR_KEY_TAB_BACK = 1u << 10
 };
+
 
 /* ------------------------------------------------------------------------
  * Performance
@@ -953,6 +965,37 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in);
    "div", ".card", "#sidebar", or any combination such as "div.card#first". */
 void ar_begin(ar_ctx *c, const char *selector);
 void ar_end(ar_ctx *c);
+
+/* ------------------------------------------------------------------------
+ * Focus
+ *
+ * Until 0.10.0 there was none: `:focus` was a selector state nothing ever set,
+ * and keyboard scrolling followed the mouse cursor because there was nothing
+ * better to follow. Everything in 0.10.0 stands on this -- a control that
+ * cannot be reached by Tab cannot be operated without a mouse, and an
+ * accessibility tree with no notion of where the user is has nothing to say.
+ *
+ * A box is a tab stop only if it says so. `ar_focusable` marks the box most
+ * recently begun, which for a parsed document the HTML side calls for anything
+ * carrying `tabindex`, and which an immediate-mode caller calls itself.
+ * ------------------------------------------------------------------------ */
+
+/* Mark the box just begun as a tab stop. Call between ar_begin and ar_end. */
+void ar_focusable(ar_ctx *c);
+
+/* Move focus to the next or previous tab stop, in document order. Returns 1 if
+   the focus moved. This is what AR_KEY_TAB does, exposed so an embedder can
+   drive it from a menu or a shortcut. Focus moved this way is visible: it
+   draws a ring, because a keyboard put it there. */
+int ar_focus_next(ar_ctx *c, int backwards);
+
+/* Drop focus entirely. A document with nothing focused is where every document
+   starts, and this is how it gets back there. */
+void ar_focus_clear(ar_ctx *c);
+
+/* Whether anything is focused, and whether the focus should be drawn. */
+int ar_has_focus(const ar_ctx *c);
+int ar_focus_is_visible(const ar_ctx *c);
 
 /*
  * A box with its own declaration list, which is what an HTML `style=""`

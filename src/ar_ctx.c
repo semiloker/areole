@@ -2891,11 +2891,67 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        counts as a click if it lands on the same one. Dragging off a button
        and letting go therefore does nothing, which is what every other
        toolkit does and what people expect. */
+    /* The focusable list and the focused box's index belong to one frame; the
+       focused *key* outlives the frame, which is the whole point of it being a
+       key. */
+    c->focusable_n = 0;
+    c->focus_index = -1;
+
+    /*
+     * Tab, before the tree is rebuilt, walking the list the previous frame
+     * left behind.
+     *
+     * That is a frame of lag and it is the same lag hover has, for the same
+     * reason: the list of tab stops is a property of the tree, and this
+     * frame's tree does not exist yet. It is invisible in practice because a
+     * Tab that arrives is followed by a frame.
+     */
+    if (in && (in->keys_pressed & (AR_KEY_TAB | AR_KEY_TAB_BACK)))
+    {
+        ar_focus_next(c, (in->keys_pressed & AR_KEY_TAB_BACK) ? 1 : 0);
+    }
+
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
         ar_i32 k;
 
         c->active = c->hot;
+
+        /*
+         * A press moves focus to the nearest focusable box at or above the
+         * cursor, and that focus is *not* visible.
+         *
+         * This is the whole of `:focus-visible`: a click focuses a control so
+         * that typing goes to it, and must not draw a ring; a Tab focuses the
+         * same control and must. Pages ship `outline: none` because engines
+         * used to draw a ring for both.
+         *
+         * A press on nothing focusable clears the focus rather than leaving it
+         * where it was, which is what a browser does and what makes clicking
+         * the page background a way out of a form.
+         */
+        {
+            ar_i32 f;
+            ar_u32 hit = 0;
+
+            for (k = 0; k < c->hot_chain_n && !hit; ++k)
+            {
+                for (f = 0; f < c->focusable_prev_n; ++f)
+                {
+                    if (c->focusables_prev[f] == c->hot_chain[k])
+                    {
+                        hit = c->hot_chain[k];
+                        break;
+                    }
+                }
+            }
+            c->focus_key = hit;
+            c->focus_visible = 0;
+            if (!hit)
+            {
+                c->focus_chain_n = 0;
+            }
+        }
 
         /* The ancestors latch with it, for the reason `:hover` has them: the
            box under the cursor in a document is the text, and the rule that
@@ -3052,7 +3108,18 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     ar_classes klass;
     ar_u32     key;
     ar_slot   *slot;
-    ar_u8      state = AR_STATE_NONE;
+    /*
+     * Sixteen bits, and it was eight until 0.10.0 put a state bit above the
+     * eighth into this function.
+     *
+     * `n->state` has been an ar_u16 all along and the local that feeds it was
+     * half that width, which cost nothing for six releases by coincidence: the
+     * three bits above the eighth that existed -- :last-child, :only-child and
+     * :empty -- are all set by the late pass directly on `n->state`, and never
+     * travel through here. `:focus-visible` and `:focus-within` do, and arrived
+     * as zero.
+     */
+    ar_u16     state = AR_STATE_NONE;
 
     if (c->node_count >= c->node_cap)
     {
@@ -3090,6 +3157,28 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     if (ar__in_chain(c->active_chain, c->active_chain_n, key))
     {
         state |= AR_STATE_ACTIVE;
+    }
+
+    /*
+     * Focus, from the same place and for the same reason: it is settled by the
+     * previous frame's tree, because this frame's has not been laid out yet.
+     *
+     * `:focus-visible` is not a second kind of focus, it is the same focus
+     * qualified by how it arrived -- so it is the focus bit and the remembered
+     * keyboard flag, and never one without the other.
+     */
+    if (c->focus_key != 0 && key == c->focus_key)
+    {
+        state |= AR_STATE_FOCUS;
+        if (c->focus_visible)
+        {
+            state |= AR_STATE_FOCUS_VISIBLE;
+        }
+        c->focus_index = (ar_i32)idx;
+    }
+    if (ar__in_chain(c->focus_chain, c->focus_chain_n, key))
+    {
+        state |= AR_STATE_FOCUS_WITHIN;
     }
 
     /* The structural bits that position among siblings already settles. The
@@ -3407,6 +3496,88 @@ static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
             return;
         }
     }
+}
+
+void ar_focusable(ar_ctx *c)
+{
+    if (!c || c->node_count <= 0 || c->focusable_n >= AR_MAX_FOCUSABLES)
+    {
+        return;
+    }
+    c->focusables[c->focusable_n++] = c->nodes[c->node_count - 1].key;
+}
+
+int ar_focus_next(ar_ctx *c, int backwards)
+{
+    ar_i32 n, i, at = -1;
+
+    if (!c)
+    {
+        return 0;
+    }
+    n = c->focusable_prev_n;
+    if (n <= 0)
+    {
+        return 0;
+    }
+
+    for (i = 0; i < n; ++i)
+    {
+        if (c->focusables_prev[i] == c->focus_key)
+        {
+            at = i;
+            break;
+        }
+    }
+
+    /*
+     * Nothing focused yet means Tab takes the first stop and Shift-Tab the
+     * last, which is what a browser does with a fresh document. Wrapping at
+     * both ends rather than stopping, because a document is not a modal and
+     * there is nowhere else for the focus to go yet -- focus trapping is a
+     * 0.10.0 problem and needs something to trap it in.
+     */
+    if (at < 0)
+    {
+        at = backwards ? n - 1 : 0;
+    }
+    else
+    {
+        at = backwards ? at - 1 : at + 1;
+        if (at < 0)
+        {
+            at = n - 1;
+        }
+        if (at >= n)
+        {
+            at = 0;
+        }
+    }
+
+    c->focus_key = c->focusables_prev[at];
+    c->focus_visible = 1;
+    return 1;
+}
+
+void ar_focus_clear(ar_ctx *c)
+{
+    if (c)
+    {
+        c->focus_key = 0;
+        c->focus_visible = 0;
+        c->focus_chain_n = 0;
+        c->focus_index = -1;
+    }
+}
+
+int ar_has_focus(const ar_ctx *c)
+{
+    return c && c->focus_key != 0;
+}
+
+int ar_focus_is_visible(const ar_ctx *c)
+{
+    return c && c->focus_key != 0 && c->focus_visible;
 }
 
 void ar_begin(ar_ctx *c, const char *selector)
@@ -4159,16 +4330,14 @@ static void ar__apply_wheel(ar_ctx *c)
  * Runs beside ar__apply_wheel and settles into the same place, so a key and a
  * notch cannot disagree about where a container ended up.
  *
- * Which container? There is no focus in areole, so the honest answer is the
- * same one the wheel would move: the innermost scrollable box under the
- * cursor. That is a deviation from a browser, where the keyboard follows focus
- * and the wheel follows the pointer, and it is named here rather than left to
- * be discovered. Focus arrives with the rest of keyboard handling in 0.10.0
- * and this becomes a one-line change when it does.
+ * Which container? The one holding the focus, and when nothing is focused,
+ * the one under the cursor.
  *
- * A page is the viewport less an overlap, which is what every reader expects:
- * the last line of the old page is the first line of the new one, so nothing
- * is skipped over the fold.
+ * This said "there is no focus in areole, so the honest answer is the
+ * cursor" from 0.6.1 until 0.10.0, and named itself a deviation from a
+ * browser while it did. There is a focus now. The cursor rule stayed as the
+ * fallback rather than being replaced, because a document nobody has tabbed
+ * into has no focus and Page Down should still do something there.
  */
 #define AR_KEY_LINE     40
 #define AR_PAGE_OVERLAP 24
@@ -4205,7 +4374,26 @@ static void ar__apply_keys(ar_ctx *c)
 {
     ar_i32 i;
 
-    if (c->keys == 0 || !c->mouse_inside || c->drag_key)
+    /*
+     * The keyboard follows the focus when there is one, and the cursor when
+     * there is not.
+     *
+     * Until 0.10.0 it followed the cursor always, and the comment above this
+     * function said why: "There is no focus in areole, so the honest answer
+     * is the cursor." That was honest and it was a deviation -- in a browser
+     * the keyboard follows focus, and scrolling a pane you are not pointing
+     * at is exactly what Tab and then Page Down is for.
+     *
+     * The cursor fallback stays and is not a consolation prize: a document
+     * nobody has tabbed into yet has no focus, and Page Down there should
+     * still scroll whatever is under the pointer. The wheel is left alone
+     * entirely -- a wheel scrolls what it points at, in every toolkit.
+     */
+    if (c->keys == 0 || c->drag_key)
+    {
+        return;
+    }
+    if (!ar_has_focus(c) && !c->mouse_inside)
     {
         return;
     }
@@ -4217,7 +4405,22 @@ static void ar__apply_keys(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want, travel;
 
-        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n))
+        {
+            continue;
+        }
+        /* With a focus, the container holding it; without one, the container
+           under the pointer. `focus_chain` is the path from the focused box to
+           the root, so a hit in it is exactly "this container contains the
+           focus". */
+        if (ar_has_focus(c))
+        {
+            if (!ar__in_chain(c->focus_chain, c->focus_chain_n, n->key))
+            {
+                continue;
+            }
+        }
+        else if (!ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -4320,6 +4523,27 @@ static void ar__update_hot(ar_ctx *c)
         while (at >= 0 && c->hot_chain_n < AR_MAX_DEPTH)
         {
             c->hot_chain[c->hot_chain_n++] = c->nodes[at].key;
+            at = c->nodes[at].parent;
+        }
+    }
+
+    /*
+     * And the focus chain, for `:focus-within`.
+     *
+     * Built from the index ar_begin recorded rather than by searching, and
+     * rebuilt every frame because the tree is: a key that was focused last
+     * frame and is not declared this frame keeps its key and loses its index,
+     * which is exactly what should happen -- the focus survives a box going
+     * away and comes back with it.
+     */
+    c->focus_chain_n = 0;
+    if (c->focus_index >= 0)
+    {
+        ar_i32 at = c->focus_index;
+
+        while (at >= 0 && c->focus_chain_n < AR_MAX_DEPTH)
+        {
+            c->focus_chain[c->focus_chain_n++] = c->nodes[at].key;
             at = c->nodes[at].parent;
         }
     }
@@ -4988,6 +5212,29 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     {
         ar__paint(c, s, damage);
     }
+    /*
+     * The frame's tab stops become the list Tab and a click walk next frame.
+     *
+     * Here rather than inside ar__update_hot, which is where it went first:
+     * that function returns early when the cursor is outside the window, so on
+     * a machine where nobody had touched the mouse the list was never
+     * published and Tab did nothing at all. Focus is the one kind of input
+     * that has to work when the mouse does not.
+     *
+     * Copied rather than swapped, because the live list is cleared at the top
+     * of every frame and a swap would hand the next frame a stale one whenever
+     * a frame declared no focusable boxes.
+     */
+    {
+        ar_i32 fk;
+
+        c->focusable_prev_n = c->focusable_n;
+        for (fk = 0; fk < c->focusable_n; ++fk)
+        {
+            c->focusables_prev[fk] = c->focusables[fk];
+        }
+    }
+
     ar__update_hot(c);
     ar__apply_drag(c);
     ar__apply_wheel(c);

@@ -13,6 +13,11 @@
 
 #define AR_MAX_DEPTH 64
 
+/* How many focusable boxes one frame may hold. A form with more than this
+   many fields is a form nobody fills in; Tab stops at the ceiling rather
+   than wrapping into the wrong place, and ar_test says so. */
+#define AR_MAX_FOCUSABLES 256
+
 /* ------------------------------------------------------------------------
  * Box
  *
@@ -459,6 +464,49 @@ struct ar_ctx
     ar_i32 hot_chain_n;
     ar_u32 active_chain[AR_MAX_DEPTH];
     ar_i32 active_chain_n;
+
+    /*
+     * Focus, as a key and the path from it to the root.
+     *
+     * The same shape as the hover chain above and for the same two reasons:
+     * keys rather than indices because the state is wanted in `ar_begin` while
+     * this frame's tree is still being built, and a chain because
+     * `:focus-within` matches every ancestor the way `:hover` does.
+     *
+     * Zero means nothing is focused, which is a real state and not a missing
+     * one -- a document with nothing focused is where every document starts,
+     * and Tab is what leaves it.
+     */
+    ar_u32 focus_key;
+    /* Where it landed in this frame's tree, or -1. Recorded in ar_begin so
+       the ancestor chain costs a walk up rather than a search over every
+       box, which on a ten-thousand-box document is the difference between
+       eight compares and ten thousand. */
+    ar_i32 focus_index;
+    ar_u32 focus_chain[AR_MAX_DEPTH];
+    ar_i32 focus_chain_n;
+
+    /*
+     * Whether the focus arrived from the keyboard.
+     *
+     * `:focus-visible` is this bit, and it is the whole reason the pseudo-class
+     * exists: a click must focus without drawing a ring and a Tab must draw
+     * one. It cannot be worked out from the box, only from the event that
+     * moved the focus, so it is remembered here at the moment of the move.
+     */
+    int focus_visible;
+
+    /* The focusable boxes of the frame just built, in document order, so Tab
+       has something to walk. Rebuilt every frame because the tree is. */
+    ar_u32 focusables[AR_MAX_FOCUSABLES];
+    ar_i32 focusable_n;
+
+    /* And the list as it stood when the frame closed, which is what Tab and a
+       click actually walk. Two lists because the live one is half-built while
+       the tree is being declared, and a Tab arriving mid-frame would see a
+       document that stops at whatever box is open. */
+    ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
+    ar_i32 focusable_prev_n;
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame

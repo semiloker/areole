@@ -4677,6 +4677,20 @@ static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
     {
         return AR_STATE_FOCUS;
     }
+    /*
+     * Longest first would be the usual worry here, and it is not one: these
+     * compare the whole name rather than a prefix, so `focus` cannot swallow
+     * `focus-visible`. Written in this order anyway, because the next person
+     * to add `:focus-something` will read the order as meaningful.
+     */
+    if (ar__same(name, len, "focus-visible"))
+    {
+        return AR_STATE_FOCUS_VISIBLE;
+    }
+    if (ar__same(name, len, "focus-within"))
+    {
+        return AR_STATE_FOCUS_WITHIN;
+    }
     if (ar__same(name, len, "root"))
     {
         return AR_STATE_ROOT;
@@ -4939,6 +4953,14 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "focus"))
                 {
                     *state |= AR_STATE_FOCUS;
+                }
+                else if (ar__same(name, len, "focus-visible"))
+                {
+                    *state |= AR_STATE_FOCUS_VISIBLE;
+                }
+                else if (ar__same(name, len, "focus-within"))
+                {
+                    *state |= AR_STATE_FOCUS_WITHIN;
                 }
                 else if (ar__same(name, len, "root"))
                 {
