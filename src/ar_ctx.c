@@ -2896,6 +2896,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        key. */
     c->focusable_n = 0;
     c->focus_index = -1;
+    c->control_n = 0;
 
     /*
      * Tab, before the tree is rebuilt, walking the list the previous frame
@@ -3185,6 +3186,45 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
        "apply to the next thing" API and is worth one line to prevent. */
     state |= c->next_state;
     c->next_state = 0;
+
+    /*
+     * A control's checkedness comes from the slot once anybody has touched it,
+     * and from the markup until then.
+     *
+     * Which way round that goes is the whole of it. The markup says what the
+     * control starts as; a click says what it is now. Reading the markup every
+     * frame makes a box with `checked` spring back the moment it is
+     * unchecked -- and reading the slot every frame makes a box that has never
+     * been clicked ignore its own markup. TOUCHED is what tells the two
+     * apart, and it is the bit that is easy not to think of.
+     */
+    if (c->next_kind == AR_CTL_CHECKBOX || c->next_kind == AR_CTL_RADIO)
+    {
+        if (slot && (slot->flags & AR_SLOT_TOUCHED))
+        {
+            state &= ~(ar_u32)AR_STATE_CHECKED;
+            if (slot->flags & AR_SLOT_CHECKED)
+            {
+                state |= AR_STATE_CHECKED;
+            }
+        }
+        else if (slot && (state & AR_STATE_CHECKED))
+        {
+            /* Seed the slot from the markup, so the first click has something
+               to toggle away from rather than toggling into the state it is
+               already in. */
+            slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED);
+        }
+    }
+    if (c->next_kind != AR_CTL_NONE && c->control_n < AR_MAX_FOCUSABLES)
+    {
+        c->control_key[c->control_n] = key;
+        c->control_group[c->control_n] = c->next_group;
+        c->control_kind[c->control_n] = c->next_kind;
+        c->control_n++;
+    }
+    c->next_kind = AR_CTL_NONE;
+    c->next_group = 0;
 
     /* The structural bits that position among siblings already settles. The
        other three wait for the parent to close; see ar__resolve_late. */
@@ -3508,6 +3548,15 @@ void ar_state_next(ar_ctx *c, ar_u32 bits)
     if (c)
     {
         c->next_state |= bits;
+    }
+}
+
+void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group)
+{
+    if (c)
+    {
+        c->next_kind = kind;
+        c->next_group = group;
     }
 }
 
@@ -5225,6 +5274,83 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     {
         ar__paint(c, s, damage);
     }
+    /*
+     * Activation, and it is settled here because here is where both halves are
+     * known: the tree is complete, so every control is registered, and the
+     * click has been resolved against it.
+     *
+     * The effect lands on the next frame. That is the same one-frame model
+     * hover, focus and everything else in this file uses, and for the same
+     * reason: the state a box is styled with has to be settled before the box
+     * is styled, and this is after.
+     */
+    {
+        ar_i32 ci;
+        ar_u32 fired = 0;
+
+        /* A click on a control, or a key on the focused one. Space and Enter
+           both activate; Space only reaches here when something is focused,
+           because otherwise it has already paged the view down. */
+        if (c->clicked)
+        {
+            fired = c->clicked;
+        }
+        else if (c->focus_key && (c->keys & (AR_KEY_ENTER | AR_KEY_SPACE)))
+        {
+            fired = c->focus_key;
+        }
+
+        for (ci = 0; fired && ci < c->control_n; ++ci)
+        {
+            ar_slot *slot;
+
+            if (c->control_key[ci] != fired)
+            {
+                continue;
+            }
+            slot = ar_ctx_slot(c, fired);
+            if (!slot)
+            {
+                break;
+            }
+
+            if (c->control_kind[ci] == AR_CTL_CHECKBOX)
+            {
+                slot->flags = (ar_u8)((slot->flags ^ AR_SLOT_CHECKED) | AR_SLOT_TOUCHED);
+            }
+            else if (c->control_kind[ci] == AR_CTL_RADIO)
+            {
+                ar_i32 k;
+
+                /*
+                 * A radio turns on and never off by its own activation, and
+                 * every other radio of the same name turns off. That
+                 * asymmetry is the control: a group with nothing selected is
+                 * reachable from the markup and not from the user.
+                 */
+                for (k = 0; k < c->control_n; ++k)
+                {
+                    ar_slot *other;
+
+                    if (c->control_kind[k] != AR_CTL_RADIO ||
+                        c->control_group[k] != c->control_group[ci])
+                    {
+                        continue;
+                    }
+                    other = ar_ctx_slot(c, c->control_key[k]);
+                    if (!other)
+                    {
+                        continue;
+                    }
+                    other->flags = (ar_u8)((other->flags & ~(ar_u8)AR_SLOT_CHECKED) |
+                                           AR_SLOT_TOUCHED);
+                }
+                slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED | AR_SLOT_TOUCHED);
+            }
+            break;
+        }
+    }
+
     /*
      * The frame's tab stops become the list Tab and a click walk next frame.
      *

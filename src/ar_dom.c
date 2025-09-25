@@ -745,6 +745,47 @@ static ar_u32 ar__markup_state(const ar_doc *d, ar_i32 node)
     return st;
 }
 
+/*
+ * Which controls activate, and how.
+ *
+ * The list is short because it is the list of things that do something when
+ * you press them and need no caret to do it. Text fields are absent on
+ * purpose: they take a keystroke rather than an activation, and that is the
+ * editing subsystem rather than this one.
+ */
+static ar_u8 ar__control_kind(const ar_doc *d, ar_i32 node)
+{
+    ar_span name = d->nodes[node].name;
+
+    if (ar_span_is(name, "button"))
+    {
+        return AR_CTL_BUTTON;
+    }
+    if (ar_span_is(name, "summary"))
+    {
+        return AR_CTL_SUMMARY;
+    }
+    if (ar_span_is(name, "input"))
+    {
+        ar_span type = ar__attr_of(d, node, "type");
+
+        if (type.p && ar_span_is(type, "checkbox"))
+        {
+            return AR_CTL_CHECKBOX;
+        }
+        if (type.p && ar_span_is(type, "radio"))
+        {
+            return AR_CTL_RADIO;
+        }
+        if (type.p && (ar_span_is(type, "submit") || ar_span_is(type, "reset") ||
+                       ar_span_is(type, "button")))
+        {
+            return AR_CTL_BUTTON;
+        }
+    }
+    return AR_CTL_NONE;
+}
+
 static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
@@ -789,10 +830,23 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         const char *h = ar__hints(d, node, hints);
 
         ar_u32 st = ar__markup_state(d, node);
+        ar_u8  kind = ar__control_kind(d, node);
 
         if (st)
         {
             ar_state_next(c, st);
+        }
+        if (kind != AR_CTL_NONE)
+        {
+            /* A radio's group is the hash of its `name`, and a radio with no
+               name is a group of one -- which is what a browser does and is
+               less surprising than making every unnamed radio fight the
+               others. */
+            ar_span nm = ar__attr_of(d, node, "name");
+
+            ar_control_next(c, kind, (kind == AR_CTL_RADIO && nm.p)
+                                         ? ar_hash(nm.p, nm.n)
+                                         : (ar_u32)node);
         }
         ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
     }

@@ -17496,6 +17496,161 @@ static void test_control_states_from_markup(void)
           "control: a boolean attribute is true when present, whatever it says");
 }
 
+/*
+ * Controls that can be operated, which is the difference between markup that
+ * describes a checkbox and a checkbox.
+ *
+ * Activation is settled at frame end, where both halves are known -- the tree
+ * is complete so every control is registered, and the click has been resolved
+ * against it -- and takes effect on the next frame. That is the same one-frame
+ * model hover and focus use, and for the same reason: the state a box is
+ * styled with has to be settled before it is styled.
+ */
+static void ar__press_at(ar_surface *s, ar_i32 x, ar_i32 y)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = x;
+    in.mouse_y = y;
+    in.mouse_inside = 1;
+
+    /* One frame to settle which box is under the cursor, as the hover
+       machinery has always needed, and then the press and its release --
+       a click is only a click when it goes down and comes up on one box. */
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    in.mouse_pressed = AR_MOUSE_LEFT;
+    in.mouse_down = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    in.mouse_pressed = 0;
+    in.mouse_down = 0;
+    in.mouse_released = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    /* And one more, because the toggle lands on the frame after the click. */
+    ar__reframe(s);
+}
+
+static int ar__is_checked(const char *id)
+{
+    return (ar__box_style(ar__first_tag_id(id))->v[AR_P_WIDTH]) == 77;
+}
+
+static void test_a_checkbox_toggles(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"checkbox\">"
+                    "</body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    CHECK(!ar__is_checked("a"), "control: a checkbox starts unchecked");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__is_checked("a"), "control: a click checks it");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(!ar__is_checked("a"), "control: and another click unchecks it");
+}
+
+static void test_a_checked_attribute_is_a_starting_point(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"a\" type=\"checkbox\" checked></body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    CHECK(ar__is_checked("a"), "control: a checked attribute starts it checked");
+
+    /*
+     * And a click must be able to turn it off and keep it off. Reading the
+     * markup every frame makes a box with `checked` spring back the instant it
+     * is unchecked, which is the bug this half of the slot exists to prevent:
+     * TOUCHED is what tells "unchecked by the user" from "never visited".
+     */
+    ar__press_at(&s, 5, 5);
+    CHECK(!ar__is_checked("a"), "control: and a click can turn it off");
+    ar__reframe(&s);
+    CHECK(!ar__is_checked("a"), "control: and it stays off on the frame after");
+}
+
+static void test_radios_of_one_name_exclude_each_other(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"x\" type=\"radio\" name=\"g\">"
+                    "<input id=\"y\" type=\"radio\" name=\"g\">"
+                    "<input id=\"z\" type=\"radio\" name=\"other\">"
+                    "</body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "input:checked { width:77px }");
+
+    ar__press_at(&s, 5, 5); /* x */
+    CHECK(ar__is_checked("x"), "control: a click selects a radio");
+
+    ar__press_at(&s, 5, 25); /* y */
+    CHECK(ar__is_checked("y"), "control: clicking another selects it");
+    CHECK(!ar__is_checked("x"), "control: and deselects the first of the same name");
+
+    /*
+     * A radio turns on and never off by its own activation, which is the
+     * asymmetry that makes it a radio: a group with nothing selected is
+     * reachable from the markup and not from the user.
+     */
+    ar__press_at(&s, 5, 25);
+    CHECK(ar__is_checked("y"), "control: clicking a selected radio leaves it selected");
+
+    /* And a different name is a different group. */
+    ar__press_at(&s, 5, 45); /* z */
+    CHECK(ar__is_checked("z"), "control: a radio of another name selects");
+    CHECK(ar__is_checked("y"), "control: and leaves the first group alone");
+}
+
+static void test_space_activates_the_focused_control(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"a\" type=\"checkbox\"></body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(ar_has_focus(g_ui), "control: tab reaches the checkbox");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = AR_KEY_SPACE;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    ar__reframe(&s);
+
+    CHECK(ar__is_checked("a"), "control: space activates what the keyboard is on");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21007,6 +21162,10 @@ int main(void)
     test_border_shorthand_takes_a_deferred_colour();
     test_tab_order_in_a_document();
     test_control_states_from_markup();
+    test_a_checkbox_toggles();
+    test_a_checked_attribute_is_a_starting_point();
+    test_radios_of_one_name_exclude_each_other();
+    test_space_activates_the_focused_control();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
