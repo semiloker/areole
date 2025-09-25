@@ -243,13 +243,18 @@ void ar_state_next(ar_ctx *c, ar_u32 bits);
    `name` and is ignored for everything else. */
 void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
 
+/* Whether the box most recently opened is a `<details>` that is showing its
+   contents. The walk asks so it can skip the children of a closed one. */
+int ar_box_is_open(const ar_ctx *c);
+
 enum
 {
     AR_CTL_NONE = 0,
     AR_CTL_CHECKBOX,
     AR_CTL_RADIO,
     AR_CTL_BUTTON,
-    AR_CTL_SUMMARY
+    AR_CTL_SUMMARY,
+    AR_CTL_DETAILS
 };
 
 typedef struct ar_slot
@@ -300,7 +305,11 @@ typedef struct ar_slot
 enum
 {
     AR_SLOT_CHECKED = 1 << 0,
-    AR_SLOT_TOUCHED = 1 << 1
+    AR_SLOT_TOUCHED = 1 << 1,
+    /* A `<details>` showing its contents. Separate from CHECKED because a
+       box is never both, and sharing the bit would work until the day
+       something is. */
+    AR_SLOT_OPEN = 1 << 2
 };
 
 /* ------------------------------------------------------------------------

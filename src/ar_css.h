@@ -1276,6 +1276,16 @@ enum
     AR_STATE_DISABLED = 1 << 17,
     AR_STATE_ENABLED = 1 << 18,
 
+    /*
+     * `:open`, for a `<details>` that is showing its contents.
+     *
+     * A pseudo-class and not `[open]`, for the reason `:checked` is not
+     * `[checked]`: the attribute is where it started and the state is what the
+     * user has done since. A stylesheet written against `[open]` styles the
+     * markup and stops agreeing with the screen the first time anyone clicks.
+     */
+    AR_STATE_OPEN = 1 << 19,
+
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
 

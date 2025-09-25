@@ -3216,6 +3216,39 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
             slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED);
         }
     }
+    if (c->next_kind == AR_CTL_DETAILS && slot)
+    {
+        /* Same TOUCHED rule as a checkbox: the `open` attribute is where it
+           started, the slot is what has happened since. */
+        if (slot->flags & AR_SLOT_TOUCHED)
+        {
+            state &= ~(ar_u32)AR_STATE_OPEN;
+            if (slot->flags & AR_SLOT_OPEN)
+            {
+                state |= AR_STATE_OPEN;
+            }
+        }
+        else if (state & AR_STATE_OPEN)
+        {
+            slot->flags = (ar_u8)(slot->flags | AR_SLOT_OPEN);
+        }
+    }
+
+    /*
+     * A summary carries the key of the `<details>` it opens, in the field a
+     * radio uses for its group.
+     *
+     * Two meanings in one field, which is worth a sentence rather than a
+     * fourth array of 256 keys: for a radio the group is "which radios am I
+     * exclusive with", for a summary it is "which box do I toggle". Both are
+     * "the thing this control acts on", and the parent is known here and not
+     * in the document walk, which is why it is filled in here.
+     */
+    if (c->next_kind == AR_CTL_SUMMARY && parent >= 0)
+    {
+        c->next_group = c->nodes[parent].key;
+    }
+
     if (c->next_kind != AR_CTL_NONE && c->control_n < AR_MAX_FOCUSABLES)
     {
         c->control_key[c->control_n] = key;
@@ -3630,6 +3663,15 @@ void ar_focus_clear(ar_ctx *c)
         c->focus_chain_n = 0;
         c->focus_index = -1;
     }
+}
+
+int ar_box_is_open(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return 0;
+    }
+    return (c->nodes[c->node_count - 1].state & AR_STATE_OPEN) != 0;
 }
 
 int ar_has_focus(const ar_ctx *c)
@@ -5288,12 +5330,36 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar_i32 ci;
         ar_u32 fired = 0;
 
-        /* A click on a control, or a key on the focused one. Space and Enter
-           both activate; Space only reaches here when something is focused,
-           because otherwise it has already paged the view down. */
+        /*
+         * A click on a control, or a key on the focused one. Space and Enter
+         * both activate; Space only reaches here when something is focused,
+         * because otherwise it has already paged the view down.
+         *
+         * The click is matched against the *chain* and not against the box it
+         * landed on, for the reason `:hover` needs a chain: in a parsed
+         * document every element's text is a child box, so a press on
+         * `<summary>head</summary>` lands on the text and never on the summary.
+         * An `<input>` has no text child and worked without this, which is
+         * exactly the sort of coincidence that makes the bug look like it is
+         * about `<details>`.
+         */
         if (c->clicked)
         {
-            fired = c->clicked;
+            ar_i32 h;
+
+            for (h = 0; h < c->hot_chain_n && !fired; ++h)
+            {
+                ar_i32 k;
+
+                for (k = 0; k < c->control_n; ++k)
+                {
+                    if (c->control_key[k] == c->hot_chain[h])
+                    {
+                        fired = c->hot_chain[h];
+                        break;
+                    }
+                }
+            }
         }
         else if (c->focus_key && (c->keys & (AR_KEY_ENTER | AR_KEY_SPACE)))
         {
@@ -5317,6 +5383,15 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
             if (c->control_kind[ci] == AR_CTL_CHECKBOX)
             {
                 slot->flags = (ar_u8)((slot->flags ^ AR_SLOT_CHECKED) | AR_SLOT_TOUCHED);
+            }
+            else if (c->control_kind[ci] == AR_CTL_SUMMARY)
+            {
+                ar_slot *det = ar_ctx_slot(c, c->control_group[ci]);
+
+                if (det)
+                {
+                    det->flags = (ar_u8)((det->flags ^ AR_SLOT_OPEN) | AR_SLOT_TOUCHED);
+                }
             }
             else if (c->control_kind[ci] == AR_CTL_RADIO)
             {
