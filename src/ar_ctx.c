@@ -916,7 +916,7 @@ static void ar__mark_inert(ar_ctx *c)
         }
         if (inert)
         {
-            n->state = (ar_u16)(n->state | AR_STATE_INERT);
+            n->state = (ar_u32)(n->state | AR_STATE_INERT);
         }
     }
 }
@@ -967,7 +967,7 @@ static void ar__mark_collapsed(ar_ctx *c)
             {
                 if (c->nodes[at].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
                 {
-                    n->state = (ar_u16)(n->state | AR_STATE_COLLAPSED);
+                    n->state = (ar_u32)(n->state | AR_STATE_COLLAPSED);
                 }
                 break;
             }
@@ -3109,8 +3109,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     ar_u32     key;
     ar_slot   *slot;
     /*
-     * Sixteen bits, and it was eight until 0.10.0 put a state bit above the
-     * eighth into this function.
+     * Thirty-two bits, and it was eight two commits ago.
      *
      * `n->state` has been an ar_u16 all along and the local that feeds it was
      * half that width, which cost nothing for six releases by coincidence: the
@@ -3119,7 +3118,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
      * travel through here. `:focus-visible` and `:focus-within` do, and arrived
      * as zero.
      */
-    ar_u16     state = AR_STATE_NONE;
+    ar_u32     state = AR_STATE_NONE;
 
     if (c->node_count >= c->node_cap)
     {
@@ -3180,6 +3179,12 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     {
         state |= AR_STATE_FOCUS_WITHIN;
     }
+
+    /* Whatever the caller said this box is, taken once and cleared so it
+       cannot leak into the next box -- which is the failure mode of every
+       "apply to the next thing" API and is worth one line to prevent. */
+    state |= c->next_state;
+    c->next_state = 0;
 
     /* The structural bits that position among siblings already settles. The
        other three wait for the parent to close; see ar__resolve_late. */
@@ -3495,6 +3500,14 @@ static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
         {
             return;
         }
+    }
+}
+
+void ar_state_next(ar_ctx *c, ar_u32 bits)
+{
+    if (c)
+    {
+        c->next_state |= bits;
     }
 }
 

@@ -695,6 +695,56 @@ static int ar__focusable_element(const ar_doc *d, ar_i32 node)
     return 0;
 }
 
+/*
+ * The states a control is born with, read from the markup.
+ *
+ * `checked` and `disabled` are boolean attributes: present means true whatever
+ * the value says, so `disabled="false"` disables. That is HTML and it surprises
+ * people, and writing the check any other way is how an engine ends up
+ * disagreeing with every browser about one line of somebody's markup.
+ *
+ * `:enabled` is not merely the absence of `:disabled`. Neither matches an
+ * element that cannot be disabled at all -- a paragraph is not an enabled
+ * paragraph -- so both bits come from the same short list of elements and the
+ * list is the point.
+ */
+static ar_u32 ar__markup_state(const ar_doc *d, ar_i32 node)
+{
+    ar_span name = d->nodes[node].name;
+    ar_u32  st = 0;
+    int     formish;
+
+    formish = ar_span_is(name, "input") || ar_span_is(name, "button") ||
+              ar_span_is(name, "select") || ar_span_is(name, "textarea") ||
+              ar_span_is(name, "option") || ar_span_is(name, "optgroup") ||
+              ar_span_is(name, "fieldset");
+
+    if (formish)
+    {
+        st |= ar__attr_of(d, node, "disabled").p ? AR_STATE_DISABLED : AR_STATE_ENABLED;
+    }
+
+    /*
+     * `checked` in the markup is the *default* checkedness, not the state. A
+     * user who clicks the box changes the state and not the attribute, which
+     * is why `:checked` is a pseudo-class and `[checked]` is a different
+     * question -- and the difference is a mistake people make once.
+     *
+     * Nothing here can change it yet, so for now the two agree. When
+     * activation lands, this becomes the initial value and the slot carries
+     * what happened since.
+     */
+    if (ar_span_is(name, "input") && ar__attr_of(d, node, "checked").p)
+    {
+        st |= AR_STATE_CHECKED;
+    }
+    if (ar_span_is(name, "option") && ar__attr_of(d, node, "selected").p)
+    {
+        st |= AR_STATE_CHECKED;
+    }
+    return st;
+}
+
 static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
@@ -738,6 +788,12 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
            copies them and neither buffer survives this frame's recursion. */
         const char *h = ar__hints(d, node, hints);
 
+        ar_u32 st = ar__markup_state(d, node);
+
+        if (st)
+        {
+            ar_state_next(c, st);
+        }
         ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
     }
 
