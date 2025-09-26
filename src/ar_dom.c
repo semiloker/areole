@@ -99,6 +99,26 @@ static void ar__put_span(char *buf, ar_u32 *used, ar_u32 cap, ar_span s)
  * The class attribute is a space-separated list and the selector syntax spells
  * each one with a dot, so the spaces become dots.
  */
+/* Append a literal to a selector already built, if it fits. Silent when it
+   does not: a selector too long to hold its own class is a document with a
+   pathological class list, and dropping the tail styles the box plainly
+   rather than failing to build it. */
+static void ar__put_lit(char *buf, const char *lit)
+{
+    ar_u32 used = 0;
+    ar_u32 i = 0;
+
+    while (buf[used])
+    {
+        ++used;
+    }
+    while (lit[i] && used + 1 < AR_DOM_SEL)
+    {
+        buf[used++] = lit[i++];
+    }
+    buf[used] = 0;
+}
+
 static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
 {
     ar_u32  used = 0;
@@ -840,6 +860,28 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         ar_u32 st = ar__markup_state(d, node);
         ar_u8  kind = ar__control_kind(d, node);
 
+        /*
+         * A class per input type, because there are no attribute selectors in
+         * this engine and the user-agent sheet has to be able to tell a
+         * checkbox from a text field.
+         *
+         * `input[type=checkbox]` is how every other engine writes this rule.
+         * Adding attribute selectors to get there is 0.4.6's work and a good
+         * deal more than a checkbox needs, so the hook is a synthetic class
+         * with a reserved prefix. It is visible to author stylesheets, which
+         * is the honest cost: `.ar-checkbox` will match, and is documented
+         * rather than hidden, because a name nobody is told about is a name
+         * somebody discovers.
+         */
+        if (kind == AR_CTL_CHECKBOX)
+        {
+            ar__put_lit(sel, ".ar-checkbox");
+        }
+        else if (kind == AR_CTL_RADIO)
+        {
+            ar__put_lit(sel, ".ar-radio");
+        }
+
         if (st)
         {
             ar_state_next(c, st);
@@ -865,6 +907,23 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     {
         ar_focusable(c);
     }
+    /*
+     * A checkbox and a radio each get one child box, which is the mark.
+     *
+     * A real box rather than a painted glyph, because that is what makes it
+     * styleable -- the whole argument for building controls out of boxes at
+     * all. It carries the same checked state as its parent so the sheet can
+     * say `.ar-mark:checked`, rather than needing a combinator that reaches
+     * from a parent's state to a child.
+     */
+    if (ar__control_kind(d, node) == AR_CTL_CHECKBOX ||
+        ar__control_kind(d, node) == AR_CTL_RADIO)
+    {
+        ar_state_next(c, ar_box_is_checked(c) ? AR_STATE_CHECKED : 0);
+        ar_begin(c, "ar-mark");
+        ar_end(c);
+    }
+
     {
         /*
          * A closed `<details>` shows its summary and nothing else.

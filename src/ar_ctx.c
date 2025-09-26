@@ -3665,6 +3665,15 @@ void ar_focus_clear(ar_ctx *c)
     }
 }
 
+int ar_box_is_checked(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return 0;
+    }
+    return (c->nodes[c->node_count - 1].state & AR_STATE_CHECKED) != 0;
+}
+
 int ar_box_is_open(const ar_ctx *c)
 {
     if (!c || c->node_count <= 0)

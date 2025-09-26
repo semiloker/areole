@@ -17710,6 +17710,74 @@ static void test_details_open_attribute_is_a_starting_point(void)
     CHECK(ar__first_tag_id("body") < 0, "details: and it stays closed the frame after");
 }
 
+/*
+ * A control that looks like a control.
+ *
+ * Boxes and borders rather than a bitmap, which is the whole argument for
+ * building them this way: an author can restyle a checkbox because a checkbox
+ * is a box. And the colours are the system ones 0.4.4 shipped, so this is the
+ * first thing in the engine to use those nineteen names for their purpose.
+ */
+static void test_controls_are_boxes(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"c\" type=\"checkbox\">"
+                    "<input id=\"r\" type=\"radio\">"
+                    "<input id=\"t\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 }");
+
+    /* The synthetic class is what lets the sheet tell a checkbox from a text
+       field, there being no attribute selectors here yet. */
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 13,
+          "ua: a checkbox is square whatever the font is");
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_WIDTH] == 13,
+          "ua: and so is a radio");
+    CHECK(ar__box_style(ar__first_tag_id("t"))->v[AR_P_WIDTH] != 13,
+          "ua: a text field is not sized like either");
+
+    /* The radio is round and the checkbox is not. */
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] > 0,
+          "ua: a radio is round");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_BORDER_RADIUS] == 0,
+          "ua: and a checkbox is square");
+
+    /* The system colours reach a control, which is what those names are for. */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("t")), AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "ua: a field takes the system Field colour");
+}
+
+static void test_the_mark_is_a_box_that_appears(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"c\" type=\"checkbox\"></body></html>",
+                    "body { margin:0 } input { display:block; margin:0 }");
+
+    /*
+     * The mark is built whether or not it is shown, so that checking a box
+     * costs no layout: it is already the right size in the right place, and
+     * only its background changes.
+     */
+    CHECK(ar__first_tag_id("c") >= 0, "ua: the checkbox is there");
+    {
+        ar_i32 box = ar__first_tag_id("c");
+        ar_i32 mark = box + 1; /* its only child */
+
+        CHECK(mark < g_ui->node_count, "ua: a checkbox has a mark child");
+        CHECK((ar_u32)AR_WIDE(ar__box_style(mark), AR_P_BACKGROUND) == 0u,
+              "ua: and the mark is transparent while unchecked");
+
+        ar__press_at(&s, 5, 5);
+        CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_BACKGROUND) != 0u,
+              "ua: and takes a colour once checked");
+    }
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21227,6 +21295,8 @@ int main(void)
     test_space_activates_the_focused_control();
     test_details_opens_and_closes();
     test_details_open_attribute_is_a_starting_point();
+    test_controls_are_boxes();
+    test_the_mark_is_a_box_that_appears();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

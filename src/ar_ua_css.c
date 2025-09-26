@@ -258,6 +258,62 @@ static const char *const AR__UA[] = {
 
     /*
      * ------------------------------------------------------------------
+     * Controls that look like controls, 0.10.0
+     * ------------------------------------------------------------------
+     *
+     * Every one of these is boxes and borders rather than a bitmap, which is
+     * the whole argument for building controls this way: an author can restyle
+     * a checkbox because a checkbox is a box.
+     *
+     * The colours are the system ones 0.4.4 shipped, so a control follows the
+     * desktop theme and `color-scheme: dark` repaints the lot -- which is what
+     * those nineteen names are for and the first thing in this engine to use
+     * them for their actual purpose.
+     *
+     * `.ar-checkbox` and `.ar-radio` are synthetic classes the document walk
+     * adds, because there are no attribute selectors here yet and
+     * `input[type=checkbox]` is how this rule is written everywhere else.
+     */
+    "button, input { background:ButtonFace; color:ButtonText; }"
+    "button, input { border:1px solid ButtonBorder; }"
+    "input { background:Field; color:FieldText; }"
+    "button:disabled, input:disabled { color:GrayText; }",
+
+    /* A square that is a square whatever the font is: a control sized in `em`
+       grows with the text around it and stops being a checkbox. */
+    ".ar-checkbox, .ar-radio { width:13px; height:13px; }"
+    ".ar-checkbox, .ar-radio { padding-left:0; padding-right:0; }"
+    ".ar-radio { border-radius:7px; }",
+
+    /* The mark is a child box and is built whether or not it is shown, so that
+       turning it on costs no layout -- the box is already the right size and in
+       the right place, and only its background changes. */
+    "ar-mark { display:block; width:7px; height:7px; }"
+    "ar-mark { margin-left:2px; margin-top:2px; background:transparent; }"
+    "ar-mark:checked { background:AccentColor; }"
+    ".ar-radio > ar-mark { border-radius:4px; }",
+
+    /*
+     * No focus ring here, and the reason is a missing property rather than a
+     * missing rule.
+     *
+     * There is no `outline` in this engine. The obvious substitute is a
+     * border, and it is worse than nothing: a border takes space, so a ring
+     * drawn with one shifts the layout every time the focus moves. Avoiding
+     * exactly that is what `outline` is for.
+     *
+     * So `:focus-visible` matches and nothing shows yet. The pseudo-class is
+     * the hard half and it works; the ring needs `outline-width`,
+     * `outline-color` and a paint pass that draws outside the border box
+     * without contributing to it. That is the next commit, and it will spend
+     * the last two property slots -- which is what widens AR_PSET_WORDS to
+     * four, priced at 0.9.6 as four bytes per style and nothing measurable.
+     */
+
+    "summary { display:block; }"
+
+    /*
+     * ------------------------------------------------------------------
      * The rest of the element set, 0.9.1
      * ------------------------------------------------------------------
      *

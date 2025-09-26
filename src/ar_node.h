@@ -247,6 +247,9 @@ void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
    contents. The walk asks so it can skip the children of a closed one. */
 int ar_box_is_open(const ar_ctx *c);
 
+/* The same question about a control's checkedness, for the mark. */
+int ar_box_is_checked(const ar_ctx *c);
+
 enum
 {
     AR_CTL_NONE = 0,
