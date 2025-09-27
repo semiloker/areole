@@ -777,6 +777,97 @@ static ar_u32 ar__markup_state(const ar_doc *d, ar_i32 node)
  * purpose: they take a keystroke rather than an activation, and that is the
  * editing subsystem rather than this one.
  */
+/*
+ * A number attribute, in thousandths, defaulting when it is absent or junk.
+ *
+ * Thousandths because `value="0.7"` is the common way to write a progress bar
+ * and an integer parse would make it zero -- which is a full bar reading empty
+ * rather than an error anybody notices.
+ */
+static ar_i32 ar__attr_num(const ar_doc *d, ar_i32 node, const char *name, ar_i32 dflt)
+{
+    ar_span a = ar__attr_of(d, node, name);
+    ar_i32  whole = 0, frac = 0, digits = 0, sign = 1;
+    ar_u32  i = 0;
+    int     any = 0;
+
+    if (!a.p || a.n == 0)
+    {
+        return dflt;
+    }
+    while (i < a.n && (a.p[i] == ' ' || a.p[i] == '\t'))
+    {
+        ++i;
+    }
+    if (i < a.n && (a.p[i] == '-' || a.p[i] == '+'))
+    {
+        sign = a.p[i] == '-' ? -1 : 1;
+        ++i;
+    }
+    while (i < a.n && a.p[i] >= '0' && a.p[i] <= '9')
+    {
+        if (whole < 100000)
+        {
+            whole = whole * 10 + (a.p[i] - '0');
+        }
+        ++i;
+        any = 1;
+    }
+    if (i < a.n && a.p[i] == '.')
+    {
+        ++i;
+        while (i < a.n && a.p[i] >= '0' && a.p[i] <= '9')
+        {
+            if (digits < 3)
+            {
+                frac = frac * 10 + (a.p[i] - '0');
+                ++digits;
+            }
+            ++i;
+            any = 1;
+        }
+    }
+    while (digits < 3)
+    {
+        frac *= 10;
+        ++digits;
+    }
+    return any ? sign * (whole * 1000 + frac) : dflt;
+}
+
+/*
+ * How full a `<progress>` or `<meter>` is, as a percentage.
+ *
+ * `<progress>` with no `value` is *indeterminate* and not empty -- a bar that
+ * is waiting rather than one at zero. There is no animation here to say so, so
+ * it reads as empty and is written down rather than pretended about.
+ *
+ * `<meter>` has `min` as well, which `<progress>` does not: a meter measures a
+ * range and a progress bar counts from nothing.
+ */
+static ar_i32 ar__gauge_pct(const ar_doc *d, ar_i32 node, int is_meter)
+{
+    ar_i32 lo = is_meter ? ar__attr_num(d, node, "min", 0) : 0;
+    ar_i32 hi = ar__attr_num(d, node, "max", 1000);
+    ar_i32 v = ar__attr_num(d, node, "value", lo);
+    ar_i32 span;
+
+    if (hi <= lo)
+    {
+        return 0;
+    }
+    if (v < lo)
+    {
+        v = lo;
+    }
+    if (v > hi)
+    {
+        v = hi;
+    }
+    span = hi - lo;
+    return ((v - lo) * 100 + span / 2) / span;
+}
+
 static ar_u8 ar__control_kind(const ar_doc *d, ar_i32 node)
 {
     ar_span name = d->nodes[node].name;
@@ -905,7 +996,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
        begun -- and before the children, so the tab order is document order. */
     if (ar__focusable_element(d, node))
     {
-        ar_focusable(c);
+        ar_focusable(c, ar__attr_num(d, node, "tabindex", 0) / 1000);
     }
     /*
      * A checkbox and a radio each get one child box, which is the mark.
@@ -922,6 +1013,58 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         ar_state_next(c, ar_box_is_checked(c) ? AR_STATE_CHECKED : 0);
         ar_begin(c, "ar-mark");
         ar_end(c);
+    }
+
+    /*
+     * A `<progress>` or `<meter>` is a track with a bar in it, and the bar is
+     * a box whose width is the value.
+     *
+     * The percentage is written as an inline style rather than resolved here,
+     * so that the width lands in the cascade like any other and an author can
+     * override the track around it without the bar losing its meaning.
+     */
+    {
+        ar_span gname = d->nodes[node].name;
+        int     meter = ar_span_is(gname, "meter");
+
+        if (meter || ar_span_is(gname, "progress"))
+        {
+            char   bar[32];
+            ar_i32 pct = ar__gauge_pct(d, node, meter);
+            ar_u32 used = 0;
+
+            ar__put_lit(bar, "");
+            bar[0] = 0;
+            {
+                static const char *W = "width:";
+                ar_i32             t = pct;
+                char               digits[4];
+                ar_i32             nd = 0;
+
+                while (W[used])
+                {
+                    bar[used] = W[used];
+                    ++used;
+                }
+                if (t == 0)
+                {
+                    digits[nd++] = '0';
+                }
+                while (t > 0)
+                {
+                    digits[nd++] = (char)('0' + (t % 10));
+                    t /= 10;
+                }
+                while (nd > 0)
+                {
+                    bar[used++] = digits[--nd];
+                }
+                bar[used++] = '%';
+                bar[used] = 0;
+            }
+            ar_begin_styled(c, "ar-bar", bar);
+            ar_end(c);
+        }
     }
 
     {

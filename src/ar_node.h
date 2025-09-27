@@ -579,6 +579,12 @@ struct ar_ctx
     ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
     ar_i32 focusable_prev_n;
 
+    /* The `tabindex` of each stop, in the same order. A positive one sorts
+       ahead of every zero, which is the rule nobody should rely on and every
+       engine has to honour. */
+    ar_i16 focus_order[AR_MAX_FOCUSABLES];
+    ar_i16 focus_order_prev[AR_MAX_FOCUSABLES];
+
     /*
      * The controls of the frame just built.
      *

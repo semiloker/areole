@@ -676,8 +676,23 @@ typedef ar_i32 ar_scroll_pos;
  * 220 KB -> 224 KB, still at 0.10.0, for `outline`. Two properties and a
  * fourth word of the property mask grow ar_style, and the style cache holds
  * sixty-four of those. Measured: 226,936 of 229,376.
+ *
+ * 224 KB -> 231 KB, still at 0.10.0, and most of it is not new storage.
+ *
+ * The focus order arrays are 1 KB. The rest is the assertion in ar_ctx.c
+ * finally accounting for something it never could: the slot table is
+ * `ar__round_pow2(boxes * 2)` entries while AR_BYTES_PER_BOX budgets one slot
+ * per box, so between one and four slots per box are allocated against a
+ * budget for one, and the difference has always landed in the slack. A fixed
+ * slack cannot cover a term that scales with the box count.
+ *
+ * It hid an overflow twice -- the media query pool at 0.9.6 and 1 KB of focus
+ * order here, where the assertion passed while thirteen tests failed. Bisected
+ * this time: satisfied at 227,960, tests needed 230,113. AR_MEM_SLACK is 8 KB
+ * now and the real fix is named in the roadmap: the per-box budget should
+ * count the slots the way they are actually allocated.
  */
-#define AR_MEM_FIXED  229376u
+#define AR_MEM_FIXED  236544u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
@@ -1012,8 +1027,15 @@ void ar_end(ar_ctx *c);
  * carrying `tabindex`, and which an immediate-mode caller calls itself.
  * ------------------------------------------------------------------------ */
 
-/* Mark the box just begun as a tab stop. Call between ar_begin and ar_end. */
-void ar_focusable(ar_ctx *c);
+/*
+ * Mark the box just begun as a tab stop, with its `tabindex`.
+ *
+ * Zero is the ordinary case and means document order. A positive value sorts
+ * ahead of every zero and in ascending order among themselves, which is the
+ * rule nobody should rely on and every engine has to honour anyway. A negative
+ * one is not a tab stop at all and is refused here rather than filtered later.
+ */
+void ar_focusable(ar_ctx *c, ar_i32 tabindex);
 
 /* Move focus to the next or previous tab stop, in document order. Returns 1 if
    the focus moved. This is what AR_KEY_TAB does, exposed so an embedder can

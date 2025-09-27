@@ -305,6 +305,19 @@ static const char *const AR__UA[] = {
     "button:focus-visible, input:focus-visible { outline:2px solid AccentColor; }"
     "summary:focus-visible, a:focus-visible { outline:2px solid AccentColor; }",
 
+    /*
+     * A gauge is a track with a bar in it, and both are boxes.
+     *
+     * `<progress>` with no `value` is indeterminate rather than empty -- a bar
+     * that is waiting, not one at zero. There is no animation here to say so,
+     * so it reads as empty, which is written down in ar_dom.c rather than
+     * pretended about.
+     */
+    "progress, meter { display:inline-block; width:160px; height:12px; }"
+    "progress, meter { background:Field; border:1px solid ButtonBorder; }"
+    "ar-bar { display:block; height:12px; background:AccentColor; }"
+    "meter > ar-bar { background:Highlight; }",
+
     "summary { display:block; }"
 
     /*
