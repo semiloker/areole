@@ -679,6 +679,7 @@ enum
     AR_SH_PADDING = AR_P_COUNT + 1,
     AR_SH_MARGIN,
     AR_SH_BORDER,
+    AR_SH_OUTLINE,
     AR_SH_OVERFLOW,
     AR_SH_OVERSCROLL,
     AR_SH_SCROLLBAR_COLOR,
@@ -742,6 +743,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-width", AR_P_BORDER_WIDTH},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"color-scheme", AR_P_COLOR_SCHEME},
+                                          {"outline-width", AR_P_OUTLINE_WIDTH},
+                                          {"outline-color", AR_P_OUTLINE_COLOR},
+                                          {"outline", AR_SH_OUTLINE},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"line-height", AR_P_LINE_HEIGHT},
@@ -4263,6 +4267,10 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         {
             as = AR_P_BORDER_WIDTH;
         }
+        if (prop == AR_SH_OUTLINE)
+        {
+            as = AR_P_OUTLINE_WIDTH;
+        }
         if (prop == AR_SH_OVERFLOW)
         {
             as = AR_P_OVERFLOW;
@@ -4424,6 +4432,27 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         if (n >= 2)
         {
             ar__set(rule, AR_P_SCROLLBAR_TRACK, vals[1].v, vals[1].unit);
+        }
+    }
+    else if (prop == AR_SH_OUTLINE)
+    {
+        /*
+         * `<width> [style] <colour>` in any order, which is border's grammar
+         * and is read by border's rules. `outline-style` is not stored: this
+         * engine draws one kind of line, so `solid` is accepted and anything
+         * else is accepted and drawn the same. Saying that here is cheaper
+         * than a property nobody can tell the effect of.
+         */
+        ar_i32 i;
+
+        ar__set(rule, AR_P_OUTLINE_WIDTH, vals[0].v, AR_UNIT_PX);
+        for (i = 0; i < n; ++i)
+        {
+            if (vals[i].unit == AR_UNIT_COLOR || vals[i].unit == AR_UNIT_CURRENTCOLOR ||
+                vals[i].unit == AR_UNIT_SYSCOLOR)
+            {
+                ar__set(rule, AR_P_OUTLINE_COLOR, vals[i].v, vals[i].unit);
+            }
         }
     }
     else if (prop == AR_SH_BORDER)

@@ -17778,6 +17778,68 @@ static void test_the_mark_is_a_box_that_appears(void)
     }
 }
 
+/*
+ * `outline`, and the focus ring it exists for.
+ *
+ * The ninety-fifth and ninety-sixth properties, and the pair that widened the
+ * property mask to four words -- priced at 0.9.6 before it was needed, which
+ * is the point of pricing a thing.
+ */
+static void test_an_outline_costs_no_layout(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">one</div>"
+                    "<div id=\"b\">two</div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block; height:20px; margin:0 }"
+                    "#a { outline:4px solid #f00 }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_OUTLINE_WIDTH] == 4,
+          "outline: the shorthand sets a width");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_OUTLINE_COLOR) == 0xFFFF0000u,
+          "outline: and a colour");
+
+    /*
+     * The whole reason the property exists: the box below an outlined box must
+     * not move. A ring drawn with a border shifts every box after it the
+     * moment somebody presses Tab, which is worse than no ring at all.
+     */
+    CHECK(ar__box(ar__first_tag_id("b")).y == 20,
+          "outline: and the box after it does not move");
+    CHECK(ar__box(ar__first_tag_id("a")).h == 20,
+          "outline: nor does the outlined box grow");
+}
+
+static void test_the_focus_ring_is_drawn_for_a_key_and_not_a_click(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><button id=\"b\">go</button></body></html>",
+                    "body { margin:0 } button { display:block; margin:0 }");
+
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
+          "outline: an untouched control has no ring");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 2,
+          "outline: a tab draws one");
+
+    /*
+     * And a click takes the same focus without the ring, which is the
+     * distinction :focus-visible exists for and the reason pages ship
+     * `outline: none` when an engine gets it wrong.
+     */
+    ar__press_at(&s, 5, 5);
+    CHECK(ar_has_focus(g_ui), "outline: a click focuses the button");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
+          "outline: and draws no ring");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21297,6 +21359,8 @@ int main(void)
     test_details_open_attribute_is_a_starting_point();
     test_controls_are_boxes();
     test_the_mark_is_a_box_that_appears();
+    test_an_outline_costs_no_layout();
+    test_the_focus_ring_is_drawn_for_a_key_and_not_a_click();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

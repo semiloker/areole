@@ -294,21 +294,16 @@ static const char *const AR__UA[] = {
     ".ar-radio > ar-mark { border-radius:4px; }",
 
     /*
-     * No focus ring here, and the reason is a missing property rather than a
-     * missing rule.
+     * The focus ring, and `:focus-visible` rather than `:focus` on purpose: a
+     * click must not draw one and a Tab must. Drawing a ring for both is why
+     * so many pages ship `outline: none`.
      *
-     * There is no `outline` in this engine. The obvious substitute is a
-     * border, and it is worse than nothing: a border takes space, so a ring
-     * drawn with one shifts the layout every time the focus moves. Avoiding
-     * exactly that is what `outline` is for.
-     *
-     * So `:focus-visible` matches and nothing shows yet. The pseudo-class is
-     * the hard half and it works; the ring needs `outline-width`,
-     * `outline-color` and a paint pass that draws outside the border box
-     * without contributing to it. That is the next commit, and it will spend
-     * the last two property slots -- which is what widens AR_PSET_WORDS to
-     * four, priced at 0.9.6 as four bytes per style and nothing measurable.
+     * An outline rather than a border, because a border takes space and a ring
+     * drawn with one shifts the page every time the focus moves. Avoiding that
+     * is what the property is for.
      */
+    "button:focus-visible, input:focus-visible { outline:2px solid AccentColor; }"
+    "summary:focus-visible, a:focus-visible { outline:2px solid AccentColor; }",
 
     "summary { display:block; }"
 

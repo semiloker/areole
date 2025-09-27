@@ -4088,6 +4088,35 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_fill_rect(s, n->rect, clip, bg);
         }
 
+        /*
+         * The outline, before the border and outside the box.
+         *
+         * Outside is the whole point: an outline contributes nothing to
+         * layout, so it can appear and disappear as the focus moves without
+         * the page shifting under it. A border cannot do this job, and a focus
+         * ring drawn with one moves every box after it the moment somebody
+         * presses Tab.
+         *
+         * Drawn as four rectangles around `rect` rather than as one larger
+         * rectangle behind it, because it has to sit over whatever is beside
+         * the box and under nothing of the box's own -- and because a filled
+         * rectangle behind a transparent background would tint the box itself.
+         */
+        {
+            ar_i32  ow = n->style.v[AR_P_OUTLINE_WIDTH];
+            ar_color oc = (ar_color)AR_WIDE(&n->style, AR_P_OUTLINE_COLOR);
+
+            if (ow > 0 && AR_ALPHA_OF(oc) != 0)
+            {
+                ar_rect r = n->rect;
+
+                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
+                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
+                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y, ow, r.h), clip, oc);
+                ar_fill_rect(s, ar_rect_make(r.x + r.w, r.y, ow, r.h), clip, oc);
+            }
+        }
+
         bw = n->style.v[AR_P_BORDER_WIDTH];
         border = (ar_color)AR_WIDE(&n->style, AR_P_BORDER_COLOR);
         if (n->state & AR_STATE_COLLAPSED)

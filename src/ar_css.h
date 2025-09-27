@@ -336,6 +336,15 @@ typedef enum ar_prop
      * them. It inherits, so declaring it on `:root` settles the document, and
      * it is narrow because the value is a pair of flags.
      */
+    /*
+     * `outline-width`. The ninety-fifth property, and the reason it exists is
+     * that a border cannot do this job: a border takes space, so a focus ring
+     * drawn with one moves the page every time the focus moves. An outline is
+     * drawn outside the border box and contributes nothing to layout, which is
+     * the whole of what the property is for.
+     */
+    AR_P_OUTLINE_WIDTH,
+
     AR_P_COLOR_SCHEME,
 
     AR_P_NARROW_COUNT,
@@ -348,6 +357,10 @@ typedef enum ar_prop
 
     /* `scrollbar-color` is two colours in one declaration, thumb then track,
        and they cascade as one. Two slots because a colour is a colour. */
+    /* The ninety-sixth, and the last that fits three words. See
+       AR_PSET_WORDS below, which this commit moves to four. */
+    AR_P_OUTLINE_COLOR,
+
     AR_P_SCROLLBAR_THUMB,
     AR_P_SCROLLBAR_TRACK,
 
@@ -413,6 +426,22 @@ enum
 };
 
 /*
+ * Four words, a hundred and twenty-eight properties, and ninety-six of them
+ * are spent.
+ *
+ * It was three, and the note below priced the move before it was needed --
+ * which is the point of pricing it. `outline-width` and `outline-color` take
+ * the last two slots of the old ceiling, so this is the commit that pays.
+ *
+ * The measured bill, taken at 0.9.6 and confirmed here: ar_style 316 -> 320
+ * bytes, the ceiling 96 -> 128, and three benchmark passes against the 0.9.6
+ * baseline flagged one scene once, which is the noise floor rather than a
+ * cost. AR_BYTES_PER_BOX at 560 absorbs it without moving.
+ *
+ * What follows is the note as it stood before the bill came due.
+ *
+ * ---
+ *
  * Three words, ninety-six properties, and ninety-four of them are spent.
  *
  * The next release to need a ninety-seventh must make this four, and the price
@@ -427,7 +456,7 @@ enum
  * which was the right call for reasons that had nothing to do with room.
  * ar__prop_mask_fits below stops the build when the ninety-seventh arrives.
  */
-#define AR_PSET_WORDS 3
+#define AR_PSET_WORDS 4
 
 typedef struct ar_pset
 {
