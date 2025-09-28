@@ -1029,6 +1029,16 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
      * say `.ar-mark:checked`, rather than needing a combinator that reaches
      * from a parent's state to a child.
      */
+    /* A text field's contents are a box like any other text, so that they are
+       measured, laid out and painted by the machinery that already does all
+       three -- rather than by a special case that would have to learn them. */
+    if (ar__control_kind(d, node) == AR_CTL_TEXT)
+    {
+        ar_span v = ar__attr_of(d, node, "value");
+
+        ar_field_child(c, v.p, v.n);
+    }
+
     if (ar__control_kind(d, node) == AR_CTL_CHECKBOX ||
         ar__control_kind(d, node) == AR_CTL_RADIO)
     {

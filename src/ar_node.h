@@ -247,6 +247,10 @@ void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
 /* A text field's value as the markup states it. */
 void ar_value_next(ar_ctx *c, const char *value, ar_u32 len);
 
+/* Emit the text child of the field just opened, from whichever of the three
+   places currently holds its text. */
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n);
+
 /* Whether the box most recently opened is a `<details>` that is showing its
    contents. The walk asks so it can skip the children of a closed one. */
 int ar_box_is_open(const ar_ctx *c);
@@ -564,6 +568,20 @@ struct ar_ctx
      */
     ar_edit edit;
     ar_u32  edit_key;
+
+    /* This frame's typing, held until the buffer has a field to belong to.
+       Tab and a character can arrive in the same frame, and the character
+       belongs to the field the Tab moved to -- which is not known until the
+       tree is built. */
+    const char *pending_text;
+    ar_u32      pending_text_len;
+    ar_u32      pending_keys;
+    int         pending_done;
+
+    /* The field's text, terminated, for the one frame it is drawn in. The
+       buffer itself is not terminated -- `len` is the authority there --
+       and ar_text takes a C string, so somewhere has to hold the copy. */
+    char field_scratch[AR_EDIT_CAP + 1];
 
     ar_u32 next_state;
 
