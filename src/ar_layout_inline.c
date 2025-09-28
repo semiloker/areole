@@ -459,7 +459,20 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
                     break;
                 }
                 w = env->measure(env->ud, ch, at, next);
-                if (L.x > 0 && L.x + w > L.line_w)
+
+                /*
+                 * `white-space` decides whether this line may end here at all.
+                 *
+                 * A field, a button's label and a table's `nowrap` column all
+                 * want the text to run off the end rather than to fold, and
+                 * until now nothing could say so -- which is why a long value
+                 * in a narrow field wrapped where every real field scrolls.
+                 * The mandatory break below is deliberately outside this test:
+                 * a newline in `pre` text breaks the line whatever the
+                 * wrapping says, which is the whole of what `pre` means.
+                 */
+                if (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L.x > 0 &&
+                    L.x + w > L.line_w)
                 {
                     ar__break_line(&L, fc, abs_top);
                 }

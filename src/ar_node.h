@@ -258,6 +258,10 @@ int ar_box_is_open(const ar_ctx *c);
 /* The same question about a control's checkedness, for the mark. */
 int ar_box_is_checked(const ar_ctx *c);
 
+/* The computed `white-space` of the box just opened, for the walk that has to
+   decide whether to collapse the text inside it. */
+ar_i32 ar_box_white_space(const ar_ctx *c);
+
 enum
 {
     AR_CTL_NONE = 0,

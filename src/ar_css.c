@@ -409,6 +409,9 @@ int ar_prop_inherits(ar_i32 prop)
     /* `color-scheme` inherits, which is what makes declaring it once on
        `:root` settle a whole document -- the same reason `color` does. */
     case AR_P_COLOR_SCHEME:
+    /* Text properties inherit, and this is one: a `<pre>` whose children
+       did not keep their spaces would be a `<pre>` in name only. */
+    case AR_P_WHITE_SPACE:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -441,7 +444,7 @@ int ar_prop_inherits(ar_i32 prop)
 static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,        AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
                                       AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,  AR_P_VISIBILITY,
                                       AR_P_EMPTY_CELLS,  AR_P_CAPTION_SIDE,
-                                      AR_P_COLOR_SCHEME};
+                                      AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -743,6 +746,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-width", AR_P_BORDER_WIDTH},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"color-scheme", AR_P_COLOR_SCHEME},
+                                          {"white-space", AR_P_WHITE_SPACE},
                                           {"outline-width", AR_P_OUTLINE_WIDTH},
                                           {"outline-color", AR_P_OUTLINE_COLOR},
                                           {"outline", AR_SH_OUTLINE},
@@ -877,6 +881,15 @@ typedef struct ar__kw
 } ar__kw;
 
 static const ar__kw AR_KEYWORDS[] = {
+    /* `normal` and `nowrap` are spelled the same as values of other
+       properties, which costs nothing: the lookup is by property and by name,
+       so two rows may share a word. */
+    {"normal", AR_P_WHITE_SPACE, AR_WS_NORMAL},
+    {"nowrap", AR_P_WHITE_SPACE, AR_WS_NOWRAP},
+    {"pre", AR_P_WHITE_SPACE, AR_WS_PRE},
+    {"pre-wrap", AR_P_WHITE_SPACE, AR_WS_PRE_WRAP},
+    {"pre-line", AR_P_WHITE_SPACE, AR_WS_PRE_LINE},
+
     /*
      * `color-scheme`. `light dark` is two idents and the value loop keeps the
      * first, which gives `light` -- and that is the right answer today rather

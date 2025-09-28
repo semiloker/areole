@@ -596,9 +596,9 @@ typedef ar_i32 ar_scroll_pos;
  * which is the point of pricing things.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 568u
+#define AR_BYTES_PER_BOX 576u
 #else
-#define AR_BYTES_PER_BOX 568u
+#define AR_BYTES_PER_BOX 576u
 #endif
 
 /*
@@ -724,7 +724,7 @@ typedef ar_i32 ar_scroll_pos;
  * now and the real fix is named in the roadmap: the per-box budget should
  * count the slots the way they are actually allocated.
  */
-#define AR_MEM_FIXED  249856u
+#define AR_MEM_FIXED  253952u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property

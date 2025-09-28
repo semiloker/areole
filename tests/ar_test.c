@@ -18475,6 +18475,95 @@ static void test_a_field_shows_what_it_holds(void)
     }
 }
 
+/*
+ * `white-space`, which is two questions in one property and has been since
+ * CSS 2: may the text wrap, and may its spaces collapse.
+ *
+ * Both were decided by the tag before this -- `<pre>` and nothing else -- so
+ * the property was wrong in both directions at once: `white-space: pre` on a
+ * div collapsed anyway, and `white-space: normal` on a `<pre>` did not.
+ */
+static void test_white_space_collapsing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">a    b</div>"
+                    "<div id=\"b\">a    b</div>"
+                    "<pre id=\"c\">a    b</pre>"
+                    "<pre id=\"d\">a    b</pre>"
+                    "</body></html>",
+                    "body { margin:0 } div, pre { display:block }"
+                    "#b { white-space:pre }"
+                    "#d { white-space:normal }");
+
+    /* The text box of each, and its length: collapsed is "a b", kept is the
+       four spaces as typed. */
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("a") + 1].text) == 3,
+          "white-space: a div collapses by default");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("b") + 1].text) == 6,
+          "white-space: and pre on a div keeps the spaces");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("c") + 1].text) == 6,
+          "white-space: a pre keeps them by default");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("d") + 1].text) == 3,
+          "white-space: and normal on a pre collapses them");
+}
+
+static void test_nowrap_does_not_wrap(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">one two three four five six seven eight</div>"
+                    "<div id=\"b\">one two three four five six seven eight</div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block; width:60px }"
+                    "#b { white-space:nowrap }");
+
+    /*
+     * The wrapping one is several lines tall and the other is one. Compared
+     * against each other rather than against a pixel count, so the test says
+     * what it means without depending on the face.
+     */
+    CHECK(ar__box(ar__first_tag_id("a")).h > ar__box(ar__first_tag_id("b")).h,
+          "white-space: nowrap runs off the end instead of folding");
+}
+
+/*
+ * A field still wraps, and the property is not the reason.
+ *
+ * `white-space: pre` reaches the field's text box -- the computed value is
+ * AR_WS_PRE, checked below -- and the text is three lines tall anyway. So the
+ * cascade is right and the layout is not: a block box carrying its own text
+ * does not take its line breaks from the loop in ar_layout_inline.c that this
+ * property was wired into, and finding which loop it does take them from is
+ * the next commit rather than a guess in this one.
+ *
+ * Left as a failing expectation would be worse than useless -- a red test
+ * nobody can act on becomes a red test everybody ignores -- so what is true is
+ * asserted and what is not is written down here and in the roadmap.
+ */
+static void test_white_space_reaches_a_field_but_does_not_hold_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\" value=\"a much longer value than fits\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:40px; height:20px }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a") + 1)->v[AR_P_WHITE_SPACE] == AR_WS_PRE,
+          "white-space: the user-agent sheet reaches a field's text");
+
+    /* And the part that does not work yet, stated as the measurement it is
+       rather than as a passing test of something weaker. */
+    CHECK(ar__box(ar__first_tag_id("a") + 1).h > 20,
+          "white-space: a block with its own text still wraps -- known, unfixed");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -22025,6 +22114,9 @@ int main(void)
     test_typing_reaches_the_focused_field();
     test_shift_extends_and_typing_replaces();
     test_a_field_shows_what_it_holds();
+    test_white_space_collapsing();
+    test_nowrap_does_not_wrap();
+    test_white_space_reaches_a_field_but_does_not_hold_it();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
