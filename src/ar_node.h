@@ -10,6 +10,7 @@
 #include "ar_internal.h"
 #include "ar_css.h"
 #include "ar_text.h"
+#include "ar_edit.h"
 
 #define AR_MAX_DEPTH 64
 
@@ -243,6 +244,9 @@ void ar_state_next(ar_ctx *c, ar_u32 bits);
    `name` and is ignored for everything else. */
 void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
 
+/* A text field's value as the markup states it. */
+void ar_value_next(ar_ctx *c, const char *value, ar_u32 len);
+
 /* Whether the box most recently opened is a `<details>` that is showing its
    contents. The walk asks so it can skip the children of a closed one. */
 int ar_box_is_open(const ar_ctx *c);
@@ -257,7 +261,8 @@ enum
     AR_CTL_RADIO,
     AR_CTL_BUTTON,
     AR_CTL_SUMMARY,
-    AR_CTL_DETAILS
+    AR_CTL_DETAILS,
+    AR_CTL_TEXT
 };
 
 typedef struct ar_slot
@@ -540,6 +545,26 @@ struct ar_ctx
      * rule and the box would be styled as though it were not checked. That is
      * why this is a pending value rather than a setter on the box.
      */
+    /*
+     * The field being edited, and which box it belongs to.
+     *
+     * One buffer and not one per field. An ar_edit is four and a half
+     * kilobytes, almost all of it the undo ring, and twenty of them is a form's
+     * worth of memory spent on nineteen fields nobody is typing in. Only one
+     * field has the caret at a time, which is the whole of the argument.
+     *
+     * What that costs is named rather than hidden: **undo does not survive
+     * leaving a field.** Tab away and back, and the ring is empty. A browser
+     * keeps it, and keeping it here means a ring per field or a shared ring
+     * that knows which field each step belongs to -- neither of which is worth
+     * doing before the text is on the screen at all.
+     *
+     * The text itself does survive, in the pool below, because losing what
+     * somebody typed is not a trade-off, it is a bug.
+     */
+    ar_edit edit;
+    ar_u32  edit_key;
+
     ar_u32 next_state;
 
     /* And what kind of control it is, for the same reason and taken the same
@@ -547,6 +572,11 @@ struct ar_ctx
        what makes a group a group. */
     ar_u8  next_kind;
     ar_u32 next_group;
+
+    /* A text field's markup value, borrowed for the length of ar_begin --
+       only read when the field is newly focused and has no stored text. */
+    const char *next_value;
+    ar_u32      next_value_len;
 
     ar_u32 focus_key;
     /* Where it landed in this frame's tree, or -1. Recorded in ar_begin so
@@ -593,6 +623,20 @@ struct ar_ctx
      * model hover and focus already use, and for the same reason: the state a
      * box is styled with has to be settled before the box is styled.
      */
+    /*
+     * What every other edited field holds, without its history.
+     *
+     * 256 bytes each against ar_edit's four and a half kilobytes, because the
+     * undo ring is what makes an ar_edit expensive and a field nobody is typing
+     * in does not need one. Sixteen is a long form; the seventeenth field to be
+     * edited evicts the least recently seen, which loses text and is the reason
+     * this number is written down rather than guessed at.
+     */
+    ar_u32 value_key[16];
+    char   value_text[16][AR_EDIT_CAP];
+    ar_u16 value_len[16];
+    ar_u32 value_seen[16];
+
     ar_u32 control_key[AR_MAX_FOCUSABLES];
     ar_u32 control_group[AR_MAX_FOCUSABLES];
     ar_u8  control_kind[AR_MAX_FOCUSABLES];

@@ -61,6 +61,11 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
  */
 #define AR_MEM_SLACK 8192
 
+/* Defined with the rest of the field machinery, used by ar_frame_begin and
+   ar__push_node, which both come first. */
+static void ar__edit_apply(ar_ctx *c, const ar_input *in);
+static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n);
+
 #define AR_MAX_RULES 256
 
 /* Distinct selector-and-state tuples in an interface, not boxes: a thousand
@@ -2935,6 +2940,15 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
         ar_focus_next(c, (in->keys_pressed & AR_KEY_TAB_BACK) ? 1 : 0);
     }
 
+    /*
+     * Typing, after Tab and before the tree is built.
+     *
+     * After Tab because a Tab moves the caret to a different field and the
+     * character that arrives with it belongs to the new one. Before the tree,
+     * because the tree is about to be built from the text this changes.
+     */
+    ar__edit_apply(c, in);
+
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
         ar_i32 k;
@@ -3272,6 +3286,20 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
         c->next_group = c->nodes[parent].key;
     }
 
+    /*
+     * A text field with the caret in it takes the buffer.
+     *
+     * Here rather than at focus time because this is where the key is known
+     * and where the markup's own value is to hand -- and because a field that
+     * has never been focused should not cost a buffer copy for existing.
+     */
+    if (c->next_kind == AR_CTL_TEXT && c->focus_key == key)
+    {
+        ar__edit_follow_focus(c, key, c->next_value, c->next_value_len);
+    }
+    c->next_value = 0;
+    c->next_value_len = 0;
+
     if (c->next_kind != AR_CTL_NONE && c->control_n < AR_MAX_FOCUSABLES)
     {
         c->control_key[c->control_n] = key;
@@ -3607,12 +3635,217 @@ void ar_state_next(ar_ctx *c, ar_u32 bits)
     }
 }
 
+/* ------------------------------------------------------------------------
+ * Text fields
+ *
+ * One edit buffer, because only one field has the caret. What that costs is
+ * that undo does not survive leaving a field -- named in ar_node.h beside the
+ * buffer rather than discovered. The text does survive, in a pool of sixteen,
+ * because losing what somebody typed is not a trade-off.
+ * ------------------------------------------------------------------------ */
+
+static ar_i32 ar__value_find(ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    for (i = 0; i < 16; ++i)
+    {
+        if (c->value_key[i] == key && key != 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* A free slot, or the one seen longest ago. Eviction loses text, which is why
+   the pool size is written down where somebody can weigh it. */
+static ar_i32 ar__value_slot(ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i, oldest = 0;
+
+    for (i = 0; i < 16; ++i)
+    {
+        if (c->value_key[i] == key || c->value_key[i] == 0)
+        {
+            return i;
+        }
+        if (c->value_seen[i] < c->value_seen[oldest])
+        {
+            oldest = i;
+        }
+    }
+    return oldest;
+}
+
+static void ar__value_store(ar_ctx *c, ar_u32 key, const char *text, ar_u16 len)
+{
+    ar_i32 at = ar__value_slot(c, key);
+    ar_u16 i;
+
+    c->value_key[at] = key;
+    c->value_len[at] = len;
+    c->value_seen[at] = c->frame;
+    for (i = 0; i < len; ++i)
+    {
+        c->value_text[at][i] = text[i];
+    }
+}
+
+/*
+ * Bring the buffer to whichever field has the caret now.
+ *
+ * The old field's text goes to the pool first, then the new field's comes back
+ * from it -- or from its markup, if nobody has touched it. Doing it in that
+ * order is the whole of it: the other way round and tabbing between two fields
+ * copies the first one's text into the second.
+ */
+static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n)
+{
+    ar_i32 at;
+
+    if (c->edit_key == key)
+    {
+        return;
+    }
+    if (c->edit_key != 0)
+    {
+        ar__value_store(c, c->edit_key, c->edit.text, c->edit.len);
+    }
+
+    at = ar__value_find(c, key);
+    if (at >= 0)
+    {
+        ar_u16 i;
+
+        ar_edit_init(&c->edit, 0);
+        c->edit.len = c->value_len[at];
+        for (i = 0; i < c->edit.len; ++i)
+        {
+            c->edit.text[i] = c->value_text[at][i];
+        }
+        c->edit.caret = c->edit.len;
+        c->edit.anchor = c->edit.len;
+        c->value_seen[at] = c->frame;
+    }
+    else
+    {
+        /*
+         * The markup's value, by length rather than to a NUL.
+         *
+         * It is a span of the document's own buffer and is not terminated:
+         * copying to a NUL walks into whatever element came next, which is a
+         * field that starts out holding the rest of the page.
+         */
+        ar_u32 i;
+
+        ar_edit_init(&c->edit, 0);
+        if (initial && n > AR_EDIT_CAP)
+        {
+            n = AR_EDIT_CAP;
+        }
+        for (i = 0; initial && i < n; ++i)
+        {
+            c->edit.text[i] = initial[i];
+        }
+        c->edit.len = (ar_u16)(initial ? n : 0);
+        c->edit.caret = c->edit.len;
+        c->edit.anchor = c->edit.len;
+    }
+    c->edit_key = key;
+}
+
+/*
+ * One frame's worth of typing, applied to the focused field.
+ *
+ * Text and keys are two different inputs and stay that way: the platform turns
+ * a key event into a character, because the key that produced `@` is Shift and
+ * 2 on one layout and AltGr and Q on another, and no table here could tell.
+ */
+static void ar__edit_apply(ar_ctx *c, const ar_input *in)
+{
+    int extend;
+
+    if (!in || c->edit_key == 0)
+    {
+        return;
+    }
+    extend = (in->keys_pressed & AR_KEY_SHIFT) != 0;
+
+    if (in->text && in->text_len > 0)
+    {
+        ar_edit_insert(&c->edit, in->text, in->text_len);
+    }
+    if (in->keys_pressed & AR_KEY_BACKSPACE)
+    {
+        ar_edit_backspace(&c->edit);
+    }
+    if (in->keys_pressed & AR_KEY_DELETE)
+    {
+        ar_edit_delete(&c->edit);
+    }
+    if (in->keys_pressed & AR_KEY_LEFT)
+    {
+        ar_edit_move(&c->edit, -1, extend);
+    }
+    if (in->keys_pressed & AR_KEY_RIGHT)
+    {
+        ar_edit_move(&c->edit, 1, extend);
+    }
+    if (in->keys_pressed & AR_KEY_HOME)
+    {
+        ar_edit_home(&c->edit, extend);
+    }
+    if (in->keys_pressed & AR_KEY_END)
+    {
+        ar_edit_end(&c->edit, extend);
+    }
+    if (in->keys_pressed & AR_KEY_SELECT_ALL)
+    {
+        ar_edit_select_all(&c->edit);
+    }
+    if (in->keys_pressed & AR_KEY_UNDO)
+    {
+        ar_edit_undo(&c->edit);
+    }
+    if (in->keys_pressed & AR_KEY_REDO)
+    {
+        ar_edit_redo(&c->edit);
+    }
+}
+
+const char *ar_field_text(ar_ctx *c, ar_u32 *len)
+{
+    if (!c || c->edit_key == 0)
+    {
+        if (len)
+        {
+            *len = 0;
+        }
+        return 0;
+    }
+    if (len)
+    {
+        *len = c->edit.len;
+    }
+    return c->edit.text;
+}
+
 void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group)
 {
     if (c)
     {
         c->next_kind = kind;
         c->next_group = group;
+    }
+}
+
+void ar_value_next(ar_ctx *c, const char *value, ar_u32 len)
+{
+    if (c)
+    {
+        c->next_value = value;
+        c->next_value_len = len;
     }
 }
 

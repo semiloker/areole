@@ -273,6 +273,21 @@ typedef struct ar_input
      * second-guessing. A backend that repeats sets the bit again.
      */
     ar_u32 keys_pressed;
+
+    /*
+     * The text typed since the last frame, as UTF-8, or null.
+     *
+     * Text and keys are two different things and a backend has to keep them
+     * apart: the key that produced `@` is Shift and 2 on one layout and AltGr
+     * and Q on another, and no table here could tell. The platform turns a key
+     * event into a character and hands over the character; this file never
+     * learns what a keyboard layout is.
+     *
+     * The pointer is borrowed for the length of ar_frame_begin and copied if it
+     * is wanted, which is the same contract every other string in this API has.
+     */
+    const char *text;
+    ar_u32      text_len;
 } ar_input;
 
 /*
@@ -318,7 +333,24 @@ enum
      * browser pages with Space until the focus is on something that consumes
      * it, and then the control wins. The focus decides, here as there.
      */
-    AR_KEY_ENTER = 1u << 11
+    AR_KEY_ENTER = 1u << 11,
+
+    /* The two that delete. Separate bits rather than one and a direction,
+       because a backend has two keys and translating them into one plus a flag
+       is work for the one place that then has to undo it. */
+    AR_KEY_BACKSPACE = 1u << 12,
+    AR_KEY_DELETE = 1u << 13,
+
+    /* Shift, as a qualifier on the arrows: held, it extends the selection. Not
+       a modifier table -- the platform knows about modifiers and this does
+       not -- but the one modifier that changes what an arrow means. */
+    AR_KEY_SHIFT = 1u << 14,
+
+    /* Select all, undo and redo, which every platform spells with a different
+       modifier and which all three arrive here already decided. */
+    AR_KEY_SELECT_ALL = 1u << 15,
+    AR_KEY_UNDO = 1u << 16,
+    AR_KEY_REDO = 1u << 17
 };
 
 
@@ -692,7 +724,7 @@ typedef ar_i32 ar_scroll_pos;
  * now and the real fix is named in the roadmap: the per-box budget should
  * count the slots the way they are actually allocated.
  */
-#define AR_MEM_FIXED  236544u
+#define AR_MEM_FIXED  249856u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
@@ -1050,6 +1082,10 @@ void ar_focus_clear(ar_ctx *c);
 /* Whether anything is focused, and whether the focus should be drawn. */
 int ar_has_focus(const ar_ctx *c);
 int ar_focus_is_visible(const ar_ctx *c);
+
+/* The text of the field being edited, or null when none is. Borrowed for the
+   frame, like everything else this API hands back. */
+const char *ar_field_text(ar_ctx *c, ar_u32 *len);
 
 /*
  * A box with its own declaration list, which is what an HTML `style=""`
