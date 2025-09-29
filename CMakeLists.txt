@@ -145,6 +145,10 @@ if(WIN32)
     set_target_properties(areole_win32 PROPERTIES C_EXTENSIONS ON)
     areole_set_warnings(areole_win32)
 
+    add_executable(example_forms examples/16_forms/main.c)
+    target_link_libraries(example_forms PRIVATE areole_win32)
+    areole_set_warnings(example_forms)
+
     add_executable(example_hello examples/01_hello/main.c)
     target_link_libraries(example_hello PRIVATE areole_win32)
     areole_set_warnings(example_hello)

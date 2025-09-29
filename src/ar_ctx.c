@@ -4081,6 +4081,11 @@ int ar_box_is_open(const ar_ctx *c)
     return (c->nodes[c->node_count - 1].state & AR_STATE_OPEN) != 0;
 }
 
+ar_i32 ar_tab_stops(const ar_ctx *c)
+{
+    return c ? c->focusable_prev_n : 0;
+}
+
 int ar_has_focus(const ar_ctx *c)
 {
     return c && c->focus_key != 0;
