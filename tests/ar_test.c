@@ -18564,6 +18564,39 @@ static void test_white_space_reaches_a_field_but_does_not_hold_it(void)
           "white-space: a block with its own text still wraps -- known, unfixed");
 }
 
+/*
+ * `:focus` on a parsed document, which is not the same path as the
+ * immediate-mode tests above and turned out not to work.
+ *
+ * Those drive ar_focusable by hand and match. A document goes through
+ * ar_dom_build, and the ring never appeared in the rendered example -- so this
+ * asks the question directly rather than through a picture.
+ */
+static void test_focus_styles_reach_a_parsed_document(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\">"
+                    "<input id=\"b\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:100px; height:20px }"
+                    "#a:focus { width:111px }"
+                    "#a:focus-visible { height:33px }");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+
+    CHECK(ar_has_focus(g_ui), "focus: tab focuses something in a document");
+    CHECK(g_ui->focus_key == g_ui->nodes[ar__first_tag_id("a")].key,
+          "focus: and it is the first field's own box");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 111,
+          "focus: :focus matches it");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_HEIGHT] == 33,
+          "focus: and :focus-visible does too");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -22088,6 +22121,7 @@ int main(void)
     test_system_colors_and_color_scheme();
     test_border_shorthand_takes_a_deferred_colour();
     test_tab_order_in_a_document();
+    test_focus_styles_reach_a_parsed_document();
     test_control_states_from_markup();
     test_a_checkbox_toggles();
     test_a_checked_attribute_is_a_starting_point();
