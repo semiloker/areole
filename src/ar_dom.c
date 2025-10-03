@@ -939,7 +939,21 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 
     if (d->nodes[node].kind == AR_DOM_TEXT)
     {
-        if (!ar__ignorable(d->nodes[node].text) && d->nodes[node].text.p)
+        /*
+         * A whitespace-only text node is dropped between blocks and kept
+         * between inlines.
+         *
+         * `<ul>
+  <li>a</li>
+</ul>` has newlines a browser drops on the
+         * floor and every hand-written document is full of them. But
+         * `<small>a</small> <strong>b</strong>` has a space that is the only
+         * thing separating two words, and dropping it renders
+         * "smallstrong" -- which is what this did until a plain HTML page was
+         * rendered and looked at.
+         */
+        if ((!ar__ignorable(d->nodes[node].text) || ar_last_child_is_inline(c)) &&
+            d->nodes[node].text.p)
         {
             /* The text is NUL-terminated in the document's own buffer, which
                is why ar_html_tree.c stores it there rather than leaving it a

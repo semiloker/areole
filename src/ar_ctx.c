@@ -4054,6 +4054,42 @@ void ar_focus_clear(ar_ctx *c)
  * else -- so `white-space: pre` on a div did nothing and `white-space: normal`
  * on a `<pre>` did nothing either.
  */
+/*
+ * Is the last box opened inside the current one inline-level?
+ *
+ * The document walk asks before dropping a whitespace-only text node. Such a
+ * node is ignorable *between blocks* and significant between inlines:
+ * `<li>a</li>
+<li>b</li>` has a newline nobody should see, and
+ * `<small>a</small> <strong>b</strong>` has a space everybody should.
+ *
+ * Answered from the previous sibling rather than the next because the previous
+ * one has been built and has a computed display, and the next one has not.
+ * That also gives the right answer at both ends: whitespace before the first
+ * inline child and after the last is dropped, which is what a browser does
+ * with the whitespace at the start and end of a line.
+ */
+int ar_last_child_is_inline(const ar_ctx *c)
+{
+    ar_i32 parent, last;
+
+    if (!c || c->depth <= 0)
+    {
+        return 0;
+    }
+    parent = c->stack[c->depth - 1];
+    if (parent < 0 || parent >= c->node_count)
+    {
+        return 0;
+    }
+    last = c->nodes[parent].last_child;
+    if (last < 0)
+    {
+        return 0;
+    }
+    return ar_is_inline_level(&c->nodes[last]) || c->nodes[last].text != 0;
+}
+
 ar_i32 ar_box_white_space(const ar_ctx *c)
 {
     if (!c || c->node_count <= 0)

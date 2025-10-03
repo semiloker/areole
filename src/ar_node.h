@@ -262,6 +262,10 @@ int ar_box_is_checked(const ar_ctx *c);
    decide whether to collapse the text inside it. */
 ar_i32 ar_box_white_space(const ar_ctx *c);
 
+/* Whether the last box opened inside the current one is inline-level, which is
+   what decides whether a whitespace-only text node is content. */
+int ar_last_child_is_inline(const ar_ctx *c);
+
 enum
 {
     AR_CTL_NONE = 0,
