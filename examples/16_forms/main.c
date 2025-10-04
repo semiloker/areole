@@ -142,7 +142,8 @@ static const char *const DOC[] = {
     "<p><button id=\"send\">Place order</button>"
     "<input id=\"clear\" class=\"button\" type=\"reset\" value=\"Start again\"></p>"
     "</form>"
-    "<p class=\"note\" id=\"disabled-note\"><input id=\"off\" type=\"text\" value=\"not editable\" disabled>"
+    "<p class=\"note\" id=\"disabled-note\"><input id=\"off\" type=\"text\" value=\"not editable\" "
+    "disabled>"
     "<label for=\"off\">A disabled field is not a tab stop</label></p>"
     "</body></html>",
 
@@ -270,20 +271,19 @@ static void frame(ar_ctx *c, const ar_input *in, ar_surface *s)
  */
 static void dump(ar_ctx *c)
 {
-    static const char *ROLE[] = {"none",     "button",  "link",     "checkbox",  "radio",
-                                 "textbox",  "search",  "slider",   "combobox",  "option",
-                                 "heading",  "para",    "list",     "listitem",  "table",
-                                 "row",      "cell",    "colhead",  "image",     "dialog",
-                                 "progress", "meter",   "group",    "form",      "main",
-                                 "nav",      "banner",  "contentinfo", "complementary",
-                                 "region",   "article"};
+    static const char *ROLE[] = {
+        "none",          "button",   "link",   "checkbox", "radio", "textbox", "search",
+        "slider",        "combobox", "option", "heading",  "para",  "list",    "listitem",
+        "table",         "row",      "cell",   "colhead",  "image", "dialog",  "progress",
+        "meter",         "group",    "form",   "main",     "nav",   "banner",  "contentinfo",
+        "complementary", "region",   "article"};
     ar_i32 i;
 
     printf("areole %s -- the accessibility tree of example 16\n\n", ar_version());
     for (i = 0; i < g_doc->node_count; ++i)
     {
-        char   name[128];
-        ar_u8  role;
+        char  name[128];
+        ar_u8 role;
 
         if (g_doc->nodes[i].kind != AR_DOM_ELEMENT)
         {
@@ -373,6 +373,103 @@ static void ppm(ar_ctx *c, const char *path)
 }
 
 /*
+ * How many pixels of one colour are inside a rectangle.
+ *
+ * The whole of the pixel gate below, and deliberately the smallest thing that
+ * could be: counting is enough to say a ring is there, and comparing against a
+ * golden image would make this example the first that cannot be run on a
+ * machine without one.
+ */
+static ar_i32 count_px(const ar_surface *s, ar_rect r, ar_u32 rgb)
+{
+    ar_i32 x, y, n = 0;
+
+    for (y = r.y; y < r.y + r.h; ++y)
+    {
+        if (y < 0 || y >= s->h)
+        {
+            continue;
+        }
+        for (x = r.x; x < r.x + r.w; ++x)
+        {
+            if (x >= 0 && x < s->w && (s->pixels[y * s->stride + x] & 0xFFFFFFu) == rgb)
+            {
+                ++n;
+            }
+        }
+    }
+    return n;
+}
+
+/*
+ * The check no assertion about state could make.
+ *
+ * 0.10.0 shipped fourteen commits of focus, controls and editing with 1,860
+ * assertions behind them, every one about state or geometry, and the focus
+ * ring did not appear on the screen. Three separate faults, and all three were
+ * invisible to a test that asks the engine what it thinks:
+ *
+ *   - `outline-width` and `outline-color` were not in ar_paint_digest, so a
+ *     frame where only the ring changed produced no damage and never painted;
+ *   - damage was the border box, and an outline is drawn outside it, so the
+ *     repaint that did happen clipped the ring away;
+ *   - `outline-color` was not in the list that resolves a system colour, so
+ *     AccentColor arrived at the paint pass as the index 17, whose alpha is
+ *     zero.
+ *
+ * Every one of them is a list that has to grow when a property joins a pass.
+ * None of them can be caught by asking; all three are caught by looking. So
+ * this counts pixels: the ring's own band must be full of AccentColor and the
+ * box just inside it must have none, which is what makes it a *ring* and not a
+ * filled rectangle or a border.
+ */
+static int ring_check(ar_ctx *c, ar_surface *s, int want_ring, const char **why)
+{
+    const ar_u32 ACCENT = 0x0078D7u; /* AccentColor, light scheme */
+    const ar_i32 W = 2;              /* the user-agent sheet's outline-width */
+    ar_i32       i = ar_focus_node(c);
+    ar_rect      box, out;
+    ar_i32       band, inside;
+
+    if (i < 0)
+    {
+        *why = "nothing is focused";
+        return 0;
+    }
+    box = ar_node_rect(c, i);
+    out = ar_rect_make(box.x - W, box.y - W, box.w + 2 * W, box.h + 2 * W);
+
+    /* The band is the difference of the two rectangles, so this is the area of
+       one minus the area of the other -- no second walk, and it states the
+       arithmetic the ring has to satisfy rather than a number somebody read
+       off an image once. */
+    band = count_px(s, out, ACCENT) - count_px(s, box, ACCENT);
+    inside = count_px(s, box, ACCENT);
+
+    if (!want_ring)
+    {
+        *why = "a mouse focus draws no ring";
+        return band == 0;
+    }
+
+    *why = "a key focus draws a full ring, and only a ring";
+    if (band != out.w * out.h - box.w * box.h)
+    {
+        *why = "the ring is missing or incomplete";
+        return 0;
+    }
+    /* A field is white and holds no accent of its own, so anything here is the
+       ring having been drawn as a filled rectangle behind the box instead of
+       four rectangles around it. */
+    if (inside != 0)
+    {
+        *why = "the ring bled into the box";
+        return 0;
+    }
+    return 1;
+}
+
+/*
  * The same thing a person would do, without a window.
  *
  * Every check here is one the demo is for: Tab reaches the fields in order,
@@ -419,9 +516,36 @@ static int selftest(ar_ctx *c, ar_surface *s)
     STEP(0, 0);
     WANT(!ar_has_focus(c), "a form starts with nothing focused");
 
+    /*
+     * A second settling frame, and the pixel gate below does not work without
+     * it.
+     *
+     * The first frame of a document damages the whole surface, so *everything*
+     * repaints whether or not anything asked it to -- which means a Tab on the
+     * second frame draws a correct ring even with damage tracking completely
+     * broken. Stubbing the digest fix out left this gate green until this line
+     * existed. A gate that only ever runs against a full repaint cannot see
+     * the class of bug that cost this release its focus ring.
+     */
+    STEP(0, 0);
+
     STEP(0, AR_KEY_TAB);
     WANT(ar_has_focus(c), "tab focuses something");
     WANT(ar_focus_is_visible(c), "and a key-driven focus draws its ring");
+
+    /*
+     * And the ring is on the screen, which is a different claim.
+     *
+     * The two checks above passed through every one of the three faults that
+     * kept the ring off the surface for the whole release. This is the one
+     * that could not.
+     */
+    {
+        const char *why = "";
+        int         ok = ring_check(c, s, 1, &why);
+
+        WANT(ok, why);
+    }
 
     STEP("Ada", 0);
     {
@@ -467,7 +591,7 @@ static int selftest(ar_ctx *c, ar_surface *s)
 
 int main(int argc, char **argv)
 {
-    ar_ctx *c;
+    ar_ctx     *c;
     int         want_dump = 0, want_selftest = 0, i;
     const char *ppm_path = 0;
 
@@ -537,8 +661,8 @@ int main(int argc, char **argv)
 
     if (want_dump || want_selftest)
     {
-        static ar_u32     pixels[WIN_W * WIN_H];
-        ar_surface        surf;
+        static ar_u32 pixels[WIN_W * WIN_H];
+        ar_surface    surf;
 
         surf.pixels = pixels;
         surf.w = WIN_W;

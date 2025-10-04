@@ -364,12 +364,12 @@ typedef enum ar_prop
     AR_P_COLOR,
     AR_P_BORDER_COLOR,
 
-    /* `scrollbar-color` is two colours in one declaration, thumb then track,
-       and they cascade as one. Two slots because a colour is a colour. */
     /* The ninety-sixth, and the last that fits three words. See
        AR_PSET_WORDS below, which this commit moves to four. */
     AR_P_OUTLINE_COLOR,
 
+    /* `scrollbar-color` is two colours in one declaration, thumb then track,
+       and they cascade as one. Two slots because a colour is a colour. */
     AR_P_SCROLLBAR_THUMB,
     AR_P_SCROLLBAR_TRACK,
 

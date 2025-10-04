@@ -353,7 +353,6 @@ enum
     AR_KEY_REDO = 1u << 17
 };
 
-
 /* ------------------------------------------------------------------------
  * Performance
  *
@@ -1083,13 +1082,18 @@ void ar_focus_clear(ar_ctx *c);
 int ar_has_focus(const ar_ctx *c);
 int ar_focus_is_visible(const ar_ctx *c);
 
+/* Which box has it, as an index for ar_node_rect, or -1 when nothing is
+   focused or the focused box is not in this frame's tree. An embedder wanting
+   to scroll the focus into view, place an IME window beside it, or check that
+   the ring is where it should be has no other way to ask. */
+ar_i32 ar_focus_node(const ar_ctx *c);
+
 /* The text of the field being edited, or null when none is. Borrowed for the
    frame, like everything else this API hands back. */
 const char *ar_field_text(ar_ctx *c, ar_u32 *len);
 
 /* How many tab stops the last frame published. */
 ar_i32 ar_tab_stops(const ar_ctx *c);
-
 
 /*
  * A box with its own declaration list, which is what an HTML `style=""`

@@ -3141,6 +3141,184 @@ static void test_the_bar_repaints_when_only_its_colour_changed(void)
 }
 
 /*
+ * The focus ring has to survive damage tracking, and it did not.
+ *
+ * 0.10.0 shipped a release about interaction whose focus ring never reached
+ * the screen, and the reason is entirely here: a ring appears *between* two
+ * frames and changes nothing else about the box. So the digest is the only
+ * thing that can notice it, and `outline-width` and `outline-color` were not
+ * in the list of what the paint pass reads -- the third time that list has
+ * been left behind by a property, and the first time it cost a whole feature.
+ *
+ * The second half is the same mistake in the other direction: even once the
+ * box is known to be dirty, an outline is drawn *outside* the border box, and
+ * the damage added was the border box. The repaint happened and clipped the
+ * ring away.
+ *
+ * Pixel identity against a context that repaints everything is what catches
+ * both, and nothing weaker can: every assertion about state and geometry is
+ * true throughout. The two contexts are given identical input and must produce
+ * identical surfaces -- if damage tracking skips anything the ring needs, the
+ * tracked surface is missing pixels the full one has.
+ *
+ * The two boxes are styled differently on purpose, because the two halves of
+ * the fix are caught by different things and a test that only does one of them
+ * cannot say so:
+ *
+ *   #a has no outline until it is focused, so its *painted bounds* change, and
+ *   the geometry comparison catches that on its own once the slot remembers
+ *   bounds rather than the border box.
+ *
+ *   #b always has a ring and only its colour changes, so its bounds never
+ *   move. Nothing but the digest can see it -- which is the case the digest
+ *   exists for and the one that was missing.
+ *
+ * Stubbing either half out has to turn this red, and with #a alone, stubbing
+ * the digest did not.
+ *
+ * The rings are stated in literal colours rather than AccentColor so that this
+ * test fails for one reason. A system colour that never resolves is a separate
+ * fault with a separate check; mixing them would leave a red test that does
+ * not say which.
+ */
+static const char *const FOCUS_RING_DMG_CSS =
+    "#root { display:block; padding:8px; background:#101014; }"
+    "div { display:block; height:20px; margin:6px; background:#3a4a5a; }"
+    "div#a:focus { outline:3px solid #ff0000; }"
+    "div#b { outline:3px solid #00ff00; }"
+    "div#b:focus { outline:3px solid #ff0000; }";
+
+static void ar__ring_declare(ar_ctx *c)
+{
+    ar_begin(c, "#root");
+    ar_begin(c, "div#a");
+    ar_focusable(c, 0);
+    ar_end(c);
+    ar_begin(c, "div#b");
+    ar_focusable(c, 0);
+    ar_end(c);
+    ar_end(c);
+}
+
+static void test_a_focus_ring_survives_damage_tracking(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+    int        saw_ring = 0;
+
+    /* Settle, Tab onto the first box, hold, Tab onto the second. The hold
+       frame is there because a digest that reports a change once and then
+       forgets would pass the two edges and fail in between; the second Tab is
+       what makes the *first* box have to erase a ring it had. */
+    static const ar_u32 KEYS[4] = {0, AR_KEY_TAB, 0, AR_KEY_TAB};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(FOCUS_RING_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "ring: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, FOCUS_RING_DMG_CSS);
+
+    for (frame = 0; frame < 4; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        in.keys_pressed = KEYS[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__ring_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__ring_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        /* That the reference drew a ring at all. Without this the comparison
+           below is satisfied by two blank surfaces, which is exactly how a
+           gate ends up unable to go red. */
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if ((g_dmg_b[i] & 0xFFFFFFu) == 0xFF0000u)
+            {
+                saw_ring = 1;
+                break;
+            }
+        }
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H && bad_frame < 0; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+            }
+        }
+    }
+
+    CHECK(saw_ring, "ring: a focused box draws an outline at all");
+    CHECK(bad_frame < 0, "ring: and damage tracking paints every pixel of it");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
+/*
+ * A system colour on an outline resolves to a colour.
+ *
+ * The third of the three faults, and the one the comment beside COLOR_PROPS in
+ * ar_ctx.c predicted in as many words: the list that turns a system colour
+ * index into a colour is written out by name, and `outline-color` was added to
+ * the engine without being added to it. So the user-agent sheet's `outline:
+ * 2px solid AccentColor` arrived at the paint pass holding 17 -- the *index* --
+ * whose alpha byte is zero, and the paint pass correctly declined to draw a
+ * transparent outline.
+ *
+ * Checked as a resolved value rather than as pixels because that is where the
+ * fault is. A pixel test would also go red, and would not say why.
+ */
+static void test_a_system_colour_on_an_outline_resolves(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_u32     oc;
+
+    ar__ui_reset("#root { display:block; }"
+                 "div#a { display:block; height:20px; outline:2px solid AccentColor; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    oc = (ar_u32)AR_WIDE(&g_ui->nodes[1].style, AR_P_OUTLINE_COLOR);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_OUTLINE_WIDTH] == 2, "outline: the width is stated");
+    CHECK(g_ui->nodes[1].style.unit[AR_P_OUTLINE_COLOR] == AR_UNIT_COLOR,
+          "outline: and its system colour was resolved rather than left as an index");
+    CHECK(AR_ALPHA_OF(oc) != 0, "outline: so it has an alpha, and something will be drawn");
+}
+
+/*
  * The bar appears because the content grew, not because anything was styled.
  *
  * `overflow: auto` shows a bar only once there is somewhere to go, so a list
@@ -17206,8 +17384,7 @@ static void test_border_shorthand_takes_a_deferred_colour(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
 
-    ar__render_html(&s,
-                    "<html><body><div id=\"a\"></div><div id=\"b\"></div></body></html>",
+    ar__render_html(&s, "<html><body><div id=\"a\"></div><div id=\"b\"></div></body></html>",
                     "#a { color:#3366cc; border:4px solid currentColor; }"
                     "#b { color-scheme:dark; border:4px solid CanvasText; }");
 
@@ -17396,19 +17573,18 @@ static void ar__reframe(ar_surface *s)
 
 static void test_tab_order_in_a_document(void)
 {
-    ar_surface s = ar__ui_surface(600, 400);
-    const char *DOC =
-        "<html><body>"
-        "<a name=\"top\">not a link</a>"
-        "<a href=\"#x\" id=\"link\">a link</a>"
-        "<p id=\"para\">ordinary text</p>"
-        "<button id=\"btn\">press</button>"
-        "<input id=\"box\" type=\"checkbox\">"
-        "<input id=\"gone\" type=\"hidden\">"
-        "<div id=\"tabbed\" tabindex=\"0\">reachable</div>"
-        "<div id=\"untabbed\" tabindex=\"-1\">clickable only</div>"
-        "</body></html>";
-    ar_i32 stops;
+    ar_surface  s = ar__ui_surface(600, 400);
+    const char *DOC = "<html><body>"
+                      "<a name=\"top\">not a link</a>"
+                      "<a href=\"#x\" id=\"link\">a link</a>"
+                      "<p id=\"para\">ordinary text</p>"
+                      "<button id=\"btn\">press</button>"
+                      "<input id=\"box\" type=\"checkbox\">"
+                      "<input id=\"gone\" type=\"hidden\">"
+                      "<div id=\"tabbed\" tabindex=\"0\">reachable</div>"
+                      "<div id=\"untabbed\" tabindex=\"-1\">clickable only</div>"
+                      "</body></html>";
+    ar_i32      stops;
 
     ar__render_html(&s, DOC, "");
     stops = g_ui->focusable_prev_n;
@@ -17571,8 +17747,7 @@ static void test_a_checked_attribute_is_a_starting_point(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
 
-    ar__render_html(&s,
-                    "<html><body><input id=\"a\" type=\"checkbox\" checked></body></html>",
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"checkbox\" checked></body></html>",
                     "input { display:block; width:20px; height:20px; margin:0 }"
                     "body { margin:0 }"
                     "#a:checked { width:77px }");
@@ -17631,8 +17806,7 @@ static void test_space_activates_the_focused_control(void)
     ar_surface s = ar__ui_surface(400, 300);
     ar_input   in;
 
-    ar__render_html(&s,
-                    "<html><body><input id=\"a\" type=\"checkbox\"></body></html>",
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"checkbox\"></body></html>",
                     "input { display:block; width:20px; height:20px; margin:0 }"
                     "body { margin:0 }"
                     "#a:checked { width:77px }");
@@ -17736,14 +17910,12 @@ static void test_controls_are_boxes(void)
        field, there being no attribute selectors here yet. */
     CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 13,
           "ua: a checkbox is square whatever the font is");
-    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_WIDTH] == 13,
-          "ua: and so is a radio");
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_WIDTH] == 13, "ua: and so is a radio");
     CHECK(ar__box_style(ar__first_tag_id("t"))->v[AR_P_WIDTH] != 13,
           "ua: a text field is not sized like either");
 
     /* The radio is round and the checkbox is not. */
-    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] > 0,
-          "ua: a radio is round");
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] > 0, "ua: a radio is round");
     CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_BORDER_RADIUS] == 0,
           "ua: and a checkbox is square");
 
@@ -17756,8 +17928,7 @@ static void test_the_mark_is_a_box_that_appears(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
 
-    ar__render_html(&s,
-                    "<html><body><input id=\"c\" type=\"checkbox\"></body></html>",
+    ar__render_html(&s, "<html><body><input id=\"c\" type=\"checkbox\"></body></html>",
                     "body { margin:0 } input { display:block; margin:0 }");
 
     /*
@@ -17809,18 +17980,15 @@ static void test_an_outline_costs_no_layout(void)
      * not move. A ring drawn with a border shifts every box after it the
      * moment somebody presses Tab, which is worse than no ring at all.
      */
-    CHECK(ar__box(ar__first_tag_id("b")).y == 20,
-          "outline: and the box after it does not move");
-    CHECK(ar__box(ar__first_tag_id("a")).h == 20,
-          "outline: nor does the outlined box grow");
+    CHECK(ar__box(ar__first_tag_id("b")).y == 20, "outline: and the box after it does not move");
+    CHECK(ar__box(ar__first_tag_id("a")).h == 20, "outline: nor does the outlined box grow");
 }
 
 static void test_the_focus_ring_is_drawn_for_a_key_and_not_a_click(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
 
-    ar__render_html(&s,
-                    "<html><body><button id=\"b\">go</button></body></html>",
+    ar__render_html(&s, "<html><body><button id=\"b\">go</button></body></html>",
                     "body { margin:0 } button { display:block; margin:0 }");
 
     CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
@@ -17874,7 +18042,7 @@ static void test_a_gauge_is_a_track_with_a_bar(void)
 
 static void test_a_positive_tabindex_sorts_first(void)
 {
-    ar_surface s = ar__ui_surface(400, 300);
+    ar_surface  s = ar__ui_surface(400, 300);
     const char *DOC = "<html><body>"
                       "<a href=\"#\" id=\"one\">a</a>"
                       "<a href=\"#\" id=\"two\">b</a>"
@@ -18034,19 +18202,20 @@ static void test_a11y_the_name_algorithm_is_an_order(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
 
-    ar__render_html(&s,
-                    "<html><body>"
-                    "<span id=\"other\">from elsewhere</span>"
-                    "<button id=\"all\" aria-labelledby=\"other\" aria-label=\"ignored\">text</button>"
-                    "<button id=\"lbl\" aria-label=\"spoken\">text</button>"
-                    "<label for=\"f1\">Your name</label><input id=\"f1\" type=\"text\">"
-                    "<label>Wrapped <input id=\"f2\" type=\"text\"></label>"
-                    "<button id=\"content\">Save file</button>"
-                    "<button id=\"rich\">Save <b>now</b></button>"
-                    "<input id=\"btn\" type=\"submit\" value=\"Send\">"
-                    "<input id=\"bare\" type=\"text\" value=\"typed text\">"
-                    "</body></html>",
-                    "");
+    ar__render_html(
+        &s,
+        "<html><body>"
+        "<span id=\"other\">from elsewhere</span>"
+        "<button id=\"all\" aria-labelledby=\"other\" aria-label=\"ignored\">text</button>"
+        "<button id=\"lbl\" aria-label=\"spoken\">text</button>"
+        "<label for=\"f1\">Your name</label><input id=\"f1\" type=\"text\">"
+        "<label>Wrapped <input id=\"f2\" type=\"text\"></label>"
+        "<button id=\"content\">Save file</button>"
+        "<button id=\"rich\">Save <b>now</b></button>"
+        "<input id=\"btn\" type=\"submit\" value=\"Send\">"
+        "<input id=\"bare\" type=\"text\" value=\"typed text\">"
+        "</body></html>",
+        "");
 
     /*
      * The order is the algorithm. `aria-labelledby` names another element and
@@ -18088,8 +18257,8 @@ static void test_a11y_states(void)
                     "</body></html>",
                     "");
 
-    CHECK(ar_a11y_state(ar__box_style(ar__first_tag_id("on"))->set.w[0] ? AR_STATE_CHECKED : 0, 0) ==
-              AR_A11Y_CHECKED,
+    CHECK(ar_a11y_state(ar__box_style(ar__first_tag_id("on"))->set.w[0] ? AR_STATE_CHECKED : 0,
+                        0) == AR_A11Y_CHECKED,
           "a11y: a checked box reports checked");
     CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("on")].state, 0) & AR_A11Y_CHECKED) != 0,
           "a11y: from the box state");
@@ -18113,21 +18282,21 @@ static void test_a11y_states(void)
  */
 static const char *const AR__CLUSTERS[] = {
     "hello",
-    "a\xCC\x80",                                 /* a + combining grave      */
-    "e\xCC\x81\xCC\xA7",                         /* e + acute + cedilla      */
-    "\xF0\x9F\x91\x8D",                          /* thumbs up                */
-    "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD",          /* thumbs up + skin tone    */
+    "a\xCC\x80",                                    /* a + combining grave      */
+    "e\xCC\x81\xCC\xA7",                            /* e + acute + cedilla      */
+    "\xF0\x9F\x91\x8D",                             /* thumbs up                */
+    "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD",             /* thumbs up + skin tone    */
     "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7", /* woman ZWJ girl        */
-    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8",          /* flag: two regionals      */
+    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8",             /* flag: two regionals      */
     "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", /* two flags */
-    "\xEA\xB0\x80",                              /* precomposed Hangul       */
-    "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xAB",      /* Hangul L + V + T         */
-    "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D",          /* Hebrew, right to left    */
-    "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85",          /* Arabic                   */
-    "\xE3\x81\x93\xE3\x82\x93",                  /* Japanese                 */
-    "x\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBDy",        /* an emoji between letters */
+    "\xEA\xB0\x80",                         /* precomposed Hangul       */
+    "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xAB", /* Hangul L + V + T         */
+    "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D",     /* Hebrew, right to left    */
+    "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85",     /* Arabic                   */
+    "\xE3\x81\x93\xE3\x82\x93",             /* Japanese                 */
+    "x\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBDy",   /* an emoji between letters */
     "caf\xC3\xA9",
-    "a\xCC\x80\xCC\x81\xCC\x82\xCC\x83"          /* four marks on one letter */
+    "a\xCC\x80\xCC\x81\xCC\x82\xCC\x83" /* four marks on one letter */
 };
 
 #define AR__CLUSTER_N ((ar_i32)(sizeof AR__CLUSTERS / sizeof AR__CLUSTERS[0]))
@@ -18591,8 +18760,7 @@ static void test_focus_styles_reach_a_parsed_document(void)
     CHECK(ar_has_focus(g_ui), "focus: tab focuses something in a document");
     CHECK(g_ui->focus_key == g_ui->nodes[ar__first_tag_id("a")].key,
           "focus: and it is the first field's own box");
-    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 111,
-          "focus: :focus matches it");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 111, "focus: :focus matches it");
     CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_HEIGHT] == 33,
           "focus: and :focus-visible does too");
 }
@@ -19095,8 +19263,7 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
      * That is not the four bytes the property mask cost; it is a real decision
      * and should be made with the number in front of whoever makes it.
      */
-    CHECK(sheet.count <= 220,
-          "ua: and it fits the 256 every caller gets, with headroom to spare");
+    CHECK(sheet.count <= 220, "ua: and it fits the 256 every caller gets, with headroom to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)
@@ -22074,6 +22241,8 @@ int main(void)
     test_damage_output_is_identical_to_a_full_repaint();
     test_a_region_move_is_identical_to_a_full_repaint();
     test_the_bar_repaints_when_only_its_colour_changed();
+    test_a_focus_ring_survives_damage_tracking();
+    test_a_system_colour_on_an_outline_resolves();
     test_a_bar_that_appears_because_content_grew();
 
     test_the_entity_table_is_sorted();
