@@ -393,8 +393,8 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 }
                 else
                 {
-                    win->input.keys_pressed |= (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_REDO
-                                                                                : AR_KEY_UNDO;
+                    win->input.keys_pressed |=
+                        (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_REDO : AR_KEY_UNDO;
                 }
                 break;
             }

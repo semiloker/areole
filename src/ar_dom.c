@@ -258,7 +258,6 @@ static void ar__collapse(ar_doc *d, ar_span *text)
     text->n = n;
 }
 
-
 /*
  * An element's `style` attribute, as a NUL-terminated declaration list.
  *
@@ -706,8 +705,8 @@ static int ar__focusable_element(const ar_doc *d, ar_i32 node)
 
         return href.p != 0;
     }
-    if (ar_span_is(name, "button") || ar_span_is(name, "select") ||
-        ar_span_is(name, "textarea") || ar_span_is(name, "summary"))
+    if (ar_span_is(name, "button") || ar_span_is(name, "select") || ar_span_is(name, "textarea") ||
+        ar_span_is(name, "summary"))
     {
         return 1;
     }
@@ -903,8 +902,8 @@ static ar_u8 ar__control_kind(const ar_doc *d, ar_i32 node)
         {
             return AR_CTL_RADIO;
         }
-        if (type.p && (ar_span_is(type, "submit") || ar_span_is(type, "reset") ||
-                       ar_span_is(type, "button")))
+        if (type.p &&
+            (ar_span_is(type, "submit") || ar_span_is(type, "reset") || ar_span_is(type, "button")))
         {
             return AR_CTL_BUTTON;
         }
@@ -971,7 +970,6 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         return; /* comments and the doctype generate no box */
     }
 
-
     ar__selector(d, node, sel);
     {
         /* Both lists are built before the box is opened, because ar_begin
@@ -1015,9 +1013,8 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
                others. */
             ar_span nm = ar__attr_of(d, node, "name");
 
-            ar_control_next(c, kind, (kind == AR_CTL_RADIO && nm.p)
-                                         ? ar_hash(nm.p, nm.n)
-                                         : (ar_u32)node);
+            ar_control_next(c, kind,
+                            (kind == AR_CTL_RADIO && nm.p) ? ar_hash(nm.p, nm.n) : (ar_u32)node);
             if (kind == AR_CTL_TEXT)
             {
                 /* `value` is where a text field starts, and the buffer is
@@ -1088,8 +1085,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         }
     }
 
-    if (ar__control_kind(d, node) == AR_CTL_CHECKBOX ||
-        ar__control_kind(d, node) == AR_CTL_RADIO)
+    if (ar__control_kind(d, node) == AR_CTL_CHECKBOX || ar__control_kind(d, node) == AR_CTL_RADIO)
     {
         ar_state_next(c, ar_box_is_checked(c) ? AR_STATE_CHECKED : 0);
         ar_begin(c, "ar-mark");

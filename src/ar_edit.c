@@ -39,9 +39,9 @@ enum
     AR__GB_CR,
     AR__GB_LF,
     AR__GB_CONTROL,
-    AR__GB_EXTEND,  /* combining marks, variation selectors, emoji modifiers */
+    AR__GB_EXTEND, /* combining marks, variation selectors, emoji modifiers */
     AR__GB_ZWJ,
-    AR__GB_RI,      /* regional indicator, the halves of a flag */
+    AR__GB_RI, /* regional indicator, the halves of a flag */
     AR__GB_PREPEND,
     AR__GB_SPACING, /* SpacingMark: a mark that takes width and still joins */
     AR__GB_L,
@@ -86,17 +86,16 @@ static ar_u8 ar__gb_class(ar_u32 c)
      * becomes its own cluster, which shows as a caret stop somebody did not
      * expect rather than as a broken character.
      */
-    if (ar__in(c, 0x0300, 0x036F) ||  /* combining diacriticals            */
-        ar__in(c, 0x0483, 0x0489) ||  /* Cyrillic                          */
+    if (ar__in(c, 0x0300, 0x036F) || /* combining diacriticals            */
+        ar__in(c, 0x0483, 0x0489) || /* Cyrillic                          */
         ar__in(c, 0x0591, 0x05BD) || c == 0x05BF || ar__in(c, 0x05C1, 0x05C2) ||
         ar__in(c, 0x0610, 0x061A) || ar__in(c, 0x064B, 0x065F) || c == 0x0670 ||
-        ar__in(c, 0x06D6, 0x06DC) || ar__in(c, 0x0730, 0x074A) ||
-        ar__in(c, 0x07A6, 0x07B0) || ar__in(c, 0x0900, 0x0902) || c == 0x093A ||
-        ar__in(c, 0x093E, 0x094C) ||  /* Devanagari matras, mostly Extend  */
-        ar__in(c, 0x0951, 0x0957) || ar__in(c, 0x0E31, 0x0E3A) ||
-        ar__in(c, 0x1AB0, 0x1AFF) || ar__in(c, 0x1DC0, 0x1DFF) ||
-        ar__in(c, 0x20D0, 0x20F0) ||  /* combining marks for symbols       */
-        ar__in(c, 0xFE00, 0xFE0F) ||  /* variation selectors               */
+        ar__in(c, 0x06D6, 0x06DC) || ar__in(c, 0x0730, 0x074A) || ar__in(c, 0x07A6, 0x07B0) ||
+        ar__in(c, 0x0900, 0x0902) || c == 0x093A ||
+        ar__in(c, 0x093E, 0x094C) || /* Devanagari matras, mostly Extend  */
+        ar__in(c, 0x0951, 0x0957) || ar__in(c, 0x0E31, 0x0E3A) || ar__in(c, 0x1AB0, 0x1AFF) ||
+        ar__in(c, 0x1DC0, 0x1DFF) || ar__in(c, 0x20D0, 0x20F0) || /* combining marks for symbols */
+        ar__in(c, 0xFE00, 0xFE0F) || /* variation selectors               */
         ar__in(c, 0xFE20, 0xFE2F) || ar__in(c, 0x1F3FB, 0x1F3FF) || /* skin tones */
         ar__in(c, 0xE0100, 0xE01EF))
     {
@@ -691,7 +690,7 @@ void ar_edit_select_all(ar_edit *e)
 
 int ar_edit_undo(ar_edit *e)
 {
-    ar_edit_step now;
+    ar_edit_step  now;
     ar_edit_step *st;
 
     if (!e || e->undo_at == 0)
@@ -718,7 +717,7 @@ int ar_edit_undo(ar_edit *e)
 
 int ar_edit_redo(ar_edit *e)
 {
-    ar_edit_step now;
+    ar_edit_step  now;
     ar_edit_step *st;
 
     if (!e || e->undo_at >= e->undo_n)

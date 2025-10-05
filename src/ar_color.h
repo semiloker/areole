@@ -25,7 +25,7 @@
 
 /* One fixed-point unit is 1/4096. See the header comment for why this number
    and not a rounder one. */
-#define AR_CFIX      4096
+#define AR_CFIX       4096
 #define AR_CFIX_SHIFT 12
 
 /*
@@ -122,8 +122,8 @@ typedef struct ar_color_val
  * inverse of decoding by construction rather than by a second approximation
  * that has to be kept in agreement with the first.
  */
-ar_i32 ar_srgb_to_linear(ar_i32 c8);   /* 0..255 -> 0..AR_CFIX */
-ar_i32 ar_linear_to_srgb(ar_i32 lin);  /* 0..AR_CFIX -> 0..255 */
+ar_i32 ar_srgb_to_linear(ar_i32 c8);  /* 0..255 -> 0..AR_CFIX */
+ar_i32 ar_linear_to_srgb(ar_i32 lin); /* 0..AR_CFIX -> 0..255 */
 
 /* Integer cube root of a value in AR_CFIX scale, result in AR_CFIX scale.
    Lab and Oklab both need one and neither needs anything else transcendental,
