@@ -547,6 +547,51 @@ static int selftest(ar_ctx *c, ar_surface *s)
         WANT(ok, why);
     }
 
+    /*
+     * And the other half of the pair, which is the whole of `:focus-visible`.
+     *
+     * A click focuses the field so typing arrives and draws *no* ring, because
+     * you know where you just clicked. This example's header advertises that
+     * difference as the first thing to look at, and until now nothing checked
+     * it -- which matters more right after teaching the engine to draw a ring
+     * at all, since a ring that appears on every focus is the exact regression
+     * this fix could have introduced.
+     */
+    {
+        ar_rect     box = ar_node_rect(c, ar_focus_node(c));
+        const char *why = "";
+        int         ok;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = box.x + box.w / 2;
+        in.mouse_y = box.y + box.h / 2;
+        in.mouse_inside = 1;
+
+        /* One frame with the cursor there and no button, because a press
+           focuses whatever is under the *hover* chain and hover resolves from
+           the previous frame's tree -- so a press on the first frame the
+           cursor exists finds nothing under it and clears the focus. */
+        frame(c, &in, s);
+
+        in.mouse_pressed = 1;
+        in.mouse_down = 1;
+        frame(c, &in, s);
+        in.mouse_pressed = 0;
+        in.mouse_down = 0;
+        in.mouse_released = 1;
+        frame(c, &in, s);
+
+        WANT(ar_has_focus(c), "a click focuses too");
+        WANT(!ar_focus_is_visible(c), "but says its focus should not be drawn");
+        ok = ring_check(c, s, 0, &why);
+        WANT(ok, why);
+    }
+
+    /* Back to the keyboard, so the field the checks below type into is the one
+       the Tab above chose rather than whatever the click landed on. */
+    STEP(0, AR_KEY_TAB_BACK);
+    STEP(0, AR_KEY_TAB);
+
     STEP("Ada", 0);
     {
         ar_u32      n = 0;
