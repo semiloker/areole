@@ -208,8 +208,21 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_BACKGROUND] = AR_UNIT_COLOR;
     AR_WIDE(s, AR_P_COLOR) = (ar_i32)0xFF202020u;
     s->unit[AR_P_COLOR] = AR_UNIT_COLOR;
+    /*
+     * `currentColor`, which is what CSS says and not what this was.
+     *
+     * CSS 2.1 §8.5.2: the initial value of `border-color` is the value of the
+     * `color` property. It was zero here -- fully transparent -- so a box
+     * given a width and no colour drew a border that was the right size,
+     * in the right place, and invisible.
+     *
+     * That is exactly what `<table border="1">` is: the attribute maps to a
+     * width and says nothing about colour, so every bordered table on the old
+     * web laid out with room for its lines and drew none of them. The
+     * geometry was right, which is why the table corpus never saw it.
+     */
     AR_WIDE(s, AR_P_BORDER_COLOR) = 0;
-    s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
+    s->unit[AR_P_BORDER_COLOR] = AR_UNIT_CURRENTCOLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
     s->v[AR_P_LINE_HEIGHT] = 0;
