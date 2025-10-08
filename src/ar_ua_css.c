@@ -471,6 +471,22 @@ static const char *const AR__UA[] = {
     "center { text-align:center; }",
 
     /*
+     * A link is blue, and that is the whole rule until `text-decoration`
+     * exists.
+     *
+     * `.ar-link` rather than `a:link` because a link is an `<a>` with an
+     * `href` and there are no attribute selectors here; the document walk
+     * adds the class. LinkText is the system colour that means this, so a
+     * dark colour scheme gets the lighter blue without a second rule.
+     *
+     * The underline is still missing and is the larger half of looking like a
+     * link. It is named in the list at the end of this file rather than
+     * approximated with a border, which would take space in the line and make
+     * a wrapped link draw a box round each fragment.
+     */
+    ".ar-link { color:LinkText; }",
+
+    /*
      * Not expressible yet, and named here rather than left to be discovered:
      *
      *   - `dialog` is `display:none` until it has the `open` attribute, which
