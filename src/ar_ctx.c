@@ -4528,6 +4528,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         ar_rect  clip;
         ar_color bg, border;
         ar_i32   bw;
+        ar_i32   radius;
 
         if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
@@ -4571,10 +4572,24 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
+        /* `border-radius` was parsed and stored from 0.10.0 and read by
+           nothing, so a radio button was a square with a square dot in it and
+           the property was a catalogue row for a feature that did not exist.
+           One value, all four corners: the per-corner form is four more
+           properties and no control has ever wanted it. */
+        radius = n->style.v[AR_P_BORDER_RADIUS];
+
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0)
         {
-            ar_fill_rect(s, n->rect, clip, bg);
+            if (radius > 0)
+            {
+                ar_fill_round_rect(s, n->rect, radius, clip, bg);
+            }
+            else
+            {
+                ar_fill_rect(s, n->rect, clip, bg);
+            }
         }
 
         /*
@@ -4701,10 +4716,21 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
-            ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+
+            if (radius > 0)
+            {
+                /* One ring rather than four rectangles: four would meet at the
+                   corners the radius has just removed, and each would stop at
+                   a square edge inside the curve. */
+                ar_stroke_round_rect(s, r, radius, bw, clip, border);
+            }
+            else
+            {
+                ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
+                ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
+                ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
+                ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+            }
         }
 
         /*
