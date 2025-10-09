@@ -851,6 +851,159 @@ static ar_i32 ar__attr_num(const ar_doc *d, ar_i32 node, const char *name, ar_i3
  * `<meter>` has `min` as well, which `<progress>` does not: a meter measures a
  * range and a progress bar counts from nothing.
  */
+/*
+ * The marker on a list item, as a box.
+ *
+ * A marker is a box here rather than something the paint pass draws, for the
+ * same reason a checkbox's tick is: everything a marker needs -- a colour that
+ * inherits, a size in `em`, text measurement for a number, a rounded corner
+ * for a bullet -- is already true of boxes and would have to be written again
+ * inside the painter. `::marker` and counters are the general machinery and
+ * are still 0.5.3; this is the two cases every document actually contains.
+ *
+ * It is placed by a negative left margin, which is exactly what
+ * `list-style-position: outside` means: the marker starts in the padding the
+ * list already reserves, the first line's text starts at the content edge, and
+ * a line that wraps starts there too -- without the marker taking part in the
+ * wrap. No positioning scheme and no new layout path.
+ *
+ * A bullet is drawn and a number is typed, and that split is forced: the
+ * built-in face is ASCII 32 to 126 and renders everything else as `?`, so
+ * U+2022 would be a question mark on any build without a TrueType face. A
+ * disc is a box with a radius, which is now a thing this engine can draw.
+ */
+static void ar__list_marker(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_i32 up, depth = 0, ordered = 0;
+    ar_i32 index;
+
+    if (!ar_span_is(d->nodes[node].name, "li"))
+    {
+        return;
+    }
+
+    /* Which list this belongs to, and how deep it is nested. A bare `<li>`
+       with no list around it is still a list item with a disc, which is what
+       a browser does and what the tag means on its own. */
+    for (up = d->nodes[node].parent; up >= 0; up = d->nodes[up].parent)
+    {
+        if (d->nodes[up].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (ar_span_is(d->nodes[up].name, "ol"))
+        {
+            if (depth == 0)
+            {
+                ordered = 1;
+            }
+            ++depth;
+        }
+        else if (ar_span_is(d->nodes[up].name, "ul") || ar_span_is(d->nodes[up].name, "menu") ||
+                 ar_span_is(d->nodes[up].name, "dir"))
+        {
+            ++depth;
+        }
+    }
+
+    if (!ordered)
+    {
+        /*
+         * disc, then circle, then square, by nesting depth -- the
+         * specification's own sequence, and the thing that makes a nested list
+         * readable without indentation alone having to carry it.
+         */
+        const char *sel = "ar-bullet";
+
+        if (depth == 2)
+        {
+            sel = "ar-bullet.ar-circle";
+        }
+        else if (depth >= 3)
+        {
+            sel = "ar-bullet.ar-square";
+        }
+        ar_begin(c, sel);
+        ar_end(c);
+        return;
+    }
+
+    /*
+     * The number, which is counted rather than read: `start` on the list and
+     * `value` on the item are the two ways a document overrides it, and both
+     * are common enough in real markup to be worth the twenty lines -- an
+     * ordered list that restarts at 1 halfway down is a wrong document, not a
+     * styling difference.
+     */
+    {
+        ar_i32  own = ar__attr_num(d, node, "value", 0);
+        ar_span v = ar__attr_of(d, node, "value");
+
+        if (v.p && v.n > 0)
+        {
+            index = own / 1000; /* ar__attr_num is fixed point, thousandths */
+        }
+        else
+        {
+            ar_i32  sib;
+            ar_i32  start = 1;
+            ar_span st;
+
+            up = d->nodes[node].parent;
+            st = up >= 0 ? ar__attr_of(d, up, "start") : ar__attr_of(d, node, "nosuch");
+            if (st.p && st.n > 0)
+            {
+                start = ar__attr_num(d, up, "start", 1000) / 1000;
+            }
+            index = start;
+            for (sib = up >= 0 ? d->nodes[up].first_child : -1; sib >= 0 && sib != node;
+                 sib = d->nodes[sib].next_sibling)
+            {
+                if (d->nodes[sib].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[sib].name, "li"))
+                {
+                    ++index;
+                }
+            }
+        }
+    }
+
+    {
+        char   buf[16];
+        ar_u32 used = 0;
+        ar_i32 t = index < 0 ? -index : index;
+        char   digits[12];
+        ar_i32 nd = 0;
+
+        if (t == 0)
+        {
+            digits[nd++] = '0';
+        }
+        while (t > 0 && nd < 11)
+        {
+            digits[nd++] = (char)('0' + (t % 10));
+            t /= 10;
+        }
+        if (index < 0)
+        {
+            buf[used++] = '-';
+        }
+        while (nd > 0)
+        {
+            buf[used++] = digits[--nd];
+        }
+        buf[used++] = '.';
+        buf[used] = 0;
+
+        /* The marker carries the text itself rather than wrapping a child
+           that does. A box with its own text has its own baseline, so it
+           sits on the line the item sits on; a box whose text is a child
+           is an inline-block with no baseline of its own and takes its
+           bottom margin edge instead, which lifted every number about four
+           pixels above the word beside it. */
+        ar_text_kept(c, "ar-marker", buf, used);
+    }
+}
+
 static ar_i32 ar__gauge_pct(const ar_doc *d, ar_i32 node, int is_meter)
 {
     ar_i32 lo = is_meter ? ar__attr_num(d, node, "min", 0) : 0;
@@ -1110,6 +1263,8 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         ar_begin(c, "ar-mark");
         ar_end(c);
     }
+
+    ar__list_marker(c, d, node);
 
     /*
      * A `<progress>` or `<meter>` is a track with a bar in it, and the bar is

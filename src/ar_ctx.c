@@ -3938,6 +3938,45 @@ void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n)
     ar_text(c, "ar-value", kept);
 }
 
+/*
+ * A text box whose string is copied rather than borrowed.
+ *
+ * `ar_text` keeps the pointer it is given, which is right for everything that
+ * had one already -- a document's text lives in the document's own buffer and
+ * outlives the frame. A caller that *built* the string has nowhere to put it,
+ * and handing over a stack buffer leaves every box pointing at whatever the
+ * last one happened to spell. That is not hypothetical: it is what a field's
+ * value did before ar_field_child copied it, and it read as "the value
+ * attribute is not arriving" rather than as aliasing.
+ *
+ * A list marker is the second caller, because "3." exists nowhere in the
+ * document -- the document says `<li>` and the number is counted.
+ */
+void ar_text_kept(ar_ctx *c, const char *selector, const char *text, ar_u32 n)
+{
+    char  *kept;
+    ar_u32 i;
+
+    if (!c || !text)
+    {
+        return;
+    }
+    kept = (char *)ar_arena_frame(&c->arena, n + 1u);
+    if (!kept)
+    {
+        /* The box still exists, it just has nothing in it -- the same failure
+           the tree itself takes, and reported the same way. */
+        c->overflowed = 1;
+        return;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        kept[i] = text[i];
+    }
+    kept[n] = 0;
+    ar_text(c, selector, kept);
+}
+
 const char *ar_field_text(ar_ctx *c, ar_u32 *len)
 {
     if (!c || c->edit_key == 0)
