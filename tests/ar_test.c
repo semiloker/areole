@@ -19465,6 +19465,70 @@ static void test_whitespace_between_blocks_is_dropped(void)
     CHECK(without == 10, "html: and a two-item list is ten boxes, two of them markers");
 }
 
+/*
+ * A superscript is above the line and a subscript is below it.
+ *
+ * `vertical-align` had four keywords and neither of these was one, so `<sub>`
+ * and `<sup>` were small text on the same baseline as everything around them
+ * -- which is the one thing they are not, and the only thing either element
+ * exists to do.
+ *
+ * The two offsets are not arithmetic: the specification says "an appropriate
+ * offset" and leaves it to the font. They were read off Chrome's own boxes in
+ * examples/gallery/css/text/sub-super, where both now land on exactly the y a
+ * browser gives them. This check is the part of that which runs without a
+ * browser -- the direction and the ordering, which is what a regression would
+ * break first.
+ */
+static void test_sub_and_super_leave_the_baseline(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     plain, sub, sup;
+    ar_i32     i = 0;
+
+    ar__render_html(&s, "<p>x<span id=\"p\">n</span><sub id=\"b\">n</sub><sup id=\"u\">n</sup></p>",
+                    "body { margin:0px; } p { margin:0px; font-size:16px; }");
+
+    plain = ar__first_tag_id("p");
+    sub = ar__first_tag_id("b");
+    sup = ar__first_tag_id("u");
+    (void)i;
+
+    CHECK(plain >= 0 && sub >= 0 && sup >= 0, "valign: the three spans are in the tree");
+    if (plain < 0 || sub < 0 || sup < 0)
+    {
+        return;
+    }
+
+    /*
+     * Baselines, not box tops, and the difference is the whole point: a
+     * subscript is smaller, so its box is shorter, and a shorter box raised
+     * off the line can still have its top edge lower than a taller box's.
+     * Comparing `y` asks where the boxes are; `vertical-align` moves where
+     * their baselines are, and that is what has to be asserted. The first
+     * version of this check compared `y` and went red against a correct
+     * engine, which is the reason the distinction is written down.
+     *
+     * Ordering rather than exact pixels, because the offsets are a fraction of
+     * a font size and a face with different metrics moves both. The gallery
+     * demo is where the exact numbers are checked, against Chrome.
+     */
+    {
+        ar_i32 b_plain = ar__box(plain).y + g_ui->nodes[plain].ascent;
+        ar_i32 b_sub = ar__box(sub).y + g_ui->nodes[sub].ascent;
+        ar_i32 b_sup = ar__box(sup).y + g_ui->nodes[sup].ascent;
+
+        CHECK(b_sup < b_plain, "valign: a superscript's baseline is above the text it follows");
+        CHECK(b_sub > b_plain, "valign: a subscript's is below it");
+        CHECK(b_sup < b_sub, "valign: and the two are the right way round");
+        if (!(b_sup < b_plain && b_sub > b_plain))
+        {
+            printf("      baselines: sup %ld, plain %ld, sub %ld\n", (long)b_sup, (long)b_plain,
+                   (long)b_sub);
+        }
+    }
+}
+
 static void test_a_table_from_markup_uses_the_table_model(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -22436,6 +22500,7 @@ int main(void)
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
+    test_sub_and_super_leave_the_baseline();
     test_a_table_from_markup_uses_the_table_model();
     test_head_content_draws_nothing();
     test_a_document_survives_the_round_trip();

@@ -155,7 +155,13 @@ static const char *const AR__UA[] = {
      * only at sixteen.
      */
     "big { font-size:1.2em; }"
-    "small, sub, sup { font-size:0.8125em; }",
+    "small, sub, sup { font-size:0.8125em; }"
+    /* And where the two of them sit. `vertical-align` had four keywords
+       and neither of these was one, so a subscript and a superscript were
+       small text on the same baseline as everything else -- which is the
+       one thing they are not. */
+    "sup { vertical-align:super; }"
+    "sub { vertical-align:sub; }",
 
     "h4 { display:block; font-size:1em; margin:1.33em 0px; font-weight:bold; }"
     "h5 { display:block; font-size:0.83em; margin:1.67em 0px; font-weight:bold; }"
@@ -529,8 +535,6 @@ static const char *const AR__UA[] = {
      *     `i`, `em`, `cite`, `var`, `dfn` and `address` want
      *     `font-style: italic`. Neither property exists, so nothing on a page
      *     is bold or italic.
-     *   - `sub` and `sup` want `vertical-align: sub / super` and a smaller
-     *     size. `vertical-align` has four keywords and none of them is these.
      *   - `a:link` wants a colour and an underline. `text-decoration` does not
      *     exist.
      *

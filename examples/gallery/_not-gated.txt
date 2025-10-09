@@ -154,3 +154,23 @@ css/units/ch             engine: the built-in face states no advance for "0", so
 
 css/units/percentage-references  engine: a percentage padding is read as pixels -- see 0.4.1's stated debt
 css/color/system-colors  browser: the system colours come from the OS theme there and from a fixed table here, so the two disagree by design until the theme hook lands at 0.16.1 -- geometry still agrees
+
+# ---- an inline at a smaller font-size measures narrow -------------------
+#
+# `vertical-align: sub` and `super` are right in this demo and are what it was
+# written to settle: the two offsets were picked by reading Chrome's boxes out
+# of this file rather than by arithmetic, and both subscript and superscript
+# now land on exactly the y a browser gives them.
+#
+# What is left is a width, and it is not about vertical-align at all. Setting
+# the demo to `vertical-align: baseline` leaves the same two boxes 7 px wide
+# against Chrome's 11, and the line box 19 against 16 -- so it is there
+# whatever the alignment says. It is the inline-at-another-font-size fault the
+# real-document corpus found and named, and it is the reason this demo cannot
+# be gated yet rather than a reason to leave the alignment alone: with the two
+# offsets in, the demo went from four disagreeing boxes to two.
+#
+# The demo stays, amber, because the two that remain are the thing that will
+# go green.
+
+css/text/sub-super  engine: an inline at a smaller font-size measures narrow -- the offsets are right, the advance is not

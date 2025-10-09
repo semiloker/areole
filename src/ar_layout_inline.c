@@ -54,6 +54,36 @@ int ar_is_fragmentable(const ar_node *n)
  * no text has no baseline of its own, and takes its bottom margin edge, so it
  * sits *on* the line rather than across it.
  */
+/*
+ * How far this box's baseline is lifted off the line's, in pixels.
+ *
+ * `sub` and `super` are not a fourth and fifth way of aligning a box. The line
+ * still has one shared baseline and everything still sits on it; these two
+ * move where *this* box's own baseline meets it, which is why they are handled
+ * inside the baseline case rather than beside it.
+ *
+ * The fractions are of this box's own font size, and the specification says
+ * "an appropriate offset" without giving one -- it is deliberately the font's
+ * business. `sub` and `sup` come through at 0.8125em from the user-agent
+ * sheet, so a third of that is very close to the third of the *parent* size
+ * that browsers settle on, and measuring against Edge is what picked the two
+ * numbers rather than arithmetic.
+ */
+static ar_i32 ar__valign_shift(const ar_node *n)
+{
+    ar_i32 px = n->style.v[AR_P_FONT_SIZE];
+
+    if (n->style.v[AR_P_VERTICAL_ALIGN] == AR_VALIGN_SUPER)
+    {
+        return px / 2;
+    }
+    if (n->style.v[AR_P_VERTICAL_ALIGN] == AR_VALIGN_SUB)
+    {
+        return -((px * 2) / 5);
+    }
+    return 0;
+}
+
 ar_i32 ar_inline_baseline(const ar_node *n)
 {
     if (n->text && n->text[0])
@@ -294,7 +324,10 @@ static ar_i32 ar__close_line(ar__liner *L)
         const ar_node *n = &L->nodes[env->frags[i].node];
         ar_i32         outer_h =
             ar__frag_h(n) + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
-        ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP];
+        /* A raised box needs the line to be taller above the baseline by
+           however far it was raised, or a superscript is clipped off the
+           top of its own line. A lowered one does the same below. */
+        ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP] + ar__valign_shift(n);
         ar_i32 descent = outer_h - ascent;
 
         if (ascent > max_ascent)
@@ -351,7 +384,7 @@ static ar_i32 ar__close_line(ar__liner *L)
         default:
             /* On the shared baseline: as far below the line's top as this
                item's own baseline is below its own top. */
-            f->rect.y = L->top + L->y + max_ascent - ar_inline_baseline(n);
+            f->rect.y = L->top + L->y + max_ascent - ar_inline_baseline(n) - ar__valign_shift(n);
             break;
         }
 
