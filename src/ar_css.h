@@ -354,6 +354,13 @@ typedef enum ar_prop
 
     AR_P_OUTLINE_WIDTH,
 
+    /* The ninety-seventh. `text-decoration` is one property here and not
+       the four CSS 3 split it into -- line, style, colour, thickness --
+       because nothing in this engine can draw a wavy double underline in
+       a second colour, and three slots for values nothing reads is the
+       catalogue row this project refuses. */
+    AR_P_TEXT_DECORATION,
+
     AR_P_COLOR_SCHEME,
 
     AR_P_NARROW_COUNT,
@@ -957,6 +964,13 @@ enum
     AR_CLEAR_LEFT = 1,
     AR_CLEAR_RIGHT = 2,
     AR_CLEAR_BOTH = 3
+};
+
+enum
+{
+    AR_DECOR_NONE = 0,
+    AR_DECOR_UNDERLINE,
+    AR_DECOR_LINE_THROUGH
 };
 
 enum

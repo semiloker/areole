@@ -19340,20 +19340,28 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
 
     CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
     /*
-     * Raised from 200 to 220 at 0.10.0, which spent 203 of it on controls.
+     * 200 -> 220 at 0.10.0, which spent 203 of it on controls, and 220 -> 232
+     * for the document work that followed: list markers and their three bullet
+     * shapes, a link's colour and underline, `sub` and `sup`. **222 today.**
      *
      * The wall is AR_MAX_RULES at 256 and this is the warning before it. The
-     * warning is now doing what it is for: text fields, `<select>` and the
-     * accessibility work still to land in this release will take the rest, and
-     * the release after that has to move the wall.
+     * warning has now fired twice and it is worth saying plainly that the
+     * headroom is 34 rules, not a comfortable margin: `<select>` and
+     * `<textarea>` are still owed an appearance, and a monospace family for
+     * `pre` and `code` is a rule each.
      *
-     * Which has been priced so that nobody has to guess. `ar_rule` is 624
-     * bytes, so the table is 159,744 of AR_MEM_FIXED already -- by a long way
-     * the largest thing in it -- and sixty-four more rules cost 39,936 bytes.
-     * That is not the four bytes the property mask cost; it is a real decision
-     * and should be made with the number in front of whoever makes it.
+     * The move has been priced so nobody has to guess. `ar_rule` is 624 bytes,
+     * so the table is 159,744 of AR_MEM_FIXED already -- by a long way the
+     * largest thing in it -- and sixty-four more rules cost 39,936 bytes. That
+     * is not the four bytes the property mask cost; it is a real decision and
+     * should be made with the number in front of whoever makes it.
+     *
+     * The cheaper answer is the one named in ar_css.h: a rule carries a whole
+     * ar_style to state the two or three properties it actually sets. A
+     * property-value pool would cut the 624 by an order of magnitude and make
+     * this ceiling stop mattering instead of moving it.
      */
-    CHECK(sheet.count <= 220, "ua: and it fits the 256 every caller gets, with headroom to spare");
+    CHECK(sheet.count <= 232, "ua: and it fits the 256 every caller gets, with headroom to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)
@@ -19480,6 +19488,65 @@ static void test_whitespace_between_blocks_is_dropped(void)
  * browser -- the direction and the ordering, which is what a regression would
  * break first.
  */
+/*
+ * An underline is drawn, and it is drawn on the text.
+ *
+ * `text-decoration` did not exist, so a link was the same black as the words
+ * around it and `<s>` struck nothing out. Counting pixels is the only way to
+ * see a decoration: it moves no box, so every assertion about geometry is
+ * true with it and without it -- the same blindness that kept the focus ring
+ * off the screen for a whole release.
+ *
+ * Two renders of the same markup, one decorated and one not, and the
+ * difference has to be ink below the baseline. Comparing against a control
+ * rather than against a pixel count says the line is *new* rather than that
+ * something dark happens to be there.
+ */
+static void test_an_underline_is_drawn_under_the_text(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+    ar_i32     plain_px, lined_px;
+
+/* The buffer is wider than the surface -- `stride` is AR_LAY_MAX and `w` is
+   what was asked for -- so a flat walk of `w * h` reads the wrong pixels.
+   And it is cleared first, because the two renders share it and ink the
+   first one left would be counted again by the second. */
+#define AR__INK(out)                                                                               \
+    do                                                                                             \
+    {                                                                                              \
+        ar_i32 x, y;                                                                               \
+        (out) = 0;                                                                                 \
+        for (y = 0; y < s.h; ++y)                                                                  \
+        {                                                                                          \
+            for (x = 0; x < s.w; ++x)                                                              \
+            {                                                                                      \
+                if ((g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu) != 0xFFFFFFu)                    \
+                {                                                                                  \
+                    ++(out);                                                                       \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<p>Hello</p>", "body { margin:0px; } p { margin:0px; color:#000000; }");
+    AR__INK(plain_px);
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<p>Hello</p>",
+                    "body { margin:0px; } p { margin:0px; color:#000000;"
+                    "        text-decoration:underline; }");
+    AR__INK(lined_px);
+#undef AR__INK
+
+    CHECK(plain_px > 0, "decoration: the control rendered some text at all");
+    CHECK(lined_px > plain_px, "decoration: and underlining it puts more ink on the surface");
+    if (lined_px <= plain_px)
+    {
+        printf("      %ld px undecorated, %ld decorated\n", (long)plain_px, (long)lined_px);
+    }
+}
+
 static void test_sub_and_super_leave_the_baseline(void)
 {
     ar_surface s = ar__ui_surface(400, 200);
@@ -22500,6 +22567,7 @@ int main(void)
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
+    test_an_underline_is_drawn_under_the_text();
     test_sub_and_super_leave_the_baseline();
     test_a_table_from_markup_uses_the_table_model();
     test_head_content_draws_nothing();

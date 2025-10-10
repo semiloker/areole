@@ -513,12 +513,14 @@ static const char *const AR__UA[] = {
      * adds the class. LinkText is the system colour that means this, so a
      * dark colour scheme gets the lighter blue without a second rule.
      *
-     * The underline is still missing and is the larger half of looking like a
-     * link. It is named in the list at the end of this file rather than
-     * approximated with a border, which would take space in the line and make
-     * a wrapped link draw a box round each fragment.
+     * The underline is drawn on the text rather than as a border, which is
+     * what lets a link that wraps get one line per fragment and none across
+     * the gap between them. A border would take space in the line and box
+     * each piece instead.
      */
-    ".ar-link { color:LinkText; }",
+    ".ar-link { color:LinkText; text-decoration:underline; }"
+    "u, ins { text-decoration:underline; }"
+    "s, del, strike { text-decoration:line-through; }",
 
     /*
      * Not expressible yet, and named here rather than left to be discovered:
@@ -535,8 +537,6 @@ static const char *const AR__UA[] = {
      *     `i`, `em`, `cite`, `var`, `dfn` and `address` want
      *     `font-style: italic`. Neither property exists, so nothing on a page
      *     is bold or italic.
-     *   - `a:link` wants a colour and an underline. `text-decoration` does not
-     *     exist.
      *
      * Each is a missing property rather than a missing rule, which is why they
      * are listed together: the sheet is ahead of the engine, and the sheet is
