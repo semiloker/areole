@@ -384,7 +384,10 @@ static const char *const AR__UA[] = {
     "progress, meter { display:inline-block; width:160px; height:12px; }"
     "progress, meter { background:Field; border:1px solid ButtonBorder; }"
     "ar-bar { display:block; height:12px; background:AccentColor; }"
-    "meter > ar-bar { background:Highlight; }",
+    /* The green a browser draws a meter in, sampled from Edge rather than
+       chosen: rgb(16,124,16). Highlight was the nearest system colour and is
+       the selection blue, which reads as a progress bar rather than a gauge. */
+    "meter > ar-bar { background:#107C10; }",
 
     /* A field's text is a box, so it is measured, laid out and painted by the
        machinery that already does all three. Clipped, because a field does not
