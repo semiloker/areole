@@ -613,11 +613,22 @@ typedef ar_i32 ar_scroll_pos;
  * ninety-seventh property would force AR_PSET_WORDS to four was right, and
  * this is the release that paid it -- priced at 0.9.6 before it was needed,
  * which is the point of pricing things.
+ *
+ * 576 -> 584 for `text-decoration` and `font-family`, the ninety-seventh and
+ * ninety-eighth. Three bytes each -- two in ar_style's narrow array and one in
+ * its unit array -- and alignment rounds the six to eight. The property mask
+ * does not move: four words hold 128 and 98 are used.
+ *
+ * The assertion refused 576 on the build again, which is the second time it
+ * has been the thing that noticed rather than a comment. A property costs
+ * these bytes on every box whether or not any box sets it, which is the trade
+ * the flat-style design makes and the reason `text-decoration` is one
+ * property here rather than the four CSS 3 splits it into.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 576u
+#define AR_BYTES_PER_BOX 584u
 #else
-#define AR_BYTES_PER_BOX 576u
+#define AR_BYTES_PER_BOX 584u
 #endif
 
 /*
@@ -947,6 +958,12 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
  * like something else entirely.
  */
 int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
+
+/* The face `font-family: monospace` draws with: a different axis from the
+   one above, which picks a weight inside a family. One face, because `<pre>`
+   and `<code>` are what it is for and neither is commonly bold. Without it a
+   document asking for monospace draws in the body face, as it always did. */
+int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size);
 
 int ar_font_loaded(const ar_ctx *c);
 

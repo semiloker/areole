@@ -123,6 +123,15 @@ static const char *const BOLDIT[] = {
     "C:/Windows/Fonts/georgiaz.ttf", "C:/Windows/Fonts/timesbi.ttf",
     "C:/Windows/Fonts/segoeuiz.ttf", "C:/Windows/Fonts/arialbi.ttf", 0};
 
+/* And the monospace family, which is the same whichever serif face above was
+   found: `font-family: monospace` names a family and not a companion weight,
+   so it is one list rather than one entry per face. Without it `<pre>` and
+   `<code>` draw in the body face, which is what made RFC 2616 the one
+   document here that did not render recognisably. */
+static const char *const MONO[] = {"C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/cour.ttf",
+                                   "C:/Windows/Fonts/lucon.ttf",
+                                   "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 0};
+
 /*
  * A buffer per face, and that is not tidiness.
  *
@@ -134,7 +143,7 @@ static const char *const BOLDIT[] = {
  * file. The corpus selftest passed while that was true, because it counts
  * boxes and does not look at pixels.
  */
-static unsigned char g_face_bytes[4][8 * 1024 * 1024];
+static unsigned char g_face_bytes[5][8 * 1024 * 1024];
 
 static ar_u32 slurp(int slot, const char *path)
 {
@@ -175,6 +184,18 @@ static int load_face(ar_ctx *c)
             if (m)
             {
                 ar_font_load_styled(c, g_face_bytes[3], m, 700, 1);
+            }
+            {
+                ar_i32 k;
+
+                for (k = 0; MONO[k]; ++k)
+                {
+                    m = slurp(4, MONO[k]);
+                    if (m && ar_font_load_mono(c, g_face_bytes[4], m))
+                    {
+                        break;
+                    }
+                }
             }
             return 1;
         }

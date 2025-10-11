@@ -361,6 +361,20 @@ typedef enum ar_prop
        catalogue row this project refuses. */
     AR_P_TEXT_DECORATION,
 
+    /*
+     * The ninety-eighth, and it is a *family slot* rather than a family
+     * name. areole has no font database to look a name up in: it is handed
+     * faces by the embedder and draws with those. So this holds which of
+     * the loaded families a box wants, and `monospace` is the one that
+     * matters -- it is the difference between `<pre>` reading as code and
+     * reading as prose that lost its indentation.
+     *
+     * A named family resolves to the default slot, which is the honest
+     * answer: an engine with one face cannot honour `font-family: Georgia`
+     * and should not pretend by picking something.
+     */
+    AR_P_FONT_FAMILY,
+
     AR_P_COLOR_SCHEME,
 
     AR_P_NARROW_COUNT,
@@ -964,6 +978,12 @@ enum
     AR_CLEAR_LEFT = 1,
     AR_CLEAR_RIGHT = 2,
     AR_CLEAR_BOTH = 3
+};
+
+enum
+{
+    AR_FAMILY_DEFAULT = 0,
+    AR_FAMILY_MONOSPACE
 };
 
 enum

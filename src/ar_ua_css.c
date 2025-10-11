@@ -517,7 +517,13 @@ static const char *const AR__UA[] = {
      * thirteen.
      */
     "pre, xmp, listing, plaintext { margin:13px 0px; font-size:13px; }"
-    "code, kbd, samp, tt { font-size:13px; }",
+    "code, kbd, samp, tt { font-size:13px; }"
+    /* The family these four have always meant. Their whole purpose is that
+       a run of characters lines up with the run above it, which no
+       proportional face can do -- and it is why RFC 2616 was the one
+       document in the real corpus that did not render recognisably. */
+    "pre, code, kbd, samp { font-family:monospace; }"
+    "tt, xmp, listing, textarea { font-family:monospace; }",
 
     /*
      * A nested list has no margin of its own.
