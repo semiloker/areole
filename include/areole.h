@@ -151,6 +151,18 @@ void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
    of zero is ar_fill_rect exactly. `width` is the ring's thickness, measured
    inwards from the edge. */
 void ar_fill_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_rect clip, ar_color c);
+/* Which way a triangle points. */
+enum
+{
+    AR_TRI_UP = 0,
+    AR_TRI_RIGHT,
+    AR_TRI_DOWN,
+    AR_TRI_LEFT
+};
+
+/* A filled triangle inscribed in `r`, pointing `dir`. */
+void ar_fill_tri(ar_surface *s, ar_rect r, ar_i32 dir, ar_rect clip, ar_color c);
+
 void ar_stroke_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_i32 width, ar_rect clip,
                           ar_color c);
 

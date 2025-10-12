@@ -4732,6 +4732,28 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
 
+    /*
+     * ponytail: two markers the painter knows by tag name.
+     *
+     * A `<summary>`'s disclosure triangle and a `<select>`'s arrow are a glyph
+     * in every other engine, and a glyph is what this one cannot use for them:
+     * the built-in face is ASCII 32 to 126, so U+25B8 draws as a question mark
+     * on any build without a TrueType face. They are boxes instead, and a box
+     * has no way to say "draw me as a triangle" without a property -- which
+     * would cost eight bytes on every box in every interface to serve two
+     * markers.
+     *
+     * So the painter recognises two synthetic tags, hashed once per frame
+     * rather than per box. The ceiling is that an author who writes
+     * `<ar-tri-d>` gets a triangle; the names are reserved and documented in
+     * ar_ua_css.c beside `.ar-checkbox` and the rest.
+     *
+     * The upgrade path is `content` and `::marker`, which is 0.5.3's work.
+     * When that lands these two go with it and this block comes out.
+     */
+    ar_u32 tag_tri_r = ar_hash("ar-tri-r", 8u);
+    ar_u32 tag_tri_d = ar_hash("ar-tri-d", 8u);
+
     for (ord = 0; ord < painted; ++ord)
     {
         ar_i32   i = c->order ? c->order[ord] : ord;
@@ -4789,6 +4811,18 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
            One value, all four corners: the per-corner form is four more
            properties and no control has ever wanted it. */
         radius = n->style.v[AR_P_BORDER_RADIUS];
+
+        if (n->sel_tag == tag_tri_r || n->sel_tag == tag_tri_d)
+        {
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
+
+            if (AR_ALPHA_OF(tc) != 0)
+            {
+                ar_fill_tri(s, n->rect, n->sel_tag == tag_tri_d ? AR_TRI_DOWN : AR_TRI_RIGHT, clip,
+                            tc);
+            }
+            continue;
+        }
 
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0)

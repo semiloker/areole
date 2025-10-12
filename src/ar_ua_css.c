@@ -345,7 +345,17 @@ static const char *const AR__UA[] = {
      * with a synthetic class, exactly as it does for a checkbox.
      */
     "select > option { display:none; }"
-    "select > option.ar-chosen { display:block; }",
+    "select > option.ar-chosen { display:block; }"
+
+    /*
+     * The two triangles, which are boxes the painter draws rather than
+     * glyphs -- the built-in face is ASCII and U+25B8 would be a question
+     * mark. `ar-tri-r` and `ar-tri-d` are reserved tag names, like
+     * `.ar-checkbox` and `.ar-link` are reserved classes, and they take their
+     * colour from `color` the way a glyph would.
+     */
+    "ar-tri-r, ar-tri-d { display:inline-block; width:0.5em; height:0.5em; }"
+    "summary > ar-tri-r, summary > ar-tri-d { margin-right:0.35em; }",
 
     /* A square that is a square whatever the font is: a control sized in `em`
        grows with the text around it and stops being a checkbox. */

@@ -19509,6 +19509,97 @@ static void test_whitespace_between_blocks_is_dropped(void)
  * rather than against a pixel count says the line is *new* rather than that
  * something dark happens to be there.
  */
+/*
+ * A `<summary>` has a disclosure triangle, and it points the right way.
+ *
+ * A browser draws one as a glyph and this engine cannot: the built-in face is
+ * ASCII 32 to 126, so U+25B8 comes out as a question mark on any build without
+ * a TrueType face. It is a box the painter draws instead, and the only thing
+ * that distinguishes the two directions is the tag the walk chose -- which is
+ * exactly the kind of decision that is easy to get backwards and impossible to
+ * see in a box rectangle, because both tags make the same sized box.
+ *
+ * So this counts ink on the two halves. A right-pointing triangle has its
+ * base down the left edge and its apex on the right, so the left half holds
+ * more of it; a down-pointing one is symmetric left to right and top-heavy
+ * instead. Comparing halves rather than totals is what makes the check about
+ * the direction and not merely about something being drawn.
+ */
+static void test_a_summary_has_a_triangle_that_points(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+    ar_i32     shut_left = 0, shut_right = 0, open_top = 0, open_bottom = 0;
+
+#define AR__HALVES(x0, x1, y0, y1, out)                                                            \
+    do                                                                                             \
+    {                                                                                              \
+        ar_i32 x, y;                                                                               \
+        (out) = 0;                                                                                 \
+        for (y = (y0); y < (y1); ++y)                                                              \
+        {                                                                                          \
+            for (x = (x0); x < (x1); ++x)                                                          \
+            {                                                                                      \
+                if ((g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu) != 0xFFFFFFu)                    \
+                {                                                                                  \
+                    ++(out);                                                                       \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+
+    /* The marker is the first thing on the line, so the first 8 px of the
+       content box is all triangle and no text. */
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<details><summary>x</summary><p>b</p></details>",
+                    "body { margin:0px; } details, summary, p { margin:0px; }");
+    AR__HALVES(0, 4, 0, 20, shut_left);
+    AR__HALVES(4, 8, 0, 20, shut_right);
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<details open><summary>x</summary><p>b</p></details>",
+                    "body { margin:0px; } details, summary, p { margin:0px; }");
+    {
+        /* Split the marker's *own* rows rather than a guessed midpoint: it is
+           eight pixels of a nineteen pixel line and where it sits in that line
+           depends on the baseline. Splitting at a fixed y measured the blank
+           space above it and called the triangle upside down. */
+        ar_i32 yy, first = -1, last = -1, xx;
+
+        for (yy = 0; yy < 20; ++yy)
+        {
+            for (xx = 0; xx < 8; ++xx)
+            {
+                if ((g_ui_pixels[yy * AR_LAY_MAX + xx] & 0xFFFFFFu) != 0xFFFFFFu)
+                {
+                    if (first < 0)
+                    {
+                        first = yy;
+                    }
+                    last = yy;
+                    break;
+                }
+            }
+        }
+        if (first >= 0)
+        {
+            ar_i32 mid = first + (last - first + 1) / 2;
+
+            AR__HALVES(0, 8, first, mid, open_top);
+            AR__HALVES(0, 8, mid, last + 1, open_bottom);
+        }
+    }
+#undef AR__HALVES
+
+    CHECK(shut_left > 0, "summary: a shut details draws a marker at all");
+    CHECK(shut_left > shut_right, "summary: and it points right, so its base is on the left");
+    CHECK(open_top > open_bottom, "summary: an open one points down, so its base is on top");
+    if (!(shut_left > shut_right && open_top > open_bottom))
+    {
+        printf("      shut %ld|%ld  open %ld|%ld\n", (long)shut_left, (long)shut_right,
+               (long)open_top, (long)open_bottom);
+    }
+}
+
 static void test_an_underline_is_drawn_under_the_text(void)
 {
     ar_surface s = ar__ui_surface(200, 60);
@@ -22574,6 +22665,7 @@ int main(void)
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
+    test_a_summary_has_a_triangle_that_points();
     test_an_underline_is_drawn_under_the_text();
     test_sub_and_super_leave_the_baseline();
     test_a_table_from_markup_uses_the_table_model();
