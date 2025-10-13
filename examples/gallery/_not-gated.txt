@@ -85,7 +85,7 @@ css/media/prefers-color-scheme  engine: the documented default is light until 0.
 # so `<b>` and `<i>` are drawn in the one face there is, with its advances,
 # while a browser synthesises a heavier and a slanted one and gets wider ones.
 
-css/text/weight          engine: no bold or italic face is loaded, so their advances are the roman ones
+css/text/weight          engine: no bold or italic face is loaded, so their advances are the roman ones, and an inline box reports the line box height rather than the font one -- 22 against 22.4/1.4 = 16
 
 # ---- a border reserves no space ----------------------------------------
 #
@@ -175,38 +175,3 @@ css/color/system-colors  browser: the system colours come from the OS theme ther
 
 css/text/sub-super  engine: an inline at a smaller font-size measures narrow -- the offsets are right, the advance is not
 
-# ---- a nested inline does not flow into the line ------------------------
-#
-# **This one is the largest layout fault left in the engine**, and it is here
-# rather than in a comment because it is the thing that will go green.
-#
-# An inline element with text inside it has to flow into the line its siblings
-# are on and break across lines with them. That is the whole of an inline
-# formatting context, and it is what `<b>`, `<a>` and `<code>` in the middle
-# of a sentence depend on -- which is most prose on most pages.
-#
-# areole lays the box out atomically. `ar_inline_run` walks the block's
-# *direct* children, and an inline element's text is a grandchild, so the
-# element arrives with no text of its own, fails `ar_is_fragmentable`, and is
-# placed as one unbreakable item. Measured against Chrome on this demo:
-#
-#     the paragraph     areole 260x48      chrome 260x80
-#     the inline        areole 260x16      chrome 250x80
-#
-# One line where a browser lays out five. The paragraph is a third shorter
-# than it should be and **the text past the first line's worth is never drawn
-# at all** -- not clipped by a scroll container, simply never emitted. A link
-# in a narrow column loses most of its words.
-#
-# Fixing it means the line filler descending into non-replaced inline boxes
-# instead of iterating one level of siblings, and the inline box's rectangle
-# becoming the union of the fragments its descendants produced. The machinery
-# for the second half already exists -- that is what `n->rect` being grown
-# from fragments is for -- and the first half is a change to the hottest
-# traversal in layout, which is why it is not being done in passing.
-#
-# It is the same root cause as the two inline faults the real-document corpus
-# named: adjacent inlines taking separate lines, and the spurious gap around
-# an inline inside a paragraph.
-
-css/text/nested-inline  engine: an inline element's text does not flow into the line -- the largest layout fault left

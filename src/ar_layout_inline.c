@@ -48,6 +48,30 @@ int ar_is_fragmentable(const ar_node *n)
 }
 
 /*
+ * Whether this box's children join the line it is on, rather than the box
+ * being placed on that line as one item.
+ *
+ * This is what a non-replaced inline box *is*. `<b>bold</b>` in the middle of
+ * a sentence is not an item on the line; its text is on the line, sharing it
+ * with the words either side and breaking across lines with them. The element
+ * contributes style -- a weight, a colour, an underline -- and no box of its
+ * own that anything can bump into.
+ *
+ * Before this the line filler walked one level of siblings, so an element's
+ * text, which the document walk puts in a child box, was never reached. The
+ * element arrived with no text of its own, failed ar_is_fragmentable, and was
+ * placed atomically: it took a whole line to itself, gained a space either
+ * side that nothing asked for, and everything past the first line's worth of
+ * its text was never emitted at all. `H<sub>2</sub>O` came out as `H 2O`, and
+ * a link in a narrow column lost most of its words.
+ */
+int ar_flows_children(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE && !(n->text && n->text[0]) &&
+           n->first_child >= 0;
+}
+
+/*
  * Where this box's baseline sits, measured from its top border edge.
  *
  * Text puts it under the ascent, inside whatever padding there is. A box with
@@ -69,15 +93,51 @@ int ar_is_fragmentable(const ar_node *n)
  * that browsers settle on, and measuring against Edge is what picked the two
  * numbers rather than arithmetic.
  */
-static ar_i32 ar__valign_shift(const ar_node *n)
+/*
+ * The alignment in force for the box that is actually on the line.
+ *
+ * `vertical-align` is stated on the inline box -- `<sup>` -- and what reaches
+ * the line is its text, which is a child box. The property does not inherit
+ * and should not: it applies to an inline box and moves its whole contents
+ * with it, which is a different thing from every descendant being aligned
+ * independently. So the line asks the box it is placing, and where that says
+ * `baseline` it asks the inline boxes the box is inside.
+ *
+ * The walk stops at the first ancestor that is not a flowed inline, because
+ * that is the block the line belongs to -- its own `vertical-align` is about
+ * how *it* sits in *its* parent's line, not about this one.
+ */
+static ar_i32 ar__valign_of(const ar_node *nodes, ar_i32 i)
 {
-    ar_i32 px = n->style.v[AR_P_FONT_SIZE];
+    ar_i32 at = i;
 
-    if (n->style.v[AR_P_VERTICAL_ALIGN] == AR_VALIGN_SUPER)
+    while (at >= 0)
+    {
+        ar_i32 v = nodes[at].style.v[AR_P_VERTICAL_ALIGN];
+
+        if (v != AR_VALIGN_BASELINE)
+        {
+            return v;
+        }
+        at = nodes[at].parent;
+        if (at < 0 || !ar_flows_children(&nodes[at]))
+        {
+            break;
+        }
+    }
+    return AR_VALIGN_BASELINE;
+}
+
+static ar_i32 ar__valign_shift(const ar_node *nodes, ar_i32 i)
+{
+    ar_i32 px = nodes[i].style.v[AR_P_FONT_SIZE];
+    ar_i32 v = ar__valign_of(nodes, i);
+
+    if (v == AR_VALIGN_SUPER)
     {
         return px / 2;
     }
-    if (n->style.v[AR_P_VERTICAL_ALIGN] == AR_VALIGN_SUB)
+    if (v == AR_VALIGN_SUB)
     {
         return -((px * 2) / 5);
     }
@@ -249,7 +309,7 @@ static ar_frag *ar__emit(ar__liner *L)
  * instead of "this inline was never positioned" -- a box with nowhere to store
  * its second rectangle still has its first.
  */
-static void ar__flush_open(ar__liner *L)
+static void ar__flush_open(ar__liner *L, int at_break)
 {
     ar_node *n;
     ar_frag *f;
@@ -265,6 +325,41 @@ static void ar__flush_open(ar__liner *L)
     r.y = L->top + L->y; /* provisional; closing the line fixes it */
     r.w = L->open_w;
     r.h = ar__frag_h(n);
+
+    /*
+     * The space a break leaves behind is not part of the fragment.
+     *
+     * A line breaks *after* the space that offered the opportunity, so the
+     * last piece on a line usually ends with one. The painter already drops it
+     * -- drawing it would be invisible for a left-aligned line and wrong for
+     * anything else -- so counting it here makes the rectangle wider than the
+     * ink inside it. That showed up twice: an inline box came out eight pixels
+     * wider than Chrome's, and a link's underline, which is drawn to the
+     * advance the text actually inked, stopped short of the end of its own
+     * fragment.
+     *
+     * Only at a break. When a fragment ends because the *node* changed -- the
+     * text before a `<span>`, say -- the space between them is real and the
+     * two would collide without it.
+     */
+    if (at_break && n->text && L->env->measure && L->open_to > L->open_from)
+    {
+        ar_i32 to = L->open_to;
+
+        while (to > L->open_from &&
+               (n->text[to - 1] == ' ' || n->text[to - 1] == '\n' || n->text[to - 1] == '\r'))
+        {
+            --to;
+        }
+        if (to < L->open_to)
+        {
+            r.w -= L->env->measure(L->env->ud, n, to, L->open_to);
+            if (r.w < 0)
+            {
+                r.w = 0;
+            }
+        }
+    }
 
     if (L->pieces_placed == 0)
     {
@@ -308,7 +403,7 @@ static ar_i32 ar__close_line(ar__liner *L)
     ar_i32         height;
     ar_i32         i;
 
-    ar__flush_open(L);
+    ar__flush_open(L, 1);
     if (!env->frags || L->line_frag0 >= env->frag_used)
     {
         return 0;
@@ -327,7 +422,8 @@ static ar_i32 ar__close_line(ar__liner *L)
         /* A raised box needs the line to be taller above the baseline by
            however far it was raised, or a superscript is clipped off the
            top of its own line. A lowered one does the same below. */
-        ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP] + ar__valign_shift(n);
+        ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP] +
+                        ar__valign_shift(L->nodes, env->frags[i].node);
         ar_i32 descent = outer_h - ascent;
 
         if (ascent > max_ascent)
@@ -359,7 +455,7 @@ static ar_i32 ar__close_line(ar__liner *L)
         ar_frag *f = &env->frags[i];
         ar_node *n = &L->nodes[f->node];
         ar_i32   was_y = f->rect.y;
-        ar_i32   valign = n->style.v[AR_P_VERTICAL_ALIGN];
+        ar_i32   valign = ar__valign_of(L->nodes, f->node);
         /* One line's worth, for the same reason the line's own height is: this
            runs while `n->rect` is still being grown into the union of the
            fragments, so `rect.h` here is every line already emitted and not
@@ -384,7 +480,8 @@ static ar_i32 ar__close_line(ar__liner *L)
         default:
             /* On the shared baseline: as far below the line's top as this
                item's own baseline is below its own top. */
-            f->rect.y = L->top + L->y + max_ascent - ar_inline_baseline(n) - ar__valign_shift(n);
+            f->rect.y = L->top + L->y + max_ascent - ar_inline_baseline(n) -
+                        ar__valign_shift(L->nodes, f->node);
             break;
         }
 
@@ -414,7 +511,7 @@ static void ar__add_piece(ar__liner *L, ar_i32 c, ar_i32 from, ar_i32 to, ar_i32
 {
     if (L->open_node != c)
     {
-        ar__flush_open(L);
+        ar__flush_open(L, 0);
         L->pieces_placed = L->nodes[c].frag_count > 0 ? 1 : 0;
         L->open_node = c;
         L->open_from = from;
@@ -424,6 +521,178 @@ static void ar__add_piece(ar__liner *L, ar_i32 c, ar_i32 from, ar_i32 to, ar_i32
     L->open_to = to;
     L->open_w += w;
     L->x += w;
+}
+
+/*
+ * One level of inline children, and it descends into the inline boxes among
+ * them rather than placing them.
+ *
+ * A non-replaced inline box is not an item on the line -- its *contents*
+ * are, sharing the line with whatever is either side and breaking across
+ * lines with it. That is what ar_flows_children says, and recursing here is
+ * the whole of implementing it: the liner carries the line being filled, so
+ * a nested run adds to the same line rather than starting its own.
+ *
+ * Bounded by the tree, which is already bounded by AR_MAX_DEPTH. Nothing
+ * here can recurse further than the document nests.
+ */
+static int ar__flow(ar__liner *L, ar_i32 first, ar_i32 stop, const ar_float_ctx *fc, ar_i32 abs_top,
+                    int *anything)
+{
+    ar_node       *nodes = L->nodes;
+    ar_layout_env *env = L->env;
+    ar_i32         c;
+
+    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            ch->rect.x = L->left;
+            ch->rect.y = L->top + L->y;
+            ch->rect.w = 0;
+            ch->rect.h = 0;
+            continue;
+        }
+
+        ch->frag_first = 0;
+        ch->frag_count = 0;
+
+        /* An inline box contributes style and no box of its own: its
+           children join this line. Its rectangle is rebuilt from theirs
+           once the run is placed -- see ar__settle_run. */
+        if (ar_flows_children(ch))
+        {
+            ar__flow(L, ch->first_child, -1, fc, abs_top, anything);
+            continue;
+        }
+
+        if (ar_is_fragmentable(ch) && env->measure)
+        {
+            /*
+             * A fragmentable box offers its text one break opportunity at a
+             * time. A piece that does not fit starts a new line; a piece wider
+             * than a whole line goes on one anyway, because putting it
+             * somewhere and letting it overflow is visible, where looping
+             * forever is not.
+             */
+            ar_i32 at = 0;
+
+            for (;;)
+            {
+                ar_i32 kind;
+                ar_i32 next = ar_break_next(ch->text, at, &kind);
+                ar_i32 w;
+
+                if (next <= at)
+                {
+                    break;
+                }
+                w = env->measure(env->ud, ch, at, next);
+
+                /*
+                 * `white-space` decides whether this line may end here at all.
+                 *
+                 * A field, a button's label and a table's `nowrap` column all
+                 * want the text to run off the end rather than to fold, and
+                 * until now nothing could say so -- which is why a long value
+                 * in a narrow field wrapped where every real field scrolls.
+                 * The mandatory break below is deliberately outside this test:
+                 * a newline in `pre` text breaks the line whatever the
+                 * wrapping says, which is the whole of what `pre` means.
+                 */
+                if (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L->x > 0 && L->x + w > L->line_w)
+                {
+                    ar__break_line(L, fc, abs_top);
+                }
+                ar__add_piece(L, c, at, next, w);
+                *anything = 1;
+                at = next;
+                if (kind == AR_BREAK_MANDATORY && ch->text[at])
+                {
+                    ar__break_line(L, fc, abs_top);
+                }
+            }
+            continue;
+        }
+
+        /* Atomic: one piece, the whole box, never split. */
+        {
+            ar_i32 w = ar__outer_w(ch);
+
+            if (L->x > 0 && L->x + w > L->line_w)
+            {
+                ar__break_line(L, fc, abs_top);
+            }
+            ar__add_piece(L, c, 0, 0, w);
+            *anything = 1;
+        }
+    }
+    return *anything;
+}
+
+/*
+ * Every box's own rectangle, rebuilt from what the line filler produced.
+ *
+ * A fragmented box is the union of its fragments -- that is what lets hit
+ * testing, damage tracking and the inspection API keep asking for one
+ * rectangle without knowing fragments exist.
+ *
+ * An inline box that flowed its children has no fragments of its own and is
+ * the union of *theirs*. It has to be done after them, which is why this
+ * recurses before it unions: a `<b>` inside an `<a>` has to settle before the
+ * `<a>` can ask where it ended up.
+ */
+static void ar__settle_run(ar_node *nodes, ar_layout_env *env, ar_i32 first, ar_i32 stop)
+{
+    ar_i32 c;
+
+    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
+    {
+        ar_node *ch = &nodes[c];
+        ar_i32   k;
+
+        if (ar_flows_children(ch))
+        {
+            ar_i32 kid;
+            int    any = 0;
+
+            ar__settle_run(nodes, env, ch->first_child, -1);
+            for (kid = ch->first_child; kid >= 0; kid = nodes[kid].next_sibling)
+            {
+                if (nodes[kid].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+                {
+                    continue;
+                }
+                ch->rect = any ? ar_rect_union(ch->rect, nodes[kid].rect) : nodes[kid].rect;
+                any = 1;
+            }
+            continue;
+        }
+
+        if (ch->frag_count <= 0)
+        {
+            continue;
+        }
+        ch->rect = env->frags[ch->frag_first].rect;
+        for (k = 1; k < ch->frag_count; ++k)
+        {
+            ch->rect = ar_rect_union(ch->rect, env->frags[ch->frag_first + k].rect);
+        }
+
+        /* An atomic item is its own single fragment, and the width reserved
+           for it included its margins, so its box is inset back out of them.
+           Nothing is left to paint fragment by fragment. */
+        if (!ar_is_fragmentable(ch))
+        {
+            ar_frag *f = &env->frags[ch->frag_first];
+
+            ch->rect.x = f->rect.x + ch->style.v[AR_P_MARGIN_LEFT];
+            ch->rect.w = f->rect.w - ch->style.v[AR_P_MARGIN_LEFT] - ch->style.v[AR_P_MARGIN_RIGHT];
+            ch->frag_count = 0;
+        }
+    }
 }
 
 /*
@@ -437,7 +706,6 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
                      ar_layout_env *env)
 {
     ar__liner L;
-    ar_i32    c;
     int       anything = 0;
 
     L.nodes = nodes;
@@ -474,83 +742,7 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
     L.pieces_placed = 0;
     ar__line_band(fc, abs_top, left, inner_w, &L.line_off, &L.line_w);
 
-    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
-    {
-        ar_node *ch = &nodes[c];
-
-        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            ch->rect.x = left;
-            ch->rect.y = top + L.y;
-            ch->rect.w = 0;
-            ch->rect.h = 0;
-            continue;
-        }
-
-        ch->frag_first = 0;
-        ch->frag_count = 0;
-
-        if (ar_is_fragmentable(ch) && env->measure)
-        {
-            /*
-             * A fragmentable box offers its text one break opportunity at a
-             * time. A piece that does not fit starts a new line; a piece wider
-             * than a whole line goes on one anyway, because putting it
-             * somewhere and letting it overflow is visible, where looping
-             * forever is not.
-             */
-            ar_i32 at = 0;
-
-            for (;;)
-            {
-                ar_i32 kind;
-                ar_i32 next = ar_break_next(ch->text, at, &kind);
-                ar_i32 w;
-
-                if (next <= at)
-                {
-                    break;
-                }
-                w = env->measure(env->ud, ch, at, next);
-
-                /*
-                 * `white-space` decides whether this line may end here at all.
-                 *
-                 * A field, a button's label and a table's `nowrap` column all
-                 * want the text to run off the end rather than to fold, and
-                 * until now nothing could say so -- which is why a long value
-                 * in a narrow field wrapped where every real field scrolls.
-                 * The mandatory break below is deliberately outside this test:
-                 * a newline in `pre` text breaks the line whatever the
-                 * wrapping says, which is the whole of what `pre` means.
-                 */
-                if (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L.x > 0 && L.x + w > L.line_w)
-                {
-                    ar__break_line(&L, fc, abs_top);
-                }
-                ar__add_piece(&L, c, at, next, w);
-                anything = 1;
-                at = next;
-                if (kind == AR_BREAK_MANDATORY && ch->text[at])
-                {
-                    ar__break_line(&L, fc, abs_top);
-                }
-            }
-            continue;
-        }
-
-        /* Atomic: one piece, the whole box, never split. */
-        {
-            ar_i32 w = ar__outer_w(ch);
-
-            if (L.x > 0 && L.x + w > L.line_w)
-            {
-                ar__break_line(&L, fc, abs_top);
-            }
-            ar__add_piece(&L, c, 0, 0, w);
-            anything = 1;
-        }
-    }
+    ar__flow(&L, first, stop, fc, abs_top, &anything);
 
     if (anything)
     {
@@ -563,32 +755,6 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
      * inspection API -- keeps getting a truthful one without knowing that
      * fragments exist.
      */
-    for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
-    {
-        ar_node *ch = &nodes[c];
-        ar_i32   k;
-
-        if (ch->frag_count <= 0)
-        {
-            continue;
-        }
-        ch->rect = env->frags[ch->frag_first].rect;
-        for (k = 1; k < ch->frag_count; ++k)
-        {
-            ch->rect = ar_rect_union(ch->rect, env->frags[ch->frag_first + k].rect);
-        }
-
-        /* An atomic item is its own single fragment, and the width reserved
-           for it included its margins, so its box is inset back out of them.
-           Nothing is left to paint fragment by fragment. */
-        if (!ar_is_fragmentable(ch))
-        {
-            ar_frag *f = &env->frags[ch->frag_first];
-
-            ch->rect.x = f->rect.x + ch->style.v[AR_P_MARGIN_LEFT];
-            ch->rect.w = f->rect.w - ch->style.v[AR_P_MARGIN_LEFT] - ch->style.v[AR_P_MARGIN_RIGHT];
-            ch->frag_count = 0;
-        }
-    }
+    ar__settle_run(nodes, env, first, stop);
     return L.y;
 }
