@@ -22173,6 +22173,120 @@ static void test_the_adoption_agency_terminates_on_anything(void)
     CHECK(bad == 0, "html: and terminates on every chain of misnested formatting");
 }
 
+/* --- the layout faults the comparison with Edge found --------------------- */
+
+static void test_an_inline_block_sits_on_its_text(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a, b;
+
+    ar__render_html(&s,
+                    "<html><body><p><span id=\"a\">Ab</span>"
+                    "<span id=\"ib\" style=\"display:inline-block; padding:10px 0px\">"
+                    "<span id=\"b\">Cd</span></span></p></body></html>",
+                    "body { margin:0 }");
+    /* Padding below as well as above, because the built-in face has no
+       descent: without it the last line's baseline and the box's bottom edge
+       are the same height, and the test could not tell the rule from the
+       exception it replaced. */
+    a = ar__first_tag_id("a") + 1;
+    b = ar__first_tag_id("b") + 1;
+    CHECK(ar__box(a).y == ar__box(b).y,
+          "inline-block: sits on the baseline of its last line, so the words line up");
+}
+
+static void test_an_inline_block_lays_out_its_children_as_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a, b;
+
+    ar__render_html(&s,
+                    "<html><body><span style=\"display:inline-block; width:100px\">"
+                    "<div id=\"a\">a</div><div id=\"b\">b</div></span></body></html>",
+                    "body { margin:0 } div { display:block }");
+    a = ar__first_tag_id("a");
+    b = ar__first_tag_id("b");
+    CHECK(ar__box(a).w == 100, "inline-block: a block inside fills it");
+    CHECK(ar__box(b).y >= ar__box(a).y + ar__box(a).h,
+          "inline-block: and blocks stack, not sit in a row");
+}
+
+static void test_an_absolute_box_lays_its_contents_out_at_its_width(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"position:relative; width:200px\">"
+                    "<div style=\"position:absolute; left:0px; right:0px\">"
+                    "<p id=\"p\">x</p></div></div></body></html>",
+                    "body { margin:0 } div, p { display:block; margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("p")).w == 200,
+          "position: an absolute box's contents fill the width it was given");
+}
+
+static void test_a_relative_percentage_is_of_the_parent(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"width:200px\">"
+                    "<div id=\"r\" style=\"position:relative; left:50%\">x</div></div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block }");
+    CHECK(ar__box(ar__first_tag_id("r")).x == 100,
+          "position: left 50% is half the parent, not half the window");
+}
+
+/*
+ * An inline-block on a padded body sits on the body's first line, not one
+ * below it. The line filler wrote the box's rectangle at its place on the
+ * line and left its insides where they had been laid out to measure it, so
+ * the baseline read off them was off by however far the box had moved -- the
+ * body's sixteen pixels of padding. css/text/shared-font in the gallery sat a
+ * whole line low that way: a body 64 tall where Chrome makes it 48.
+ */
+static void test_an_inline_block_carries_its_contents(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     ib, body;
+
+    ar__render_html(&s, "<html><body><span id=\"ib\">HHHH</span></body></html>",
+                    "html { font-size:16px; line-height:1 }"
+                    " body { margin:0; padding:16px } #ib { display:inline-block }");
+    ib = ar__first_tag_id("ib");
+    body = g_ui->nodes[ib].parent;
+    CHECK(ar__box(ib).y == 16, "inline-block: on the padded body's first line, not a line below");
+    CHECK(ar__box(body).h == 48, "inline-block: and the body one line tall, as Chrome has it");
+}
+
+/*
+ * A replaced element sits on its bottom edge, whatever is inside it. An
+ * `<svg>` is an inline-block in the user-agent sheet, and the text a CDATA
+ * section leaves inside it was taken for its last line of text -- so it was
+ * set on that text's baseline and dropped a line. html/parsing/cdata in the
+ * gallery: the svg at 72 and the div after it at 102, where Chrome has 36 and
+ * 69.
+ */
+static void test_a_replaced_element_sits_on_its_bottom_edge(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     v, b;
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:20px\"></div>"
+                    "<svg id=\"v\" width=\"100\" height=\"30\"><![CDATA[ x ]]></svg>"
+                    "<div id=\"b\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 } svg { font-size:8px }");
+    /* The text inside at a different size from the line's, or the two rules
+       land the svg in the same place: the built-in face has no descent, so a
+       16-pixel line of text's baseline and its bottom are the same height. */
+    v = ar__first_tag_id("v");
+    b = ar__first_tag_id("b");
+    CHECK(ar__box(v).y == 20, "replaced: the tallest thing on its line, so at the line's top");
+    CHECK(ar__box(b).y - (ar__box(v).y + ar__box(v).h) < 8,
+          "replaced: on its bottom edge, so its line ends just under it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -22708,6 +22822,12 @@ int main(void)
     test_white_space_collapsing();
     test_nowrap_does_not_wrap();
     test_white_space_reaches_a_field_but_does_not_hold_it();
+    test_an_inline_block_sits_on_its_text();
+    test_an_inline_block_lays_out_its_children_as_blocks();
+    test_an_absolute_box_lays_its_contents_out_at_its_width();
+    test_a_relative_percentage_is_of_the_parent();
+    test_an_inline_block_carries_its_contents();
+    test_a_replaced_element_sits_on_its_bottom_edge();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

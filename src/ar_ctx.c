@@ -2573,6 +2573,20 @@ static ar_i32 ar__range_px(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
     return ar_text_width_range(n->text, from, to, n->scale);
 }
 
+/* ar__range_px without the rounding, for the line filler's sums. Handed to
+   the layout only when an outline face is loaded. */
+static ar_i32 ar__range_fx_cb(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
+{
+    ar_ctx *c = (ar_ctx *)ud;
+
+    if (!n->text || to <= from)
+    {
+        return 0;
+    }
+    return ar_text_range_chain(n->text, from, to, ar_chain_for(c, n), n->style.v[AR_P_FONT_SIZE],
+                               &c->glyphs, &c->glyph_scratch);
+}
+
 /* Where a scroll container currently is, read from its slot. */
 static ar_i32 ar__scroll_of(void *ud, ar_i32 index)
 {
@@ -5986,6 +6000,11 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
         env.wrap = ar__wrap_cb;
         env.measure = ar__range_px;
+        /* Only an outline face rounds: the bitmap face's widths are whole
+           pixels already, its pieces sum exactly, and the unrounded path
+           would be a second call per word for nothing -- 5% of the layout
+           of a page of wrapped paragraphs, measured. */
+        env.measure_fx = c->have_face ? ar__range_fx_cb : 0;
         env.ud = c;
         env.sheet = &c->sheet;
         env.scroll_of = ar__scroll_of;
