@@ -39,15 +39,41 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VIEW_W 800
-#define VIEW_H 600
+/* The gallery's size, which --size can change for a page that is not a demo
+   -- the versus tool renders whole forms at the size of a browser window. */
+#define MAX_W 1600
+#define MAX_H 1200
+static ar_i32 VIEW_W = 800;
+static ar_i32 VIEW_H = 600;
 
 /* Generous, because a demo is small and the cost of being wrong about it is a
-   corpus entry that silently truncates. */
-static unsigned char g_memory[AR_MEM_DOC(8192, 2u * 1024u * 1024u)];
-static ar_u32        g_pixels[VIEW_W * VIEW_H];
-static char          g_file[512 * 1024];
-static ar_u32        g_file_n;
+   corpus entry that silently truncates. The extra eight megabytes are glyph
+   atlases, for the faces --font, --sans and --mono load. */
+static unsigned char g_memory[AR_MEM_DOC(8192, 2u * 1024u * 1024u) + 8u * 1024u * 1024u];
+static ar_u32        g_pixels[MAX_W * MAX_H];
+
+/* Font files, one buffer each: a face keeps a pointer into its bytes. */
+static unsigned char g_face_body[8u * 1024u * 1024u];
+static unsigned char g_face_sans[8u * 1024u * 1024u];
+static unsigned char g_face_mono[8u * 1024u * 1024u];
+static unsigned char g_face_bold[8u * 1024u * 1024u];
+
+static ar_u32 read_face(const char *path, unsigned char *buf, ar_u32 cap)
+{
+    FILE  *f = fopen(path, "rb");
+    ar_u32 n;
+
+    if (!f)
+    {
+        printf("# cannot open %s\n", path);
+        return 0;
+    }
+    n = (ar_u32)fread(buf, 1, cap, f);
+    fclose(f);
+    return n;
+}
+static char   g_file[512 * 1024];
+static ar_u32 g_file_n;
 
 static int read_file(const char *path)
 {
@@ -189,7 +215,9 @@ int main(int argc, char **argv)
 {
     const char *path = 0;
     const char *ppm_path = 0;
+    const char *font_body = 0, *font_sans = 0, *font_mono = 0, *font_bold = 0;
     int         want_geometry = 0;
+    int         want_ids = 0;
     int         k;
 
     ar_surface s;
@@ -207,6 +235,37 @@ int main(int argc, char **argv)
         {
             ppm_path = argv[++k];
         }
+        else if (strcmp(argv[k], "--ids") == 0)
+        {
+            want_ids = 1;
+        }
+        else if (strcmp(argv[k], "--font") == 0 && k + 1 < argc)
+        {
+            font_body = argv[++k];
+        }
+        else if (strcmp(argv[k], "--sans") == 0 && k + 1 < argc)
+        {
+            font_sans = argv[++k];
+        }
+        else if (strcmp(argv[k], "--mono") == 0 && k + 1 < argc)
+        {
+            font_mono = argv[++k];
+        }
+        else if (strcmp(argv[k], "--bold") == 0 && k + 1 < argc)
+        {
+            font_bold = argv[++k];
+        }
+        else if (strcmp(argv[k], "--size") == 0 && k + 1 < argc)
+        {
+            long w = 0, h = 0;
+
+            if (sscanf(argv[++k], "%ldx%ld", &w, &h) == 2 && w > 0 && h > 0 && w <= MAX_W &&
+                h <= MAX_H)
+            {
+                VIEW_W = (ar_i32)w;
+                VIEW_H = (ar_i32)h;
+            }
+        }
         else
         {
             path = argv[k];
@@ -214,7 +273,8 @@ int main(int argc, char **argv)
     }
     if (!path)
     {
-        printf("# usage: ar_gallery demo.html [--geometry] [--ppm out.ppm]\n");
+        printf("# usage: ar_gallery demo.html [--geometry] [--ids] [--ppm out.ppm]\n"
+               "#        [--size WxH] [--font body.ttf] [--sans sans.ttf] [--mono mono.ttf]\n");
         return 2;
     }
     if (!read_file(path))
@@ -227,6 +287,30 @@ int main(int argc, char **argv)
     {
         printf("# the arena is too small\n");
         return 2;
+    }
+    /* Faces before anything else, because a frame reserves the arena's other
+       end and an atlas has to come out of the persistent half. The gallery's
+       demos load none and draw in the built-in face, as they always have. */
+    if (font_body)
+    {
+        ar_u32 n = read_face(font_body, g_face_body, sizeof g_face_body);
+
+        if (!n || !ar_font_load(c, g_face_body, n, 1024u * 1024u, 64))
+        {
+            printf("# %s did not load\n", font_body);
+        }
+        if (font_sans && (n = read_face(font_sans, g_face_sans, sizeof g_face_sans)) > 0)
+        {
+            ar_font_load_sans(c, g_face_sans, n);
+        }
+        if (font_mono && (n = read_face(font_mono, g_face_mono, sizeof g_face_mono)) > 0)
+        {
+            ar_font_load_mono(c, g_face_mono, n);
+        }
+        if (font_bold && (n = read_face(font_bold, g_face_bold, sizeof g_face_bold)) > 0)
+        {
+            ar_font_load_styled(c, g_face_bold, n, 700, 0);
+        }
     }
     ar_ua_stylesheet(c);
     d = ar_html_parse_into(c, g_file, g_file_n);
@@ -284,6 +368,29 @@ int main(int argc, char **argv)
             r = ar_node_rect(c, i);
             path_of(c, i, p);
             printf("%s %ld %ld %ld %ld\n", p, (long)r.x, (long)r.y, (long)r.w, (long)r.h);
+        }
+    }
+
+    /* Every element with an id, by the box its node became: how the versus
+       tool lines the two engines up when one of them builds boxes the other
+       does not -- a field's text box, a checkbox's mark. */
+    if (want_ids)
+    {
+        ar_i32 i;
+
+        printf("# areole %s viewport %dx%d\n", ar_version(), (int)VIEW_W, (int)VIEW_H);
+        for (i = 0; i < d->node_count; ++i)
+        {
+            ar_span id = ar_a11y_attr(d, i, "id");
+            ar_rect r;
+
+            if (!id.p || id.n == 0 || d->nodes[i].box < 0)
+            {
+                continue;
+            }
+            r = ar_node_rect(c, d->nodes[i].box);
+            printf("#%.*s %ld %ld %ld %ld\n", (int)id.n, id.p, (long)r.x, (long)r.y, (long)r.w,
+                   (long)r.h);
         }
     }
 
