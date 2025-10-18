@@ -50,6 +50,7 @@
 
 #include "ar_a11y.h"
 #include "ar_node.h"
+#include "ar_edit.h"
 
 #include <string.h>
 
@@ -132,9 +133,17 @@ static ar_u8 ar__input_role(ar_span type)
     {
         return AR_ROLE_SLIDER;
     }
-    if (ar_span_is(type, "submit") || ar_span_is(type, "reset") || ar_span_is(type, "button"))
+    if (ar_span_is(type, "submit") || ar_span_is(type, "reset") || ar_span_is(type, "button") ||
+        ar_span_is(type, "image") || ar_span_is(type, "file") || ar_span_is(type, "color"))
     {
+        /* A file field and a colour field are buttons that open something:
+           that is how every platform announces them, with the chosen file or
+           colour as the value. */
         return AR_ROLE_BUTTON;
+    }
+    if (ar_span_is(type, "number"))
+    {
+        return AR_ROLE_SPINBUTTON;
     }
     if (ar_span_is(type, "hidden"))
     {
@@ -247,12 +256,59 @@ static void ar__cat(char *buf, ar_u32 cap, ar_u32 *used, const char *p, ar_u32 n
 }
 
 /*
+ * Whether the document has been walked into boxes. Before the first walk every
+ * node reads -1 and none of them is hidden; after one, -1 is a node the walk
+ * did not build -- inside a closed `<details>`, under the head -- which nobody
+ * can see and a name must not read out.
+ */
+static int ar__walked(const ar_doc *d)
+{
+    ar_i32 i;
+
+    for (i = 0; i < d->node_count; ++i)
+    {
+        if (d->nodes[i].kind == AR_DOM_ELEMENT)
+        {
+            return d->nodes[i].box >= 0;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Content that is never part of a name. A select's options and a textarea's
+ * text are values, not labels, and a paragraph holding a field was named
+ * "Address 12 Mill Lane" for it; script and style are not content at all.
+ */
+static int ar__never_named(const ar_doc *d, ar_i32 node)
+{
+    static const char *const TAGS[] = {"select",   "textarea", "option", "optgroup",
+                                       "datalist", "script",   "style",  "template"};
+    ar_i32                   k;
+
+    for (k = 0; k < 8; ++k)
+    {
+        if (ar_span_is(d->nodes[node].name, TAGS[k]))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
  * The text under an element, flattened, which is what "its content" means when
  * ARIA says to use it.
  *
  * Depth-limited rather than unbounded: a name is a sentence a person listens
  * to, and an element wrapping half a document has no useful name however far
  * this walks. Stopping is better than producing a paragraph.
+ *
+ * Below the element it was asked about, what is not rendered is skipped --
+ * accname's "hidden and not referenced" -- so a closed `<details>` does not
+ * read its secret out through whatever contains it. The element itself is
+ * read whatever its state, because `aria-labelledby` may point at a hidden
+ * one on purpose.
  */
 static void ar__text_of(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap, ar_u32 *used,
                         int depth)
@@ -260,6 +316,10 @@ static void ar__text_of(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap, ar_
     ar_i32 child;
 
     if (node < 0 || depth > 8 || *used + 1 >= cap)
+    {
+        return;
+    }
+    if (depth > 0 && d->nodes[node].box < 0 && ar__walked(d))
     {
         return;
     }
@@ -285,7 +345,7 @@ static void ar__text_of(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap, ar_
     }
     /* A nested control's own text is not its container's name: a button inside
        a list item labels the button. */
-    if (depth > 0 && ar_a11y_role(d, node) == AR_ROLE_BUTTON)
+    if (depth > 0 && (ar_a11y_role(d, node) == AR_ROLE_BUTTON || ar__never_named(d, node)))
     {
         return;
     }
@@ -397,6 +457,54 @@ static ar_u32 ar__trim(char *buf, ar_u32 used)
     return used;
 }
 
+/*
+ * The roles whose content is their name, which accname calls "name from
+ * content": the controls a label is written inside, a heading, a cell, an
+ * option -- and here a paragraph and a list item, because MSAA has no text
+ * interface and a static text item's name is how a reader gets its words.
+ *
+ * Not a group, a form, a region or a landmark. Those are named by markup or
+ * not at all: a `<form>` was named with every word in it, which a reader
+ * announces in full each time the focus enters it.
+ */
+static int ar__named_by_content(ar_u8 role)
+{
+    switch (role)
+    {
+    case AR_ROLE_NONE:
+    case AR_ROLE_BUTTON:
+    case AR_ROLE_LINK:
+    case AR_ROLE_CHECKBOX:
+    case AR_ROLE_RADIO:
+    case AR_ROLE_OPTION:
+    case AR_ROLE_HEADING:
+    case AR_ROLE_PARAGRAPH:
+    case AR_ROLE_LISTITEM:
+    case AR_ROLE_ROW:
+    case AR_ROLE_CELL:
+    case AR_ROLE_COLUMNHEADER:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* The first child element with this tag, for the elements HTML names by one
+   of their own children: a fieldset by its legend, a table by its caption. */
+static ar_i32 ar__first_child_tag(const ar_doc *d, ar_i32 node, const char *tag)
+{
+    ar_i32 c;
+
+    for (c = d->nodes[node].first_child; c >= 0; c = d->nodes[c].next_sibling)
+    {
+        if (d->nodes[c].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[c].name, tag))
+        {
+            return c;
+        }
+    }
+    return -1;
+}
+
 ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap)
 {
     ar_u32 used = 0;
@@ -463,13 +571,39 @@ ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap)
         }
     }
 
+    /* 3b. The child HTML names it by: a fieldset's legend, a table's caption
+           -- HTML-AAM's step for each, ahead of content, which a group does
+           not have a name from. */
+    {
+        ar_i32 by = -1;
+
+        if (ar_span_is(d->nodes[node].name, "fieldset"))
+        {
+            by = ar__first_child_tag(d, node, "legend");
+        }
+        else if (ar_span_is(d->nodes[node].name, "table"))
+        {
+            by = ar__first_child_tag(d, node, "caption");
+        }
+        if (by >= 0)
+        {
+            ar__text_of(d, by, buf, cap, &used, 0);
+            used = ar__trim(buf, used);
+            if (used > 0)
+            {
+                return used;
+            }
+        }
+    }
+
     /*
      * 4. The element's content -- but only where content is a label rather
-     *    than a value. A button's text names it; a text field's text is what
-     *    the user typed, and announcing that as the field's name is how a form
-     *    comes to have five fields all called by whatever was last entered.
+     *    than a value, and only for a role named by its content at all. A
+     *    button's text names it; a text field's text is what the user typed,
+     *    and announcing that as the field's name is how a form comes to have
+     *    five fields all called by whatever was last entered.
      */
-    if (role != AR_ROLE_TEXTBOX && role != AR_ROLE_SEARCHBOX)
+    if (ar__named_by_content(role) && !ar_span_is(d->nodes[node].name, "input"))
     {
         ar__text_of(d, node, buf, cap, &used, 0);
         used = ar__trim(buf, used);
@@ -503,6 +637,26 @@ ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap)
                 ar__cat(buf, cap, &used, a.p, a.n);
                 return ar__trim(buf, used);
             }
+        }
+    }
+
+    /* 6. What a browser writes on a submit or reset button that has no value
+          of its own -- which is what the button says, so it is its name. */
+    if (role == AR_ROLE_BUTTON && ar_span_is(d->nodes[node].name, "input") && used == 0)
+    {
+        ar_span type = ar_a11y_attr(d, node, "type");
+
+        if (type.p && ar_span_is(type, "submit"))
+        {
+            ar__cat(buf, cap, &used, "Submit", 6);
+        }
+        else if (type.p && ar_span_is(type, "reset"))
+        {
+            ar__cat(buf, cap, &used, "Reset", 5);
+        }
+        else if (type.p && ar_span_is(type, "file"))
+        {
+            ar__cat(buf, cap, &used, "Choose file", 11);
         }
     }
 
@@ -590,4 +744,431 @@ int ar_span_cmp(ar_span a, const char *lit)
         }
     }
     return lit[a.n] == 0 ? 0 : -1;
+}
+
+/* ------------------------------------------------------------------------
+ * The tree, flattened, for a backend to adapt
+ *
+ * Built from the document and the boxes it became, in the window between
+ * ar_frame_end and the next ar_frame_begin -- the one moment both are whole.
+ * The document says what each thing is; the box says whether it exists this
+ * frame, where it is, and what state it is in.
+ * ------------------------------------------------------------------------ */
+
+/* Deeper than any document anybody reads. A node past it is not listed --
+   stated rather than discovered, and a page nested 256 deep has problems a
+   screen reader is not the first to notice. */
+#define AR__A11Y_DEPTH 256
+
+static int ar__is_stop_key(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->focusable_prev_n; ++i)
+    {
+        if (c->focusables_prev[i] == key)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int ar__box_ok(const ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_i32 b = d->nodes[node].box;
+
+    return b >= 0 && b < c->node_count;
+}
+
+/* Is this a heading, and which: `<h1>` to `<h6>` are level 1 to 6, and
+   `aria-level` overrides it the way `role` overrides a tag. */
+static ar_u8 ar__heading_level(const ar_doc *d, ar_i32 node)
+{
+    ar_span name = d->nodes[node].name;
+    ar_i32  lvl = ar_dom_attr_num(d, node, "aria-level", 0) / 1000;
+
+    if (lvl >= 1 && lvl <= 9)
+    {
+        return (ar_u8)lvl;
+    }
+    if (name.n == 2 && (name.p[0] == 'h' || name.p[0] == 'H') && name.p[1] >= '1' &&
+        name.p[1] <= '6')
+    {
+        return (ar_u8)(name.p[1] - '0');
+    }
+    return 0;
+}
+
+static int ar__input_is(const ar_doc *d, ar_i32 node, const char *type)
+{
+    ar_span t = ar_a11y_attr(d, node, "type");
+
+    return ar_span_is(d->nodes[node].name, "input") && t.p && ar_span_is(t, type);
+}
+
+/* Is this node inside a select that is shut? Its options are then the
+   select's business and not separately in the tree, which is what every
+   platform does with a collapsed combobox. */
+static int ar__in_shut_select(const ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_i32 up;
+
+    for (up = d->nodes[node].parent; up >= 0; up = d->nodes[up].parent)
+    {
+        if (d->nodes[up].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[up].name, "select"))
+        {
+            return !(ar__box_ok(c, d, up) && (c->nodes[d->nodes[up].box].state & AR_STATE_OPEN));
+        }
+    }
+    return 0;
+}
+
+static ar_u32 ar__item_state(const ar_ctx *c, const ar_doc *d, ar_i32 node, ar_u8 role)
+{
+    const ar_node *n = &c->nodes[d->nodes[node].box];
+    ar_u32         st = ar_a11y_state(n->state, c->focus_key != 0 && n->key == c->focus_key);
+
+    if (ar__is_stop_key(c, n->key))
+    {
+        st |= AR_A11Y_FOCUSABLE;
+    }
+    if (ar_a11y_attr(d, node, "readonly").p)
+    {
+        st |= AR_A11Y_READONLY;
+    }
+    if (ar__input_is(d, node, "password"))
+    {
+        st |= AR_A11Y_PROTECTED;
+    }
+    if ((role == AR_ROLE_COMBOBOX || ar_span_is(d->nodes[node].name, "details")) &&
+        !(n->state & AR_STATE_OPEN))
+    {
+        st |= AR_A11Y_COLLAPSED;
+    }
+    if (role == AR_ROLE_OPTION && (n->state & AR_STATE_CHECKED))
+    {
+        st = (st & ~(ar_u32)AR_A11Y_CHECKED) | AR_A11Y_SELECTED;
+    }
+    if (ar_rect_is_empty(ar_rect_intersect(n->rect, n->clip)))
+    {
+        st |= AR_A11Y_OFFSCREEN;
+    }
+    return st;
+}
+
+ar_i32 ar_a11y_tree(const ar_ctx *c, const ar_doc *d, ar_a11y_item *out, ar_i32 cap)
+{
+    ar_i32 anc[AR__A11Y_DEPTH];
+    ar_i32 root, node, depth = 0, count = 0;
+
+    if (!c || !d || d->node_count <= 0)
+    {
+        return 0;
+    }
+    root = ar_dom_root(d);
+    if (root < 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Pre-order over the document, by its sibling links -- a loop rather than
+     * recursion, so a document nested deeper than the stack is listed rather
+     * than overflowed. `anc[k]` is the nearest listed ancestor-or-self of the
+     * node at depth k, so each item's parent is a lookup, not a search.
+     */
+    node = root;
+    for (;;)
+    {
+        int    descend = 1;
+        ar_i32 parent_item = depth > 0 ? anc[depth - 1] : -1;
+
+        anc[depth] = parent_item;
+        if (d->nodes[node].kind == AR_DOM_ELEMENT)
+        {
+            if (!ar__box_ok(c, d, node))
+            {
+                /* No box this frame -- a shut details, the head, a script --
+                   and so nothing a reader should be told is there. */
+                descend = 0;
+            }
+            else
+            {
+                const ar_node *n = &c->nodes[d->nodes[node].box];
+                ar_u8          role;
+
+                if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || (n->state & AR_STATE_INERT) ||
+                    ar_a11y_attr(d, node, "aria-hidden").p)
+                {
+                    descend = 0;
+                }
+                else if ((role = ar_a11y_role(d, node)) != AR_ROLE_NONE &&
+                         !(role == AR_ROLE_OPTION && ar__in_shut_select(c, d, node)))
+                {
+                    if (count < cap && out)
+                    {
+                        ar_a11y_item *it = &out[count];
+
+                        it->node = node;
+                        it->box = d->nodes[node].box;
+                        it->parent = parent_item;
+                        it->role = role;
+                        it->level = role == AR_ROLE_HEADING ? ar__heading_level(d, node) : 0;
+                        it->pad_[0] = 0;
+                        it->pad_[1] = 0;
+                        it->rect = n->rect;
+                        it->state = ar__item_state(c, d, node, role);
+                    }
+                    anc[depth] = count;
+                    ++count;
+                }
+            }
+        }
+        else
+        {
+            descend = 0;
+        }
+
+        if (descend && d->nodes[node].first_child >= 0 && depth + 1 < AR__A11Y_DEPTH)
+        {
+            node = d->nodes[node].first_child;
+            ++depth;
+            continue;
+        }
+        while (node != root && d->nodes[node].next_sibling < 0)
+        {
+            node = d->nodes[node].parent;
+            --depth;
+        }
+        if (node == root || node < 0)
+        {
+            break;
+        }
+        node = d->nodes[node].next_sibling;
+    }
+    return count;
+}
+
+/* ------------------------------------------------------------------------
+ * Values
+ * ------------------------------------------------------------------------ */
+
+static ar_u32 ar__put_num1000(char *buf, ar_u32 cap, ar_u32 used, ar_i32 v)
+{
+    char   tmp[16];
+    ar_i32 k = 0, whole, frac;
+
+    if (v < 0 && used < cap)
+    {
+        buf[used++] = '-';
+        v = -v;
+    }
+    whole = v / 1000;
+    frac = v % 1000;
+    do
+    {
+        tmp[k++] = (char)('0' + whole % 10);
+        whole /= 10;
+    } while (whole > 0);
+    while (k > 0 && used < cap)
+    {
+        buf[used++] = tmp[--k];
+    }
+    if (frac && used + 1 < cap)
+    {
+        buf[used++] = '.';
+        buf[used++] = (char)('0' + frac / 100);
+        if (frac % 100 && used < cap)
+        {
+            buf[used++] = (char)('0' + (frac / 10) % 10);
+            if (frac % 10 && used < cap)
+            {
+                buf[used++] = (char)('0' + frac % 10);
+            }
+        }
+    }
+    return used;
+}
+
+ar_u32 ar_a11y_value(const ar_ctx *c, const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap)
+{
+    ar_u32 used = 0;
+    ar_u8  role;
+    ar_u32 key;
+
+    if (!c || !d || node < 0 || node >= d->node_count || !buf || cap == 0)
+    {
+        return 0;
+    }
+    buf[0] = 0;
+    role = ar_a11y_role(d, node);
+    key = ar_ctl_key_of(c, node);
+
+    if (role == AR_ROLE_TEXTBOX || role == AR_ROLE_SEARCHBOX || role == AR_ROLE_SPINBUTTON ||
+        ar__input_is(d, node, "file"))
+    {
+        const char *p = 0;
+        ar_u32      n = 0;
+
+        if (!ar_field_value_of(c, key, &p, &n))
+        {
+            /* Untouched: a textarea's value is its content, an input's is its
+               attribute. */
+            ar_span v = ar_a11y_attr(d, node, "value");
+
+            if (ar_span_is(d->nodes[node].name, "textarea"))
+            {
+                ar_i32 ch = d->nodes[node].first_child;
+
+                v.p = 0;
+                v.n = 0;
+                if (ch >= 0 && d->nodes[ch].kind == AR_DOM_TEXT)
+                {
+                    v = d->nodes[ch].text;
+                }
+            }
+            p = v.p;
+            n = v.p ? v.n : 0;
+        }
+        if (ar__input_is(d, node, "password"))
+        {
+            /* One bullet a cluster, never the characters: the value of a
+               password field is its length, as far as anybody listening is
+               concerned. */
+            ar_u32 k = ar_cluster_count(p ? p : "", n);
+
+            while (k-- > 0 && used + 3 < cap)
+            {
+                buf[used++] = (char)0xE2;
+                buf[used++] = (char)0x80;
+                buf[used++] = (char)0xA2;
+            }
+        }
+        else
+        {
+            ar__cat(buf, cap, &used, p ? p : "", n);
+        }
+    }
+    else if (role == AR_ROLE_SLIDER)
+    {
+        ar_i32 lo = ar_dom_attr_num(d, node, "min", 0);
+        ar_i32 hi = ar_dom_attr_num(d, node, "max", 100000);
+        ar_i32 v = ar_ctl_value(c, key, ar_dom_attr_num(d, node, "value", lo + (hi - lo) / 2));
+
+        used = ar__put_num1000(buf, cap - 1, used, v);
+    }
+    else if (role == AR_ROLE_COMBOBOX)
+    {
+        ar_i32 opt = ar_dom_select_option(c, d, node);
+
+        if (opt >= 0)
+        {
+            ar__text_of(d, opt, buf, cap, &used, 0);
+            used = ar__trim(buf, used);
+        }
+    }
+    else if (role == AR_ROLE_PROGRESSBAR || role == AR_ROLE_METER)
+    {
+        int    meter = role == AR_ROLE_METER;
+        ar_i32 lo = meter ? ar_dom_attr_num(d, node, "min", 0) : 0;
+        ar_i32 hi = ar_dom_attr_num(d, node, "max", meter ? 1000 : 1000);
+        ar_i32 v = ar_dom_attr_num(d, node, "value", lo);
+        ar_i32 pct = hi > lo ? (v - lo) * 100 / (hi - lo) : 0;
+
+        if (!meter && !ar_a11y_attr(d, node, "value").p)
+        {
+            return 0; /* indeterminate: there is no number to say */
+        }
+        used = ar__put_num1000(buf, cap - 2, used, (pct < 0 ? 0 : pct > 100 ? 100 : pct) * 1000);
+        buf[used++] = '%';
+    }
+    else if (ar__input_is(d, node, "color"))
+    {
+        static const char HEX[] = "0123456789abcdef";
+        ar_span           v = ar_a11y_attr(d, node, "value");
+        ar_i32            rgb = 0, i;
+
+        if (v.p && v.n == 7 && v.p[0] == '#')
+        {
+            for (i = 1; i < 7; ++i)
+            {
+                char ch = v.p[i];
+                int  h = (ch >= '0' && ch <= '9')   ? ch - '0'
+                         : (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10
+                         : (ch >= 'A' && ch <= 'F') ? ch - 'A' + 10
+                                                    : 0;
+
+                rgb = rgb * 16 + h;
+            }
+        }
+        rgb = ar_ctl_value(c, key, rgb);
+        if (cap > 7)
+        {
+            buf[used++] = '#';
+            for (i = 20; i >= 0; i -= 4)
+            {
+                buf[used++] = HEX[(rgb >> i) & 15];
+            }
+        }
+    }
+    else if (role == AR_ROLE_LINK)
+    {
+        ar_span href = ar_a11y_attr(d, node, "href");
+
+        ar__cat(buf, cap, &used, href.p ? href.p : "", href.p ? href.n : 0);
+    }
+    if (used >= cap)
+    {
+        used = cap - 1;
+    }
+    buf[used] = 0;
+    return used;
+}
+
+/* ------------------------------------------------------------------------
+ * What an assistive tool can do
+ * ------------------------------------------------------------------------ */
+
+int ar_a11y_activate(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_u32 key;
+    ar_i32 i;
+
+    if (!c || !d || node < 0 || node >= d->node_count || !ar__box_ok(c, d, node))
+    {
+        return 0;
+    }
+    key = c->nodes[d->nodes[node].box].key;
+    for (i = 0; i < c->control_n; ++i)
+    {
+        if (c->control_key[i] == key)
+        {
+            /* Fired at the end of the next frame, through the same path a
+               click takes -- so a reader's "press" and a mouse's cannot do
+               different things. */
+            c->synth_fire = key;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ar_a11y_focus(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    ar_u32 key;
+
+    if (!c || !d || node < 0 || node >= d->node_count || !ar__box_ok(c, d, node))
+    {
+        return 0;
+    }
+    key = c->nodes[d->nodes[node].box].key;
+    if (!ar__is_stop_key(c, key))
+    {
+        return 0;
+    }
+    c->focus_key = key;
+    c->focus_visible = 1; /* moved without a pointer, so it is drawn */
+    c->focus_moved = 1;
+    return 1;
 }

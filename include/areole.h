@@ -320,6 +320,30 @@ typedef struct ar_input
      */
     const char *text;
     ar_u32      text_len;
+
+    /*
+     * What an input method is composing, as UTF-8, or null when nothing is.
+     *
+     * A state and not an event, which is the one way this field differs from
+     * `text`: a backend sets it every frame for as long as the composition
+     * lasts, and clears it when the composition ends -- at which point the
+     * committed characters arrive through `text` like anything typed. That
+     * split is what lets the core draw the composition inline, underlined, at
+     * the caret, without ever putting it in the field's buffer: a composition
+     * that is abandoned leaves nothing behind.
+     */
+    const char *compose;
+    ar_u32      compose_len;
+
+    /*
+     * Which press this is in a run of them: 2 for the second click of a double
+     * click, 3 for a triple. Zero reads as one.
+     *
+     * The platform counts, because the platform knows the user's double-click
+     * time and distance and the core has no clock it may call its own. A field
+     * selects a word on 2 and everything on 3.
+     */
+    ar_u32 clicks;
 } ar_input;
 
 /*
@@ -382,7 +406,32 @@ enum
        modifier and which all three arrive here already decided. */
     AR_KEY_SELECT_ALL = 1u << 15,
     AR_KEY_UNDO = 1u << 16,
-    AR_KEY_REDO = 1u << 17
+    AR_KEY_REDO = 1u << 17,
+
+    /* Escape, which closes an open dropdown and does nothing else yet. */
+    AR_KEY_ESCAPE = 1u << 18,
+
+    /*
+     * Ctrl, as a qualifier the way Shift is one: with an arrow it moves by
+     * word, with Backspace or Delete it removes one. Not a modifier table --
+     * Ctrl+A, Ctrl+Z and the clipboard arrive below already decided -- but the
+     * one meaning Ctrl adds to keys that have a meaning without it.
+     */
+    AR_KEY_CTRL = 1u << 19,
+
+    /*
+     * The clipboard, which belongs to the platform.
+     *
+     * Copy and cut are requests: the core works out *what* to copy, and the
+     * backend reads it with ar_clipboard_text after the frame and puts it
+     * wherever its clipboard lives. Paste arrives the other way, as the
+     * clipboard's text in `ar_input.text` with this bit set -- so it is one
+     * undo step rather than a typing run, and a single-line field can drop
+     * its newlines.
+     */
+    AR_KEY_COPY = 1u << 20,
+    AR_KEY_CUT = 1u << 21,
+    AR_KEY_PASTE = 1u << 22
 };
 
 /* ------------------------------------------------------------------------
@@ -796,8 +845,34 @@ typedef ar_i32 ar_scroll_pos;
  * this time: satisfied at 227,960, tests needed 230,113. AR_MEM_SLACK is 8 KB
  * now and the real fix is named in the roadmap: the per-box budget should
  * count the slots the way they are actually allocated.
+ *
+ * 288 KB -> 320 KB, still at 0.10.0, and it is the price of a textarea.
+ *
+ *     the edit buffer     4,426 -> 27,664   AR_EDIT_CAP 256 -> 4,096 bytes,
+ *                                           and undo as a 512-step diff log
+ *                                           over 16 KB instead of sixteen
+ *                                           whole copies of the buffer
+ *     the value pool      4,096 ->  8,192   one packed run instead of sixteen
+ *                                           256-byte slots, 32 entries
+ *     control tables          0 ->  6,400   element, payload and box per
+ *                                           control; sliders; selects and
+ *                                           colours as left; a 128-entry
+ *                                           element-to-key memo; an input
+ *                                           method's composition
+ *     the shared scratch    257 ->      0   gone: a field's text is built
+ *                                           straight into the frame arena
+ *
+ * The context goes 31,720 -> 65,112 bytes. Measured: 322,136 of 327,680,
+ * against 288,744 of 294,912 before -- the same five-to-six kilobytes of
+ * headroom, kept for the same reason.
+ *
+ * The buffer is the only large term and it is set by the release's own
+ * budget, which is written against a 2,000 character text area and a
+ * 500-step undo session: 256 bytes and sixteen snapshots could meet neither.
+ * The pool was 16 KB in the first draft of this and was halved, because two
+ * full textareas is a form nobody fills in, and every embedder pays for it.
  */
-#define AR_MEM_FIXED  294912u
+#define AR_MEM_FIXED  327680u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /*
@@ -988,6 +1063,12 @@ int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight,
    and `<code>` are what it is for and neither is commonly bold. Without it a
    document asking for monospace draws in the body face, as it always did. */
 int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size);
+
+/* The face `font-family: sans-serif` draws with, which is also what controls
+   draw in: a browser sets body text in a serif and its fields and buttons in a
+   sans, and a page that matches one has to be able to do both. Without it,
+   sans-serif draws in the body face, as it always did. */
+int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size);
 
 int ar_font_loaded(const ar_ctx *c);
 
@@ -1186,6 +1267,35 @@ const char *ar_field_text(ar_ctx *c, ar_u32 *len);
 
 /* How many tab stops the last frame published. */
 ar_i32 ar_tab_stops(const ar_ctx *c);
+
+/*
+ * Where the caret was drawn, or an empty rectangle when no field has it.
+ *
+ * What an input method's candidate window is placed against, and what a
+ * screen magnifier follows. Settled after layout, so it is the caret this
+ * frame painted rather than the one it was going to.
+ */
+ar_rect ar_caret_rect(const ar_ctx *c);
+
+/*
+ * How long until the caret next blinks, in microseconds, or 0 when there is
+ * nothing to blink.
+ *
+ * The core owns no clock and never wakes itself, so a backend that blocks
+ * when idle asks this after each frame and sleeps no longer than it says.
+ * A blink then costs one frame whose damage is the caret and nothing else --
+ * a one-pixel column -- which is the whole of what makes a blinking caret
+ * free on the Pentium II tier. Without a clock (ar_set_clock) the caret is
+ * steady and this returns 0.
+ */
+ar_u32 ar_caret_wait_us(const ar_ctx *c);
+
+/*
+ * What the last frame's Ctrl+C or Ctrl+X asked to put on the clipboard, or
+ * null. Borrowed until the next ar_frame_begin; a password field never offers
+ * anything, because that is what a password field is for.
+ */
+const char *ar_clipboard_text(const ar_ctx *c, ar_u32 *len);
 
 /*
  * A box with its own declaration list, which is what an HTML `style=""`
@@ -1646,6 +1756,20 @@ typedef struct ar_dom_node
 
     ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
     ar_i32 attr_count;
+
+    /*
+     * The box this node became in the most recent ar_dom_build, as an index
+     * into that frame's tree, or -1 if it made none -- a node inside a closed
+     * `<details>`, the head, a comment.
+     *
+     * On the document rather than on the box because the document is what
+     * outlives the frame, and because the cost lands where the nodes are:
+     * four bytes a node, against four bytes on every box in every interface
+     * whether it was parsed or declared. The accessibility tree, a label's
+     * click and a form's submission all have a DOM node and need the box --
+     * its rectangle, its state, its key.
+     */
+    ar_i32 box;
 } ar_dom_node;
 
 typedef struct ar_doc
@@ -1723,7 +1847,73 @@ ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
  * tree nobody outside the library can read is a tree that helps nobody.
  * ------------------------------------------------------------------------ */
 
-/* The role, as one of the AR_ROLE_* values in ar_a11y.h. */
+/*
+ * Roles, and the list is short because a role is only worth having when it
+ * changes what a reader says or does.
+ *
+ * There is no generic "group" for a `<div>`. A reader that announces one for
+ * every wrapper on the page buries the three things that mattered under forty
+ * that did not, and AR_ROLE_NONE means "walk through me to my children" rather
+ * than "I am nothing".
+ *
+ * Public as of the tree below, because a backend adapting the tree has to be
+ * able to name what it is adapting -- these lived in src/ and the forms
+ * example spelled out the one value it needed rather than reach for them.
+ */
+enum
+{
+    AR_ROLE_NONE = 0,
+    AR_ROLE_BUTTON,
+    AR_ROLE_LINK,
+    AR_ROLE_CHECKBOX,
+    AR_ROLE_RADIO,
+    AR_ROLE_TEXTBOX,
+    AR_ROLE_SEARCHBOX,
+    AR_ROLE_SLIDER,
+    AR_ROLE_COMBOBOX,
+    AR_ROLE_OPTION,
+    AR_ROLE_HEADING,
+    AR_ROLE_PARAGRAPH,
+    AR_ROLE_LIST,
+    AR_ROLE_LISTITEM,
+    AR_ROLE_TABLE,
+    AR_ROLE_ROW,
+    AR_ROLE_CELL,
+    AR_ROLE_COLUMNHEADER,
+    AR_ROLE_IMAGE,
+    AR_ROLE_DIALOG,
+    AR_ROLE_PROGRESSBAR,
+    AR_ROLE_METER,
+    AR_ROLE_GROUP,
+    AR_ROLE_FORM,
+    AR_ROLE_MAIN,
+    AR_ROLE_NAVIGATION,
+    AR_ROLE_BANNER,
+    AR_ROLE_CONTENTINFO,
+    AR_ROLE_COMPLEMENTARY,
+    AR_ROLE_REGION,
+    AR_ROLE_ARTICLE,
+    AR_ROLE_SPINBUTTON, /* a number field: a text box with a step */
+    AR_ROLE_LISTBOX,    /* an open dropdown's list */
+    AR_ROLE_COUNT
+};
+
+/* The states a reader announces alongside the role and the name. */
+enum
+{
+    AR_A11Y_CHECKED = 1u << 0,
+    AR_A11Y_DISABLED = 1u << 1,
+    AR_A11Y_EXPANDED = 1u << 2,
+    AR_A11Y_FOCUSED = 1u << 3,
+    AR_A11Y_FOCUSABLE = 1u << 4,
+    AR_A11Y_READONLY = 1u << 5,
+    AR_A11Y_COLLAPSED = 1u << 6, /* can expand and has not: a shut details  */
+    AR_A11Y_PROTECTED = 1u << 7, /* a password: say "protected", not the text */
+    AR_A11Y_SELECTED = 1u << 8,  /* the option a select is showing          */
+    AR_A11Y_OFFSCREEN = 1u << 9  /* clipped or scrolled out of the viewport */
+};
+
+/* The role, as one of the AR_ROLE_* values above. */
 ar_u8 ar_a11y_role(const ar_doc *d, ar_i32 node);
 
 /* The accessible name, by the ARIA algorithm. Returns its length. */
@@ -1731,6 +1921,111 @@ ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap);
 
 /* An attribute by name, or an empty span. */
 ar_span ar_a11y_attr(const ar_doc *d, ar_i32 node, const char *name);
+
+/*
+ * One node of the accessibility tree, flattened.
+ *
+ * `parent` is an index into the same array, or -1 for a node directly under
+ * the document. A parent always comes before its children and children are in
+ * document order, so a backend can rebuild the hierarchy in one pass or
+ * present it flat -- MSAA's simple children are flat, UI Automation is a
+ * tree, and both can be read off this.
+ *
+ * `rect` is the box in surface pixels, which every platform API wants once the
+ * window's own origin is added.
+ */
+typedef struct ar_a11y_item
+{
+    ar_i32  node;   /* the DOM node, for ar_a11y_name and the rest */
+    ar_i32  box;    /* its box in the frame the tree was built from */
+    ar_i32  parent; /* index into the array, or -1 */
+    ar_u32  state;  /* AR_A11Y_* */
+    ar_rect rect;
+    ar_u8   role;
+    ar_u8   level; /* a heading's 1 to 6, otherwise 0 */
+    ar_u8   pad_[2];
+} ar_a11y_item;
+
+/*
+ * The accessibility tree of the frame just built, from the document and the
+ * boxes it produced. Returns how many items there are, which may be more than
+ * `cap`; only `cap` are written.
+ *
+ * Call it between ar_frame_end and the next ar_frame_begin, which is the one
+ * window in which both the document and the tree it became are complete. A
+ * node with no role is walked through rather than listed, and a node that made
+ * no box -- inside a closed `<details>`, under `display:none` -- is not in the
+ * tree, because a reader announcing what nobody can see is the opposite of
+ * accessible.
+ */
+ar_i32 ar_a11y_tree(const ar_ctx *c, const ar_doc *d, ar_a11y_item *out, ar_i32 cap);
+
+/*
+ * What a control holds, as a reader would say it: a field's text, a slider's
+ * number, the option a select is showing, a gauge's percentage. A password
+ * field reports one bullet per character and never the characters. Returns
+ * the length; 0 for a node with no value.
+ */
+ar_u32 ar_a11y_value(const ar_ctx *c, const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap);
+
+/*
+ * Do what a click would, or move the focus, on behalf of an assistive tool:
+ * MSAA's accDoDefaultAction and accSelect, UI Automation's Invoke and SetFocus.
+ * Both take effect on the next frame, which is when a click would have, so a
+ * backend calls them and asks for a frame. Return 0 when the node cannot be
+ * activated or focused in the frame just built.
+ */
+int ar_a11y_activate(ar_ctx *c, const ar_doc *d, ar_i32 node);
+int ar_a11y_focus(ar_ctx *c, const ar_doc *d, ar_i32 node);
+
+/*
+ * A number that changes whenever the tree's shape might have, so a backend can
+ * tell a reader to look again (EVENT_OBJECT_REORDER) without diffing two
+ * trees. It moves with the box count and with anything opening or closing,
+ * which over-reports a little and never under-reports.
+ */
+ar_u32 ar_a11y_generation(const ar_ctx *c);
+
+/* ------------------------------------------------------------------------
+ * Forms
+ *
+ * No network, by design: a `<form>` is submitted *to the embedder*, which
+ * decides what to do with it -- post it, save it, act on it. The core does the
+ * part every embedder would otherwise get wrong, which is which controls take
+ * part and how their values are encoded.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The form the last frame submitted, as a DOM node, or -1. `submitter` gets
+ * the button that did it, or -1 for an implicit submission -- Enter in a text
+ * field, which submits its form in every browser.
+ *
+ * Read it after ar_frame_end. `action` and `method` are attributes of the
+ * returned node, and ar_a11y_attr reads them.
+ */
+ar_i32 ar_form_submitted(const ar_ctx *c, ar_i32 *submitter);
+
+/*
+ * The submission, as application/x-www-form-urlencoded: what the user typed,
+ * ticked and chose -- which is what the markup said wherever nobody has.
+ *
+ * Writes at most `cap` bytes and returns the length the whole encoding needs,
+ * the way snprintf does, so a caller can size a buffer and ask again. Disabled
+ * and unnamed controls are left out, an unchecked box is absent rather than
+ * "off", and a button is included only when it is the submitter. Valid
+ * between ar_frame_end and the next ar_frame_begin.
+ */
+ar_u32 ar_form_encode(const ar_ctx *c, ar_i32 form, ar_i32 submitter, char *buf, ar_u32 cap);
+
+/*
+ * `<input type=file>` asks for a file, and the core cannot open a dialog -- it
+ * has no platform and no file system. This is the node whose chooser the last
+ * frame asked for, or -1; the backend opens whatever it opens and hands back
+ * the chosen name. The field then shows it and submits it, which is what a
+ * file input does without a network: the name, not the bytes.
+ */
+ar_i32 ar_file_wanted(const ar_ctx *c);
+void   ar_file_chosen(ar_ctx *c, ar_i32 node, const char *name, ar_u32 len);
 
 /*
  * Parse into storage the caller points at, with no context involved.

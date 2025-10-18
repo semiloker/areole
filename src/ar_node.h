@@ -240,12 +240,78 @@ typedef struct ar_node
    markup decides rather than the ones input does. */
 void ar_state_next(ar_ctx *c, ar_u32 bits);
 
-/* What kind of control the next box is. `group` is the hash of a radio's
-   `name` and is ignored for everything else. */
-void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
+/*
+ * What kind of control the next box is.
+ *
+ * `group` is what the control acts on: a radio's `name` hash, a summary's
+ * details, an option's select, a swatch's colour field. `dom` is the element
+ * it came from, or -1 for a control declared by hand -- a label's click and a
+ * form's submission both start from the element and need to find the box.
+ * `val` is a payload the kind gives meaning to: an option's index, a swatch's
+ * colour, the element a label is for.
+ */
+void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group, ar_i32 dom, ar_i32 val);
 
 /* A text field's value as the markup states it. */
 void ar_value_next(ar_ctx *c, const char *value, ar_u32 len);
+
+/*
+ * What sort of field the next box is, and its limits.
+ *
+ * `flags` is AR_FIELD_*. `lo`, `hi` and `step` are thousandths, read only by a
+ * number field and a range; `maxlen` is `maxlength` in characters, 0 for none.
+ */
+void ar_field_next(ar_ctx *c, ar_u32 flags, ar_i32 lo, ar_i32 hi, ar_i32 step, ar_i32 maxlen);
+
+enum
+{
+    AR_FIELD_MULTI = 1u << 0,    /* a textarea: Enter is a newline, arrows move by line */
+    AR_FIELD_PASSWORD = 1u << 1, /* drawn as bullets, never copied            */
+    AR_FIELD_NUMBER = 1u << 2,   /* digits and a sign; Up and Down step it    */
+    AR_FIELD_READONLY = 1u << 3, /* a caret and a selection, and no edits     */
+    AR_FIELD_DISABLED = 1u << 4
+};
+
+/*
+ * A control's value as the user left it, or `dflt` if nobody has touched it.
+ *
+ * For the controls whose state is a number rather than a bit: the option a
+ * select shows, where a slider sits, the colour a colour field holds. Asked
+ * of the box most recently opened, which is the control itself while the walk
+ * is deciding what to build inside it.
+ */
+ar_i32 ar_box_value(const ar_ctx *c, ar_i32 dflt);
+
+/* The key of the box most recently opened, so the walk can hand it to the
+   controls built inside it as the thing they act on. */
+ar_u32 ar_box_key(const ar_ctx *c);
+
+/* Whether a box already built this frame carries any of `bits` in its state:
+   a summary asks it of its details, which is open by the slot and not by the
+   markup once anybody has clicked. */
+int ar_box_state(const ar_ctx *c, ar_i32 box, ar_u32 bits);
+
+/* The `<option>` a select is showing now, or -1 -- for the accessibility
+   tree's value and for a form's submission. */
+ar_i32 ar_dom_select_option(const ar_ctx *c, const ar_doc *d, ar_i32 node);
+
+/* The document the frame is being built from, recorded by ar_dom_build so the
+   end of the frame -- a submission, a label's click -- can read attributes. */
+void ar_frame_doc(ar_ctx *c, ar_doc *d);
+
+/* DOM helpers the end of the frame calls, implemented beside the walk in
+   ar_dom.c because that is where attributes are read. */
+ar_i32 ar_dom_form_of(const ar_doc *d, ar_i32 node);
+ar_i32 ar_dom_first_submit(const ar_doc *d, ar_i32 form);
+void   ar_dom_form_reset(ar_ctx *c, const ar_doc *d, ar_i32 form);
+ar_i32 ar_dom_attr_num(const ar_doc *d, ar_i32 node, const char *name, ar_i32 dflt);
+
+/* The control state the walk and the form code share, keyed by box. */
+ar_i32 ar_ctl_value(const ar_ctx *c, ar_u32 key, ar_i32 dflt);
+void   ar_ctl_set_value(ar_ctx *c, ar_u32 key, ar_i32 v);
+void   ar_ctl_forget(ar_ctx *c, ar_u32 key);
+ar_u32 ar_ctl_key_of(const ar_ctx *c, ar_i32 dom);
+int    ar_field_value_of(const ar_ctx *c, ar_u32 key, const char **text, ar_u32 *len);
 
 /* Emit the text child of the field just opened, from whichever of the three
    places currently holds its text. */
@@ -272,11 +338,36 @@ enum
     AR_CTL_NONE = 0,
     AR_CTL_CHECKBOX,
     AR_CTL_RADIO,
-    AR_CTL_BUTTON,
+    AR_CTL_BUTTON, /* type=button: activates, and does nothing on its own   */
     AR_CTL_SUMMARY,
     AR_CTL_DETAILS,
-    AR_CTL_TEXT
+    AR_CTL_TEXT,
+    AR_CTL_SUBMIT, /* submits its form                                       */
+    AR_CTL_RESET,  /* puts its form back the way the markup had it           */
+    AR_CTL_SELECT, /* opens and closes; arrows choose                         */
+    AR_CTL_OPTION, /* one row of an open select: group is the select's key   */
+    AR_CTL_RANGE,  /* a slider: arrows step it, a press puts it under the pointer */
+    AR_CTL_COLOR,  /* a swatch that opens a palette                           */
+    AR_CTL_SWATCH, /* one colour of that palette: val is 0xRRGGBB             */
+    AR_CTL_FILE,   /* asks the embedder for a file name                       */
+    AR_CTL_LABEL   /* passes its click to the control it labels: val is that element */
 };
+
+/* Whether a kind is a push button of any sort, which is what a click on a
+   label passes straight through to. */
+#define AR_CTL_IS_BUTTON(k) ((k) == AR_CTL_BUTTON || (k) == AR_CTL_SUBMIT || (k) == AR_CTL_RESET)
+
+/*
+ * The capacities of the interaction tables, all on the context and none on
+ * the boxes, for the reason the control list gives: a field on every box is a
+ * cost on every box in every interface for the handful that are controls.
+ */
+#define AR_VALUES      32   /* fields whose text survives losing the caret   */
+#define AR_VALUE_BYTES 8192 /* and the bytes they share: two full textareas  */
+#define AR_CVALS       64   /* selects, sliders and colours that were touched */
+#define AR_RANGES      32   /* sliders in one frame                          */
+#define AR_CTL_MEMO    128  /* which box each control element last became    */
+#define AR_COMPOSE_CAP 256  /* an input method's composition string          */
 
 typedef struct ar_slot
 {
@@ -496,6 +587,11 @@ struct ar_ctx
     ar_i32        mono_face;
     ar_font_chain mono_chain;
 
+    /* And the sans-serif family, on the same terms: one face, for controls
+       and for anything that asks for sans-serif. */
+    ar_i32        sans_face;
+    ar_font_chain sans_chain;
+
     ar_font_chain    chain;
     ar_shaper        shaper;
     int              shaping;
@@ -603,11 +699,6 @@ struct ar_ctx
     ar_u32      pending_keys;
     int         pending_done;
 
-    /* The field's text, terminated, for the one frame it is drawn in. The
-       buffer itself is not terminated -- `len` is the authority there --
-       and ar_text takes a C string, so somewhere has to hold the copy. */
-    char field_scratch[AR_EDIT_CAP + 1];
-
     ar_u32 next_state;
 
     /* And what kind of control it is, for the same reason and taken the same
@@ -669,21 +760,144 @@ struct ar_ctx
     /*
      * What every other edited field holds, without its history.
      *
-     * 256 bytes each against ar_edit's four and a half kilobytes, because the
-     * undo ring is what makes an ar_edit expensive and a field nobody is typing
-     * in does not need one. Sixteen is a long form; the seventeenth field to be
-     * edited evicts the least recently seen, which loses text and is the reason
-     * this number is written down rather than guessed at.
+     * One shared run of bytes rather than a fixed slot per field. It was
+     * sixteen slots of 256 bytes, which fitted a one-line field exactly and a
+     * textarea not at all: a field that can hold four kilobytes would have
+     * lost everything past the 256th byte the moment the caret left it. So the
+     * entries are spans of `value_bytes`, packed, and a field takes what it
+     * holds rather than what the largest field might.
+     *
+     * Thirty-two entries and sixteen kilobytes. The field after either runs
+     * out evicts the least recently seen, which loses text, and that is the
+     * reason both numbers are written down rather than guessed at.
      */
-    ar_u32 value_key[16];
-    char   value_text[16][AR_EDIT_CAP];
-    ar_u16 value_len[16];
-    ar_u32 value_seen[16];
+    ar_u32 value_key[AR_VALUES];
+    ar_i32 value_dom[AR_VALUES]; /* for a form submitting a field it did not build */
+    ar_u16 value_off[AR_VALUES];
+    ar_u16 value_len[AR_VALUES];
+    ar_u32 value_seen[AR_VALUES];
+    char   value_bytes[AR_VALUE_BYTES];
+    ar_u16 value_used;
 
     ar_u32 control_key[AR_MAX_FOCUSABLES];
     ar_u32 control_group[AR_MAX_FOCUSABLES];
     ar_u8  control_kind[AR_MAX_FOCUSABLES];
     ar_i32 control_n;
+
+    /* The element each control came from, and the payload its kind gives a
+       meaning to -- see ar_control_next. */
+    ar_i32 control_dom[AR_MAX_FOCUSABLES];
+    ar_i32 control_val[AR_MAX_FOCUSABLES];
+    ar_i32 control_box[AR_MAX_FOCUSABLES]; /* this frame's index, for its state */
+    ar_i32 next_dom;
+    ar_i32 next_val;
+
+    /* The flags of the field most recently opened, for the text child the walk
+       builds inside it -- a password draws bullets whether or not it has the
+       caret, and the child is built after the field's flags were taken. */
+    ar_u32 field_flags_cur;
+
+    /* The focus moved by keyboard this frame, so its box is brought into view
+       once layout has said where it is. */
+    int focus_moved;
+
+    /* Enter in a single-line field, waiting for the end of the frame to find
+       the form it submits -- which needs the document, and the document is
+       only certain to be complete there. */
+    ar_i32 implicit_from;
+
+    /* What the next field is and its limits, taken by ar__push_node. */
+    ar_u32 next_field;
+    ar_i32 next_lo, next_hi, next_step, next_maxlen;
+
+    /*
+     * This frame's sliders and their limits, by key.
+     *
+     * A press on a slider is resolved at the end of the frame against where it
+     * was drawn, and turning an x into a value needs the range -- which is in
+     * the markup, and the markup is not something the end of the frame should
+     * have to parse again.
+     */
+    ar_u32 range_key[AR_RANGES];
+    ar_i32 range_lo[AR_RANGES], range_hi[AR_RANGES], range_step[AR_RANGES];
+    ar_i32 range_box[AR_RANGES];
+    ar_i32 range_n;
+
+    /*
+     * The controls whose state is a number, as the user left them.
+     *
+     * The same relationship the text pool has with `value` and a slot's
+     * CHECKED bit has with `checked`: the markup is where a control starts,
+     * and this is where it went. Absent means untouched.
+     */
+    ar_u32 cval_key[AR_CVALS];
+    ar_i32 cval[AR_CVALS];
+    ar_u32 cval_seen[AR_CVALS];
+
+    /*
+     * Which box each control element became when it was last built.
+     *
+     * A control inside a closed `<details>` makes no box this frame, and a
+     * form still submits it -- with whatever the user left in it. That state
+     * is keyed by box, so the key has to outlive the frame that made it.
+     */
+    ar_i32        ctl_memo_dom[AR_CTL_MEMO];
+    ar_u32        ctl_memo_key[AR_CTL_MEMO];
+    ar_i32        ctl_memo_next;
+    const ar_doc *memo_doc;
+
+    /* The edited field, beyond its buffer: what sort it is, its limits, and
+       where this frame put it. */
+    ar_u32 edit_flags;
+    ar_i32 edit_lo, edit_hi, edit_step;
+    ar_i32 edit_dom;
+    ar_i32 edit_box;       /* its text box this frame, or -1 */
+    ar_i32 edit_field_box; /* the field itself, or -1        */
+
+    /*
+     * How far a single-line field's text is shifted left so the caret stays
+     * in view. A field does not wrap; it scrolls, and this is the scroll.
+     * Only the field with the caret has one, which is what every browser
+     * does with a field the caret has left.
+     */
+    ar_i32 edit_scroll_x;
+
+    /*
+     * The caret as painted, and whether the blink has it showing.
+     *
+     * `caret_epoch` is when it was last made to show: any keystroke or move
+     * restarts the blink with the caret visible, because a caret that vanishes
+     * the instant you press an arrow is a caret you cannot follow.
+     */
+    ar_rect caret_rect;
+    ar_rect caret_painted;
+    int     caret_on;
+    int     caret_painted_on;
+    ar_u32  caret_epoch;
+    ar_u32  edit_hash; /* caret, selection and composition, for the digest */
+
+    /* Keys that need lines to mean anything -- Up and Down in a textarea, Home
+       and End there -- held until layout has made the lines. */
+    ar_u32 post_keys;
+    int    edit_drag; /* a press began in the field and is still held */
+    ar_u32 clicks;
+
+    /* An input method's composition, copied, because ar_input's is borrowed. */
+    char   compose[AR_COMPOSE_CAP];
+    ar_u16 compose_len;
+
+    /* What Ctrl+C or Ctrl+X asked for, borrowed from the buffer or the log. */
+    const char *clip;
+    ar_u32      clip_len;
+
+    /* The document this frame is built from, and what its end has to do. */
+    ar_doc *frame_doc;
+    ar_i32  submit_form, submit_by;
+    ar_i32  reset_form;
+    ar_i32  file_wanted;
+    ar_u32  synth_fire; /* an assistive tool's click, fired at frame end */
+    ar_u32  a11y_gen;
+    ar_i32  a11y_shape; /* the box count the generation was last moved for */
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame
