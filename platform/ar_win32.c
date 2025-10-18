@@ -13,8 +13,10 @@
 
 #include <windows.h>
 #include <mmsystem.h>
+#include <imm.h>
+#include <commdlg.h>
 
-#include "areole_win32.h"
+#include "ar_win32_internal.h"
 
 struct ar_win
 {
@@ -33,6 +35,28 @@ struct ar_win
     char   text_buf[64];
     ar_u32 text_n;
     ar_u32 pending_high;
+
+    /*
+     * What an input method is composing, as UTF-8, and how long it is. A state
+     * that lasts across pumps -- the composition is shown until it is committed
+     * or abandoned -- which is why it is not cleared with the per-frame edges.
+     */
+    char   compose_buf[256];
+    ar_u32 compose_n;
+
+    /* The clipboard's text on its way in, for Ctrl+V. Larger than a field can
+       hold, because the field cuts it to fit and this should not cut first. */
+    char paste_buf[8192];
+
+    /* A run of presses close in time and place is a double or triple click.
+       Counted here because the threshold is the user's setting, and Windows
+       only reports the double -- never the triple a line selection needs. */
+    DWORD  click_time;
+    ar_i32 click_x, click_y;
+    ar_u32 click_run;
+
+    /* A timer is armed for the caret's next blink. */
+    int timer_armed;
 
     int closed;
     int resized;
@@ -185,6 +209,35 @@ static void ar__mouse_down(ar_win *win, ar_u32 button, LPARAM lp)
     win->input.mouse_down |= button;
     win->input.mouse_pressed |= button;
 
+    if (button == AR_MOUSE_LEFT)
+    {
+        DWORD  now = GetMessageTime();
+        ar_i32 dx = win->input.mouse_x - win->click_x;
+        ar_i32 dy = win->input.mouse_y - win->click_y;
+
+        if (win->click_run > 0 && now - win->click_time <= GetDoubleClickTime() &&
+            (dx < 0 ? -dx : dx) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+            (dy < 0 ? -dy : dy) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2)
+        {
+            win->click_run = win->click_run >= 3 ? 1 : win->click_run + 1;
+        }
+        else
+        {
+            win->click_run = 1;
+        }
+        win->click_time = now;
+        win->click_x = win->input.mouse_x;
+        win->click_y = win->input.mouse_y;
+        win->input.clicks = win->click_run;
+
+        /* Shift and a click extend a selection, so the qualifier rides with
+           the press as it does with an arrow. */
+        if (GetKeyState(VK_SHIFT) & 0x8000)
+        {
+            win->input.keys_pressed |= AR_KEY_SHIFT;
+        }
+    }
+
     /* Without capture, dragging a slider past the window edge silently stops
        delivering moves and the control sticks. */
     SetCapture(win->hwnd);
@@ -322,10 +375,111 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
 
+    /*
+     * An input method, drawn by the core rather than by Windows.
+     *
+     * The default composition window floats wherever the system puts it and
+     * draws the composition in its own font, which is the "faked" IME that
+     * anybody typing Japanese notices at once. So the system's window is told
+     * not to show, the composition string is handed to the core as state, and
+     * the core draws it inline at the caret, underlined. Only the candidate
+     * list stays the system's, placed beside the caret by ar_win_set_caret.
+     */
+    case WM_IME_SETCONTEXT:
+        lp &= ~(LPARAM)ISC_SHOWUICOMPOSITIONWINDOW;
+        return DefWindowProcW(hwnd, msg, wp, lp);
+
+    case WM_IME_STARTCOMPOSITION:
+        win->compose_n = 0;
+        return 0;
+
+    case WM_IME_COMPOSITION:
+    {
+        HIMC imc = ImmGetContext(hwnd);
+
+        if (imc)
+        {
+            if (lp & GCS_RESULTSTR)
+            {
+                LONG  bytes = ImmGetCompositionStringW(imc, GCS_RESULTSTR, NULL, 0);
+                WCHAR wbuf[128];
+
+                if (bytes > 0 && bytes <= (LONG)sizeof wbuf)
+                {
+                    int got =
+                        (int)(ImmGetCompositionStringW(imc, GCS_RESULTSTR, wbuf, (DWORD)bytes) /
+                              (LONG)sizeof(WCHAR));
+                    int room = (int)(sizeof win->text_buf - 1 - win->text_n);
+                    int n = WideCharToMultiByte(CP_UTF8, 0, wbuf, got, win->text_buf + win->text_n,
+                                                room, NULL, NULL);
+
+                    if (n > 0)
+                    {
+                        win->text_n += (ar_u32)n;
+                        win->text_buf[win->text_n] = 0;
+                        win->input.text = win->text_buf;
+                        win->input.text_len = win->text_n;
+                    }
+                }
+                win->compose_n = 0;
+            }
+            if (lp & GCS_COMPSTR)
+            {
+                LONG  bytes = ImmGetCompositionStringW(imc, GCS_COMPSTR, NULL, 0);
+                WCHAR wbuf[128];
+
+                win->compose_n = 0;
+                if (bytes > 0 && bytes <= (LONG)sizeof wbuf)
+                {
+                    int got = (int)(ImmGetCompositionStringW(imc, GCS_COMPSTR, wbuf, (DWORD)bytes) /
+                                    (LONG)sizeof(WCHAR));
+                    int n = WideCharToMultiByte(CP_UTF8, 0, wbuf, got, win->compose_buf,
+                                                (int)sizeof win->compose_buf - 1, NULL, NULL);
+
+                    win->compose_n = n > 0 ? (ar_u32)n : 0u;
+                }
+            }
+            ImmReleaseContext(hwnd, imc);
+        }
+        win->input.compose = win->compose_n ? win->compose_buf : NULL;
+        win->input.compose_len = win->compose_n;
+        ar_win_wake(win);
+        return 0;
+    }
+
+    case WM_IME_ENDCOMPOSITION:
+        win->compose_n = 0;
+        win->input.compose = NULL;
+        win->input.compose_len = 0;
+        ar_win_wake(win);
+        return 0;
+
+    case WM_TIMER:
+        /* The caret's blink, and nothing else: one timer, re-armed each frame
+           for exactly as long as the core says the caret will hold still. */
+        KillTimer(hwnd, 1);
+        win->timer_armed = 0;
+        ar_win_wake(win);
+        return 0;
+
+    case WM_GETOBJECT:
+    {
+        LRESULT r = ar__win_a11y_getobject(hwnd, wp, lp);
+
+        if (r)
+        {
+            return r;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         switch (wp)
         {
+        case VK_ESCAPE:
+            win->input.keys_pressed |= AR_KEY_ESCAPE;
+            break;
         case VK_UP:
             win->input.keys_pressed |= AR_KEY_UP;
             break;
@@ -369,6 +523,48 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case VK_DELETE:
             win->input.keys_pressed |= AR_KEY_DELETE;
             break;
+        case 'C':
+        case 'X':
+        case 'V':
+            /*
+             * The clipboard. Copy and cut are requests the core answers with
+             * the text, which ar_win_set_clipboard puts on the clipboard after
+             * the frame; paste is the clipboard's text arriving as typing, with
+             * a bit that says it was pasted so it is one undo step.
+             */
+            if (GetKeyState(VK_CONTROL) & 0x8000)
+            {
+                if (wp == 'C')
+                {
+                    win->input.keys_pressed |= AR_KEY_COPY;
+                }
+                else if (wp == 'X')
+                {
+                    win->input.keys_pressed |= AR_KEY_CUT;
+                }
+                else if (OpenClipboard(hwnd))
+                {
+                    HANDLE h = GetClipboardData(CF_UNICODETEXT);
+                    WCHAR *w = h ? (WCHAR *)GlobalLock(h) : NULL;
+
+                    if (w)
+                    {
+                        int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, win->paste_buf,
+                                                    (int)sizeof win->paste_buf, NULL, NULL);
+
+                        GlobalUnlock(h);
+                        if (n > 1)
+                        {
+                            win->input.text = win->paste_buf;
+                            win->input.text_len = (ar_u32)(n - 1);
+                            win->input.keys_pressed |= AR_KEY_PASTE;
+                        }
+                    }
+                    CloseClipboard();
+                }
+                break;
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
         case 'A':
         case 'Z':
         case 'Y':
@@ -409,6 +605,14 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             /* Not a modifier table -- the one modifier that changes what an
                arrow means, resolved where GetKeyState lives. */
             win->input.keys_pressed |= AR_KEY_SHIFT;
+        }
+        if ((GetKeyState(VK_CONTROL) & 0x8000) &&
+            (wp == VK_LEFT || wp == VK_RIGHT || wp == VK_BACK || wp == VK_DELETE || wp == VK_HOME ||
+             wp == VK_END))
+        {
+            /* And Ctrl, for the keys it gives a second meaning: by word, or to
+               the very start and end. */
+            win->input.keys_pressed |= AR_KEY_CTRL;
         }
         ar_win_wake(win);
         return 0;
@@ -503,6 +707,7 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_DESTROY:
         win->closed = 1;
+        ar__win_a11y_detach();
         PostQuitMessage(0);
         return 0;
 
@@ -633,6 +838,7 @@ int ar_win_pump(ar_win *win)
     win->input.keys_pressed = 0;
     win->input.text = 0;
     win->input.text_len = 0;
+    win->input.clicks = 0;
     win->text_n = 0;
     win->resized = 0;
 
@@ -662,6 +868,174 @@ int ar_win_pump(ar_win *win)
 ar_surface *ar_win_surface(ar_win *win)
 {
     return &win->surface;
+}
+
+HWND ar_win_hwnd(const ar_win *win)
+{
+    return win ? win->hwnd : NULL;
+}
+
+void ar_win_wake_after(ar_win *win, ar_u32 us)
+{
+    UINT ms;
+
+    if (!win || !win->hwnd)
+    {
+        return;
+    }
+    if (us == 0)
+    {
+        if (win->timer_armed)
+        {
+            KillTimer(win->hwnd, 1);
+            win->timer_armed = 0;
+        }
+        return;
+    }
+    ms = (UINT)((us + 999u) / 1000u);
+    SetTimer(win->hwnd, 1, ms ? ms : 1, NULL);
+    win->timer_armed = 1;
+}
+
+void ar_win_set_clipboard(ar_win *win, const char *utf8, ar_u32 len)
+{
+    int     w;
+    HGLOBAL h;
+    WCHAR  *dst;
+
+    if (!win || !win->hwnd || !utf8 || len == 0)
+    {
+        return;
+    }
+    w = MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, NULL, 0);
+    if (w <= 0)
+    {
+        return;
+    }
+    h = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)(w + 1) * sizeof(WCHAR));
+    if (!h)
+    {
+        return;
+    }
+    dst = (WCHAR *)GlobalLock(h);
+    MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, dst, w);
+    dst[w] = 0;
+    GlobalUnlock(h);
+    if (OpenClipboard(win->hwnd))
+    {
+        EmptyClipboard();
+        if (SetClipboardData(CF_UNICODETEXT, h))
+        {
+            h = NULL; /* the clipboard owns it now */
+        }
+        CloseClipboard();
+    }
+    if (h)
+    {
+        GlobalFree(h);
+    }
+}
+
+/*
+ * Where the caret is, for the input method's own windows.
+ *
+ * The composition is drawn by the core, so all that is left to place is the
+ * candidate list -- under the caret, and excluding the caret's line so the
+ * list never covers what is being composed.
+ */
+void ar_win_set_caret(ar_win *win, ar_rect caret)
+{
+    HIMC imc;
+
+    if (!win || !win->hwnd || ar_rect_is_empty(caret))
+    {
+        return;
+    }
+    imc = ImmGetContext(win->hwnd);
+    if (imc)
+    {
+        COMPOSITIONFORM cf;
+        CANDIDATEFORM   cand;
+
+        cf.dwStyle = CFS_POINT;
+        cf.ptCurrentPos.x = caret.x;
+        cf.ptCurrentPos.y = caret.y;
+        ImmSetCompositionWindow(imc, &cf);
+
+        cand.dwIndex = 0;
+        cand.dwStyle = CFS_EXCLUDE;
+        cand.ptCurrentPos.x = caret.x;
+        cand.ptCurrentPos.y = caret.y + caret.h;
+        cand.rcArea.left = caret.x;
+        cand.rcArea.top = caret.y;
+        cand.rcArea.right = caret.x + caret.w;
+        cand.rcArea.bottom = caret.y + caret.h;
+        ImmSetCandidateWindow(imc, &cand);
+        ImmReleaseContext(win->hwnd, imc);
+    }
+}
+
+ar_u32 ar_win_choose_file(ar_win *win, char *out, ar_u32 cap)
+{
+    OPENFILENAMEW ofn;
+    WCHAR         path[MAX_PATH];
+    WCHAR        *name;
+    int           n;
+
+    if (!win || !out || cap == 0)
+    {
+        return 0;
+    }
+    path[0] = 0;
+    ZeroMemory(&ofn, sizeof ofn);
+    ofn.lStructSize = sizeof ofn;
+    ofn.hwndOwner = win->hwnd;
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn))
+    {
+        return 0;
+    }
+    /* The name and not the path, which is all a file input exposes -- a browser
+       says C:\fakepath\ in front of it rather than tell a page where your
+       files are. */
+    name = path + ofn.nFileOffset;
+    n = WideCharToMultiByte(CP_UTF8, 0, name, -1, out, (int)cap, NULL, NULL);
+    return n > 1 ? (ar_u32)(n - 1) : 0u;
+}
+
+void ar_win_after_frame(ar_win *win, ar_ctx *c)
+{
+    ar_u32      n = 0;
+    const char *clip;
+    ar_i32      file;
+
+    if (!win || !c)
+    {
+        return;
+    }
+    clip = ar_clipboard_text(c, &n);
+    if (clip && n > 0)
+    {
+        ar_win_set_clipboard(win, clip, n);
+    }
+    ar_win_set_caret(win, ar_caret_rect(c));
+    ar_win_wake_after(win, ar_caret_wait_us(c));
+
+    file = ar_file_wanted(c);
+    if (file >= 0)
+    {
+        char   name[260];
+        ar_u32 len = ar_win_choose_file(win, name, sizeof name);
+
+        if (len > 0)
+        {
+            ar_file_chosen(c, file, name, len);
+        }
+        ar_win_wake(win);
+    }
+    ar_win_a11y_update(win);
 }
 
 const ar_input *ar_win_input(const ar_win *win)

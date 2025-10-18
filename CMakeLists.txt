@@ -139,9 +139,13 @@ add_test(NAME ar_fuzz_short COMMAND ar_fuzz --iters 200000)
 # not compile with language extensions disabled. The core keeps the strict
 # setting; only this target relaxes it.
 if(WIN32)
-    add_library(areole_win32 STATIC platform/ar_win32.c)
+    add_library(areole_win32 STATIC platform/ar_win32.c platform/ar_win32_a11y.c)
     target_link_libraries(areole_win32 PUBLIC areole)
-    target_link_libraries(areole_win32 PUBLIC gdi32 user32 winmm)
+    # imm32 for the input method, comdlg32 for a file input's dialog, and the
+    # three COM libraries MSAA marshals through. All ship with every Windows
+    # this backend targets; none is fetched or vendored.
+    target_link_libraries(areole_win32 PUBLIC gdi32 user32 winmm imm32 comdlg32 oleacc ole32
+                                              oleaut32 uuid)
     set_target_properties(areole_win32 PROPERTIES C_EXTENSIONS ON)
     areole_set_warnings(areole_win32)
 
