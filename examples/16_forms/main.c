@@ -5,6 +5,13 @@
  *     example_forms              open a window and use it
  *     example_forms --dump       print what the engine thinks it has
  *     example_forms --selftest   drive it without a window and check
+ *     example_forms --html       print the page, which is form.html
+ *     example_forms --ppm F      draw it, focused, into an image
+ *     example_forms --ppm-open F the same, with the select's list open
+ *
+ * The page is examples/16_forms/form.html and it has no stylesheet. What it
+ * looks like is the user-agent sheet's doing, and tools/versus.py puts it
+ * beside Edge to show how close that is.
  *
  * ------------------------------------------------------------------------
  * What this is for
@@ -42,46 +49,47 @@
  * beside the buffer rather than hidden, and this example is where you can see
  * it rather than read about it.
  *
- *   Ctrl+D            switches the whole form to the dark colour scheme
+ * And the controls 0.10.0 finished: a textarea that wraps and scrolls, a
+ * password that draws bullets, a number field Up and Down step, a select that
+ * opens on Space and chooses with the arrows, a slider, a colour field with a
+ * palette, a file field that asks Windows for a file, a label that ticks its
+ * checkbox, and a submit button that hands the form to this program -- which
+ * prints what a server would have been sent.
  *
- * Nothing in the markup changes for that. `color-scheme: dark` selects the
- * other set of system colours, and every control follows -- which is what
- * those nineteen names are for.
+ * Run Narrator (Ctrl+Win+Enter) and Tab through it: every control should
+ * announce its role, its name from its label, and its value. That is written
+ * and not yet heard -- see README.md beside this file.
  */
 #include "areole.h"
 #include "areole_win32.h"
 
-/* The role names. ar_a11y_role returns one of these and the enum lives in
-   src/ar_a11y.h, which an embedder does not include -- so the two values
-   this example actually names are spelled out here rather than pulling an
-   internal header into a demo. */
-#define EX_ROLE_NONE 0
-
 #include <stdio.h>
 #include <string.h>
 
-#define WIN_W 520
-#define WIN_H 780
+#define WIN_W 800
+#define WIN_H 860
 
-/* Boxes, plus room for the parsed document: AR_MEM alone budgets the box
-   tree and a parsed page needs its own nodes, attributes and text on top --
-   which is what AR_MEM_DOC adds and what ar_init_ex is told about. */
 /*
- * A real face, because the built-in one is eight pixels tall and a form drawn
- * in it is unreadable rather than merely plain.
- *
- * `font-family` is parsed and ignored by this engine, so the face is chosen
- * here and everything on the page uses it -- which is the honest state of the
- * text stack and not a shortcut taken for a demo.
+ * The fonts a browser uses for a page with no stylesheet, on Windows: Times
+ * New Roman for the text, its bold for the heading, Arial for the controls and
+ * Consolas for monospace -- the families Edge reports through
+ * getComputedStyle. Elsewhere, DejaVu stands in for all three, which is a
+ * different picture and an honest one.
  */
-static const char *const FACES[] = {"C:/Windows/Fonts/segoeui.ttf",
-                                    "C:/Windows/Fonts/calibri.ttf",
-                                    "C:/Windows/Fonts/arial.ttf",
-                                    "C:/Windows/Fonts/DejaVuSans.ttf",
-                                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                    0};
+static const char *const FACE_BODY[] = {"C:/Windows/Fonts/times.ttf",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", 0};
+static const char *const FACE_BOLD[] = {"C:/Windows/Fonts/timesbd.ttf",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", 0};
+static const char *const FACE_SANS[] = {"C:/Windows/Fonts/arial.ttf",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0};
+static const char *const FACE_MONO[] = {"C:/Windows/Fonts/consola.ttf",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 0};
 
-static unsigned char g_font[4 * 1024 * 1024];
+/* One buffer a face: a face keeps a pointer into its bytes. */
+static unsigned char g_font_body[4 * 1024 * 1024];
+static unsigned char g_font_bold[4 * 1024 * 1024];
+static unsigned char g_font_sans[4 * 1024 * 1024];
+static unsigned char g_font_mono[4 * 1024 * 1024];
 
 /* The atlas comes out of the same arena as everything else, so the block
    has to be big enough for it -- a face that will not load is a face that
@@ -89,169 +97,152 @@ static unsigned char g_font[4 * 1024 * 1024];
 #define ATLAS_BYTES (512u * 1024u)
 #define MAX_PX      48
 
-static unsigned char g_mem[AR_MEM_DOC(1024, 64 * 1024) + 2 * 1024 * 1024];
+static unsigned char g_mem[AR_MEM_DOC(1536, 64 * 1024) + 3 * 1024 * 1024];
 static ar_doc       *g_doc;
-static int           g_dark = 0;
+
+/* A clock the selftest owns, so a blink can be stepped to rather than waited
+   for. The window uses the real one. */
+static ar_u32 g_fake_us = 1000000u;
+
+static ar_u32 fake_clock(void)
+{
+    return g_fake_us;
+}
 
 /*
- * The document, written the way somebody would write it.
+ * The document is examples/16_forms/form.html, embedded -- not a copy written
+ * for this program, the same file, so that what the window shows, what the
+ * selftest drives and what tools/versus.py puts beside a browser are one page.
+ * `--html` prints it back out, and the build can diff the two.
  *
- * No classes for the controls and no wrapper divs to make them lay out: the
- * point of building controls out of real boxes with a user-agent stylesheet is
- * that ordinary markup produces a usable form, and a demo that needs help to
- * look right has demonstrated the opposite.
- */
-/*
- * In parts, because C90 caps a string literal at 509 characters and the
- * strict gate enforces it -- the same wall the user-agent sheet hit, and the
- * third time this session. Adjacent literals concatenate into one, so the
- * commas are what make these separate.
+ * In parts, because C90 caps a string literal at 509 characters; adjacent
+ * literals concatenate, and the commas are what make these separate.
  */
 static const char *const DOC[] = {
-    "<html><body>"
-    "<h1>Delivery</h1>"
-    "<form>"
-    "<p><label for=\"name\">Name</label>"
-    "<input id=\"name\" type=\"text\" value=\"\"></p>"
-    "<p><label for=\"note\">Note for the driver</label>"
-    "<input id=\"note\" type=\"text\" value=\"leave at the door\"></p>"
-    "<fieldset><legend>When</legend>"
-    "<p class=\"check\"><input id=\"soon\" type=\"radio\" name=\"when\" checked>",
+    "<!doctype html>\n"
+    "<html><head><meta charset=\"utf-8\"><title>Delivery</title></head>\n"
+    "<body>\n"
+    "<h1 id=\"title\">Delivery</h1>\n"
+    "<form id=\"order\" action=\"/order\" method=\"post\">\n"
+    "<p id=\"p-name\"><label id=\"l-name\" for=\"name\">Name</label>\n"
+    "<input id=\"name\" name=\"name\" type=\"text\" value=\"\"></p>\n"
+    "<p id=\"p-note\"><label id=\"l-note\" for=\"note\">Note for the driver</label>\n"
+    "<input id=\"note\" name=\"note\" type=\"text\" value=\"leave at the door\"></p>\n",
 
-    "<label for=\"soon\">As soon as possible</label></p>"
-    "<p class=\"check\"><input id=\"evening\" type=\"radio\" name=\"when\">"
-    "<label for=\"evening\">This evening</label></p>"
-    "<p class=\"check\"><input id=\"weekend\" type=\"radio\" name=\"when\">"
-    "<label for=\"weekend\">At the weekend</label></p>"
-    "</fieldset>"
-    "<p class=\"check\"><input id=\"gift\" type=\"checkbox\">"
-    "<label for=\"gift\">Wrap it as a gift</label></p>",
+    "<p id=\"p-pin\"><label id=\"l-pin\" for=\"pin\">Door PIN</label>\n"
+    "<input id=\"pin\" name=\"pin\" type=\"password\" value=\"1234\" maxlength=\"8\"></p>\n"
+    "<p id=\"p-qty\"><label id=\"l-qty\" for=\"qty\">How many</label>\n"
+    "<input id=\"qty\" name=\"qty\" type=\"number\" value=\"2\" min=\"1\" max=\"9\"></p>\n"
+    "<p id=\"p-addr\"><label id=\"l-addr\" for=\"addr\">Address</label>\n"
+    "<textarea id=\"addr\" name=\"addr\">12 Mill Lane</textarea></p>\n"
+    "<p id=\"p-size\"><label id=\"l-size\" for=\"size\">Box size</label>\n"
+    "<select id=\"size\" name=\"size\">\n",
 
-    "<p class=\"check\"><input id=\"news\" type=\"checkbox\" checked>"
-    "<label for=\"news\">Email me about offers</label></p>"
-    "<details id=\"more\">"
-    "<summary>Delivery instructions</summary>"
-    "<p>The gate code is 4417. The dog is friendly but loud.</p>"
-    "<p><input id=\"code\" type=\"text\" value=\"4417\"></p>"
-    "</details>"
-    "<p><label for=\"packing\">Packing</label>"
-    "<progress id=\"packing\" value=\"0.6\" max=\"1\"></progress></p>",
+    "<option value=\"s\">Small</option>\n"
+    "<option value=\"m\" selected>Medium</option>\n"
+    "<optgroup label=\"Bulky\">\n"
+    "<option value=\"l\">Large</option>\n"
+    "<option value=\"xl\">Extra large</option>\n"
+    "</optgroup></select></p>\n"
+    "<p id=\"p-tip\"><label id=\"l-tip\" for=\"tip\">Tip</label>\n"
+    "<input id=\"tip\" name=\"tip\" type=\"range\" min=\"0\" max=\"20\" value=\"5\"></p>\n"
+    "<p id=\"p-ribbon\"><label id=\"l-ribbon\" for=\"ribbon\">Ribbon colour</label>\n"
+    "<input id=\"ribbon\" name=\"ribbon\" type=\"color\" value=\"#c02040\"></p>\n",
 
-    "<p><label for=\"fragile\">Fragility</label>"
-    "<meter id=\"fragile\" min=\"0\" max=\"10\" value=\"7\"></meter></p>"
-    "<p><button id=\"send\">Place order</button>"
-    "<input id=\"clear\" class=\"button\" type=\"reset\" value=\"Start again\"></p>"
-    "</form>"
-    "<p class=\"note\" id=\"disabled-note\"><input id=\"off\" type=\"text\" value=\"not editable\" "
-    "disabled>"
-    "<label for=\"off\">A disabled field is not a tab stop</label></p>"
-    "</body></html>",
+    "<p id=\"p-photo\"><label id=\"l-photo\" for=\"photo\">Photo of the door</label>\n"
+    "<input id=\"photo\" name=\"photo\" type=\"file\"></p>\n"
+    "<fieldset id=\"when\"><legend id=\"when-legend\">When</legend>\n"
+    "<p id=\"p-soon\"><input id=\"soon\" type=\"radio\" name=\"when\" value=\"soon\" checked>\n"
+    "<label id=\"l-soon\" for=\"soon\">As soon as possible</label></p>\n"
+    "<p id=\"p-evening\"><input id=\"evening\" type=\"radio\" name=\"when\" value=\"evening\">\n"
+    "<label id=\"l-evening\" for=\"evening\">This evening</label></p>\n",
 
+    "<p id=\"p-weekend\"><input id=\"weekend\" type=\"radio\" name=\"when\" value=\"weekend\">\n"
+    "<label id=\"l-weekend\" for=\"weekend\">At the weekend</label></p>\n"
+    "</fieldset>\n"
+    "<p id=\"p-gift\"><input id=\"gift\" name=\"gift\" type=\"checkbox\">\n"
+    "<label id=\"l-gift\" for=\"gift\">Wrap it as a gift</label></p>\n"
+    "<p id=\"p-news\"><label id=\"l-news\"><input id=\"news\" name=\"news\" type=\"checkbox\" "
+    "checked>\n"
+    "Email me about offers</label></p>\n"
+    "<details id=\"more\"><summary id=\"more-summary\">Delivery instructions</summary>\n",
+
+    "<p>The gate code is 4417.</p></details>\n"
+    "<p id=\"p-packing\"><label id=\"l-packing\" for=\"packing\">Packing</label>\n"
+    "<progress id=\"packing\" value=\"0.6\" max=\"1\"></progress></p>\n"
+    "<p id=\"p-fragile\"><label id=\"l-fragile\" for=\"fragile\">Fragility</label>\n"
+    "<meter id=\"fragile\" min=\"0\" max=\"10\" value=\"7\"></meter></p>\n"
+    "<input type=\"hidden\" name=\"src\" value=\"example16\">\n"
+    "<p id=\"p-buttons\"><button id=\"send\" name=\"go\" value=\"send\">Place order</button>\n",
+
+    "<input id=\"clear\" type=\"reset\" value=\"Start again\"></p>\n"
+    "</form>\n"
+    "<p id=\"p-off\"><input id=\"off\" type=\"text\" value=\"not editable\" disabled>\n"
+    "<label id=\"l-off\" for=\"off\">A disabled field is not a tab stop</label></p>\n"
+    "</body></html>\n",
 };
 
 #define DOC_N ((int)(sizeof DOC / sizeof DOC[0]))
 
 /*
- * The sheet, and most of it is spacing.
+ * No stylesheet.
  *
- * A form is mostly rhythm: one measure between a label and its field, a larger
- * one between groups, and the same left edge down the page. Get those three
- * wrong and every control can be pixel-perfect and the form still looks like a
- * ransom note -- which is what the first version of this demo looked like, and
- * why the sheet is longer than the markup.
- *
- * Labels sit *above* their fields rather than beside them. Beside is what the
- * markup suggests and it is wrong for anything but a checkbox: the eye has to
- * find the start of each label on a ragged left edge, and a long label pushes
- * its field somewhere different from its neighbours.
+ * The first version of this example carried a page of CSS -- spacing, two
+ * columns, control sizes -- and the form looked like a form only because of
+ * it. With the sheet taken away it looked nothing like a browser's, which is
+ * the comparison that matters: an engine is judged by what it does with a
+ * plain page. So there is none, and the controls look the way they do because
+ * the user-agent sheet was measured against Edge until they matched.
  */
-static const char *const CSS_LIGHT[] = {
-    "body { padding:28px; background:Canvas; color:CanvasText; font-size:15px;"
-    " line-height:1.45; }"
-    "h1 { font-size:24px; margin-bottom:4px; }",
-
-    /* A label above its field, and the two kept together: the gap below a
-       field is larger than the gap above it, so a label belongs to the field
-       under it rather than floating between two. */
-    "label { display:block; margin-bottom:3px; }"
-    "p { display:block; margin-top:0px; margin-bottom:16px; }"
-    "input { width:300px; height:30px; padding-left:8px; padding-right:8px; }",
-
-    /* A checkbox and its label do sit on one line, because the box is small
-       enough that the eye takes both as one thing. */
-    "p.check { margin-bottom:8px; }"
-    "p.check label { display:inline; padding-left:8px; }"
-    /* The padding has to go as well as the width. `input` gives every field
-       eight pixels either side so the text does not touch the border, and a
-       checkbox inherits that and comes out a rectangle twice as wide as it is
-       tall -- which is the shape of a text field, not a checkbox. */
-    "p.check input { width:16px; height:16px; padding-left:0px; padding-right:0px; }"
-    "p.check ar-mark { margin-left:3px; margin-top:3px; }",
-
-    "fieldset { display:block; margin-bottom:20px; padding-left:16px;"
-    " padding-right:16px; padding-top:4px; padding-bottom:4px;"
-    " border:1px solid ButtonBorder; }"
-    "legend { display:block; margin-top:8px; margin-bottom:8px; }",
-
-    "details { margin-bottom:20px; padding-left:12px;"
-    " border:1px solid ButtonBorder; }"
-    "summary { padding-top:8px; padding-bottom:8px; }"
-    "details p { margin-top:0px; margin-bottom:12px; }",
-
-    /* The gauges, wider and shorter than the default so they read as meters
-       rather than as empty fields. */
-    "progress, meter { width:300px; height:10px; }"
-    "button { height:32px; padding-left:18px; padding-right:18px; }"
-    "input.button { width:auto; padding-left:18px; padding-right:18px; }",
-
-    /* A disabled control says so in its colour, which is the one thing a
-       disabled control must do: `GrayText` is the system colour for exactly
-       this and follows the theme with everything else. */
-    "input:disabled { color:GrayText; background:ButtonFace; }"
-    "p.note { margin-top:24px; }",
-};
-
-#define CSS_N ((int)(sizeof CSS_LIGHT / sizeof CSS_LIGHT[0]))
-
-/* The whole of switching themes. Nothing in the markup knows about it. */
-static const char *CSS_DARK = ":root { color-scheme:dark; }";
-
-static int load_face(ar_ctx *c)
+static ar_u32 read_first(const char *const *paths, unsigned char *buf, ar_u32 cap)
 {
     ar_i32 i;
 
-    for (i = 0; FACES[i]; ++i)
+    for (i = 0; paths[i]; ++i)
     {
-        FILE  *f = fopen(FACES[i], "rb");
+        FILE  *f = fopen(paths[i], "rb");
         ar_u32 n;
 
         if (!f)
         {
             continue;
         }
-        n = (ar_u32)fread(g_font, 1, sizeof g_font, f);
+        n = (ar_u32)fread(buf, 1, cap, f);
         fclose(f);
-        if (n && ar_font_load(c, g_font, n, ATLAS_BYTES, MAX_PX))
+        if (n)
         {
-            return 1;
+            return n;
         }
     }
     return 0;
 }
 
+static int load_face(ar_ctx *c)
+{
+    ar_u32 n = read_first(FACE_BODY, g_font_body, sizeof g_font_body);
+
+    if (!n || !ar_font_load(c, g_font_body, n, ATLAS_BYTES, MAX_PX))
+    {
+        return 0;
+    }
+    if ((n = read_first(FACE_BOLD, g_font_bold, sizeof g_font_bold)) > 0)
+    {
+        ar_font_load_styled(c, g_font_bold, n, 700, 0);
+    }
+    if ((n = read_first(FACE_SANS, g_font_sans, sizeof g_font_sans)) > 0)
+    {
+        ar_font_load_sans(c, g_font_sans, n);
+    }
+    if ((n = read_first(FACE_MONO, g_font_mono, sizeof g_font_mono)) > 0)
+    {
+        ar_font_load_mono(c, g_font_mono, n);
+    }
+    return 1;
+}
+
 static void build(ar_ctx *c)
 {
-    int k;
-
     ar_ua_stylesheet(c);
-    for (k = 0; k < CSS_N; ++k)
-    {
-        ar_stylesheet(c, CSS_LIGHT[k]);
-    }
-    if (g_dark)
-    {
-        ar_stylesheet(c, CSS_DARK);
-    }
 }
 
 static void frame(ar_ctx *c, const ar_input *in, ar_surface *s)
@@ -261,57 +252,90 @@ static void frame(ar_ctx *c, const ar_input *in, ar_surface *s)
     ar_frame_end(c, s);
 }
 
+static const char *role_name(ar_u8 role)
+{
+    static const char *ROLE[] = {
+        "none",          "button",   "link",    "checkbox",   "radio",  "textbox", "search",
+        "slider",        "combobox", "option",  "heading",    "para",   "list",    "listitem",
+        "table",         "row",      "cell",    "colhead",    "image",  "dialog",  "progress",
+        "meter",         "group",    "form",    "main",       "nav",    "banner",  "contentinfo",
+        "complementary", "region",   "article", "spinbutton", "listbox"};
+
+    return role < (ar_u8)(sizeof ROLE / sizeof ROLE[0]) ? ROLE[role] : "?";
+}
+
+/* The states a reader would say, spelled out for the dump. */
+static void state_words(ar_u32 st, char *out)
+{
+    out[0] = 0;
+    if (st & AR_A11Y_FOCUSED)
+    {
+        strcat(out, " focused");
+    }
+    if (st & AR_A11Y_CHECKED)
+    {
+        strcat(out, " checked");
+    }
+    if (st & AR_A11Y_SELECTED)
+    {
+        strcat(out, " selected");
+    }
+    if (st & AR_A11Y_EXPANDED)
+    {
+        strcat(out, " expanded");
+    }
+    if (st & AR_A11Y_COLLAPSED)
+    {
+        strcat(out, " collapsed");
+    }
+    if (st & AR_A11Y_DISABLED)
+    {
+        strcat(out, " unavailable");
+    }
+    if (st & AR_A11Y_READONLY)
+    {
+        strcat(out, " read-only");
+    }
+    if (st & AR_A11Y_PROTECTED)
+    {
+        strcat(out, " protected");
+    }
+}
+
 /*
  * What a screen reader would be told, printed.
  *
  * The point of the accessibility tree is that it is checkable without a screen
  * reader, and this is where that pays off: a name that comes out wrong is
  * visible here as a line of text rather than as somebody's report that the
- * form says "edit edit edit".
+ * form says "edit edit edit". It is the tree a backend adapts -- the same
+ * array ar_win32_a11y.c hands to Narrator.
  */
 static void dump(ar_ctx *c)
 {
-    static const char *ROLE[] = {
-        "none",          "button",   "link",   "checkbox", "radio", "textbox", "search",
-        "slider",        "combobox", "option", "heading",  "para",  "list",    "listitem",
-        "table",         "row",      "cell",   "colhead",  "image", "dialog",  "progress",
-        "meter",         "group",    "form",   "main",     "nav",   "banner",  "contentinfo",
-        "complementary", "region",   "article"};
-    ar_i32 i;
+    static ar_a11y_item items[256];
+    ar_i32              n = ar_a11y_tree(c, g_doc, items, 256);
+    ar_i32              i;
 
     printf("areole %s -- the accessibility tree of example 16\n\n", ar_version());
-    for (i = 0; i < g_doc->node_count; ++i)
+    for (i = 0; i < n && i < 256; ++i)
     {
-        char  name[128];
-        ar_u8 role;
+        char   name[128], value[128], st[96];
+        ar_i32 depth = 0, up = items[i].parent;
 
-        if (g_doc->nodes[i].kind != AR_DOM_ELEMENT)
+        while (up >= 0)
         {
-            continue;
+            ++depth;
+            up = items[up].parent;
         }
-        role = ar_a11y_role(g_doc, i);
-        if (role == EX_ROLE_NONE)
-        {
-            continue;
-        }
-        ar_a11y_name(g_doc, i, name, sizeof name);
-        printf("  %-12s %s\n", ROLE[role], name[0] ? name : "(unnamed)");
+        ar_a11y_name(g_doc, items[i].node, name, sizeof name);
+        ar_a11y_value(c, g_doc, items[i].node, value, sizeof value);
+        state_words(items[i].state, st);
+        printf("  %*s%-11s %s%s%s%s%s\n", (int)(depth * 2), "", role_name(items[i].role),
+               name[0] ? name : "(unnamed)", value[0] ? " = \"" : "", value, value[0] ? "\"" : "",
+               st);
     }
-
-    printf("\n  %d tab stops\n", (int)ar_tab_stops(c));
-
-    /*
-     * And the boxes, because a tree that reads correctly can still draw
-     * nothing -- which is what a picture showed and what no test did.
-     */
-    printf("\n  boxes (%d):\n", (int)ar_node_count(c));
-    for (i = 0; i < ar_node_count(c) && i < 70; ++i)
-    {
-        ar_rect r = ar_node_rect(c, i);
-
-        printf("    %-3d parent %-3d  %4d,%-4d %4dx%-4d\n", (int)i, (int)ar_node_parent(c, i),
-               (int)r.x, (int)r.y, (int)r.w, (int)r.h);
-    }
+    printf("\n  %d nodes, %d tab stops\n", (int)n, (int)ar_tab_stops(c));
 }
 
 /*
@@ -322,7 +346,7 @@ static void dump(ar_ctx *c)
  * whether the checkbox has a mark in it or whether the text sits inside the
  * field, and "the tests pass" is not an answer to "does it look right".
  */
-static void ppm(ar_ctx *c, const char *path)
+static void ppm(ar_ctx *c, const char *path, int open_select)
 {
     FILE         *out;
     ar_surface    surf;
@@ -348,6 +372,26 @@ static void ppm(ar_ctx *c, const char *path)
     frame(c, &in, &surf);
     in.keys_pressed = 0;
     frame(c, &in, &surf);
+
+    /* Tab on to the select and open it: name, note, PIN, quantity, address,
+       then the select -- which Space opens on the frame after. */
+    if (open_select)
+    {
+        int k;
+
+        for (k = 0; k < 5; ++k)
+        {
+            in.keys_pressed = AR_KEY_TAB;
+            frame(c, &in, &surf);
+        }
+        in.keys_pressed = AR_KEY_SPACE;
+        frame(c, &in, &surf);
+        in.keys_pressed = AR_KEY_DOWN;
+        frame(c, &in, &surf);
+        in.keys_pressed = 0;
+        frame(c, &in, &surf);
+        frame(c, &in, &surf);
+    }
 
     /* "wb", and on this platform it decides whether the image is an image:
        stdout in text mode turns every 0x0A inside a pixel into 0x0D 0x0A and
@@ -469,12 +513,53 @@ static int ring_check(ar_ctx *c, ar_surface *s, int want_ring, const char **why)
     return 1;
 }
 
+/* Every pixel the last frame presented, summed over its damage regions --
+   what a blink costs, which 0.10.0 says must be under two thousand. */
+static ar_i32 presented_px(ar_ctx *c)
+{
+    ar_i32 k, px = 0;
+
+    for (k = 0; k < ar_damage_count(c); ++k)
+    {
+        ar_rect r = ar_damage_rect(c, k);
+
+        px += r.w * r.h;
+    }
+    return px;
+}
+
+static ar_i32 node_by_id(const char *id)
+{
+    ar_i32 i;
+    size_t n = strlen(id);
+
+    for (i = 0; i < g_doc->node_count; ++i)
+    {
+        ar_span v = ar_a11y_attr(g_doc, i, "id");
+
+        if (v.p && v.n == n && memcmp(v.p, id, n) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int value_is(ar_ctx *c, const char *id, const char *want)
+{
+    char   buf[256];
+    ar_u32 n = ar_a11y_value(c, g_doc, node_by_id(id), buf, sizeof buf);
+
+    return n == strlen(want) && memcmp(buf, want, n) == 0;
+}
+
 /*
  * The same thing a person would do, without a window.
  *
  * Every check here is one the demo is for: Tab reaches the fields in order,
- * typing lands in the focused one, the text survives leaving and returning,
- * and a radio group excludes itself. If this passes, the window will behave.
+ * typing lands in the focused one, the text survives leaving and returning, a
+ * radio group excludes itself, and the form is handed over when it is sent.
+ * If this passes, the window will behave.
  */
 static int selftest(ar_ctx *c, ar_surface *s)
 {
@@ -509,6 +594,50 @@ static int selftest(ar_ctx *c, ar_surface *s)
         {                                                                                          \
             fail = 1;                                                                              \
         }                                                                                          \
+    } while (0)
+
+/* Tab to the element with this id, by pressing Tab until the focus is there:
+   the way a person gets anywhere on a form without a mouse. */
+#define TAB_TO(id)                                                                                 \
+    do                                                                                             \
+    {                                                                                              \
+        int guard_;                                                                                \
+                                                                                                   \
+        for (guard_ = 0; guard_ < 40; ++guard_)                                                    \
+        {                                                                                          \
+            ar_i32 box_ = g_doc->nodes[node_by_id(id)].box;                                        \
+                                                                                                   \
+            if (box_ >= 0 && ar_focus_node(c) == box_)                                             \
+            {                                                                                      \
+                break;                                                                             \
+            }                                                                                      \
+            STEP(0, AR_KEY_TAB);                                                                   \
+        }                                                                                          \
+    } while (0)
+
+/* A click in the middle of an element, with the hover frame a press needs. */
+#define CLICK(id)                                                                                  \
+    do                                                                                             \
+    {                                                                                              \
+        ar_rect r_ = ar_node_rect(c, g_doc->nodes[node_by_id(id)].box);                            \
+                                                                                                   \
+        memset(&in, 0, sizeof in);                                                                 \
+        in.mouse_x = r_.x + r_.w / 2;                                                              \
+        in.mouse_y = r_.y + r_.h / 2;                                                              \
+        in.mouse_inside = 1;                                                                       \
+        frame(c, &in, s);                                                                          \
+        in.mouse_pressed = 1;                                                                      \
+        in.mouse_down = 1;                                                                         \
+        frame(c, &in, s);                                                                          \
+        in.mouse_pressed = 0;                                                                      \
+        in.mouse_down = 0;                                                                         \
+        in.mouse_released = 1;                                                                     \
+        frame(c, &in, s);                                                                          \
+        in.mouse_released = 0;                                                                     \
+        in.mouse_inside = 0;                                                                       \
+        in.mouse_x = -1;                                                                           \
+        in.mouse_y = -1;                                                                           \
+        frame(c, &in, s);                                                                          \
     } while (0)
 
     printf("areole %s -- example 16 selftest\n\n", ar_version());
@@ -551,11 +680,7 @@ static int selftest(ar_ctx *c, ar_surface *s)
      * And the other half of the pair, which is the whole of `:focus-visible`.
      *
      * A click focuses the field so typing arrives and draws *no* ring, because
-     * you know where you just clicked. This example's header advertises that
-     * difference as the first thing to look at, and until now nothing checked
-     * it -- which matters more right after teaching the engine to draw a ring
-     * at all, since a ring that appears on every focus is the exact regression
-     * this fix could have introduced.
+     * you know where you just clicked.
      */
     {
         ar_rect     box = ar_node_rect(c, ar_focus_node(c));
@@ -593,38 +718,300 @@ static int selftest(ar_ctx *c, ar_surface *s)
     STEP(0, AR_KEY_TAB);
 
     STEP("Ada", 0);
-    {
-        ar_u32      n = 0;
-        const char *t = ar_field_text(c, &n);
-
-        WANT(t && n == 3 && memcmp(t, "Ada", 3) == 0, "typing reaches the first field");
-    }
+    WANT(value_is(c, "name", "Ada"), "typing reaches the first field");
 
     STEP(0, AR_KEY_TAB);
-    {
-        ar_u32      n = 0;
-        const char *t = ar_field_text(c, &n);
-
-        WANT(t && n == 17, "the second field starts from its value attribute");
-    }
+    WANT(value_is(c, "note", "leave at the door"),
+         "the second field starts from its value attribute");
 
     STEP(0, AR_KEY_TAB_BACK);
-    {
-        ar_u32      n = 0;
-        const char *t = ar_field_text(c, &n);
-
-        WANT(t && n == 3 && memcmp(t, "Ada", 3) == 0,
-             "and going back finds what was typed, not the markup");
-    }
+    WANT(value_is(c, "name", "Ada"), "and going back finds what was typed, not the markup");
 
     /* The caret moves by cluster and the selection has a direction. */
     STEP(0, AR_KEY_LEFT | AR_KEY_SHIFT);
     STEP("i", 0);
-    {
-        ar_u32      n = 0;
-        const char *t = ar_field_text(c, &n);
+    WANT(value_is(c, "name", "Adi"), "shift-left selects and typing replaces");
 
-        WANT(t && n == 3 && memcmp(t, "Adi", 3) == 0, "shift-left selects and typing replaces");
+    /*
+     * A blink is the caret's column and nothing else.
+     *
+     * 0.10.0's seventh criterion, measured on the surface: a frame in which
+     * only the blink phase moved presents fewer than two thousand pixels. Run
+     * against a clock this test owns, stepped by exactly one blink, because
+     * waiting for a real one would make the selftest take half a second and
+     * still not know which phase it was in.
+     */
+    {
+        ar_i32 px;
+
+        ar_set_clock(c, fake_clock);
+        STEP(0, AR_KEY_END);
+        STEP(0, 0);
+        g_fake_us += 530000u;
+        STEP(0, 0);
+        px = presented_px(c);
+        WANT(px > 0 && px < 2000, "a blink repaints the caret and nothing else");
+        printf("       (%d pixels presented for one blink)\n", (int)px);
+        g_fake_us += 530000u;
+        STEP(0, 0);
+        WANT(ar_caret_wait_us(c) > 0 && ar_caret_wait_us(c) <= 530000u,
+             "and says how long until the next one");
+    }
+
+    /* A password draws one mask per character and never the characters. */
+    TAB_TO("pin");
+    {
+        ar_i32      box = g_doc->nodes[node_by_id("pin")].box;
+        const char *shown = ar_node_text(c, box + 1);
+
+        WANT(strstr(shown, "1234") == 0 && strlen(shown) >= 4,
+             "a password draws masks, not its text");
+        WANT(value_is(c, "pin", "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2"),
+             "and tells a reader its length, not its characters");
+    }
+
+    /* Up and Down step a number, within its limits. */
+    TAB_TO("qty");
+    STEP(0, AR_KEY_UP);
+    WANT(value_is(c, "qty", "3"), "up steps a number field");
+    STEP(0, AR_KEY_DOWN);
+    STEP(0, AR_KEY_DOWN);
+    STEP(0, AR_KEY_DOWN);
+    STEP(0, AR_KEY_DOWN);
+    WANT(value_is(c, "qty", "1"), "and down stops at its minimum");
+
+    /* A textarea takes Enter as a newline and keeps its content as its value. */
+    TAB_TO("addr");
+    WANT(value_is(c, "addr", "12 Mill Lane"), "a textarea starts from its content");
+    STEP(0, AR_KEY_END | AR_KEY_CTRL);
+    STEP(0, AR_KEY_ENTER);
+    STEP("Leeds", 0);
+    WANT(value_is(c, "addr", "12 Mill Lane\nLeeds"), "and Enter in it is a newline");
+
+    /* A select opens on Space, the arrows choose, Enter closes. */
+    TAB_TO("size");
+    WANT(value_is(c, "size", "Medium"), "a select shows its selected option");
+    /* Activation lands on the next frame, as hover and focus do: the frame
+       that sees the key has already styled the select as shut. */
+    STEP(0, AR_KEY_SPACE);
+    STEP(0, 0);
+    {
+        ar_a11y_item items[128];
+        ar_i32       n = ar_a11y_tree(c, g_doc, items, 128), k, open = 0, options = 0;
+
+        for (k = 0; k < n && k < 128; ++k)
+        {
+            if (items[k].node == node_by_id("size") && (items[k].state & AR_A11Y_EXPANDED))
+            {
+                open = 1;
+            }
+            if (items[k].role == AR_ROLE_OPTION)
+            {
+                ++options;
+            }
+        }
+        WANT(open, "space opens it");
+        WANT(options == 4, "and its four options are in the tree while it is open");
+    }
+    STEP(0, AR_KEY_DOWN);
+    WANT(value_is(c, "size", "Large"), "down chooses the next option, through the optgroup");
+    STEP(0, AR_KEY_ENTER);
+    WANT(value_is(c, "size", "Large"), "enter closes it on that choice");
+
+    /* A slider steps with the arrows. */
+    TAB_TO("tip");
+    STEP(0, AR_KEY_RIGHT);
+    STEP(0, AR_KEY_RIGHT);
+    WANT(value_is(c, "tip", "7"), "the arrows step a slider");
+    STEP(0, AR_KEY_END);
+    WANT(value_is(c, "tip", "20"), "and End takes it to its maximum");
+
+    /* A colour field opens a palette, and a chip in it is a choice. */
+    TAB_TO("ribbon");
+    STEP(0, AR_KEY_ENTER);
+    STEP(0, 0);
+    {
+        ar_i32 i, chip = -1;
+        ar_i32 field = g_doc->nodes[node_by_id("ribbon")].box;
+
+        /* A chip is a box whose parent -- the palette -- is a child of the
+           colour field. The last one is the sixteenth colour, magenta. */
+        for (i = 0; i < ar_node_count(c); ++i)
+        {
+            ar_i32 up = ar_node_parent(c, i);
+
+            if (up >= 0 && ar_node_parent(c, up) == field && ar_node_rect(c, i).w == 16)
+            {
+                chip = i;
+            }
+        }
+        WANT(chip >= 0, "enter opens the colour palette");
+        if (chip >= 0)
+        {
+            ar_rect r = ar_node_rect(c, chip);
+
+            memset(&in, 0, sizeof in);
+            in.mouse_x = r.x + 8;
+            in.mouse_y = r.y + 8;
+            in.mouse_inside = 1;
+            frame(c, &in, s);
+            in.mouse_pressed = 1;
+            in.mouse_down = 1;
+            frame(c, &in, s);
+            in.mouse_pressed = 0;
+            in.mouse_down = 0;
+            in.mouse_released = 1;
+            frame(c, &in, s);
+            STEP(0, 0);
+        }
+        WANT(value_is(c, "ribbon", "#ff00ff"), "and a click on a chip is the new colour");
+    }
+
+    /* A file field asks the embedder, and shows and submits the answer. */
+    TAB_TO("photo");
+    STEP(0, AR_KEY_SPACE);
+    WANT(ar_file_wanted(c) == node_by_id("photo"), "a file field asks for a file");
+    ar_file_chosen(c, node_by_id("photo"), "door.jpg", 8);
+    STEP(0, 0);
+    WANT(value_is(c, "photo", "door.jpg"), "and holds the name it was given");
+
+    /* A label passes its click to its control, both ways it can be written. */
+    CLICK("gift");
+    {
+        ar_i32 lab = -1, i;
+
+        for (i = 0; i < g_doc->node_count; ++i)
+        {
+            ar_span f = ar_a11y_attr(g_doc, i, "for");
+
+            if (f.p && f.n == 4 && memcmp(f.p, "gift", 4) == 0)
+            {
+                lab = i;
+            }
+        }
+        WANT(ar_a11y_tree(c, g_doc, 0, 0) > 0, "the tree is there to ask");
+        {
+            ar_a11y_item items[128];
+            ar_i32       n = ar_a11y_tree(c, g_doc, items, 128), k;
+            int          checked = 0;
+
+            for (k = 0; k < n && k < 128; ++k)
+            {
+                if (items[k].node == node_by_id("gift"))
+                {
+                    checked = (items[k].state & AR_A11Y_CHECKED) != 0;
+                }
+            }
+            WANT(checked, "a click on the box ticks it");
+        }
+        if (lab >= 0)
+        {
+            ar_rect      r = ar_node_rect(c, g_doc->nodes[lab].box);
+            ar_a11y_item items[128];
+            ar_i32       n, k;
+            int          checked = 1;
+
+            memset(&in, 0, sizeof in);
+            in.mouse_x = r.x + r.w / 2;
+            in.mouse_y = r.y + r.h / 2;
+            in.mouse_inside = 1;
+            frame(c, &in, s);
+            in.mouse_pressed = 1;
+            in.mouse_down = 1;
+            frame(c, &in, s);
+            in.mouse_pressed = 0;
+            in.mouse_down = 0;
+            in.mouse_released = 1;
+            frame(c, &in, s);
+            STEP(0, 0);
+            n = ar_a11y_tree(c, g_doc, items, 128);
+            for (k = 0; k < n && k < 128; ++k)
+            {
+                if (items[k].node == node_by_id("gift"))
+                {
+                    checked = (items[k].state & AR_A11Y_CHECKED) != 0;
+                }
+            }
+            WANT(!checked, "and a click on its label unticks it again");
+        }
+    }
+
+    /* The radio group is one tab stop, and the arrows move within it. */
+    {
+        ar_i32 before = ar_tab_stops(c);
+
+        TAB_TO("soon");
+        STEP(0, AR_KEY_DOWN);
+        STEP(0, 0);
+        WANT(ar_focus_node(c) == g_doc->nodes[node_by_id("evening")].box,
+             "down moves the focus to the next radio");
+        WANT(before == 15, "and the three radios are one tab stop among fifteen");
+        printf("       (%d tab stops)\n", (int)before);
+    }
+
+    /*
+     * Sent: the form is handed to this program, encoded the way a server
+     * expects it, with what the user did rather than what the markup said.
+     */
+    TAB_TO("send");
+    STEP(0, AR_KEY_ENTER);
+    {
+        ar_i32 by = -2;
+        ar_i32 form = ar_form_submitted(c, &by);
+        char   data[1024];
+        ar_u32 n = form >= 0 ? ar_form_encode(c, form, by, data, sizeof data) : 0;
+
+        WANT(form == node_by_id("order"), "enter on the button submits the form");
+        WANT(by == node_by_id("send"), "and says which button did it");
+        if (n > 0)
+        {
+            printf("       %s\n", data);
+        }
+        WANT(n > 0 && strstr(data, "name=Adi") && strstr(data, "when=evening") &&
+                 strstr(data, "addr=12+Mill+Lane%0D%0ALeeds") && strstr(data, "size=l") &&
+                 strstr(data, "tip=20") && strstr(data, "ribbon=%23ff00ff") &&
+                 strstr(data, "photo=door.jpg") && strstr(data, "news=on") &&
+                 strstr(data, "go=send") && strstr(data, "src=example16") &&
+                 !strstr(data, "gift=") && !strstr(data, "off="),
+             "with what was typed, ticked and chosen");
+    }
+
+    /* Start again puts every control back to its markup. */
+    TAB_TO("clear");
+    STEP(0, AR_KEY_SPACE);
+    STEP(0, 0);
+    WANT(value_is(c, "name", "") && value_is(c, "size", "Medium") && value_is(c, "tip", "5") &&
+             value_is(c, "addr", "12 Mill Lane"),
+         "reset puts the form back the way the markup had it");
+
+    /* Every control in the tree has a role and a name, which is the half of
+       criterion 6 that can be checked without a screen reader. */
+    {
+        static ar_a11y_item items[256];
+        ar_i32              n = ar_a11y_tree(c, g_doc, items, 256), k, controls = 0, named = 0;
+
+        for (k = 0; k < n && k < 256; ++k)
+        {
+            ar_u8 r = items[k].role;
+            char  name[96];
+
+            if (r == AR_ROLE_BUTTON || r == AR_ROLE_CHECKBOX || r == AR_ROLE_RADIO ||
+                r == AR_ROLE_TEXTBOX || r == AR_ROLE_SPINBUTTON || r == AR_ROLE_SLIDER ||
+                r == AR_ROLE_COMBOBOX || r == AR_ROLE_PROGRESSBAR || r == AR_ROLE_METER)
+            {
+                ++controls;
+                if (ar_a11y_name(g_doc, items[k].node, name, sizeof name) > 0)
+                {
+                    ++named;
+                }
+                else
+                {
+                    printf("       unnamed: %s\n", role_name(r));
+                }
+            }
+        }
+        WANT(controls >= 20 && named == controls, "twenty controls, every one named");
+        printf("       (%d controls, %d named)\n", (int)controls, (int)named);
     }
 
     printf("\n%s\n", fail ? "selftest FAILED" : "selftest passed");
@@ -632,12 +1019,14 @@ static int selftest(ar_ctx *c, ar_surface *s)
 
 #undef STEP
 #undef WANT
+#undef TAB_TO
+#undef CLICK
 }
 
 int main(int argc, char **argv)
 {
     ar_ctx     *c;
-    int         want_dump = 0, want_selftest = 0, i;
+    int         want_dump = 0, want_selftest = 0, open_select = 0, i;
     const char *ppm_path = 0;
 
     for (i = 1; i < argc; ++i)
@@ -654,6 +1043,24 @@ int main(int argc, char **argv)
         {
             ppm_path = argv[++i];
         }
+        else if (strcmp(argv[i], "--html") == 0)
+        {
+            /* The page, exactly as it is parsed: form.html is this output. */
+            int k;
+
+            for (k = 0; k < DOC_N; ++k)
+            {
+                fputs(DOC[k], stdout);
+            }
+            return 0;
+        }
+        else if (strcmp(argv[i], "--ppm-open") == 0 && i + 1 < argc)
+        {
+            /* The same picture with the select open, which is the one state of
+               the form a still image of it untouched cannot show. */
+            ppm_path = argv[++i];
+            open_select = 1;
+        }
     }
 
     c = ar_init_ex(g_mem, (ar_u32)sizeof g_mem, 256, 64 * 1024);
@@ -666,15 +1073,10 @@ int main(int argc, char **argv)
     {
         printf("no outline face found -- falling back to the built-in 8x8\n");
     }
-    if (!c)
-    {
-        printf("could not initialise\n");
-        return 1;
-    }
     build(c);
 
     {
-        static char whole[4096];
+        static char whole[8192];
         ar_u32      used = 0;
         int         k;
 
@@ -700,7 +1102,7 @@ int main(int argc, char **argv)
 
     if (ppm_path)
     {
-        ppm(c, ppm_path);
+        ppm(c, ppm_path, open_select);
         return 0;
     }
 
@@ -739,14 +1141,15 @@ int main(int argc, char **argv)
             return 1;
         }
         ar_set_clock(c, ar_time_us);
+        ar_win_a11y(win, c, g_doc);
         printf("areole %s -- Tab to move, Space or Enter to press, type into a field.\n",
                ar_version());
-        printf("Ctrl+D for the dark scheme, Ctrl+A/Z/Y to select all, undo, redo.\n");
+        printf("Ctrl+A/Z/Y select all, undo, redo; Ctrl+C/X/V the clipboard.\n");
 
         while (ar_win_pump(win))
         {
             const ar_input *in = ar_win_input(win);
-            ar_i32          region;
+            ar_i32          region, form, by;
 
             frame(c, in, ar_win_surface(win));
             for (region = 0; region < ar_damage_count(c); ++region)
@@ -755,6 +1158,19 @@ int main(int argc, char **argv)
             }
             ar_frame_presented(c);
 
+            /* What a server would have been sent, which is what a form does
+               without a network: it hands its data to the program. */
+            form = ar_form_submitted(c, &by);
+            if (form >= 0)
+            {
+                static char data[8192];
+
+                ar_form_encode(c, form, by, data, sizeof data);
+                printf("submitted: %s\n", data);
+                ar_win_set_title(win, "areole - a form (submitted)");
+            }
+
+            ar_win_after_frame(win, c);
             if (ar_needs_redraw(c))
             {
                 ar_win_wake(win);
