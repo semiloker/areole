@@ -57,6 +57,7 @@ static unsigned char g_face_body[8u * 1024u * 1024u];
 static unsigned char g_face_sans[8u * 1024u * 1024u];
 static unsigned char g_face_mono[8u * 1024u * 1024u];
 static unsigned char g_face_bold[8u * 1024u * 1024u];
+static unsigned char g_face_italic[8u * 1024u * 1024u];
 
 static ar_u32 read_face(const char *path, unsigned char *buf, ar_u32 cap)
 {
@@ -216,6 +217,7 @@ int main(int argc, char **argv)
     const char *path = 0;
     const char *ppm_path = 0;
     const char *font_body = 0, *font_sans = 0, *font_mono = 0, *font_bold = 0;
+    const char *font_italic = 0;
     int         want_geometry = 0;
     int         want_ids = 0;
     int         k;
@@ -255,6 +257,10 @@ int main(int argc, char **argv)
         {
             font_bold = argv[++k];
         }
+        else if (strcmp(argv[k], "--italic") == 0 && k + 1 < argc)
+        {
+            font_italic = argv[++k];
+        }
         else if (strcmp(argv[k], "--size") == 0 && k + 1 < argc)
         {
             long w = 0, h = 0;
@@ -274,7 +280,8 @@ int main(int argc, char **argv)
     if (!path)
     {
         printf("# usage: ar_gallery demo.html [--geometry] [--ids] [--ppm out.ppm]\n"
-               "#        [--size WxH] [--font body.ttf] [--sans sans.ttf] [--mono mono.ttf]\n");
+               "#        [--size WxH] [--font body.ttf] [--sans sans.ttf] [--mono mono.ttf]\n"
+               "#        [--bold bold.ttf] [--italic italic.ttf]\n");
         return 2;
     }
     if (!read_file(path))
@@ -310,6 +317,10 @@ int main(int argc, char **argv)
         if (font_bold && (n = read_face(font_bold, g_face_bold, sizeof g_face_bold)) > 0)
         {
             ar_font_load_styled(c, g_face_bold, n, 700, 0);
+        }
+        if (font_italic && (n = read_face(font_italic, g_face_italic, sizeof g_face_italic)) > 0)
+        {
+            ar_font_load_styled(c, g_face_italic, n, 400, 1);
         }
     }
     ar_ua_stylesheet(c);
