@@ -862,7 +862,7 @@ typedef ar_i32 ar_scroll_pos;
  *     the shared scratch    257 ->      0   gone: a field's text is built
  *                                           straight into the frame arena
  *
- * The context goes 31,720 -> 65,112 bytes. Measured: 322,136 of 327,680,
+ * The context goes 31,720 -> 65,208 bytes. Measured: 322,232 of 327,680,
  * against 288,744 of 294,912 before -- the same five-to-six kilobytes of
  * headroom, kept for the same reason.
  *
@@ -1283,12 +1283,30 @@ ar_rect ar_caret_rect(const ar_ctx *c);
  *
  * The core owns no clock and never wakes itself, so a backend that blocks
  * when idle asks this after each frame and sleeps no longer than it says.
- * A blink then costs one frame whose damage is the caret and nothing else --
- * a one-pixel column -- which is the whole of what makes a blinking caret
- * free on the Pentium II tier. Without a clock (ar_set_clock) the caret is
- * steady and this returns 0.
+ * When it wakes for that and nothing else, ar_frame_blink is the whole of
+ * what the blink needs. Without a clock (ar_set_clock) the caret is steady
+ * and this returns 0.
  */
 ar_u32 ar_caret_wait_us(const ar_ctx *c);
+
+/*
+ * A caret blink, without a frame.
+ *
+ * Call it in place of a whole frame when nothing has happened but time -- the
+ * wake ar_caret_wait_us asked for, with no input in between. It repaints the
+ * caret's column from the frame already built, into the surface that frame
+ * was painted into, and returns the rectangle to present: one pixel by a line.
+ * Empty when the caret's phase has not changed, when no field has it, or when
+ * there is no finished frame to repaint from (after ar_frame_begin and before
+ * ar_frame_end). Any input at all needs a real frame instead, because only a
+ * frame can learn what the input changed.
+ *
+ * A blink by a whole frame was correct and cost the frame: the tree built,
+ * styled and laid out to learn that one column of pixels differed. Projected
+ * to the Pentium II tier that was 1 to 1.4 ms against a budget of 0.5. This
+ * paints the column and nothing else.
+ */
+ar_rect ar_frame_blink(ar_ctx *c, ar_surface *s);
 
 /*
  * What the last frame's Ctrl+C or Ctrl+X asked to put on the clipboard, or

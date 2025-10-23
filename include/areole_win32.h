@@ -63,6 +63,11 @@ int ar_win_resized(const ar_win *win);
    -- for a caret that blinks. Zero cancels. */
 void ar_win_wake_after(ar_win *win, ar_u32 us);
 
+/* True when the last pump woke for that and nothing else: the timer fired, and
+   no input, resize or requested wake came with it. Then ar_frame_blink is all
+   the frame there needs to be. */
+int ar_win_idle(const ar_win *win);
+
 /* Put text on the system clipboard, for what ar_clipboard_text handed back. */
 void ar_win_set_clipboard(ar_win *win, const char *utf8, ar_u32 len);
 
