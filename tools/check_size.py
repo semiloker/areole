@@ -96,7 +96,31 @@ OBJECTS = [
 # 160 KB against 156,024 measured, which is 4,360 of headroom -- the same
 # uncomfortable margin this budget has always been kept at, and 0.10.0 still
 # owes `<select>` and the text field rendering.
-TOTAL_BUDGET = 160 * 1024
+#
+# **Raised again to 188 KB at 0.10.0's close, and it is the same argument made
+# a second time -- which is worth saying, because the first one ended "0.10.0
+# still owes" and this is the owing.**
+#
+# ar_dom.c went 25,444 -> 47,912 between the 160 KB line and the release, and
+# ar_ua_css.c 6,536 -> 10,024. None of it is the parser: it is the walk turning
+# twenty control kinds into boxes. The `<select>` with its option list and
+# groups, the slider's rail and thumb, the colour field and its palette (576
+# bytes of table), the file field, the gauges' track, the fieldset's legend,
+# `<label>` and its target, `disabled` inherited from a fieldset, and -- the
+# biggest single function after the walk itself -- form submission, encoding
+# what was entered (ar_form_encode, 4,016). The user-agent sheet's growth is
+# every control's rule measured against Edge, replacing values written from
+# memory.
+#
+# Measured, not budgeted: 0.10.0's document named no size, so there was no
+# allowance to spend against, and the honest record is that the figure was set
+# after the work rather than before it. The leads for getting some of it back,
+# unmeasured: ar__walk inlines a dozen helpers into 12,896 bytes, and the hint
+# table (ar__hints, 9,136) is a chain of compares where the CSS tables are
+# sorted arrays.
+#
+# 188 KB against 188,828 measured: 3,684 of headroom.
+TOTAL_BUDGET = 188 * 1024
 ENTITY_BUDGET = 30 * 1024
 ENTITY_OBJECT = "ar_html_entity.c"
 
@@ -148,12 +172,18 @@ ENTITY_OBJECT = "ar_html_entity.c"
 # is the shape this file already has twice and the conversion was not done
 # here only because the release ran out of room to do it in. It has not been
 # measured, so it is a lead and not a promise.
+#
+# **Raised to 100 KB at 0.10.0.** 99,640 measured against 98,304: the user-agent
+# sheet's control rules, measured against Edge, are 3,488 of the 3,584 grown,
+# and the four font family keywords that name a sans face the other 96. The
+# sheet is counted here and in the HTML total both, so the same bytes moved two
+# lines; this one moves by 4 KB and leaves 2,760.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
     "ar_color.c",
 ]
-CSS_BUDGET = 96 * 1024
+CSS_BUDGET = 100 * 1024
 
 # The interaction subsystem, added at 0.10.0 -- and added for the reason the CSS
 # one was. ar_css.c sat outside every size gate until 0.4.2 noticed, so a CSS
