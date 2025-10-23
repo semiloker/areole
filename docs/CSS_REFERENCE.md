@@ -356,12 +356,24 @@ exactly then, and only then. Written as two words — `align-items: safe center`
 | `float` | `left`, `right` — the initial value is `none` |
 | `clear` | `left`, `right`, `both` |
 | `text-align` | `left`, `right`, `center` |
-| `vertical-align` | `baseline`, `top`, `middle`, `bottom` |
+| `vertical-align` | `baseline`, `top`, `middle`, `bottom`, `sub`, `super`, a length |
 | `box-sizing` | `content-box`, `border-box` |
 
 `box-sizing` defaults to `content-box`, as CSS says. areole used to treat a
 stated size as the border box, which put it 18 px from a browser on a padded
 box.
+
+A `vertical-align` length raises the box by that much above the baseline, and a
+negative one lowers it -- `-0.2em` is how the user-agent sheet sits a
+`<progress>` and a `<meter>` where a browser does. `0` is the baseline, and is
+not a reason to stop looking for a `sub` or `super` further up.
+
+**An inline-block sits on the last line of text inside it**, as CSS 2.1 says,
+and on its bottom margin edge when there is none -- or when it is a replaced
+element (`<img>`, `<svg>`, `<video>`, `<canvas>`), whose contents are a picture
+and not lines. Form controls are the browsers' own exception and areole makes
+it too: a text field sits on its text though it clips it, a checkbox or a
+slider on the bottom of its content box, and a textarea on its bottom edge.
 
 ### Tables
 
@@ -561,7 +573,7 @@ tooltip shoved sideways to fit stops pointing at anything.
 | `border` | `<width> [solid] <colour>` in any order |
 | `border-width` | length |
 | `border-color` | colour |
-| `border-radius` | length — **parsed, not yet drawn** |
+| `border-radius` | length — one value, all four corners |
 | `font-size` | length |
 
 ## Values
@@ -744,10 +756,33 @@ Named so that their absence is a decision rather than an oversight:
 picks a whole-number scale of the built-in 8x8 bitmap font, rounded down and
 clamped at 1. With one it is the pixel size handed to the rasterizer.
 
-`font-family` is parsed and ignored. Which face draws is decided by
-`ar_font_load` and `ar_font_add` rather than by the stylesheet, because
-selecting between families needs a font database and that is later in 0.2.x. A
-stylesheet naming families is not an error; it simply does not choose yet.
+`font-family` chooses between three faces, not between names. `monospace`
+draws with the face given to `ar_font_load_mono`; `sans-serif`, `system-ui`,
+`arial` and `helvetica` with the one given to `ar_font_load_sans`; anything else
+with the face `ar_font_load` loaded. A family with no face loaded for it falls
+back to that one. The user-agent sheet gives `<input>`, `<button>` and
+`<select>` `sans-serif`, and `<pre>`, `<code>` and `<textarea>` `monospace`,
+which is what a browser does -- so a page with no stylesheet looks like one
+only when the three faces are a browser's (Times New Roman, Arial and Consolas
+on Windows; example 16 loads exactly those). Choosing a family by any other
+name needs a font database, and is not here.
+
+### Form controls, and the one place areole differs on purpose
+
+A control is boxes, styled by the user-agent sheet -- a checkbox is a box with
+a tick in it, a select a box with a chevron and its options -- and every size,
+padding and colour in that sheet was measured off Edge with no author
+stylesheet, rather than recalled. Example 16 is a page of twenty of them with
+no CSS, and `tools/versus.py` puts it beside Edge.
+
+**areole reserves no space for a border; a border is drawn over the padding.**
+So where a browser gives a text field `padding: 1px 2px` and a 2-pixel inset
+border, the sheet here says `padding: 3px 4px` and a 1-pixel border, and the
+field is the same 177 pixels wide either way. The pixels agree; the computed
+`padding` does not, and `tools/compare_computed.py` reports four elements --
+`button`, `fieldset`, `input`, `select` -- as disagreeing for exactly that
+reason. It is a trade made knowingly: the picture is what a reader of the page
+sees, and the computed value is what only a script would.
 
 Antialiasing, grid fitting, stem darkening and subpixel positioning are not CSS
 properties in any specification and are not invented as ones here. They are
