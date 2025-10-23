@@ -94,6 +94,35 @@ static void ar__put_span(char *buf, ar_u32 *used, ar_u32 cap, ar_span s)
 }
 
 /*
+ * A class or id name as the selector string can carry it.
+ *
+ * HTML allows almost anything in either, and the selector syntax stops a name
+ * at the first character that is not an identifier's. The HTML standard's own
+ * ids are `syntax:the-xhtml-syntax`, the RFC's `section-1.1`, a Tailwind class
+ * `md:flex`: each ended its name early -- `#syntax`, colliding with the real
+ * `#syntax` on the page -- and the `:` ended the compound outright, so every
+ * class after it was lost, `.ar-link` among them, and a link drew as plain
+ * text. Anything else becomes `_`, which keeps the name whole and distinct; a
+ * stylesheet naming it needs CSS escapes, which the parser does not read yet.
+ */
+static void ar__put_name(char *buf, ar_u32 *used, ar_u32 cap, const char *p, ar_u32 n)
+{
+    ar_u32 i;
+
+    for (i = 0; i < n; ++i)
+    {
+        char ch = p[i];
+
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+              ch == '-' || ch == '_' || (unsigned char)ch >= 0x80))
+        {
+            ch = '_';
+        }
+        ar__put(buf, used, cap, ch);
+    }
+}
+
+/*
  * `tag.a.b#id`, in the order ar_begin's parser expects.
  *
  * The class attribute is a space-separated list and the selector syntax spells
@@ -146,13 +175,13 @@ static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
                 ar__put(buf, &used, AR_DOM_SEL, '.');
                 open = 1;
             }
-            ar__put(buf, &used, AR_DOM_SEL, c);
+            ar__put_name(buf, &used, AR_DOM_SEL, &c, 1);
         }
     }
     if (id.n > 0)
     {
         ar__put(buf, &used, AR_DOM_SEL, '#');
-        ar__put_span(buf, &used, AR_DOM_SEL, id);
+        ar__put_name(buf, &used, AR_DOM_SEL, id.p, id.n);
     }
     buf[used] = 0;
 }
@@ -1780,6 +1809,19 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         {
             /* A hidden input has no box in any browser. It drew as an empty
                eleven-em field here, because nothing said otherwise. */
+            ar__put_lit(sel, ".ar-hidden");
+        }
+
+        /*
+         * The `hidden` attribute, on anything: html.css's `[hidden] { display:
+         * none }`, spelled as the same class. Put beside a browser, nasa.gov
+         * drew its dropdown menus open -- the submenus and the megamenu are
+         * five elements marked `hidden` -- because nothing read it. A user-
+         * agent rule, so an author's `display` still wins, as it does in a
+         * browser; `until-found` hides too, until find-in-page exists.
+         */
+        if (ar__attr_of(d, node, "hidden").p)
+        {
             ar__put_lit(sel, ".ar-hidden");
         }
 

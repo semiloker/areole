@@ -590,10 +590,13 @@ static int ar__is_space(char c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
 }
 
+/* An identifier's characters, non-ASCII included, as CSS Syntax has them: a
+   class written in Japanese or Cyrillic is an ident like any other, and every
+   byte of its UTF-8 is at or above 0x80. */
 static int ar__is_ident(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
-           c == '_';
+           c == '_' || (unsigned char)c >= 0x80;
 }
 
 static int ar__is_digit(char c)
@@ -4678,6 +4681,33 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
     if (!sel)
     {
         return 0;
+    }
+
+    /*
+     * The document walk's own classes first -- `.ar-link`, `.ar-hidden`, the
+     * control kinds -- whatever order they were written in. They are what the
+     * user-agent sheet keys on, and the walk appends them after the author's;
+     * when an element's own classes filled the set, it was these that were
+     * dropped, and a link drew as text and a `hidden` menu drew open. The
+     * `ar-` prefix is the reserved one, so a page cannot crowd them out.
+     */
+    {
+        const char *q;
+
+        for (q = sel; *q; ++q)
+        {
+            if (q[0] == '.' && q[1] == 'a' && q[2] == 'r' && q[3] == '-')
+            {
+                const char *start = q + 1;
+                const char *e = start;
+
+                while (*e && ar__is_ident(*e))
+                {
+                    ++e;
+                }
+                ar_classes_add(klass, ar_hash(start, (ar_u32)(e - start)));
+            }
+        }
     }
 
     while (*p)
