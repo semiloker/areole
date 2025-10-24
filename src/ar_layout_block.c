@@ -138,6 +138,74 @@ int ar_block_open_at_bottom(const ar_node *n)
  * children and no text. Such a box contributes one collapsed margin to the
  * flow rather than two margins and a zero-height gap between them.
  */
+/*
+ * Inline content that makes no line, CSS 2.1 9.4.2.
+ *
+ * "Line boxes that contain no text, no preserved white space, no inline
+ * elements with non-zero margins, padding, or borders or other in-flow
+ * content ... must be treated as zero-height line boxes ... and must be
+ * treated as not existing for any other purpose." Collapsible white space,
+ * an empty `<a>`, and inlines holding only those.
+ *
+ * The HTML standard's own page starts `<header><a class=logo></a><hgroup>`
+ * -- the logo is a background image -- and here the empty link and the space
+ * after it made a line sixteen pixels tall that also stood between the
+ * header's edge and the `<h1>`'s margin. Everything on the page sat 25 px
+ * below Edge's.
+ */
+static int ar__phantom(const ar_node *nodes, ar_i32 i)
+{
+    const ar_node *n = &nodes[i];
+    ar_i32         c;
+
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+    {
+        return 1;
+    }
+    if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || ar_is_floated(n) || ar_is_out_of_flow(n))
+    {
+        return 0;
+    }
+    if (n->style.v[AR_P_MARGIN_LEFT] != 0 || n->style.v[AR_P_MARGIN_RIGHT] != 0 ||
+        n->style.v[AR_P_PAD_LEFT] != 0 || n->style.v[AR_P_PAD_RIGHT] != 0 ||
+        n->style.v[AR_P_PAD_TOP] != 0 || n->style.v[AR_P_PAD_BOTTOM] != 0 ||
+        n->style.v[AR_P_BORDER_WIDTH] != 0)
+    {
+        return 0;
+    }
+    if (n->text)
+    {
+        const char *t = n->text;
+
+        if (!AR_WS_COLLAPSES(n->style.v[AR_P_WHITE_SPACE]))
+        {
+            return t[0] == 0;
+        }
+        for (; *t; ++t)
+        {
+            if (*t != ' ' && *t != '\t' && *t != '\n' && *t != '\r' && *t != '\f')
+            {
+                return 0;
+            }
+        }
+    }
+    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        if (!ar__phantom(nodes, c))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* In flow, and something: what a margin can meet. */
+static int ar__counts(const ar_node *nodes, ar_i32 c)
+{
+    return nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
+           !ar_is_out_of_flow(&nodes[c]) && !ar__phantom(nodes, c);
+}
+
 static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
 {
     ar_i32 c;
@@ -193,8 +261,7 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
+        if (ar__counts(nodes, c))
         {
             return 0;
         }
@@ -202,15 +269,15 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     return 1;
 }
 
-/* The first and last children that are in flow at all. */
+/* The first and last children that are in flow at all -- past any inline
+   content that makes no line, which is not there for a margin to meet. */
 static ar_i32 ar__first_in_flow(const ar_node *n, const ar_node *nodes)
 {
     ar_i32 c;
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
+        if (ar__counts(nodes, c))
         {
             return c;
         }
@@ -225,8 +292,7 @@ static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
+        if (ar__counts(nodes, c))
         {
             last = c;
         }
@@ -428,11 +494,30 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
         if (ar_is_inline_level(ch))
         {
             ar_i32 stop = c;
+            int    phantom = 1;
 
             while (stop >= 0 && (ar_is_inline_level(&nodes[stop]) ||
                                  nodes[stop].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE))
             {
+                phantom = phantom && ar__phantom(nodes, stop);
                 stop = nodes[stop].next_sibling;
+            }
+
+            /* A run that makes no line is placed -- its boxes need somewhere
+               to be -- and is otherwise not there: no height, and the margins
+               either side of it still meet. */
+            if (phantom)
+            {
+                if (run)
+                {
+                    (void)run(ud, c, stop, cursor + pending);
+                }
+                if (stop < 0)
+                {
+                    break;
+                }
+                c = nodes[stop].prev_sibling;
+                continue;
             }
             cursor += pending;
             pending = 0;
