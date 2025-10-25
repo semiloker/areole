@@ -98,6 +98,7 @@ static const char *const AR_SUPPORTS_PROPS[] = {
     "table-layout",
     "border-collapse",
     "visibility",
+    "opacity",
     "caption-side",
     "empty-cells",
     "border-spacing",

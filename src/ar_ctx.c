@@ -1102,6 +1102,30 @@ void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
    inertness is settled long before that point in the file. */
 static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root);
 
+/*
+ * Which boxes are drawn at opacity zero: their own, or any box around them.
+ *
+ * One pass, because boxes are in tree order and a parent is always seen
+ * before its children. Not a property that inherits -- a child saying
+ * `opacity: 1` does not come back, since its opacity is a fraction of its
+ * parent's -- so it is a state, set here after the cascade.
+ */
+static void ar__mark_transparent(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+
+        if (n->style.v[AR_P_OPACITY] == 0 ||
+            (n->parent >= 0 && (c->nodes[n->parent].state & AR_STATE_TRANSPARENT)))
+        {
+            n->state = (ar_u32)(n->state | AR_STATE_TRANSPARENT);
+        }
+    }
+}
+
 static void ar__mark_inert(ar_ctx *c)
 {
     ar_i32 modal = -1;
@@ -6939,7 +6963,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         ar_i32   bw;
         ar_i32   radius;
 
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || (n->state & AR_STATE_TRANSPARENT))
         {
             continue;
         }
@@ -8208,6 +8232,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        before anything asks for either. */
     ar__content_widths(c);
     ar__mark_inert(c);
+    ar__mark_transparent(c);
     ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));

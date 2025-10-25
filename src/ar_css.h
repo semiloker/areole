@@ -377,6 +377,17 @@ typedef enum ar_prop
 
     AR_P_COLOR_SCHEME,
 
+    /*
+     * `opacity`, per mille: 0 to 1000, not inherited.
+     *
+     * Partly, and the part is the visible one. Zero draws nothing for the box
+     * or anything inside it -- weather.gov hides its open menus that way, and
+     * every one of them drew -- while the box still takes its space and still
+     * takes the pointer, as in a browser. Anything between draws opaque: a
+     * translucent group needs the group composited first, which is 0.12.0.
+     */
+    AR_P_OPACITY,
+
     AR_P_NARROW_COUNT,
 
     AR_P_MAX_WIDTH = AR_P_NARROW_COUNT,
@@ -1394,6 +1405,11 @@ enum
        selector names it -- but a fact the layout and the painter both need,
        and the document walk is the one place that knows it. */
     AR_STATE_LEGEND = 1 << 20,
+
+    /* Drawn at opacity zero: this box or one around it said so. Marked after
+       the cascade, a subtree at a time, because `opacity` does not inherit
+       and a child cannot undo its parent's. */
+    AR_STATE_TRANSPARENT = 1 << 21,
 
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
