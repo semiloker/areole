@@ -464,7 +464,10 @@ static const char *const AR__UA[] = {
        whether it keeps its spaces, and an author can say otherwise. */
     "ar-value { display:block; }"
     "pre, textarea { white-space:pre; }"
-    "ar-value { white-space:pre; }",
+    "ar-value { white-space:pre; }"
+    /* `::placeholder`, which is a class here as everything of its kind is:
+       Edge's grey, read off its pixels. */
+    ".ar-placeholder { color:#757575; }",
 
     /* The summary's triangle, a box the painter draws -- the built-in face is
        ASCII and U+25B8 would be a question mark. A browser's marker is the

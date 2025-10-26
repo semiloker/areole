@@ -616,13 +616,16 @@ ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap)
     /* 5. The attributes that stand in for content on elements that have none:
           `alt` on an image, `title` on anything, `value` on a push button. */
     {
-        static const char *ATTRS[3];
+        static const char *ATTRS[4];
         ar_i32             i;
 
         ATTRS[0] = "alt";
         ATTRS[1] = "value";
         ATTRS[2] = "title";
-        for (i = 0; i < 3; ++i)
+        /* HTML-AAM's last resort for a field nobody labelled: the hint it
+           shows while empty. After `title`, which outranks it there too. */
+        ATTRS[3] = "placeholder";
+        for (i = 0; i < 4; ++i)
         {
             ar_span a = ar_a11y_attr(d, node, ATTRS[i]);
 

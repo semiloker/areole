@@ -23085,6 +23085,43 @@ static void test_the_body_background_fills_the_canvas(void)
 }
 
 /*
+ * A placeholder shows while the field is empty -- with the caret in it too --
+ * and goes with the first character. Wikipedia's and nasa.gov's search boxes
+ * were blank beside Edge's "Search Wikipedia".
+ */
+static void test_a_placeholder_shows_until_typed(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f, t;
+    char       name[64];
+
+    ar__render_html(&s, "<html><body><input id=\"f\" placeholder=\"Search here\"></body></html>",
+                    "body { margin:0 }");
+    f = ar__first_tag_id("f");
+    t = f + 1;
+    CHECK(g_ui->nodes[t].text && strcmp(g_ui->nodes[t].text, "Search here") == 0,
+          "placeholder: an empty field shows it");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(t), AR_P_COLOR) == 0xFF757575u,
+          "placeholder: in the grey a browser draws it in");
+    ar_a11y_name(&g_doc, ar__dom_id("f"), name, sizeof name);
+    CHECK(strcmp(name, "Search here") == 0, "placeholder: and names a field nobody labelled");
+
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    CHECK(strcmp(g_ui->nodes[ar__first_tag_id("f") + 1].text, "Search here") == 0,
+          "placeholder: still shown with the caret in the field");
+    CHECK(ar_caret_rect(g_ui).x == g_ui->nodes[ar__first_tag_id("f") + 1].rect.x,
+          "placeholder: and the caret stands at its start");
+
+    ar__type(&s, "a", 0);
+    ar__type(&s, 0, 0);
+    CHECK(strcmp(g_ui->nodes[ar__first_tag_id("f") + 1].text, "a") == 0,
+          "placeholder: gone with the first character");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("f") + 1), AR_P_COLOR) != 0xFF757575u,
+          "placeholder: and the text is not grey");
+}
+
+/*
  * `opacity: 0` draws nothing for a box or anything inside it, and the box
  * keeps its space. weather.gov hides its open menus with an inline
  * `opacity: 0`, and every one of them drew.
@@ -23764,6 +23801,7 @@ int main(void)
     test_a_line_with_nothing_on_it_is_not_there();
     test_many_classes_are_all_kept();
     test_opacity_zero_draws_nothing();
+    test_a_placeholder_shows_until_typed();
     test_the_body_background_fills_the_canvas();
     test_a_legend_sits_on_the_border();
     test_current_color();
