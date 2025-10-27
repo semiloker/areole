@@ -66,7 +66,7 @@ static ar_u32 ar__tag(const char *s)
 static ar_u32 ar__find_table(const ar_face *f, const char *tag, ar_u32 *len_out)
 {
     ar_u32 want = ar__tag(tag);
-    ar_u32 count = ar__u16at(f, 4);
+    ar_u32 count = ar__u16at(f, f->dir + 4);
     ar_u32 i;
 
     if (len_out)
@@ -75,14 +75,14 @@ static ar_u32 ar__find_table(const ar_face *f, const char *tag, ar_u32 *len_out)
     }
     /* A directory claiming more tables than could fit in the file is the first
        thing a fuzzer produces, so the count is bounded before it is trusted. */
-    if (count > (f->size - 12) / 16)
+    if (f->dir > f->size - 12 || count > (f->size - f->dir - 12) / 16)
     {
         return 0;
     }
 
     for (i = 0; i < count; ++i)
     {
-        ar_u32 rec = 12 + i * 16;
+        ar_u32 rec = f->dir + 12 + i * 16;
         if (ar__u32at(f, rec) == want)
         {
             ar_u32 off = ar__u32at(f, rec + 8);
@@ -797,10 +797,33 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
     f->size = size;
 
     version = ar__u32at(f, 0);
+
+    /*
+     * A collection, 'ttcf': its first face.
+     *
+     * Every CJK face Windows ships is one -- Yu Gothic, MS Gothic, Meiryo,
+     * Microsoft YaHei -- so refusing them meant no Japanese or Chinese text at
+     * all: Japanese Wikipedia beside Edge was a page of notdef boxes. The
+     * header is a count and a list of offsets, each to a face's own table
+     * directory; the first is the regular face in all of those. Choosing
+     * another needs an index the API cannot pass yet.
+     */
+    if (version == ar__tag("ttcf"))
+    {
+        if (size < 16 || ar__u32at(f, 8) == 0)
+        {
+            return 0;
+        }
+        f->dir = ar__u32at(f, 12);
+        if (f->dir > size - 12)
+        {
+            return 0;
+        }
+        version = ar__u32at(f, f->dir);
+    }
+
     /* 0x00010000 is TrueType, 'true' is the Apple spelling of the same thing,
-       'OTTO' is PostScript outlines in a CFF table. 'ttcf' is a collection and
-       is still refused: picking one face out of it needs an index the caller
-       has no way to pass yet. */
+       'OTTO' is PostScript outlines in a CFF table. */
     if (version != 0x00010000u && version != ar__tag("true") && version != ar__tag("OTTO"))
     {
         return 0;

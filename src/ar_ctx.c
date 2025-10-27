@@ -766,6 +766,18 @@ const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
     {
         return &c->style_chain[slot];
     }
+    /* Bold italic with no face of its own takes the nearest one there is --
+       the weight first, which is what a browser keeps when it slants a bold
+       face to stand in. Falling to regular drew a `<dfn>` inside an `<h2>`,
+       bold and italic in Edge, as neither. */
+    if (slot == 3 && c->style_chain[1].count > 0)
+    {
+        return &c->style_chain[1];
+    }
+    if (slot == 3 && c->style_chain[2].count > 0)
+    {
+        return &c->style_chain[2];
+    }
     return &c->chain;
 }
 

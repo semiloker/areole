@@ -45,7 +45,8 @@ from gallery import read_png  # noqa: E402
 ENGINE = os.path.join(ROOT, 'build', 'ar_gallery.exe')
 FONTS = 'C:/Windows/Fonts/'
 DEFAULT_FONTS = {'body': FONTS + 'times.ttf', 'bold': FONTS + 'timesbd.ttf',
-                 'italic': FONTS + 'timesi.ttf',
+                 'italic': FONTS + 'timesi.ttf', 'bold_italic': FONTS + 'timesbi.ttf',
+                 'fallback': FONTS + 'YuGothM.ttc',
                  'sans': FONTS + 'arial.ttf', 'mono': FONTS + 'consola.ttf'}
 
 # The page goes in an iframe and is measured from outside, so the page itself
@@ -103,6 +104,10 @@ def areole(page, w, h, fonts, out_ppm):
         args += ['--bold', fonts['bold']]
     if fonts.get('italic'):
         args += ['--italic', fonts['italic']]
+    if fonts.get('bold_italic'):
+        args += ['--bold-italic', fonts['bold_italic']]
+    if fonts.get('fallback') and os.path.exists(fonts['fallback']):
+        args += ['--fallback', fonts['fallback']]
     r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace')
     return parse_boxes(r.stdout)
 
