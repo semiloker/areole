@@ -575,6 +575,18 @@ tooltip shoved sideways to fit stops pointing at anything.
 | `border-color` | colour |
 | `border-radius` | length — one value, all four corners |
 | `font-size` | length |
+| `opacity` | number or percentage — see below |
+
+**The canvas takes the root's background**, CSS 2.1 14.2, and in an HTML
+document whose root names none, the body's: `body { background: ... }`
+colours the whole window, not a box that stops under the last paragraph. With
+neither, a document's canvas is the `Canvas` system colour in the root's
+colour scheme. An interface built with `ar_begin` has no `html` root and its
+canvas is whatever the surface held, as before.
+
+**`text-align` reaches a box's own text** as well as a line of children --
+which is what right-aligns a list's numbers against the item. A field's text
+stays left, because its caret is measured from there.
 
 ## Values
 
@@ -665,9 +677,16 @@ which set of system colours applies. `light dark` parses and keeps the first,
 which is the right answer today: `prefers-color-scheme` is pinned to `light`
 until the OS hook arrives at 0.16.1, and the pair needs storing then.
 
-Not implemented: `light-dark()`, `accent-color`, `opacity`, `color()` with an
-explicit space, and the `none` keyword as a genuinely missing component --
-`none` parses and resolves to zero.
+Not implemented: `light-dark()`, `accent-color`, `color()` with an explicit
+space, and the `none` keyword as a genuinely missing component -- `none`
+parses and resolves to zero.
+
+**`opacity` is half there, and the half is the one pages use.** `0` draws
+nothing for the box or anything inside it, while the box keeps its space and
+its place under the pointer, as in a browser -- which is how sites hide menus
+that animate open. A number or a percentage, clamped to `[0, 1]`. Any value
+between draws the box opaque: a translucent group has to be composited as a
+group, and that is 0.12.0.
 
 **Comments.** `/* ... */`, anywhere whitespace is allowed.
 
@@ -728,11 +747,13 @@ Named so that their absence is a decision rather than an oversight:
   handed over. Refused at parse time rather than guessed
 - named grid lines on a subgrid declaration, and subgrids nested inside
   subgrids
-- `box-shadow`, gradients, `opacity` on a whole subtree
+- `box-shadow`, gradients, and `opacity` between 0 and 1, which draws opaque
 - container queries and `@container`; `@media` and `@supports` are built
 - custom properties, `var()`, `calc()`; angle, time and frequency units, which
   wait for a property that reads one
-- attribute selectors, pseudo-elements, `:nth-child(an+b)`
+- attribute selectors, pseudo-elements, `:nth-child(an+b)`. The `hidden`
+  attribute needs none: the document walk hides it as html.css's
+  `[hidden] { display: none }` does, and an author's `display` still wins
 - writing modes and logical properties, so no `-inline` or `-block` longhands
 - the `display: contents` exceptions for replaced elements, form controls and
   table parts — every one of them needs a tag name, and there are none yet
