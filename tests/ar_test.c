@@ -23053,6 +23053,33 @@ static void test_a_hidden_input_has_no_box(void)
 }
 
 /*
+ * A `<style>` inside a `<template>` does not style the document. MDN keeps all
+ * of its styles in declarative shadow roots, and read as the page's they made
+ * every link transparent.
+ */
+static void test_template_styles_stay_in_the_template(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<html><body><template shadowrootmode=\"open\"><style>p { color:#ff0000 }</style>"
+              "</template><p id=\"p\">x</p><style>#p { padding-left:3px }</style></body></html>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("p")), AR_P_COLOR) != 0xFFFF0000u,
+          "template: a style inside it does not reach the document");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_PAD_LEFT] == 3,
+          "template: while the document's own style still does");
+}
+
+/*
  * The `hidden` attribute hides anything, and an author can still show it.
  *
  * nasa.gov beside Edge: its `<ul hidden>` submenus drawn open. The
@@ -23840,6 +23867,7 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
+    test_template_styles_stay_in_the_template();
     test_the_hidden_attribute_hides();
     test_a_line_with_nothing_on_it_is_not_there();
     test_a_font_collection_loads_its_first_face();

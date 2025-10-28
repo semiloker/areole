@@ -2790,6 +2790,19 @@ static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
     {
         return 0;
     }
+    /*
+     * Not into a `<template>`. Its contents are inert -- a fragment kept for
+     * later, not part of the page -- and with `shadowrootmode` they are a
+     * shadow root whose styles reach that root and nothing outside it. MDN's
+     * pages carry all twenty-four of their `<style>` elements in declarative
+     * shadow roots, and read as the document's they styled every element on
+     * the page with a component's insides: `a { color: var(--color-link-
+     * normal) }`, a variable no rule defines, made every link transparent.
+     */
+    if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "template"))
+    {
+        return 0;
+    }
     if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "link"))
     {
         /* In the same walk as `<style>` and not in a pass of its own, because
