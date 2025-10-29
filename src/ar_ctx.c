@@ -2434,6 +2434,24 @@ static void ar__blockify_inlines(ar_ctx *c)
         {
             continue;
         }
+
+        /*
+         * A flex or grid item is blockified, CSS Display 3: an `<a>` or a
+         * `<span>` that is a flex item is a block there. An inline box whose
+         * children join a line is placed by the line filler of the block
+         * around it -- and a flex container has no line filler, so the text
+         * of every such item was never placed at all: a sidebar of links in a
+         * flex column drew its highlight and none of its words. A box that
+         * carries its own text is already an item the algorithms place, and is
+         * left as it is.
+         */
+        if (n->parent >= 0 && !(n->text && n->text[0]) &&
+            (c->nodes[n->parent].style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
+             c->nodes[n->parent].style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_BLOCK;
+            continue;
+        }
         for (k = n->first_child; k >= 0; k = c->nodes[k].next_sibling)
         {
             const ar_node *ch = &c->nodes[k];
