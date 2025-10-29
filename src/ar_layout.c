@@ -1066,7 +1066,11 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
     ch->rect.y = su->top + y;
     if (!real)
     {
+        /* A box with no height still has insides, laid out where the measure
+           pass left them -- empty blocks inside an empty block, now that
+           those collapse through too. They go where the box went. */
         ch->rect.h = 0;
+        ar_settle_at(su->nodes, su->env, index, was);
         return;
     }
 
