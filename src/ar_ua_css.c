@@ -108,7 +108,16 @@ static const char *const AR__UA[] = {
      * white sheet.
      */
     "html { display:block; font-size:16px; }"
-    "body { display:block; margin:8px; }",
+    "body { display:block; margin:8px; }"
+    /*
+     * CSS's initial `display`, for every element nothing below names. areole's
+     * own initial value is `flex`, which is right for an interface and was
+     * what every unknown element in a document got: a custom element -- MDN's
+     * `<mdn-dropdown>` -- laid its button and its menu out side by side, the
+     * button stretched down the menu's whole height. A universal selector is
+     * the least specific there is, so every rule below still wins.
+     */
+    "* { display:inline; }",
 
     "head, style, script, title { display:none; }"
     "meta, link, base { display:none; }",

@@ -23080,6 +23080,49 @@ static void test_template_styles_stay_in_the_template(void)
 }
 
 /*
+ * An element nothing names is inline, as CSS's initial value says -- and an
+ * inline holding a block stacks around it rather than putting it on a line.
+ * MDN's `<mdn-dropdown>` drew its button stretched down beside its menu.
+ */
+static void test_an_unknown_element_is_inline(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    b, d;
+
+    ar__render_html(
+        &s,
+        "<html><body><p><my-word id=\"w\">word</my-word></p>"
+        "<my-menu id=\"m\"><button id=\"b\">b</button><div id=\"d\">panel</div></my-menu>"
+        "</body></html>",
+        "body { margin:0 } p { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("w"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+          "unknown: an element nothing names is inline");
+    b = ar__box(ar__first_tag_id("b"));
+    d = ar__box(ar__first_tag_id("d"));
+    CHECK(d.y >= b.y + b.h, "unknown: a block inside an inline goes below what came before it");
+    CHECK(b.h < 40, "unknown: and nothing is stretched to the block's height");
+}
+
+/*
+ * A list item's marker sits beside its first block, not on a line above it:
+ * `<li><p>`, and Wikipedia's contents, `<li><a><div>`.
+ */
+static void test_a_marker_sits_beside_the_first_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     li;
+
+    ar__render_html(&s,
+                    "<html><body><ul><li id=\"l\"><div id=\"t\">text</div></li></ul></body></html>",
+                    "body { margin:0 } ul { margin:0 }");
+    li = ar__first_tag_id("l");
+    CHECK(ar__box(li + 1).y < ar__box(ar__first_tag_id("t")).y + ar__box(ar__first_tag_id("t")).h,
+          "marker: on the block's first line");
+    CHECK(ar__box(ar__first_tag_id("t")).y == ar__box(li).y,
+          "marker: and the block does not move down a line for it");
+}
+
+/*
  * The `hidden` attribute hides anything, and an author can still show it.
  *
  * nasa.gov beside Edge: its `<ul hidden>` submenus drawn open. The
@@ -23868,6 +23911,8 @@ int main(void)
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
     test_template_styles_stay_in_the_template();
+    test_an_unknown_element_is_inline();
+    test_a_marker_sits_beside_the_first_block();
     test_the_hidden_attribute_hides();
     test_a_line_with_nothing_on_it_is_not_there();
     test_a_font_collection_loads_its_first_face();

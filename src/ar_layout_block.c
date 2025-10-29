@@ -199,6 +199,13 @@ static int ar__phantom(const ar_node *nodes, ar_i32 i)
     return 1;
 }
 
+/* A list item's marker, which the document walk emits as the item's first
+   box: `ar-bullet` for a drawn disc, `ar-marker` for a typed number. */
+static int ar__is_marker(const ar_node *n)
+{
+    return n->sel_tag == ar_hash("ar-bullet", 9u) || n->sel_tag == ar_hash("ar-marker", 9u);
+}
+
 /* In flow, and something: what a margin can meet. */
 static int ar__counts(const ar_node *nodes, ar_i32 c)
 {
@@ -495,13 +502,46 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
         {
             ar_i32 stop = c;
             int    phantom = 1;
+            int    marker = 0;
 
             while (stop >= 0 && (ar_is_inline_level(&nodes[stop]) ||
                                  nodes[stop].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE))
             {
-                phantom = phantom && ar__phantom(nodes, stop);
+                if (!ar__phantom(nodes, stop))
+                {
+                    if (ar__is_marker(&nodes[stop]))
+                    {
+                        marker = 1;
+                    }
+                    else
+                    {
+                        phantom = 0;
+                    }
+                }
                 stop = nodes[stop].next_sibling;
             }
+
+            /*
+             * A marker with nothing beside it but a block: it belongs on the
+             * block's first line, as an outside marker does in every browser,
+             * and not on a line of its own above it. `<li><p>`, and
+             * Wikipedia's contents -- `<li><a><div>` -- drew every bullet a
+             * line above its words. Placed where the block's first line will
+             * be, after the margin that collapses above it, and no height.
+             */
+            if (phantom && marker && stop >= 0)
+            {
+                const ar_node *next = &nodes[stop];
+                ar_i32         gap = at_start ? ar_block_top_gap(n, next) : next->mt;
+
+                if (run)
+                {
+                    (void)run(ud, c, stop, cursor + ar_margin_collapse(pending, gap));
+                }
+                c = next->prev_sibling;
+                continue;
+            }
+            phantom = phantom && !marker;
 
             /* A run that makes no line is placed -- its boxes need somewhere
                to be -- and is otherwise not there: no height, and the margins
