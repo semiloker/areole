@@ -23402,6 +23402,22 @@ static void test_a_flex_item_is_a_block(void)
           "flex item: and the next one beside it");
 }
 
+/* `text-decoration: none` takes a link's underline away. */
+static void test_text_decoration_none(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><a id=\"a\" href=\"#\">x</a> <a id=\"b\" class=\"n\" href=\"#\">y</a>"
+        "</body></html>",
+        "body { margin:0 } .n { text-decoration:none }");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_TEXT_DECORATION] == AR_DECOR_UNDERLINE,
+          "decoration: a link is underlined");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_TEXT_DECORATION] == AR_DECOR_NONE,
+          "decoration: and none takes it away");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -23964,6 +23980,7 @@ int main(void)
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
     test_a_flex_item_is_a_block();
+    test_text_decoration_none();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
