@@ -23418,6 +23418,32 @@ static void test_text_decoration_none(void)
           "decoration: and none takes it away");
 }
 
+/*
+ * An auto margin on the main axis takes the free space before
+ * `justify-content` sees it (Flexbox 9.5): the far-end item of a toolbar, and
+ * a box centred with `margin: 0 auto`.
+ */
+static void test_a_flex_auto_margin_takes_the_free_space(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><div style=\"display:flex; width:400px; justify-content:center\">"
+        "<div style=\"width:20px; height:10px\"></div>"
+        "<div id=\"r\" style=\"width:30px; height:10px; margin-left:auto\"></div></div>"
+        "<div style=\"display:flex; width:400px\">"
+        "<div id=\"c\" style=\"width:100px; height:10px; margin:0 auto\"></div></div>"
+        "<div style=\"display:flex; flex-direction:column; height:100px\">"
+        "<div id=\"v\" style=\"height:10px; margin-top:auto\"></div></div></body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("r")).x == 370,
+          "auto margin: margin-left pushes the last item to the far end, over justify-content");
+    CHECK(ar__box(ar__first_tag_id("c")).x == 150, "auto margin: two of them centre the item");
+    CHECK(ar__box(ar__first_tag_id("v")).y == 20 + 90,
+          "auto margin: and in a column, margin-top pushes it to the bottom");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -23981,6 +24007,7 @@ int main(void)
     test_a_hidden_input_has_no_box();
     test_a_flex_item_is_a_block();
     test_text_decoration_none();
+    test_a_flex_auto_margin_takes_the_free_space();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
