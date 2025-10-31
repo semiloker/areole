@@ -1466,6 +1466,9 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
 int ar_is_fragmentable(const ar_node *n);
 int ar_flows_children(const ar_node *n);
 
+/* Whether this box is a `<br>`: a forced line break and nothing else. */
+int ar_is_line_break(const ar_node *n);
+
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 
 /* The same lookup without claiming an empty slot, for queries. */

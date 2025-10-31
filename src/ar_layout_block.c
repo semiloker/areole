@@ -166,6 +166,10 @@ static int ar__phantom(const ar_node *nodes, ar_i32 i)
     {
         return 0;
     }
+    if (ar_is_line_break(n))
+    {
+        return 0; /* a forced break makes a line, empty or not (CSS 2.1 9.4.2) */
+    }
     if (n->style.v[AR_P_MARGIN_LEFT] != 0 || n->style.v[AR_P_MARGIN_RIGHT] != 0 ||
         n->style.v[AR_P_PAD_LEFT] != 0 || n->style.v[AR_P_PAD_RIGHT] != 0 ||
         n->style.v[AR_P_PAD_TOP] != 0 || n->style.v[AR_P_PAD_BOTTOM] != 0 ||

@@ -74,6 +74,18 @@ int ar_flows_children(const ar_node *n)
 }
 
 /*
+ * A `<br>` ends its line, and was an empty inline that ended nothing: `one<br>
+ * two` was one line, and `<label>Name</label><br><input>` -- every form
+ * written by hand -- put the field beside its label. The hash is asked only of
+ * a box with no children and no text, which is what reaches the atomic branch.
+ */
+int ar_is_line_break(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE && n->first_child < 0 &&
+           !(n->text && n->text[0]) && n->sel_tag == ar_hash("br", 2);
+}
+
+/*
  * Where this box's baseline sits, measured from its top border edge.
  *
  * Text puts it under the ascent, inside whatever padding there is. A box with
@@ -933,6 +945,14 @@ static int ar__flow(ar__liner *L, ar_i32 first, ar_i32 stop, const ar_float_ctx 
             }
             ar__add_piece(L, c, 0, 0, w, 0);
             *anything = 1;
+            /* Placed first, so a line holding nothing but the break -- the
+               middle of `<br><br>` -- is a line, and as tall as the strut. A
+               break at the very end opens a line nothing goes on, which
+               closes at no height, as a browser's does. */
+            if (ar_is_line_break(ch))
+            {
+                ar__break_line(L, fc, abs_top);
+            }
         }
     }
     return *anything;
