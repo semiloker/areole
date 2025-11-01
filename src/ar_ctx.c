@@ -2421,6 +2421,26 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
  * line here, where the specification would continue it beside the inline's
  * own first words. The split proper is anonymous-box work in the line filler.
  */
+/* Whether a container's children are flex or grid items rather than a flow. */
+static int ar__lays_out_items(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+}
+
+/* Whether a text is nothing but white space. */
+static int ar__all_white(const char *t)
+{
+    for (; *t; ++t)
+    {
+        if (*t != ' ' && *t != '\t' && *t != '\n' && *t != '\r' && *t != '\f')
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void ar__blockify_inlines(ar_ctx *c)
 {
     ar_i32 i;
@@ -2430,6 +2450,19 @@ static void ar__blockify_inlines(ar_ctx *c)
         ar_node *n = &c->nodes[i];
         ar_i32   k;
 
+        /*
+         * White space alone between flex or grid items is not rendered, what
+         * ever `white-space` says (Flexbox 4, Grid 6). ar_dom keeps the newline
+         * after an inline, because between two inlines it can be the only
+         * thing separating two words -- and after the last `<a>` of a sidebar
+         * it became a flex item one line tall, a gap a browser does not have.
+         */
+        if (n->parent >= 0 && n->first_child < 0 && n->text && n->text[0] &&
+            ar__lays_out_items(&c->nodes[n->parent]) && ar__all_white(n->text))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_NONE;
+            continue;
+        }
         if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || n->first_child < 0)
         {
             continue;
@@ -2445,9 +2478,7 @@ static void ar__blockify_inlines(ar_ctx *c)
          * carries its own text is already an item the algorithms place, and is
          * left as it is.
          */
-        if (n->parent >= 0 && !(n->text && n->text[0]) &&
-            (c->nodes[n->parent].style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
-             c->nodes[n->parent].style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID))
+        if (n->parent >= 0 && !(n->text && n->text[0]) && ar__lays_out_items(&c->nodes[n->parent]))
         {
             n->style.v[AR_P_DISPLAY] = AR_DISPLAY_BLOCK;
             continue;

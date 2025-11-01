@@ -23379,6 +23379,24 @@ static void test_a_legend_sits_on_the_border(void)
     CHECK(ar__box(p).y > ar__box(l).y + ar__box(l).h, "fieldset: and the content starts under it");
 }
 
+/*
+ * White space between flex items is no item (Flexbox 4). The newline after a
+ * sidebar's last link was one, a line tall, above the next heading.
+ */
+static void test_white_space_between_flex_items_is_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    a, d;
+
+    ar__render_html(&s,
+                    "<html><body><nav style=\"display:flex; flex-direction:column\">"
+                    "<a id=\"a\" href=\"#\">one</a>\n  <div id=\"d\">two</div></nav></body></html>",
+                    "body { margin:0 }");
+    a = ar__box(ar__first_tag_id("a"));
+    d = ar__box(ar__first_tag_id("d"));
+    CHECK(d.y == a.y + a.h, "flex: the newline between two items takes no room");
+}
+
 /* A `<br>` ends its line: in text, between fields, twice, and at the end. */
 static void test_a_br_breaks_the_line(void)
 {
@@ -24069,6 +24087,7 @@ int main(void)
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
     test_a_br_breaks_the_line();
+    test_white_space_between_flex_items_is_nothing();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
