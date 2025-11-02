@@ -307,13 +307,13 @@ void ar_apply_ratio(ar_node *n, int w_definite)
      */
     if (has_w)
     {
-        n->rect.h = ar_clamp((n->rect.w * 1000 + ratio / 2) / ratio, n->style.v[AR_P_MIN_HEIGHT],
-                             AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h =
+            ar_clamp((n->rect.w * 1000 + ratio / 2) / ratio, ar_used_min(n, 1), ar_used_max(n, 1));
     }
     else
     {
-        n->rect.w = ar_clamp((n->rect.h * ratio + 500) / 1000, n->style.v[AR_P_MIN_WIDTH],
-                             AR_WIDE(&n->style, AR_P_MAX_WIDTH));
+        n->rect.w =
+            ar_clamp((n->rect.h * ratio + 500) / 1000, ar_used_min(n, 0), ar_used_max(n, 0));
     }
 }
 
@@ -492,8 +492,7 @@ ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch
        only, which made `height: max-content` a silent `auto`. */
     if (ar_intrinsic_size(ch, p, axis, inner, &v))
     {
-        return ar_clamp(v, ch->style.v[ar_axis_min_prop(axis)],
-                        AR_WIDE(&ch->style, ar_axis_max_prop(axis)));
+        return ar_clamp(v, ar_used_min(ch, axis), ar_used_max(ch, axis));
     }
 
     switch (ch->style.unit[p])
@@ -518,8 +517,7 @@ ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch
         break;
     }
 
-    return ar_clamp(v, ch->style.v[ar_axis_min_prop(axis)],
-                    AR_WIDE(&ch->style, ar_axis_max_prop(axis)));
+    return ar_clamp(v, ar_used_min(ch, axis), ar_used_max(ch, axis));
 }
 
 /*
@@ -674,14 +672,13 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
          */
         if (n->measured_w == n->rect.w)
         {
-            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
-                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
             return;
         }
 
         gh = ar_grid_content_height(nodes, (ar_i32)(n - nodes), env->sheet, env);
 
-        n->rect.h = ar_clamp(gh, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h = ar_clamp(gh, ar_used_min(n, 1), ar_used_max(n, 1));
         /* That was a placement, not a measurement -- ar_grid_content_height
            runs the whole track solve and positions every item. Saying so is
            what lets the forward sweep skip it instead of running a second
@@ -725,14 +722,12 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
          */
         if (n->measured_w == n->rect.w)
         {
-            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
-                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
             return;
         }
 
         ar_flex_place_auto(nodes, idx, env);
-        n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
-                             AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
         n->measured_w = n->rect.w;
         return;
     }
@@ -749,7 +744,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
         {
             th = n->style.v[AR_P_HEIGHT];
         }
-        n->rect.h = ar_clamp(th, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h = ar_clamp(th, ar_used_min(n, 1), ar_used_max(n, 1));
         return;
     }
 
@@ -819,8 +814,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     {
         if (n->measured_w == n->rect.w)
         {
-            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
-                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
             return;
         }
         ar__place_block(nodes, (ar_i32)(n - nodes), env);
@@ -852,7 +846,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     h += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     if (h > n->rect.h)
     {
-        n->rect.h = ar_clamp(h, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h = ar_clamp(h, ar_used_min(n, 1), ar_used_max(n, 1));
     }
 }
 
@@ -908,8 +902,7 @@ static void ar__size_shrink_to_fit(ar_node *nodes, ar_node *ch, ar_i32 inner_w, 
             break;
         }
     }
-    ch->rect.w =
-        ar_clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], AR_WIDE(&ch->style, AR_P_MAX_WIDTH));
+    ch->rect.w = ar_clamp(ch->rect.w, ar_used_min(ch, 0), ar_used_max(ch, 0));
     if (ch->rect.w < 0)
     {
         ch->rect.w = 0;
@@ -923,8 +916,7 @@ static void ar__size_shrink_to_fit(ar_node *nodes, ar_node *ch, ar_i32 inner_w, 
     {
         ch->rect.h = ch->fit[1];
     }
-    ch->rect.h =
-        ar_clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
+    ch->rect.h = ar_clamp(ch->rect.h, ar_used_min(ch, 1), ar_used_max(ch, 1));
 
     ar_wrap_height(nodes, ch, 1, 0, env);
 }
@@ -1217,8 +1209,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
                 break;
             }
         }
-        ch->rect.w =
-            ar_clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], AR_WIDE(&ch->style, AR_P_MAX_WIDTH));
+        ch->rect.w = ar_clamp(ch->rect.w, ar_used_min(ch, 0), ar_used_max(ch, 0));
         if (ch->rect.w < 0)
         {
             ch->rect.w = 0;
@@ -1274,8 +1265,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             ch->rect.h = ch->fit[1];
             break;
         }
-        ch->rect.h = ar_clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT],
-                              AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
+        ch->rect.h = ar_clamp(ch->rect.h, ar_used_min(ch, 1), ar_used_max(ch, 1));
 
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
@@ -1445,8 +1435,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             used += ar__text_block_height(n);
         }
         used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
-        n->rect.h =
-            ar_clamp(used, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->rect.h = ar_clamp(used, ar_used_min(n, 1), ar_used_max(n, 1));
 
         /* `used` and `content_h` are the same number, so the height this
            arrived at is already stored; all that is missing is the width it

@@ -23436,6 +23436,21 @@ static void test_an_option_takes_its_selects_size(void)
           "option: and the page's size when it sets one");
 }
 
+/* A max-width is the content's under content-box, like a width. */
+static void test_max_width_is_the_contents(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><div id=\"a\" style=\"max-width:200px; padding:0 20px\">x</div>"
+        "<div id=\"b\" style=\"max-width:200px; padding:0 20px; box-sizing:border-box\">"
+        "x</div></body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("a")).w == 240, "max-width: the padding goes around it");
+    CHECK(ar__box(ar__first_tag_id("b")).w == 200, "max-width: and inside it under border-box");
+}
+
 /* `text-decoration: none` takes a link's underline away. */
 static void test_text_decoration_none(void)
 {
@@ -24121,6 +24136,7 @@ int main(void)
     test_a_br_breaks_the_line();
     test_white_space_between_flex_items_is_nothing();
     test_an_option_takes_its_selects_size();
+    test_max_width_is_the_contents();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
