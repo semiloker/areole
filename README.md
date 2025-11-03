@@ -6,10 +6,38 @@ No Direct2D. No OpenGL. No Vulkan. No SDL. No GTK. `areole` rasterizes every
 pixel itself and hands the finished buffer to the operating system in a single
 blit. Layout is written in **real CSS**, parsed once at startup.
 
-![the hello example](docs/hello.png)
+![a settings page drawn and used in areole](docs/showcase-live.png)
 
-Every rectangle above came out of a stylesheet. The example that draws it does
-not contain a single coordinate.
+One HTML file with ordinary CSS, [docs/showcase.html](docs/showcase.html), drawn and driven by
+areole. The pointer is added afterwards; areole draws none.
+
+## areole beside a browser
+
+The same file, window and fonts -- areole left, Edge right.
+
+**Settings, light** -- flex, grid, `margin-left: auto`, fourteen form controls
+
+![settings: areole and Edge](docs/vs/settings.png)
+
+**Dashboard, dark** -- a grid of cards, a table, pills, bars
+
+![dashboard: areole and Edge](docs/vs/dashboard.png)
+
+**Article, serif** -- a centred `max-width` column, italic, bold, inline code
+
+![article: areole and Edge](docs/vs/article.png)
+
+**A form with no CSS at all** -- nothing but the browser's own defaults
+
+![form: areole and Edge](docs/vs/form.png)
+
+What still differs is mostly borders: areole paints a border over the padding instead of outside
+it ([on purpose, for now](docs/CSS_REFERENCE.md#form-controls-and-the-one-place-areole-differs-on-purpose)),
+so a bordered box is two pixels smaller. `python tools/readme_shots.py` redraws every picture here.
+
+## Code
+
+An interface, in C, with no HTML:
 
 ```c
 ar_stylesheet(ui,
@@ -21,6 +49,22 @@ ar_begin(ui, "div.rail");
     for (i = 0; i < 5; ++i)
         if (ar_button(ui, "div.nav", pages[i])) selected = i;
 ar_end(ui);
+```
+
+Or a page, parsed once and built every frame:
+
+```c
+ar_doc *page = ar_html_parse_into(ui, html, html_len);
+ar_doc_stylesheets(ui, page);
+
+while (ar_win_pump(win)) {
+    ar_frame_begin(ui, ar_win_input(win));
+    ar_dom_build(ui, page);
+    ar_frame_end(ui, ar_win_surface(win));
+    for (i = 0; i < ar_damage_count(ui); ++i)
+        ar_win_present(win, ar_damage_rect(ui, i));
+    ar_frame_presented(ui);
+}
 ```
 
 ## Why
@@ -1080,8 +1124,8 @@ delivery form of twenty controls in plain markup, with no stylesheet at all.
 | Editing | grapheme clusters, words, selection, the clipboard, IME composition; 512 undo steps in 24 KB |
 | Forms | implicit submission, `ar_form_submitted`, `ar_form_encode` |
 | Accessibility | a public tree; MSAA on Windows, read back from another process: 20 of 20 controls named |
-| Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.18% of pixels differ |
-| Checks | **1,964** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
+| Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.45% of pixels differ |
+| Checks | **2,029** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
 | Memory | `AR_MEM_FIXED` 288 KB -> 320 KB; no allocation after init, the undo log included |
 | Binary | the core +125,984 bytes since 0.9.6, against a budget of 60 KB -- see below |
 
@@ -1122,6 +1166,20 @@ separable; the core is 125,984 bytes larger than at 0.9.6, of which `ar_a11y.c` 
 `ar_ctx.c` grew 27,824 in the last stretch alone and `ar_dom.c` 22,468 -- the control walk and form
 submission, which tools/check_size.py itemises where it raises the HTML budget to 188 KB. That
 raise is recorded as what it is: set after the work, because the document named no size.
+
+### Eight bugs the pages above found
+
+- A flex item is a block, whatever its display said -- sidebar links drew no words.
+- `text-decoration: none` is a value -- links kept their underline.
+- An auto margin takes a flex line's free space -- the avatar sat beside the tabs.
+- A space does not open a line -- every field after a full-width one sat a line low.
+- A `<br>` ends its line. It never had.
+- White space between flex items is nothing -- 23 pixels between links where Edge has 2.
+- An option takes its select's font size.
+- `min-*` and `max-*` are the content's under `content-box`, like `width` -- an article column was
+  40 pixels narrow.
+
+Left for later: the border model (0.12.2), and a textarea's `rows`, still fifteen pixels a row.
 
 ### Four bugs found by checking, not by reading
 
