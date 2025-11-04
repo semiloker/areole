@@ -22589,6 +22589,29 @@ static void test_a_slider_steps(void)
     CHECK(ar__value_is("r", "0"), "range: Home its min");
 }
 
+/*
+ * A press puts the thumb's centre under the pointer, and a press on the thumb
+ * leaves it where it is. The fill was taken for the thumb, and a click on the
+ * thumb at 65 moved it to 55.
+ */
+static void test_a_slider_follows_the_pointer(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+    ar_i32     span;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"r\" type=\"range\" min=\"0\" max=\"100\" "
+                    "value=\"65\"></body></html>",
+                    "body { margin:0 }");
+    r = ar__box(ar__first_tag_id("r"));
+    span = r.w - 16; /* the rail: the track less one thumb */
+    ar__press_at(&s, r.x + 8 + (span * 65 + 50) / 100, r.y + r.h / 2);
+    CHECK(ar__value_is("r", "65"), "range: a press on the thumb leaves it where it is");
+    ar__press_at(&s, r.x + 8 + (span * 20 + 50) / 100, r.y + r.h / 2);
+    CHECK(ar__value_is("r", "20"), "range: a press on the track brings the thumb under it");
+}
+
 static void test_a_label_passes_its_click(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -22844,6 +22867,24 @@ static void test_a_blink_is_one_column(void)
     CHECK(ar_caret_wait_us(g_ui) > 0 && ar_caret_wait_us(g_ui) <= 530000u,
           "caret: and says how long until the next");
     ar_set_clock(g_ui, 0);
+}
+
+/* Enter at the end of a textarea puts the caret on the new line at once. */
+static void test_enter_moves_the_caret_down(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    start, typed, entered;
+
+    ar__render_html(&s, "<html><body><textarea id=\"t\"></textarea></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    start = ar_caret_rect(g_ui);
+    ar__type(&s, "ab", 0);
+    typed = ar_caret_rect(g_ui);
+    ar__type(&s, 0, AR_KEY_ENTER);
+    entered = ar_caret_rect(g_ui);
+    CHECK(entered.y > typed.y, "enter: the caret goes down a line with the newline");
+    CHECK(entered.x == start.x, "enter: and back to the start of it");
 }
 
 static void test_a_field_scrolls_rather_than_wraps(void)
@@ -24137,6 +24178,8 @@ int main(void)
     test_white_space_between_flex_items_is_nothing();
     test_an_option_takes_its_selects_size();
     test_max_width_is_the_contents();
+    test_a_slider_follows_the_pointer();
+    test_enter_moves_the_caret_down();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
