@@ -374,6 +374,8 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     }
     ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
     c->media_resolution = 1000;
+    c->render_scale = 1000;
+    c->painted_scale = 1000;
     c->media_from_caller = 0;
     c->media.width = 0;
     c->media.height = 0;
@@ -3236,6 +3238,21 @@ ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
+void ar_set_render_scale(ar_ctx *c, ar_i32 thousandths)
+{
+    if (!c)
+    {
+        return;
+    }
+    thousandths = thousandths < 250 ? 250 : thousandths > 8000 ? 8000 : thousandths;
+    c->render_scale = thousandths;
+}
+
+ar_i32 ar_render_scale(const ar_ctx *c)
+{
+    return c ? c->render_scale : 1000;
+}
+
 void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths)
 {
     if (c && dppx_thousandths > 0)
@@ -5604,6 +5621,77 @@ int ar_button(ar_ctx *c, const char *selector, const char *label)
  */
 #define AR_LINE_BUF 512
 
+/* ------------------------------------------------------------------------
+ * Painting at a render scale
+ *
+ * Every rectangle the painter draws goes through these, which are the
+ * primitives with the layout's pixels turned into the surface's. A rectangle
+ * is scaled by its edges rather than by its origin and size, so two boxes
+ * that touch at 1000 still touch at 1500 instead of leaving a seam or an
+ * overlap; and anything at least a pixel wide stays at least a pixel wide, so
+ * a hairline border survives 500. At 1000 each is one comparison.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__k(const ar_ctx *c, ar_i32 v)
+{
+    ar_i32 k = c->render_scale;
+
+    return v >= 0 ? v * k / 1000 : -((-v * k + 999) / 1000);
+}
+
+static ar_rect ar__kr(const ar_ctx *c, ar_rect r)
+{
+    ar_rect out;
+
+    if (c->render_scale == 1000)
+    {
+        return r;
+    }
+    out.x = ar__k(c, r.x);
+    out.y = ar__k(c, r.y);
+    out.w = ar__k(c, r.x + r.w) - out.x;
+    out.h = ar__k(c, r.y + r.h) - out.y;
+    if (r.w > 0 && out.w < 1)
+    {
+        out.w = 1;
+    }
+    if (r.h > 0 && out.h < 1)
+    {
+        out.h = 1;
+    }
+    return out;
+}
+
+static ar_i32 ar__kw(const ar_ctx *c, ar_i32 v)
+{
+    ar_i32 w = ar__k(c, v);
+
+    return v > 0 && w < 1 ? 1 : w;
+}
+
+static void ar__fill(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_rect clip, ar_color col)
+{
+    ar_fill_rect(dst, ar__kr(c, r), ar__kr(c, clip), col);
+}
+
+static void ar__fill_round(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 radius, ar_rect clip,
+                           ar_color col)
+{
+    ar_fill_round_rect(dst, ar__kr(c, r), ar__kw(c, radius), ar__kr(c, clip), col);
+}
+
+static void ar__stroke_round(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 radius,
+                             ar_i32 width, ar_rect clip, ar_color col)
+{
+    ar_stroke_round_rect(dst, ar__kr(c, r), ar__kw(c, radius), ar__kw(c, width), ar__kr(c, clip),
+                         col);
+}
+
+static void ar__fill_tri_k(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 dir, ar_rect clip,
+                           ar_color col)
+{
+    ar_fill_tri(dst, ar__kr(c, r), dir, ar__kr(c, clip), col);
+}
+
 static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y,
                           const ar_node *n, ar_i32 from, ar_i32 to, ar_color col)
 {
@@ -5657,13 +5745,25 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         /* A font puts the baseline below the top of the line box; the bitmap
            face has no baseline and draws from the top, so the two paths take
            different y values for the same text. */
-        adv = ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, ar_chain_for(c, n),
-                                  c->shaping ? &c->shaper : 0, n->style.v[AR_P_FONT_SIZE], col,
+        /* At a render scale the glyphs are shaped and rasterized at the
+           scaled size -- that is the point of drawing larger -- and the
+           advance comes back in the surface's pixels, so it is taken back to
+           the layout's for the decoration below. */
+        ar_i32 ppem = ar__kw(c, n->style.v[AR_P_FONT_SIZE]);
+
+        adv = ar_text_draw_shaped(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y + n->ascent), buf,
+                                  ar_chain_for(c, n), c->shaping ? &c->shaper : 0, ppem, col,
                                   &c->glyphs, &c->glyph_scratch, 0);
+        if (c->render_scale != 1000 && adv > 0)
+        {
+            adv = adv * 1000 / c->render_scale;
+        }
     }
     else
     {
-        ar_draw_text(s, clip, x, y, buf, n->scale, col);
+        ar_i32 cell = n->scale * c->render_scale / 1000;
+
+        ar_draw_text(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y), buf, cell > 0 ? cell : 1, col);
         /* Measured below, and only if something is going to be drawn with it:
            this path reports no advance, and charging every line in every
            undecorated document for a second pass over its own text to support
@@ -5731,7 +5831,7 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
                    of the way up from the baseline for every Latin face. */
                 ly = base - n->style.v[AR_P_FONT_SIZE] / 3;
             }
-            ar_fill_rect(s, ar_rect_make(x, ly, adv, thick), clip, col);
+            ar__fill(c, s, ar_rect_make(x, ly, adv, thick), clip, col);
         }
     }
 }
@@ -5898,8 +5998,8 @@ static void ar__paint_bars(ar_ctx *c, ar_surface *s, ar_rect region)
            transparent and equally invisible, so reading the two the same way
            loses nothing. */
         ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
-        ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
-        ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
+        ar__fill(c, s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
+        ar__fill(c, s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
     }
 }
 
@@ -6329,7 +6429,7 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
             {
                 x1 = x0 + 2; /* a selected newline still shows as selected */
             }
-            ar_fill_rect(s, ar_rect_make(tx + x0, ty + li * adv, x1 - x0, th), tclip, hl);
+            ar__fill(c, s, ar_rect_make(tx + x0, ty + li * adv, x1 - x0, th), tclip, hl);
         }
     }
 
@@ -6359,7 +6459,7 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
             }
             x0 = (ar__range_fx(c, n, ls, a) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
             x1 = (ar__range_fx(c, n, ls, b) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
-            ar_fill_rect(s, ar_rect_make(tx + x0, ty + li * adv + th - 1, x1 - x0, 1), tclip, tc);
+            ar__fill(c, s, ar_rect_make(tx + x0, ty + li * adv + th - 1, x1 - x0, 1), tclip, tc);
         }
     }
 
@@ -6368,7 +6468,7 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
        toolkit draws it as a hairline for that reason. */
     if (c->caret_on && c->caret_rect.w > 0)
     {
-        ar_fill_rect(s, c->caret_rect, tclip, tc);
+        ar__fill(c, s, c->caret_rect, tclip, tc);
     }
 }
 
@@ -6890,9 +6990,9 @@ static void ar__radio_stops(ar_ctx *c)
 }
 
 /* One pixel, clipped -- the unit the parts below are drawn in. */
-static void ar__dot(ar_surface *s, ar_i32 x, ar_i32 y, ar_rect clip, ar_color col)
+static void ar__dot(const ar_ctx *c, ar_surface *s, ar_i32 x, ar_i32 y, ar_rect clip, ar_color col)
 {
-    ar_fill_rect(s, ar_rect_make(x, y, 1, 1), clip, col);
+    ar__fill(c, s, ar_rect_make(x, y, 1, 1), clip, col);
 }
 
 /*
@@ -6908,7 +7008,8 @@ static void ar__dot(ar_surface *s, ar_i32 x, ar_i32 y, ar_rect clip, ar_color co
  * Integer steps and no anti-aliasing, so the edges are a pixel harder than
  * Edge's; the shapes and their places are the same.
  */
-static void ar__paint_part(ar_surface *s, const ar_node *n, ar_rect clip, ar_color col, int which)
+static void ar__paint_part(const ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect clip,
+                           ar_color col, int which)
 {
     ar_i32 x = n->rect.x, y = n->rect.y, k;
 
@@ -6916,32 +7017,32 @@ static void ar__paint_part(ar_surface *s, const ar_node *n, ar_rect clip, ar_col
     {
         for (k = 0; k <= 2; ++k)
         {
-            ar__dot(s, x + 1 + k, y + 4 + k, clip, col);
-            ar__dot(s, x + 1 + k, y + 5 + k, clip, col);
+            ar__dot(c, s, x + 1 + k, y + 4 + k, clip, col);
+            ar__dot(c, s, x + 1 + k, y + 5 + k, clip, col);
         }
         for (k = 0; k <= 4; ++k)
         {
-            ar__dot(s, x + 3 + k, y + 6 - k, clip, col);
-            ar__dot(s, x + 3 + k, y + 5 - k, clip, col);
+            ar__dot(c, s, x + 3 + k, y + 6 - k, clip, col);
+            ar__dot(c, s, x + 3 + k, y + 5 - k, clip, col);
         }
     }
     else if (which == 1)
     {
         for (k = 0; k < 4; ++k)
         {
-            ar_fill_rect(s, ar_rect_make(x + k, y + k, 2, 1), clip, col);
-            ar_fill_rect(s, ar_rect_make(x + 6 - k, y + k, 2, 1), clip, col);
+            ar__fill(c, s, ar_rect_make(x + k, y + k, 2, 1), clip, col);
+            ar__fill(c, s, ar_rect_make(x + 6 - k, y + k, 2, 1), clip, col);
         }
     }
     else
     {
         for (k = 0; k < 3; ++k)
         {
-            ar__dot(s, x + 1 + 2 * k, y + 5 - 2 * k, clip, col);
+            ar__dot(c, s, x + 1 + 2 * k, y + 5 - 2 * k, clip, col);
         }
         for (k = 0; k < 2; ++k)
         {
-            ar__dot(s, x + 4 + 2 * k, y + 5 - 2 * k, clip, col);
+            ar__dot(c, s, x + 4 + 2 * k, y + 5 - 2 * k, clip, col);
         }
     }
 }
@@ -6992,26 +7093,26 @@ static void ar__paint_fieldset(ar_ctx *c, ar_surface *s, const ar_node *n, ar_re
         {
             if (gap0 > x0)
             {
-                ar_fill_rect(s, ar_rect_make(x0, y, gap0 - x0, 1), clip, col);
+                ar__fill(c, s, ar_rect_make(x0, y, gap0 - x0, 1), clip, col);
             }
             if (x1 > gap1)
             {
-                ar_fill_rect(s, ar_rect_make(gap1, y, x1 - gap1, 1), clip, col);
+                ar__fill(c, s, ar_rect_make(gap1, y, x1 - gap1, 1), clip, col);
             }
         }
         else
         {
-            ar_fill_rect(s, ar_rect_make(x0, y, x1 - x0, 1), clip, col);
+            ar__fill(c, s, ar_rect_make(x0, y, x1 - x0, 1), clip, col);
         }
     }
     /* Left: dark, then light inside it. */
-    ar_fill_rect(s, ar_rect_make(r.x, top, 1, bottom - top - 1), clip, dark);
-    ar_fill_rect(s, ar_rect_make(r.x + 1, top + 1, 1, bottom - top - 3), clip, light);
+    ar__fill(c, s, ar_rect_make(r.x, top, 1, bottom - top - 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(r.x + 1, top + 1, 1, bottom - top - 3), clip, light);
     /* Right and bottom: dark inside, light outside. */
-    ar_fill_rect(s, ar_rect_make(right - 2, top, 1, bottom - top - 1), clip, dark);
-    ar_fill_rect(s, ar_rect_make(right - 1, top, 1, bottom - top), clip, light);
-    ar_fill_rect(s, ar_rect_make(r.x, bottom - 2, r.w - 1, 1), clip, dark);
-    ar_fill_rect(s, ar_rect_make(r.x, bottom - 1, r.w, 1), clip, light);
+    ar__fill(c, s, ar_rect_make(right - 2, top, 1, bottom - top - 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(right - 1, top, 1, bottom - top), clip, light);
+    ar__fill(c, s, ar_rect_make(r.x, bottom - 2, r.w - 1, 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(r.x, bottom - 1, r.w, 1), clip, light);
 }
 
 /*
@@ -7098,8 +7199,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
     if (canvas >= 0)
     {
-        ar_fill_rect(s, region, region,
-                     (ar_color)AR_WIDE(&c->nodes[canvas].style, AR_P_BACKGROUND));
+        ar__fill(c, s, region, region, (ar_color)AR_WIDE(&c->nodes[canvas].style, AR_P_BACKGROUND));
     }
     else if (document)
     {
@@ -7107,9 +7207,9 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
            root's colour scheme -- white, or near-black for a dark page. An
            interface built with ar_begin has no root `html` and keeps
            whatever the surface held, as it always has. */
-        ar_fill_rect(s, region, region,
-                     (ar_color)ar_sys_color_default(
-                         AR_SYS_CANVAS, c->nodes[0].style.v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK));
+        ar__fill(c, s, region, region,
+                 (ar_color)ar_sys_color_default(
+                     AR_SYS_CANVAS, c->nodes[0].style.v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK));
     }
 
     for (ord = 0; ord < painted; ++ord)
@@ -7149,7 +7249,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             fill = (ar_color)AR_WIDE(&bd, AR_P_BACKGROUND);
             if (AR_ALPHA_OF(fill) != 0)
             {
-                ar_fill_rect(s, c->last_viewport, region, fill);
+                ar__fill(c, s, c->last_viewport, region, fill);
             }
         }
 
@@ -7176,8 +7276,8 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
             if (AR_ALPHA_OF(tc) != 0)
             {
-                ar_fill_tri(s, n->rect, n->sel_tag == tag_tri_d ? AR_TRI_DOWN : AR_TRI_RIGHT, clip,
-                            tc);
+                ar__fill_tri_k(c, s, n->rect, n->sel_tag == tag_tri_d ? AR_TRI_DOWN : AR_TRI_RIGHT,
+                               clip, tc);
             }
             continue;
         }
@@ -7188,7 +7288,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
             if (AR_ALPHA_OF(tc) != 0)
             {
-                ar__paint_part(s, n, clip, tc,
+                ar__paint_part(c, s, n, clip, tc,
                                n->sel_tag == tag_tick ? 0 : (n->sel_tag == tag_chev ? 1 : 2));
             }
             continue;
@@ -7199,11 +7299,11 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         {
             if (radius > 0)
             {
-                ar_fill_round_rect(s, n->rect, radius, clip, bg);
+                ar__fill_round(c, s, n->rect, radius, clip, bg);
             }
             else
             {
-                ar_fill_rect(s, n->rect, clip, bg);
+                ar__fill(c, s, n->rect, clip, bg);
             }
         }
 
@@ -7229,10 +7329,10 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             {
                 ar_rect r = n->rect;
 
-                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
-                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
-                ar_fill_rect(s, ar_rect_make(r.x - ow, r.y, ow, r.h), clip, oc);
-                ar_fill_rect(s, ar_rect_make(r.x + r.w, r.y, ow, r.h), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y, ow, r.h), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x + r.w, r.y, ow, r.h), clip, oc);
             }
         }
 
@@ -7255,19 +7355,19 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
                 if (t > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
                 }
                 if (b > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
                 }
                 if (l > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
                 }
                 if (ri > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
                 }
             }
         }
@@ -7284,14 +7384,14 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                 /* One ring rather than four rectangles: four would meet at the
                    corners the radius has just removed, and each would stop at
                    a square edge inside the curve. */
-                ar_stroke_round_rect(s, r, radius, bw, clip, border);
+                ar__stroke_round(c, s, r, radius, bw, clip, border);
             }
             else
             {
-                ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
-                ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
-                ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
-                ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
             }
         }
 
@@ -7312,7 +7412,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
                 if (bg >> 24)
                 {
-                    ar_fill_rect(s, f->rect, clip, bg);
+                    ar__fill(c, s, f->rect, clip, bg);
                 }
                 ar__draw_line(c, s, fclip, f->rect.x + n->style.v[AR_P_PAD_LEFT],
                               f->rect.y + n->style.v[AR_P_PAD_TOP], n, f->from, f->to,
@@ -8214,7 +8314,7 @@ static ar__move ar__region_move(ar_ctx *c, ar_surface *s, ar_rect viewport)
             }
         }
     }
-    if (mw <= 0)
+    if (mw <= 0 || c->render_scale != 1000)
     {
         return m;
     }
@@ -8257,7 +8357,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         c->depth = 0;
     }
 
-    viewport = ar_rect_make(0, 0, s ? s->w : 0, s ? s->h : 0);
+    /* The page is laid out in the surface's size at the render scale: a
+       surface twice the window at 2000 lays out at the window's size. */
+    viewport = ar_rect_make(0, 0, s ? s->w * 1000 / c->render_scale : 0,
+                            s ? s->h * 1000 / c->render_scale : 0);
 
     /*
      * `viewport-fit: auto` lays out inside the safe rectangle.
@@ -8398,9 +8501,13 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     /* A resize repaints everything: every box moved, and the surface behind
        them is new memory. */
-    if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h)
+    /* A new scale leaves the same layout and not one pixel standing that is
+       right: everything is repainted, as for a new size. */
+    if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h ||
+        c->render_scale != c->painted_scale)
     {
         ar_damage_add_all(&c->damage);
+        c->painted_scale = c->render_scale;
     }
     c->last_viewport = viewport;
     ar_damage_set_viewport(&c->damage, viewport);
