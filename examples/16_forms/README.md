@@ -15,6 +15,8 @@ usable form, and one that looks like a browser's.
 cmake --build build --target example_forms
 
 ./build/example_forms                 # open a window and use it
+./build/example_forms --scale 2       # draw at twice the pixels and shrink: smoother
+./build/example_forms --scale 0.5     # draw at half and stretch: faster
 ./build/example_forms --selftest      # drive it without a window: 40 checks
 ./build/example_forms --dump          # print the accessibility tree
 ./build/example_forms --html          # print the page -- it is form.html

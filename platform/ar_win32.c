@@ -28,6 +28,17 @@ struct ar_win
     ar_surface surface;
     ar_input   input;
 
+    /*
+     * Rendering at a scale of the window: `render` is the buffer ar_frame_end
+     * draws into, `render_scale` times the window each way, and ar_win_present
+     * scales what changed down (an average of each block) or up (bilinear)
+     * into `surface`. A scale of 0 or 1000 is the window's own pixels and none
+     * of this exists.
+     */
+    ar_i32     render_scale;
+    ar_surface render;
+    SIZE_T     render_cap;
+
     /* One frame's typed characters, as UTF-8, and the high half of a surrogate
        pair waiting for its partner. Windows sends an astral character as two
        messages and dropping the second is how an emoji becomes a question
@@ -135,6 +146,81 @@ static void ar__surface_destroy(ar_win *win)
     win->surface.stride = 0;
 }
 
+/* The render buffer for the window's current size at `scale`, grown when it
+   has to be and never shrunk -- a window dragged smaller and back would
+   otherwise allocate on every step. */
+static int ar__render_fit(ar_win *win, ar_i32 scale)
+{
+    ar_i32 rw, rh;
+    SIZE_T need;
+
+    if (scale == 1000)
+    {
+        return 1;
+    }
+    /* Rounded up, so the page laid out in it covers the whole window. */
+    rw = (win->surface.w * scale + 999) / 1000;
+    rh = (win->surface.h * scale + 999) / 1000;
+    rw = rw < 1 ? 1 : rw;
+    rh = rh < 1 ? 1 : rh;
+    need = (SIZE_T)rw * (SIZE_T)rh * sizeof(ar_u32);
+    if (need > win->render_cap)
+    {
+        void *mem = VirtualAlloc(NULL, need, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+        if (!mem)
+        {
+            return 0;
+        }
+        if (win->render.pixels)
+        {
+            VirtualFree(win->render.pixels, 0, MEM_RELEASE);
+        }
+        win->render.pixels = (ar_u32 *)mem;
+        win->render_cap = need;
+    }
+    win->render.w = rw;
+    win->render.h = rh;
+    win->render.stride = rw;
+    return 1;
+}
+
+static void ar__render_free(ar_win *win)
+{
+    if (win->render.pixels)
+    {
+        VirtualFree(win->render.pixels, 0, MEM_RELEASE);
+    }
+    win->render.pixels = NULL;
+    win->render_cap = 0;
+}
+
+static int ar__scaled(const ar_win *win)
+{
+    return win->render_scale != 0 && win->render_scale != 1000 && win->render.pixels;
+}
+
+int ar_win_set_render_scale(ar_win *win, ar_ctx *c, ar_i32 thousandths)
+{
+    if (!win)
+    {
+        return 0;
+    }
+    thousandths = thousandths < 250 ? 250 : thousandths > 8000 ? 8000 : thousandths;
+    if (!ar__render_fit(win, thousandths))
+    {
+        return 0;
+    }
+    win->render_scale = thousandths;
+    if (c)
+    {
+        ar_set_render_scale(c, thousandths);
+    }
+    win->resized = 1; /* the surface ar_win_surface hands out is a new one */
+    win->awake = 1;
+    return 1;
+}
+
 static int ar__surface_create(ar_win *win, ar_i32 w, ar_i32 h)
 {
     BITMAPINFO bi;
@@ -181,6 +267,15 @@ static int ar__surface_create(ar_win *win, ar_i32 w, ar_i32 h)
     win->surface.w = w;
     win->surface.h = h;
     win->surface.stride = w; /* a 32 bpp DIB row is already a multiple of 4 */
+
+    /* The render buffer follows the window. If it cannot, the window's own
+       pixels are drawn into instead -- a picture at the wrong scale is
+       better than none. */
+    if (win->render_scale != 0 && win->render_scale != 1000 &&
+        !ar__render_fit(win, win->render_scale))
+    {
+        ar__render_free(win);
+    }
     return 1;
 }
 
@@ -806,6 +901,7 @@ void ar_win_close(ar_win *win)
         return;
     }
     ar__surface_destroy(win);
+    ar__render_free(win);
     if (win->hwnd)
     {
         DestroyWindow(win->hwnd);
@@ -888,7 +984,7 @@ int ar_win_idle(const ar_win *win)
 
 ar_surface *ar_win_surface(ar_win *win)
 {
-    return &win->surface;
+    return ar__scaled(win) ? &win->render : &win->surface;
 }
 
 HWND ar_win_hwnd(const ar_win *win)
@@ -1085,6 +1181,10 @@ void ar_win_present(ar_win *win, ar_rect dirty)
         return;
     }
 
+    if (ar__scaled(win))
+    {
+        ar_surface_resample(&win->render, &win->surface, d, win->render_scale);
+    }
     dc = GetDC(win->hwnd);
     if (!dc)
     {

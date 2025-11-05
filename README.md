@@ -67,6 +67,10 @@ while (ar_win_pump(win)) {
 }
 ```
 
+And at any render scale: `ar_win_set_render_scale(win, ui, 2000)` draws twice the window's pixels
+and shrinks them into it, smoother; `500` draws half and stretches them, faster. Layout, input and
+hit testing stay in window pixels. Try `example_forms --scale 2`.
+
 ## Why
 
 There are excellent immediate mode GUI libraries. None of them is this one.

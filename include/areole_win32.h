@@ -52,6 +52,19 @@ void ar_win_present(ar_win *win, ar_rect dirty);
    and dimensions are new and everything must be redrawn. */
 int ar_win_resized(const ar_win *win);
 
+/*
+ * Renders at a scale of the window, in thousandths, and sets the same scale on
+ * the context: 2000 draws twice the pixels each way and shrinks them into the
+ * window -- smoother edges and text -- and 500 draws a quarter as many and
+ * stretches them, for a slow machine. 1000 is the window's own pixels.
+ *
+ * ar_win_surface then hands back a buffer of the scaled size, which is what
+ * ar_frame_end is given; layout, hit testing, the pointer and the damage all
+ * stay in window pixels, and ar_win_present scales what changed into the
+ * window. Returns 0, and keeps the old scale, if the buffer cannot be had.
+ */
+int ar_win_set_render_scale(ar_win *win, ar_ctx *c, ar_i32 thousandths);
+
 /* ------------------------------------------------------------------------
  * Interaction, 0.10.0
  *

@@ -97,8 +97,41 @@ static unsigned char g_font_mono[4 * 1024 * 1024];
 #define ATLAS_BYTES (512u * 1024u)
 #define MAX_PX      48
 
-static unsigned char g_mem[AR_MEM_DOC(1536, 64 * 1024) + 3 * 1024 * 1024];
-static ar_doc       *g_doc;
+/* The glyph atlas grows with the square of the render scale (--scale), so the
+   block has room for one drawn at several times the window's pixels. */
+static unsigned char g_mem[AR_MEM_DOC(1536, 64 * 1024) + 16 * 1024 * 1024];
+static ar_i32        g_scale = 1000;
+
+/* "2", "1.5", "0.5x" or "1500" as thousandths: a scale as a person types it. */
+static ar_i32 parse_scale(const char *t)
+{
+    ar_i32 whole = 0, frac = 0, digits = 0;
+
+    while (*t >= '0' && *t <= '9')
+    {
+        whole = whole * 10 + (*t++ - '0');
+    }
+    if (*t == '.')
+    {
+        ++t;
+        while (*t >= '0' && *t <= '9' && digits < 3)
+        {
+            frac = frac * 10 + (*t++ - '0');
+            ++digits;
+        }
+    }
+    while (digits++ < 3)
+    {
+        frac *= 10;
+    }
+    if (whole >= 100) /* already thousandths */
+    {
+        return whole;
+    }
+    return whole * 1000 + frac;
+}
+
+static ar_doc *g_doc;
 
 /* A clock the selftest owns, so a blink can be stepped to rather than waited
    for. The window uses the real one. */
@@ -221,7 +254,15 @@ static int load_face(ar_ctx *c)
 {
     ar_u32 n = read_first(FACE_BODY, g_font_body, sizeof g_font_body);
 
-    if (!n || !ar_font_load(c, g_font_body, n, ATLAS_BYTES, MAX_PX))
+    /* Glyphs are rasterized at the render scale, so the largest one is that
+       many times larger, and so is every one in the atlas. */
+    ar_u32 atlas = ATLAS_BYTES / 1000u * (ar_u32)g_scale / 1000u * (ar_u32)g_scale;
+
+    atlas = atlas < ATLAS_BYTES           ? ATLAS_BYTES
+            : atlas > 12u * 1024u * 1024u ? 12u * 1024u * 1024u
+                                          : atlas;
+    if (!n ||
+        !ar_font_load(c, g_font_body, n, atlas, MAX_PX * (g_scale > 1000 ? g_scale : 1000) / 1000))
     {
         return 0;
     }
@@ -1054,6 +1095,13 @@ int main(int argc, char **argv)
             }
             return 0;
         }
+        else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc)
+        {
+            /* Draws at that many times the window's pixels: 2 or 3 for
+               smoother text and edges, 0.5 for a slow machine. */
+            g_scale = parse_scale(argv[++i]);
+            g_scale = g_scale < 250 ? 250 : g_scale > 8000 ? 8000 : g_scale;
+        }
         else if (strcmp(argv[i], "--ppm-open") == 0 && i + 1 < argc)
         {
             /* The same picture with the select open, which is the one state of
@@ -1142,6 +1190,11 @@ int main(int argc, char **argv)
         }
         ar_set_clock(c, ar_time_us);
         ar_win_a11y(win, c, g_doc);
+        if (g_scale != 1000 && !ar_win_set_render_scale(win, c, g_scale))
+        {
+            printf("no memory to render at %ld/1000 -- drawing at the window's own size\n",
+                   (long)g_scale);
+        }
         printf("areole %s -- Tab to move, Space or Enter to press, type into a field.\n",
                ar_version());
         printf("Ctrl+A/Z/Y select all, undo, redo; Ctrl+C/X/V the clipboard.\n");
