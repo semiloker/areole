@@ -169,8 +169,8 @@ static ar_u32 ar__tag4(const char *s)
  * differently depending on whether the run was tagged latn or DFLT -- and it
  * avoids carrying a script detector that only complex shaping would need.
  */
-static void ar__collect(const ar_face *f, ar_u32 table, const char *tag, ar_u32 *out,
-                        ar_i32 *count, ar_i32 max)
+static void ar__collect(const ar_face *f, ar_u32 table, const char *tag, ar_u32 *out, ar_i32 *count,
+                        ar_i32 max)
 {
     ar_u32 want = ar__tag4(tag);
     ar_u32 features, lookups, nfeat, i;
@@ -290,7 +290,6 @@ static ar_u32 ar__subtable(const ar_face *f, ar_u32 lookup, ar_u32 j, ar_i32 *ty
     return at;
 }
 
-
 /*
  * Arabic joining.
  *
@@ -319,24 +318,18 @@ ar_i32 ar_join_type(ar_u32 cp)
         {0x0622, 0x0625, AR_JOIN_R}, /* alef with madda, hamza above/below */
         {0x0626, 0x0626, AR_JOIN_D}, {0x0627, 0x0627, AR_JOIN_R}, /* alef */
         {0x0628, 0x0628, AR_JOIN_D}, {0x0629, 0x0629, AR_JOIN_R}, /* teh marbuta */
-        {0x062A, 0x062E, AR_JOIN_D},
-        {0x062F, 0x0632, AR_JOIN_R}, /* dal, thal, ra, zain */
+        {0x062A, 0x062E, AR_JOIN_D}, {0x062F, 0x0632, AR_JOIN_R}, /* dal, thal, ra, zain */
         {0x0633, 0x063F, AR_JOIN_D}, {0x0640, 0x0640, AR_JOIN_C}, /* tatweel */
         {0x0641, 0x0647, AR_JOIN_D}, {0x0648, 0x0648, AR_JOIN_R}, /* waw */
-        {0x0649, 0x064A, AR_JOIN_D}, {0x064B, 0x065F, AR_JOIN_T},
-        {0x0660, 0x066F, AR_JOIN_U}, {0x0670, 0x0670, AR_JOIN_T},
-        {0x0671, 0x0673, AR_JOIN_R}, {0x0674, 0x0674, AR_JOIN_U},
-        {0x0675, 0x0677, AR_JOIN_R}, {0x0678, 0x0688, AR_JOIN_D},
-        {0x0689, 0x0699, AR_JOIN_R}, {0x069A, 0x06BF, AR_JOIN_D},
-        {0x06C0, 0x06CB, AR_JOIN_R}, {0x06CC, 0x06CC, AR_JOIN_D},
-        {0x06CD, 0x06CE, AR_JOIN_R}, {0x06CF, 0x06CF, AR_JOIN_R},
-        {0x06D0, 0x06D3, AR_JOIN_D}, {0x06D4, 0x06D4, AR_JOIN_U},
-        {0x06D5, 0x06D5, AR_JOIN_R}, {0x06D6, 0x06ED, AR_JOIN_T},
-        {0x06EE, 0x06EF, AR_JOIN_R}, {0x06F0, 0x06F9, AR_JOIN_U},
-        {0x06FA, 0x06FF, AR_JOIN_D},
+        {0x0649, 0x064A, AR_JOIN_D}, {0x064B, 0x065F, AR_JOIN_T}, {0x0660, 0x066F, AR_JOIN_U},
+        {0x0670, 0x0670, AR_JOIN_T}, {0x0671, 0x0673, AR_JOIN_R}, {0x0674, 0x0674, AR_JOIN_U},
+        {0x0675, 0x0677, AR_JOIN_R}, {0x0678, 0x0688, AR_JOIN_D}, {0x0689, 0x0699, AR_JOIN_R},
+        {0x069A, 0x06BF, AR_JOIN_D}, {0x06C0, 0x06CB, AR_JOIN_R}, {0x06CC, 0x06CC, AR_JOIN_D},
+        {0x06CD, 0x06CE, AR_JOIN_R}, {0x06CF, 0x06CF, AR_JOIN_R}, {0x06D0, 0x06D3, AR_JOIN_D},
+        {0x06D4, 0x06D4, AR_JOIN_U}, {0x06D5, 0x06D5, AR_JOIN_R}, {0x06D6, 0x06ED, AR_JOIN_T},
+        {0x06EE, 0x06EF, AR_JOIN_R}, {0x06F0, 0x06F9, AR_JOIN_U}, {0x06FA, 0x06FF, AR_JOIN_D},
         {0x0710, 0x0710, AR_JOIN_R}, {0x0711, 0x0711, AR_JOIN_T}, /* Syriac */
-        {0x0712, 0x072F, AR_JOIN_D}, {0x0730, 0x074A, AR_JOIN_T},
-        {0x0750, 0x077F, AR_JOIN_D},
+        {0x0712, 0x072F, AR_JOIN_D}, {0x0730, 0x074A, AR_JOIN_T}, {0x0750, 0x077F, AR_JOIN_D},
         {0x200C, 0x200C, AR_JOIN_U}, /* zero width non-joiner */
         {0x200D, 0x200D, AR_JOIN_C}  /* zero width joiner     */
     };
@@ -409,7 +402,6 @@ static ar_i32 ar__apply_single(const ar_shaper *sh, const ar_u32 *lookups, ar_i3
     return -1;
 }
 
-
 /*
  * GSUB type 2: one glyph becomes several.
  *
@@ -423,8 +415,7 @@ static ar_i32 ar__apply_single(const ar_shaper *sh, const ar_u32 *lookups, ar_i3
  * not fit is skipped: leaving the character composed is a worse rendering,
  * writing past the buffer is a worse program.
  */
-static ar_i32 ar__multiple_sub(const ar_face *f, ar_u32 sub, ar_i32 glyph, ar_i32 *out,
-                               ar_i32 room)
+static ar_i32 ar__multiple_sub(const ar_face *f, ar_u32 sub, ar_i32 glyph, ar_i32 *out, ar_i32 room)
 {
     ar_i32 cov;
     ar_u32 seq, n, i;
@@ -542,7 +533,6 @@ static ar_i32 ar__apply_ccmp(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, a
     return count;
 }
 
-
 /*
  * GSUB type 6: chained contextual substitution.
  *
@@ -557,8 +547,8 @@ static ar_i32 ar__apply_ccmp(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, a
  * express the same thing through rule sets keyed on a glyph or a class, and a
  * lookup in one of those formats is skipped rather than half applied.
  */
-static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs,
-                                   ar_i32 count, ar_i32 at, ar_i32 depth);
+static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs, ar_i32 count,
+                                   ar_i32 at, ar_i32 depth);
 
 static int ar__chain_match(const ar_face *f, ar_u32 sub, const ar_i32 *glyphs, ar_i32 count,
                            ar_i32 at, ar_u32 *records, ar_u32 *nrecords, ar_i32 *matched)
@@ -617,8 +607,8 @@ static int ar__chain_match(const ar_face *f, ar_u32 sub, const ar_i32 *glyphs, a
 /* Runs one lookup, by offset, at one position. Only the substitutions that do
    not change the run's length, because a nested lookup that did would move
    every position the outer match is still holding. */
-static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs,
-                                   ar_i32 count, ar_i32 at, ar_i32 depth)
+static ar_i32 ar__apply_one_lookup(const ar_shaper *sh, ar_u32 lookup, ar_i32 *glyphs, ar_i32 count,
+                                   ar_i32 at, ar_i32 depth)
 {
     const ar_face *f = sh->face;
     ar_u32         nsub = ar__sh_u16(f, lookup + 4);
@@ -779,7 +769,6 @@ static void ar__arabic_forms(const ar_shaper *sh, const ar_u32 *cps, ar_i32 *gly
     }
 }
 
-
 /* GDEF class 3 is a mark. Fonts that ship no GDEF are treated as having no
    marks, which is right for the Latin-only fonts that mostly omit it. */
 static int ar__is_mark(const ar_shaper *sh, ar_i32 glyph)
@@ -934,7 +923,6 @@ static ar_i32 ar__pair_adjust(const ar_face *f, ar_u32 sub, ar_i32 a, ar_i32 b)
     return 0;
 }
 
-
 /* An anchor is a point in the glyph's own coordinates. Format 2 adds a
    contour point index for hinted attachment and format 3 device tables; both
    carry the plain coordinates first, so both are read as format 1. */
@@ -1087,8 +1075,8 @@ ar_i32 ar_shape_run_cp(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 
     return ar_shape_run_pos(sh, cps, glyphs, adv, 0, 0, cluster, count, count);
 }
 
-ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
-                        ar_i32 *dx, ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap)
+ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *dx,
+                        ar_i32 *dy, ar_i32 *cluster, ar_i32 count, ar_i32 cap)
 {
     ar_i32 i;
 
@@ -1148,7 +1136,7 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32
     if (dx && dy && sh && sh->ok && (sh->mark_count > 0 || sh->mkmk_count > 0))
     {
         const ar_face *f = sh->face;
-        ar_i32         base = -1;     /* the last thing a mark can attach to  */
+        ar_i32         base = -1;      /* the last thing a mark can attach to  */
         ar_i32         last_mark = -1; /* and the last mark, for mark to mark */
 
         for (i = 0; i < count; ++i)
@@ -1173,8 +1161,8 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32
                     {
                         continue;
                     }
-                    attached = ar__mark_attach(f, sub, 6, glyphs[last_mark], glyphs[i], &dx[i],
-                                               &dy[i]);
+                    attached =
+                        ar__mark_attach(f, sub, 6, glyphs[last_mark], glyphs[i], &dx[i], &dy[i]);
                     if (attached)
                     {
                         /* Relative to a mark that is itself displaced. */
@@ -1198,8 +1186,8 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32
                     {
                         continue;
                     }
-                    attached = ar__mark_attach(f, sub, type, glyphs[base], glyphs[i], &dx[i],
-                                               &dy[i]);
+                    attached =
+                        ar__mark_attach(f, sub, type, glyphs[base], glyphs[i], &dx[i], &dy[i]);
                 }
             }
 
@@ -1224,8 +1212,7 @@ ar_i32 ar_shape_run_pos(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32
     return count;
 }
 
-ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
-                    ar_i32 count)
+ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster, ar_i32 count)
 {
     const ar_face *f;
     ar_i32         i, k, out;
@@ -1258,8 +1245,8 @@ ar_i32 ar_shape_run(const ar_shaper *sh, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cl
                 {
                     continue;
                 }
-                replaced = ar__try_ligature(sh, sub, glyphs, count, i, &consumed, skipped,
-                                            &nskipped);
+                replaced =
+                    ar__try_ligature(sh, sub, glyphs, count, i, &consumed, skipped, &nskipped);
             }
         }
 

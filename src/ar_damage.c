@@ -204,7 +204,14 @@ ar_u32 ar_paint_digest(const ar_node *n)
 {
     /* Exactly what ar__paint reads, and nothing else. If a property is added
        to the paint pass it must be added here, or boxes will stop repainting
-       when only that property changes. */
+       when only that property changes.
+
+       Read through ar_style_get rather than v[] directly: this list is walked
+       by index, so three of its entries are the wide properties that live past
+       the end of v[]. Indexing v[] here compiled without a murmur -- the
+       subscript is not a constant, so -Warray-bounds cannot see it -- and
+       produced a digest built from whatever followed the array. The
+       pixel-identity test is what caught it. */
     static const int PAINTED[] = {AR_P_DISPLAY,    AR_P_OVERFLOW,     AR_P_OVERFLOW_X,
                                   AR_P_BACKGROUND, AR_P_BORDER_WIDTH, AR_P_BORDER_COLOR,
                                   AR_P_PAD_LEFT,   AR_P_PAD_TOP,      AR_P_COLOR};
@@ -214,7 +221,7 @@ ar_u32 ar_paint_digest(const ar_node *n)
 
     for (i = 0; i < count; ++i)
     {
-        h = ar__mix(h, (ar_u32)n->style.v[PAINTED[i]]);
+        h = ar__mix(h, (ar_u32)ar_style_get(&n->style, PAINTED[i]));
     }
     h = ar__mix(h, (ar_u32)n->scale);
 

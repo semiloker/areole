@@ -37,6 +37,47 @@ ar_u32 ar_hash(const char *s, ar_u32 len)
 /* ------------------------------------------------------------------------
  * Defaults
  * ------------------------------------------------------------------------ */
+ar_i32 ar_style_get(const ar_style *s, ar_i32 prop)
+{
+    if (prop >= AR_P_NARROW_COUNT)
+    {
+        return s->wide[prop - AR_P_NARROW_COUNT];
+    }
+    return s->v[prop];
+}
+
+void ar_style_put(ar_style *s, ar_i32 prop, ar_i32 v)
+{
+    if (prop >= AR_P_NARROW_COUNT)
+    {
+        s->wide[prop - AR_P_NARROW_COUNT] = v;
+        return;
+    }
+    s->v[prop] = (ar_i16)ar_style_clamp_narrow(v);
+}
+
+/*
+ * v[] is sixteen bits, so a stated length above 32767 has to go somewhere
+ * defined. Clamping is the only option that keeps layout monotonic: wrapping
+ * would turn `width: 40000px` into a negative width, which lays out as a box
+ * to the left of its own parent rather than merely a wide one.
+ *
+ * Nothing computed passes through here -- a scroll container's content height
+ * is worked out in ar_i32 and stays there. This is the authored value only.
+ */
+ar_i32 ar_style_clamp_narrow(ar_i32 v)
+{
+    if (v > 32767)
+    {
+        return 32767;
+    }
+    if (v < -32768)
+    {
+        return -32768;
+    }
+    return v;
+}
+
 void ar_style_defaults(ar_style *s)
 {
     ar_i32 i;
@@ -44,7 +85,7 @@ void ar_style_defaults(ar_style *s)
     s->set = ar_pset_none();
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        s->v[i] = 0;
+        ar_style_put(s, i, 0);
         s->unit[i] = AR_UNIT_PX;
     }
 
@@ -63,20 +104,24 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_OVERFLOW] = AR_OVERFLOW_VISIBLE;
     s->v[AR_P_OVERFLOW_X] = AR_OVERFLOW_VISIBLE;
     s->unit[AR_P_OVERFLOW] = AR_UNIT_KEYWORD;
+    s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
+    s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
+    s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
+    s->unit[AR_P_OVERSCROLL_X] = AR_UNIT_KEYWORD;
 
     /* A box with no stated size takes the size of its content. This is what
        makes a stylesheet that says nothing about width still lay out. */
     s->unit[AR_P_WIDTH] = AR_UNIT_AUTO;
     s->unit[AR_P_HEIGHT] = AR_UNIT_AUTO;
 
-    s->v[AR_P_MAX_WIDTH] = 0x7FFFFFFF;
-    s->v[AR_P_MAX_HEIGHT] = 0x7FFFFFFF;
+    AR_WIDE(s, AR_P_MAX_WIDTH) = 0x7FFFFFFF;
+    AR_WIDE(s, AR_P_MAX_HEIGHT) = 0x7FFFFFFF;
 
-    s->v[AR_P_BACKGROUND] = 0; /* fully transparent, so nothing is painted */
+    AR_WIDE(s, AR_P_BACKGROUND) = 0; /* fully transparent, so nothing is painted */
     s->unit[AR_P_BACKGROUND] = AR_UNIT_COLOR;
-    s->v[AR_P_COLOR] = (ar_i32)0xFF202020u;
+    AR_WIDE(s, AR_P_COLOR) = (ar_i32)0xFF202020u;
     s->unit[AR_P_COLOR] = AR_UNIT_COLOR;
-    s->v[AR_P_BORDER_COLOR] = 0;
+    AR_WIDE(s, AR_P_BORDER_COLOR) = 0;
     s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
@@ -230,7 +275,7 @@ void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set)
     {
         if (ar_pset_has(set, (ar_i32)i))
         {
-            dst->v[i] = src->v[i];
+            ar_style_put(dst, i, ar_style_get(src, i));
             dst->unit[i] = src->unit[i];
         }
     }
@@ -280,13 +325,13 @@ void ar_style_inherit(ar_style *child, const ar_style *parent)
         {
             if (child->unit[i] == AR_UNIT_INHERIT)
             {
-                child->v[i] = parent->v[i];
+                ar_style_put(child, i, ar_style_get(parent, i));
                 child->unit[i] = parent->unit[i];
                 continue;
             }
             if (child->unit[i] == AR_UNIT_INITIAL)
             {
-                child->v[i] = defaults.v[i];
+                ar_style_put(child, i, ar_style_get(&defaults, i));
                 child->unit[i] = defaults.unit[i];
                 continue;
             }
@@ -299,7 +344,7 @@ void ar_style_inherit(ar_style *child, const ar_style *parent)
         {
             continue; /* the child said something; it wins */
         }
-        child->v[i] = parent->v[i];
+        ar_style_put(child, i, ar_style_get(parent, i));
         child->unit[i] = parent->unit[i];
         /* Marked as set, so a grandchild inherits through a box that only
            inherited it -- which is the whole point of a cascade. */
@@ -456,7 +501,8 @@ enum
     AR_SH_PADDING = AR_P_COUNT + 1,
     AR_SH_MARGIN,
     AR_SH_BORDER,
-    AR_SH_OVERFLOW
+    AR_SH_OVERFLOW,
+    AR_SH_OVERSCROLL
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
@@ -491,6 +537,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
+                                          {"overscroll-behavior", AR_SH_OVERSCROLL},
+                                          {"overscroll-behavior-x", AR_P_OVERSCROLL_X},
+                                          {"overscroll-behavior-y", AR_P_OVERSCROLL},
                                           {"text-align", AR_P_TEXT_ALIGN},
                                           {"vertical-align", AR_P_VERTICAL_ALIGN},
                                           {"float", AR_P_FLOAT},
@@ -601,7 +650,15 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
                                      {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
                                      {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO}};
+                                     {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO},
+
+                                     {"auto", AR_P_OVERSCROLL, AR_OVERSCROLL_AUTO},
+                                     {"contain", AR_P_OVERSCROLL, AR_OVERSCROLL_CONTAIN},
+                                     {"none", AR_P_OVERSCROLL, AR_OVERSCROLL_NONE},
+
+                                     {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
+                                     {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
+                                     {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE}};
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))
 
@@ -788,7 +845,7 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 
 static void ar__set(ar_rule *rule, ar_u8 prop, ar_i32 v, ar_u8 unit)
 {
-    rule->style.v[prop] = v;
+    ar_style_put(&rule->style, prop, v);
     rule->style.unit[prop] = unit;
     ar_pset_add(&rule->set, prop);
 }
@@ -894,6 +951,10 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             as = AR_P_OVERFLOW;
         }
+        if (prop == AR_SH_OVERSCROLL)
+        {
+            as = AR_P_OVERSCROLL;
+        }
 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
@@ -967,6 +1028,14 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
 
         ar__set(rule, AR_P_OVERFLOW_X, x.v, x.unit);
         ar__set(rule, AR_P_OVERFLOW, y.v, y.unit);
+    }
+    else if (prop == AR_SH_OVERSCROLL)
+    {
+        ar__value x = vals[0];
+        ar__value y = (n >= 2) ? vals[1] : vals[0];
+
+        ar__set(rule, AR_P_OVERSCROLL_X, x.v, x.unit);
+        ar__set(rule, AR_P_OVERSCROLL, y.v, y.unit);
     }
     else if (prop == AR_SH_BORDER)
     {

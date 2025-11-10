@@ -146,8 +146,7 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
             {
                 printf("        \"extra_label\": \"%s\",\n", rs[i].c->extra_label);
                 printf("        \"extra_us\": %.2f,\n", rs[i].extra_us);
-                printf("        \"extra_ratio\": %.3f,\n",
-                       rs[i].rival_p50 * 1e6 / rs[i].extra_us);
+                printf("        \"extra_ratio\": %.3f,\n", rs[i].rival_p50 * 1e6 / rs[i].extra_us);
             }
             if (rs[i].c->caveat)
             {
@@ -185,8 +184,7 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
         {
             if (rs[i].extra_us > 0.0)
             {
-                printf(" %10.1fus %8.2fx", rs[i].extra_us,
-                       rs[i].rival_p50 * 1e6 / rs[i].extra_us);
+                printf(" %10.1fus %8.2fx", rs[i].extra_us, rs[i].rival_p50 * 1e6 / rs[i].extra_us);
             }
             else
             {
@@ -200,7 +198,8 @@ static void print_engine(const cmp_engine *eng, const cmp_result *rs, int n, int
     if (extra)
     {
         printf("The '%s' column excludes style resolution,\n"
-               "which the rival does not do at all.\n", label);
+               "which the rival does not do at all.\n",
+               label);
     }
 
     for (i = 0; i < n; ++i)

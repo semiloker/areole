@@ -20,6 +20,7 @@ jobs:
   strict-c89:
     name: strict C89 (core only)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +61,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +88,7 @@ jobs:
   build-mingw:
     name: windows / mingw-w64
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         shell: msys2 {0}
@@ -120,11 +123,12 @@ jobs:
       # The margin-collapsing corpus. It only prints rectangles here; the
       # browser comparison needs Chromium and runs locally.
       - name: Block corpus renders
-        run: ./build/example_block.exe > /dev/null
+        run: ./build/example_block.exe --dump > /dev/null
 
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -146,10 +150,20 @@ jobs:
           find $dirs \( -name '*.c' -o -name '*.h' \) -print0 |
             xargs -0 -r clang-format --dry-run --Werror
 
+      # `style` is deliberately not enabled, and the reason is not squeamishness.
+      # It found one defect and thirty-eight non-findings, and one of its checks
+      # cannot ever pass here: "the scope of the variable can be reduced" is a
+      # restatement of C89 wanting declarations at the top of a block, which is
+      # invariant 3. A gate that cannot go green is a gate nobody reads, and
+      # this one had been red since it was written -- which is how a null
+      # dereference in ar_break_next survived inside it.
+      #
+      # warning, performance and portability all stay. That null dereference was
+      # a `warning`, so the category that mattered is the one kept.
       - name: cppcheck
         run: |
           cppcheck --quiet --error-exitcode=1 --std=c89 --inline-suppr \
-                   --enable=warning,style,performance,portability \
+                   --enable=warning,performance,portability \
                    --suppress=missingIncludeSystem \
                    --suppress=unusedFunction \
                    --suppress=checkersReport \

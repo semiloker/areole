@@ -1629,14 +1629,14 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
 
         clip = ar_rect_intersect(n->clip, region);
 
-        bg = (ar_color)n->style.v[AR_P_BACKGROUND];
+        bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0)
         {
             ar_fill_rect(s, n->rect, clip, bg);
         }
 
         bw = n->style.v[AR_P_BORDER_WIDTH];
-        border = (ar_color)n->style.v[AR_P_BORDER_COLOR];
+        border = (ar_color)AR_WIDE(&n->style, AR_P_BORDER_COLOR);
         if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
@@ -1676,7 +1676,7 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
                 }
                 ar__draw_line(c, s, fclip, f->rect.x + n->style.v[AR_P_PAD_LEFT],
                               f->rect.y + n->style.v[AR_P_PAD_TOP], n, f->from, f->to,
-                              (ar_color)n->style.v[AR_P_COLOR]);
+                              (ar_color)AR_WIDE(&n->style, AR_P_COLOR));
             }
             continue;
         }
@@ -1688,7 +1688,7 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_rect  tclip = ar_rect_intersect(clip, n->rect);
             ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT];
             ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
-            ar_color tc = (ar_color)n->style.v[AR_P_COLOR];
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
 
             /* The same wrap layout used, so the lines drawn are the lines
                that were made room for. Wrapping twice per frame is the cost
@@ -1879,7 +1879,26 @@ static void ar__apply_wheel(ar_ctx *c)
         want = ar_scroll_clamp(n, slot->scroll - travel);
         if (want == slot->scroll)
         {
-            continue; /* nowhere to go here; the notch chains outwards */
+            /*
+             * Nowhere to go here, so the notch chains outwards -- unless this
+             * container says it should not. That is the whole of
+             * overscroll-behavior: `contain` and `none` stop the walk at this
+             * boundary rather than offering the notch to an ancestor, which is
+             * what keeps a modal's wheel off the page behind it.
+             *
+             * The test is on the container that would have chained, not on the
+             * one that would have received it, because it is the inner box's
+             * stylesheet that gets to refuse.
+             *
+             * The wheel is the block axis, so this reads the block property.
+             * The inline one is parsed and stored and nothing consults it yet,
+             * because nothing generates an inline wheel event.
+             */
+            if (n->style.v[AR_P_OVERSCROLL] != AR_OVERSCROLL_AUTO)
+            {
+                return;
+            }
+            continue;
         }
         ar__scroll_moved(c, n->key, want - slot->scroll);
         slot->scroll = (ar_scroll_pos)want;

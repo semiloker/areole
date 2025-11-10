@@ -88,9 +88,9 @@ typedef struct bench_result
     int    overflowed;
 } bench_result;
 
-static int    g_full_repaint = 0;
+static int         g_full_repaint = 0;
 static const char *g_font_path = 0;
-static double g_samples[BENCH_MAX_SAMPLES];
+static double      g_samples[BENCH_MAX_SAMPLES];
 
 static void die(const char *msg)
 {
