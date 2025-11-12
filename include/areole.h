@@ -217,7 +217,47 @@ typedef struct ar_input
     ar_i32 wheel_px;
 
     int mouse_inside; /* the cursor is over the client area */
+
+    /*
+     * Keys pressed since the last frame, as a bitmask of AR_KEY_*.
+     *
+     * Deliberately not a keyboard. This is the set of keys that scroll, and
+     * nothing else: no text, no focus traversal, no caret, no IME, no modifier
+     * tracking. Those are 0.10.0 and starting them here is how 0.6.1 would
+     * quietly become 0.10.0.
+     *
+     * Presses rather than held state, because scrolling is an event: holding
+     * Page Down should repeat at the rate the platform repeats keys, which is
+     * a thing the platform already decides and the core has no business
+     * second-guessing. A backend that repeats sets the bit again.
+     */
+    ar_u32 keys_pressed;
 } ar_input;
+
+/*
+ * The keys that scroll.
+ *
+ * A platform-independent enum, because src/ never includes a platform header
+ * and a virtual key code is the most platform-specific thing there is. Each
+ * backend maps its own codes onto these.
+ */
+enum
+{
+    AR_KEY_UP = 1u << 0,
+    AR_KEY_DOWN = 1u << 1,
+    AR_KEY_LEFT = 1u << 2,
+    AR_KEY_RIGHT = 1u << 3,
+    AR_KEY_PAGE_UP = 1u << 4,
+    AR_KEY_PAGE_DOWN = 1u << 5,
+    AR_KEY_HOME = 1u << 6,
+    AR_KEY_END = 1u << 7,
+
+    /* Space pages down, and shift-space pages up in every browser. There is no
+       modifier tracking here, so a backend that wants the second one sets
+       AR_KEY_PAGE_UP itself -- which is the honest split: the platform knows
+       about shift and this does not. */
+    AR_KEY_SPACE = 1u << 8
+};
 
 /* ------------------------------------------------------------------------
  * Performance
@@ -627,8 +667,9 @@ ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i);
 /* The same three on the inline axis. A container scrolls sideways when
    overflow-x resolves to scroll or auto -- which includes the case where only
    overflow-y was stated, since a lone visible on the other axis becomes auto.
-   There is no horizontal scrollbar and no wheel binding yet: drive it from the
-   application, the way a keyboard or a swipe would. */
+   AR_KEY_LEFT and AR_KEY_RIGHT drive it, and so does this call. There is still
+   no horizontal scrollbar to drag and no wheel binding, because nothing here
+   generates an inline wheel event. */
 ar_i32 ar_node_scroll_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_range_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);
@@ -636,6 +677,23 @@ ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);
 /* Moves a container, clamped to its range. For a keyboard, a scrollbar drag,
    or scrolling something into view. Returns where it ended up. */
 ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y);
+
+/*
+ * Brings a box into view by scrolling its nearest scrollable ancestor.
+ *
+ * Honours `scroll-margin` on the box and `scroll-padding` on the container, so
+ * a sticky header does not end up covering the thing that was just scrolled
+ * to -- which is the entire reason those two properties exist.
+ *
+ * Scrolls the minimum distance: a box already fully visible does not move, and
+ * one below the fold comes to the bottom rather than jumping to the top. That
+ * is what a reader expects and what "nearest" means in the CSS of the same
+ * name.
+ *
+ * Returns 1 if anything moved. Only the block axis, matching the rest of the
+ * scrolling here.
+ */
+int ar_node_scroll_into_view(ar_ctx *c, ar_i32 i);
 
 /* Whether a wheel notch moved anything this frame, so a caller whose pump
    blocks knows to ask for the frame that shows it. */
