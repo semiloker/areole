@@ -510,6 +510,126 @@ int ar_needs_redraw(const ar_ctx *c)
     return c->hot_changed || c->scrolled;
 }
 
+void ar_set_safe_area(ar_ctx *c, ar_i32 top, ar_i32 right, ar_i32 bottom, ar_i32 left)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->env.v[AR_ENV_SAFE_TOP] = top;
+    c->env.v[AR_ENV_SAFE_RIGHT] = right;
+    c->env.v[AR_ENV_SAFE_BOTTOM] = bottom;
+    c->env.v[AR_ENV_SAFE_LEFT] = left;
+    c->env.known[AR_ENV_SAFE_TOP] = 1;
+    c->env.known[AR_ENV_SAFE_RIGHT] = 1;
+    c->env.known[AR_ENV_SAFE_BOTTOM] = 1;
+    c->env.known[AR_ENV_SAFE_LEFT] = 1;
+}
+
+void ar_set_titlebar_area(ar_ctx *c, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->env.v[AR_ENV_TITLEBAR_X] = x;
+    c->env.v[AR_ENV_TITLEBAR_Y] = y;
+    c->env.v[AR_ENV_TITLEBAR_W] = w;
+    c->env.v[AR_ENV_TITLEBAR_H] = h;
+    c->env.known[AR_ENV_TITLEBAR_X] = 1;
+    c->env.known[AR_ENV_TITLEBAR_Y] = 1;
+    c->env.known[AR_ENV_TITLEBAR_W] = 1;
+    c->env.known[AR_ENV_TITLEBAR_H] = 1;
+}
+
+void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
+{
+    if (c)
+    {
+        c->env.fit_cover = (ar_u8)(cover ? 1 : 0);
+    }
+}
+
+/*
+ * Sticky boxes that cannot ever stick.
+ *
+ * A sticky box is pinned inside its nearest scroll container. CSS counts
+ * `overflow: hidden` as one -- it clips, and it can be scrolled
+ * programmatically even though nothing offers the user a way to -- so a sticky
+ * box inside one is pinned to a scrollport that never moves, and never sticks.
+ *
+ * That is correct, and it is the single most reported non-bug in every engine,
+ * because the author sees a header that will not stick and a stylesheet with
+ * nothing wrong in it. Saying so is cheaper than being asked.
+ *
+ * The walk stops at the first clipping ancestor, which is the one that decides:
+ * a scrolling ancestor further out is not this box's scrollport and cannot
+ * rescue it.
+ */
+static void ar__diagnose(ar_ctx *c)
+{
+    ar_i32 i;
+
+    c->diag_count = 0;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_i32 at;
+
+        if (!ar_is_sticky(&c->nodes[i]) || c->nodes[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+
+        for (at = c->nodes[i].parent; at >= 0; at = c->nodes[at].parent)
+        {
+            if (!ar_clips(&c->nodes[at]))
+            {
+                continue;
+            }
+            if (!ar_is_scroll_container(&c->nodes[at]) && c->diag_count < AR_DIAG_MAX)
+            {
+                c->diag[c->diag_count].code = AR_DIAG_STICKY_NEVER_STICKS;
+                c->diag[c->diag_count].node = i;
+                ++c->diag_count;
+            }
+            break;
+        }
+    }
+}
+
+ar_i32 ar_diag_count(const ar_ctx *c)
+{
+    return c ? c->diag_count : 0;
+}
+
+ar_i32 ar_diag_at(const ar_ctx *c, ar_i32 i, ar_i32 *out_node)
+{
+    if (!c || i < 0 || i >= c->diag_count)
+    {
+        if (out_node)
+        {
+            *out_node = -1;
+        }
+        return 0;
+    }
+    if (out_node)
+    {
+        *out_node = c->diag[i].node;
+    }
+    return c->diag[i].code;
+}
+
+const char *ar_diag_text(ar_i32 code)
+{
+    if (code == AR_DIAG_STICKY_NEVER_STICKS)
+    {
+        return "position:sticky inside an overflow:hidden ancestor never sticks: "
+               "that ancestor is its scrollport and it does not scroll";
+    }
+    return "";
+}
+
 ar_perf *ar_perf_of(ar_ctx *c)
 {
     return &c->perf;
@@ -647,6 +767,37 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
        A stylesheet without combinators skips this entirely. */
     ar_sheet_resolve_contextual(&c->sheet, i, n->sel_tag, &n->sel_class, n->sel_id, n->state,
                                 ar__sel_walk, c, &n->style);
+
+    /*
+     * env(), after the cache for exactly the reason inheritance is.
+     *
+     * A resolved style may only depend on the cache key -- tag, class, id and
+     * state -- and an env() value depends on none of them. It depends on what
+     * the backend last said about the display, which can change while the
+     * stylesheet does not. Resolving it here, on the copy the cache handed
+     * back, keeps the cached entry free of it; the alternative was to clear
+     * the whole cache whenever an inset moved, which would have made a
+     * fullscreen toggle cost a full restyle.
+     *
+     * The loop is over the properties this box actually stated. A sheet with
+     * no env() in it walks that set once and finds nothing.
+     */
+    {
+        ar_i32 p;
+
+        for (p = 0; p < AR_P_COUNT; ++p)
+        {
+            ar_u8 u = n->style.unit[p];
+
+            if (u >= AR_UNIT_ENV_FIRST && u <= AR_UNIT_ENV_LAST)
+            {
+                ar_i32 slot = (ar_i32)u - AR_UNIT_ENV_FIRST;
+
+                ar_style_put(&n->style, p, ar_env_value(&c->env, slot, ar_style_get(&n->style, p)));
+                n->style.unit[p] = AR_UNIT_PX;
+            }
+        }
+    }
 
     /* Inheritance, after the cache rather than inside it. The cache holds what
        the selectors produced, which does not depend on where a box sits; the
@@ -2642,6 +2793,44 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     viewport = ar_rect_make(0, 0, s ? s->w : 0, s ? s->h : 0);
 
+    /*
+     * `viewport-fit: auto` lays out inside the safe rectangle.
+     *
+     * This is the half of the bargain env() cannot do on its own. With `auto`
+     * the layout viewport is the surface with the insets taken off, and
+     * env(safe-area-inset-*) reports zero, because the stylesheet has already
+     * been kept clear of them and telling it to avoid them again would move
+     * everything twice. With `cover` the viewport is the whole surface and the
+     * real insets are what env() hands back.
+     *
+     * One place decides both, which is what makes the pair atomic: there is no
+     * ordering of two calls that can leave the viewport inset while env() also
+     * reports the inset.
+     */
+    if (!c->env.fit_cover && c->env.known[AR_ENV_SAFE_TOP])
+    {
+        ar_i32 t = c->env.v[AR_ENV_SAFE_TOP];
+        ar_i32 r = c->env.v[AR_ENV_SAFE_RIGHT];
+        ar_i32 b = c->env.v[AR_ENV_SAFE_BOTTOM];
+        ar_i32 l = c->env.v[AR_ENV_SAFE_LEFT];
+
+        /* An inset larger than the surface would give a negative viewport,
+           which lays out as a box to the left of its own origin. Insets that
+           do not fit are taken as far as they go and no further. */
+        if (l + r > viewport.w)
+        {
+            l = viewport.w;
+            r = 0;
+        }
+        if (t + b > viewport.h)
+        {
+            t = viewport.h;
+            b = 0;
+        }
+        viewport =
+            ar_rect_make(viewport.x + l, viewport.y + t, viewport.w - l - r, viewport.h - t - b);
+    }
+
     if (c->node_count == 0)
     {
         return ar_rect_make(0, 0, 0, 0);
@@ -2683,6 +2872,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Content widths, then clips: both once the rectangles are final and
        before anything asks for either. */
     ar__content_widths(c);
+    ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 

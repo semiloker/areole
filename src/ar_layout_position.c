@@ -307,7 +307,7 @@ static ar_i32 ar__sticky_shift(const ar_node *n, const ar_node *parent, ar_i32 p
      */
     if (parent)
     {
-        ar_i32 p_lo, p_hi;
+        ar_i32 p_lo, p_hi, lo, hi;
 
         if (lead_p == AR_P_TOP)
         {
@@ -319,13 +319,36 @@ static ar_i32 ar__sticky_shift(const ar_node *n, const ar_node *parent, ar_i32 p
             p_lo = parent->rect.x + pad_lead;
             p_hi = parent->rect.x + parent->rect.w - pad_trail;
         }
-        if (box_lo + shift < p_lo)
+        /*
+         * The two edges give a range the shift has to land in, and it has to
+         * be read as a range rather than as two corrections in a row.
+         *
+         *     box_lo + shift >= p_lo   ->   shift >= p_lo - box_lo
+         *     box_hi + shift <= p_hi   ->   shift <= p_hi - box_hi
+         *
+         * Applying them one after the other looks equivalent and is not. When
+         * the box is bigger than the block it must stay inside, the range is
+         * empty -- there is no shift that keeps both edges in -- and the
+         * second correction simply overwrote the first, producing a large
+         * shift in the wrong direction. A horizontally scrolling row 420 wide
+         * in a 200 wide scrollport was pinned at -220 whatever the scroll
+         * position, which the browser comparison caught: a real browser leaves
+         * such a box alone, because there is nowhere it can go that satisfies
+         * the constraint it is under.
+         */
+        lo = p_lo - box_lo;
+        hi = p_hi - box_hi;
+        if (lo > hi)
         {
-            shift = p_lo - box_lo;
+            return 0;
         }
-        if (box_hi + shift > p_hi)
+        if (shift < lo)
         {
-            shift = p_hi - box_hi;
+            shift = lo;
+        }
+        if (shift > hi)
+        {
+            shift = hi;
         }
     }
     return shift;

@@ -5220,6 +5220,297 @@ static const char *AR_SCROLL_CSS = "#root { display:block; }"
                                    ".row { display:block; height:40px; }";
 
 /* The range is what does not fit, and nothing more. */
+/*
+ * A sticky box bigger than the block it must stay inside cannot move.
+ *
+ * The clamp gives the shift a range: at least far enough that the leading edge
+ * stays in, at most far enough that the trailing edge does. Applying those two
+ * one after the other looks the same and is not -- when the box is bigger than
+ * the containing block the range is empty, and the second correction used to
+ * overwrite the first and produce a large shift the wrong way. A 420 wide row
+ * in a 200 wide horizontal scrollport was pinned at -220 whatever the scroll
+ * position.
+ *
+ * A browser leaves such a box alone, because there is nowhere it can go that
+ * satisfies the constraint. Found by examples/06_sticky against Edge.
+ */
+/* The resolved value of a property on a laid-out node, which is what env()
+   has to be read through: it is resolved per box, after the style cache. */
+static ar_i32 ar__css_prop_of_node(ar_i32 i, ar_i32 prop)
+{
+    return ar_style_get(&g_ui->nodes[i].style, prop);
+}
+
+/* ------------------------------------------------------------------------
+ * env() and safe areas
+ *
+ * Eight numbers the core cannot work out and will not guess. The interesting
+ * part is not the arithmetic, it is the three-way distinction between a value
+ * the backend reported, a value it reported as zero, and a value it never
+ * mentioned -- the last two look identical in the result and must not behave
+ * alike.
+ * ------------------------------------------------------------------------ */
+static const char *AR_ENV_CSS = "#root { display:block; }"
+                                ".pad  { display:block; height:10px;"
+                                "        padding-top: env(safe-area-inset-top, 20px); }";
+
+static ar_i32 ar__env_pad_top(int report, ar_i32 inset, int cover)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+
+    ar__ui_reset(AR_ENV_CSS);
+    if (report)
+    {
+        ar_set_safe_area(g_ui, inset, 0, 0, 0);
+    }
+    ar_set_viewport_fit_cover(g_ui, cover);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.pad");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    return ar__css_prop_of_node(1, AR_P_PAD_TOP);
+}
+
+static void test_env_falls_back_only_when_nothing_reported_it(void)
+{
+    /* Never mentioned: the fallback stands. */
+    CHECK(ar__env_pad_top(0, 0, 1) == 20, "env: an unreported name takes its fallback");
+
+    /* Reported, and reported as zero. A windowed desktop really does have
+       insets of zero, and that is an answer rather than a silence -- taking
+       the fallback here would put a twenty pixel gap at the top of every
+       window that has nothing above it. */
+    CHECK(ar__env_pad_top(1, 0, 1) == 0, "env: a reported zero is a value, not a silence");
+
+    CHECK(ar__env_pad_top(1, 34, 1) == 34, "env: a reported inset is what env() resolves to");
+}
+
+static void test_viewport_fit_moves_the_insets_and_the_viewport_together(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+    ar_i32     auto_pad, cover_pad, auto_root_h, cover_root_h;
+
+    /* With `auto` the layout viewport is already the safe rectangle, so a
+       stylesheet must be told the inset is zero: avoiding it twice would push
+       the content down by 34 pixels that were already taken off. */
+    auto_pad = ar__env_pad_top(1, 34, 0);
+    cover_pad = ar__env_pad_top(1, 34, 1);
+    CHECK(auto_pad == 0 && cover_pad == 34,
+          "env: viewport-fit decides whether the inset is reported at all");
+
+    /* And the other half of the same decision, measured on the root box. */
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset("#root { display:block; height:grow; }");
+    ar_set_safe_area(g_ui, 34, 0, 12, 0);
+    ar_set_viewport_fit_cover(g_ui, 0);
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    auto_root_h = ar__box(0).h;
+
+    ar__ui_reset("#root { display:block; height:grow; }");
+    ar_set_safe_area(g_ui, 34, 0, 12, 0);
+    ar_set_viewport_fit_cover(g_ui, 1);
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    cover_root_h = ar__box(0).h;
+
+    CHECK(auto_root_h == 200 - 34 - 12 && cover_root_h == 200,
+          "env: auto lays out inside the safe rectangle, cover over the whole surface");
+
+    /* The pairing is the point. If the viewport were inset *and* env() still
+       reported the inset, content would clear it twice. */
+    CHECK(auto_root_h + auto_pad == 200 - 34 - 12,
+          "env: the viewport and the reported inset never both take the same pixels");
+}
+
+static void test_titlebar_area_is_not_gated_on_viewport_fit(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+
+    /* The titlebar rectangle says where the window controls are. That does not
+       change because the viewport was inset, so unlike the safe-area insets it
+       is reported under `auto` too. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:block; height:10px;"
+                 "     padding-left: env(titlebar-area-width, 5px); }");
+    ar_set_titlebar_area(g_ui, 0, 0, 96, 32);
+    ar_set_viewport_fit_cover(g_ui, 0);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__css_prop_of_node(1, AR_P_PAD_LEFT) == 96,
+          "env: titlebar-area is reported whatever viewport-fit says");
+}
+
+static void test_env_with_an_unknown_name_takes_its_fallback(void)
+{
+    /* CSS uses the fallback when the name is undefined, which is the whole
+       point of having one -- a stylesheet written for a platform that reports
+       a variable still lays out on one that does not. */
+    ar__sheet(".u { display:block; padding-top: env(nonsense-inset, 7px); }");
+    CHECK(ar__css_value(".u", 0, AR_P_PAD_TOP) == 7, "env: an unknown name takes its fallback");
+
+    /* Without a fallback there is no value to be had, so the declaration goes
+       and the property keeps what it would have had. */
+    ar__sheet(".v { display:block; padding-top: env(nonsense-inset); }");
+    CHECK(ar__css_value(".v", 0, AR_P_PAD_TOP) == 0,
+          "env: an unknown name with no fallback drops the declaration");
+
+    /* And the call is consumed either way. This is what caught the first
+       version: it bailed out at the unknown name, left the scanner inside the
+       parentheses, and the fallback was picked back up as though it were the
+       value -- the right answer for the wrong reason. A declaration after it
+       has to survive. */
+    ar__sheet(".w { display:block; padding-top: env(nonsense-inset); height: 42px; }");
+    CHECK(ar__css_value(".w", 0, AR_P_HEIGHT) == 42,
+          "env: a failed env() does not swallow the declaration after it");
+}
+
+/*
+ * Criterion 2: a sticky box that cannot stick because of an overflow:hidden
+ * ancestor is reported through the diagnostic API.
+ *
+ * The three cases together are the test. Reporting the blocked one is easy;
+ * what makes the report worth having is that it stays quiet for a sticky box
+ * that is fine, and for one whose clipping ancestor does scroll. A diagnostic
+ * that fires on everything is noise, and noise is ignored.
+ */
+static ar_i32 ar__diag_run(const char *css, ar_i32 *out_node)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.box");
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.stick");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    if (out_node)
+    {
+        *out_node = -1;
+    }
+    if (ar_diag_count(g_ui) > 0)
+    {
+        return ar_diag_at(g_ui, 0, out_node);
+    }
+    return 0;
+}
+
+static void test_a_sticky_box_that_can_never_stick_is_reported(void)
+{
+    ar_i32 node = -1;
+    ar_i32 blocked, scrolls, unclipped;
+
+    blocked = ar__diag_run("#root { display:block; }"
+                           ".box  { display:block; height:100px; overflow:hidden; }"
+                           ".tall { display:block; height:200px; }"
+                           ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                           &node);
+
+    CHECK(blocked == AR_DIAG_STICKY_NEVER_STICKS && node == 3,
+          "diag: sticky under overflow:hidden is reported, and names the box");
+
+    /* The same tree with a scrollport that does scroll. Nothing to report:
+       this one sticks. */
+    scrolls = ar__diag_run("#root { display:block; }"
+                           ".box  { display:block; height:100px; overflow:scroll; }"
+                           ".tall { display:block; height:200px; }"
+                           ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                           &node);
+    CHECK(scrolls == 0, "diag: sticky under a real scrollport is not reported");
+
+    /* And with no clipping ancestor at all, where the viewport is the
+       scrollport. Also nothing to report. */
+    unclipped = ar__diag_run("#root { display:block; }"
+                             ".box  { display:block; height:100px; }"
+                             ".tall { display:block; height:200px; }"
+                             ".stick{ display:block; height:20px; position:sticky; top:0px; }",
+                             &node);
+    CHECK(unclipped == 0, "diag: sticky with no clipping ancestor is not reported");
+
+    CHECK(ar_diag_text(AR_DIAG_STICKY_NEVER_STICKS)[0] != 0 && ar_diag_text(0)[0] == 0,
+          "diag: a code has a sentence, and an unknown code has an empty one");
+}
+
+static void test_a_sticky_box_too_big_to_move_does_not(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".port { display:block; width:200px; height:120px; overflow-x:scroll; }"
+                 ".wide { display:block; width:420px; height:30px;"
+                 "        position:sticky; left:10px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.port");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    ar_frame_presented(g_ui);
+
+    CHECK(ar_node_scroll_range_x(g_ui, 1) == 220, "sticky: the row overflows its port sideways");
+
+    ar_node_scroll_to_x(g_ui, 1, 45);
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.port");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Scrolled like any other content, and not pinned anywhere. */
+    CHECK(ar__box(2).x == -45, "sticky: a box wider than its containing block just scrolls");
+}
+
 static void test_scroll_range_is_the_overflow(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -8933,6 +9224,12 @@ int main(void)
     test_sticky_leaves_with_its_section();
     test_sticky_against_the_viewport();
     test_sticky_with_no_offsets_never_moves();
+    test_a_sticky_box_too_big_to_move_does_not();
+    test_a_sticky_box_that_can_never_stick_is_reported();
+    test_env_falls_back_only_when_nothing_reported_it();
+    test_viewport_fit_moves_the_insets_and_the_viewport_together();
+    test_titlebar_area_is_not_gated_on_viewport_fit();
+    test_env_with_an_unknown_name_takes_its_fallback();
     test_scroll_range_is_the_overflow();
     test_scrolling_moves_the_contents();
     test_scroll_is_clamped();
