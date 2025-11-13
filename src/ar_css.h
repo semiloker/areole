@@ -117,6 +117,47 @@ typedef enum ar_prop
     AR_P_BOX_SIZING,
 
     /*
+     * `overlay`: whether this box is in the top layer.
+     *
+     * A property rather than a magic tag, for two reasons. ar_stack.c decides
+     * paint order by reading n->style.v[...] and nothing else, so a property
+     * costs it one test; and 0.14.2 schedules `overlay` as a *transitionable*
+     * property, so the roadmap is already written against it being one.
+     *
+     * A deviation, named rather than discovered: CSS makes `overlay`
+     * UA-controlled -- a page cannot put itself in the top layer, only
+     * <dialog> and popover can. areole has no UA stylesheet and no elements
+     * yet, so a stylesheet sets it. When 0.9.1's UA sheet lands it sets this
+     * on dialog[open] and nothing here changes.
+     */
+    AR_P_OVERLAY,
+
+    /*
+     * `inert`: this box and its subtree take no pointer input.
+     *
+     * An HTML attribute rather than a CSS property, and areole has no
+     * attributes -- there is no parser and no element type. A property stands
+     * in until 0.9.0, on the same terms as `overlay` above: when the parser
+     * lands, `inert` on an element sets this and nothing here changes.
+     */
+    AR_P_INERT,
+
+    /*
+     * `position-try`, cut down to the part that has stopped moving.
+     *
+     * The full property takes a list of fallback position sets, and
+     * `position-try-fallbacks` is named in tracked-unstable.md as still
+     * changing -- which the 0.6.3 plan schedules anyway, contradicting itself.
+     * The mechanism is what matters and it is stable: if the box would leave
+     * the viewport on an axis, flip it to the anchor's other side. That is
+     * what a popover near an edge needs and it is expressible in one keyword.
+     *
+     * The list grammar stays out until its trigger fires, which is the promise
+     * this project made about moving specifications.
+     */
+    AR_P_POSITION_TRY,
+
+    /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
      * the length of ar_style.v.
@@ -152,6 +193,17 @@ typedef enum ar_prop
        and they cascade as one. Two slots because a colour is a colour. */
     AR_P_SCROLLBAR_THUMB,
     AR_P_SCROLLBAR_TRACK,
+
+    /*
+     * `anchor-name` and `position-anchor`, as hashes of the ident.
+     *
+     * Wide because a hash is thirty-two bits and narrowing one would make two
+     * different names collide silently -- the worst kind of bug this struct
+     * can produce. Nothing ever needs the text back: an anchor is found by
+     * comparing a name to a name, which a hash answers exactly.
+     */
+    AR_P_ANCHOR_NAME,
+    AR_P_POSITION_ANCHOR,
 
     AR_P_COUNT
 } ar_prop;
@@ -241,6 +293,15 @@ typedef enum ar_unit
      * They must stay in AR_ENV_* order: the slot is the offset from
      * AR_UNIT_ENV_FIRST, which is what lets resolution be a table lookup.
      */
+    /*
+     * anchor(side) and anchor-size(dimension).
+     *
+     * A unit for the same reason env() is one: it says where the number comes
+     * from, and the number is not known until the anchor has been laid out.
+     * The value slot carries which edge, so one unit covers all of them.
+     */
+    AR_UNIT_ANCHOR,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -526,6 +587,37 @@ enum
 
 enum
 {
+    /* `overlay`. `none` is the initial value and is zero, so a box says
+       nothing about the top layer unless it says something. */
+    AR_OVERLAY_NONE = 0,
+    AR_OVERLAY_AUTO = 1,
+
+    /*
+     * `modal` is areole's stand-in for what showModal() does: the top layer,
+     * *and* everything outside it made inert. CSS has no such value -- the
+     * modality comes from the element and its method, neither of which exists
+     * here yet. Named as a deviation rather than presented as CSS.
+     */
+    AR_OVERLAY_MODAL = 2,
+
+    AR_INERT_NONE = 0,
+    AR_INERT_AUTO = 1,
+
+    /* `position-try`. Flip on the axis that would leave the viewport. */
+    AR_TRY_NONE = 0,
+    AR_TRY_FLIP_BLOCK = 1,
+    AR_TRY_FLIP_INLINE = 2,
+    AR_TRY_FLIP_BOTH = 3,
+
+    /* Which edge of the anchor an anchor() refers to. */
+    AR_ANCHOR_SIDE_TOP = 0,
+    AR_ANCHOR_SIDE_RIGHT = 1,
+    AR_ANCHOR_SIDE_BOTTOM = 2,
+    AR_ANCHOR_SIDE_LEFT = 3,
+    AR_ANCHOR_SIDE_CENTER = 4,
+    AR_ANCHOR_SIZE_WIDTH = 5,
+    AR_ANCHOR_SIZE_HEIGHT = 6,
+
     AR_ANCHOR_AUTO = 0,
     AR_ANCHOR_NONE
 };
@@ -594,6 +686,14 @@ enum
     AR_STATE_LAST = 1 << 7,
     AR_STATE_ONLY = 1 << 8,
     AR_STATE_EMPTY = 1 << 9,
+
+    /*
+     * Not a selector state: nothing parses `:inert`, and this is written after
+     * the styles are resolved rather than before. It lives in the same word
+     * because the word had six spare bits and a per-box byte would have cost
+     * every box in the interface one.
+     */
+    AR_STATE_INERT = 1 << 10,
 
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
@@ -710,6 +810,18 @@ typedef struct ar_rule
        against everything and the other does not. */
     ar_pset  important;
     ar_style style;
+
+    /*
+     * This rule was written `::backdrop`, so it styles the sheet painted
+     * behind a modal rather than any box in the tree.
+     *
+     * A flag on the rule rather than a pseudo-element in the selector engine,
+     * because there is exactly one pseudo-element and it matches no box: the
+     * backdrop is not in the tree, has no rectangle of its own until a modal
+     * gives it one, and would take a node slot and change every corpus's tree
+     * paths if it were a real box.
+     */
+    ar_u8 backdrop;
 } ar_rule;
 
 /* ------------------------------------------------------------------------
@@ -826,6 +938,18 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
+/*
+ * The style of the backdrop behind one modal.
+ *
+ * Deliberately not cached. The cache key is tag, class, id and state, and
+ * "is this the backdrop" is none of those -- so it would have to join the key
+ * or stay out, and this file says which of those to prefer. There is at most
+ * one backdrop per modal and modals are counted on one hand, so staying out
+ * costs a linear pass nobody will measure.
+ */
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out);
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out);
 

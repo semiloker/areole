@@ -593,6 +593,11 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"bottom", AR_P_BOTTOM},
                                           {"left", AR_P_LEFT},
                                           {"z-index", AR_P_Z_INDEX},
+                                          {"overlay", AR_P_OVERLAY},
+                                          {"inert", AR_P_INERT},
+                                          {"anchor-name", AR_P_ANCHOR_NAME},
+                                          {"position-anchor", AR_P_POSITION_ANCHOR},
+                                          {"position-try", AR_P_POSITION_TRY},
                                           {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
@@ -702,6 +707,18 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
                                      {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
                                      {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+
+                                     {"none", AR_P_OVERLAY, AR_OVERLAY_NONE},
+                                     {"auto", AR_P_OVERLAY, AR_OVERLAY_AUTO},
+                                     {"modal", AR_P_OVERLAY, AR_OVERLAY_MODAL},
+
+                                     {"none", AR_P_INERT, AR_INERT_NONE},
+                                     {"auto", AR_P_INERT, AR_INERT_AUTO},
+
+                                     {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
+                                     {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
+                                     {"flip-inline", AR_P_POSITION_TRY, AR_TRY_FLIP_INLINE},
+                                     {"flip-both", AR_P_POSITION_TRY, AR_TRY_FLIP_BOTH},
 
                                      {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
                                      {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
@@ -976,6 +993,85 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
          * and there is no way to say that here yet. It is in
          * docs/CSS_REFERENCE.md rather than only in this comment.
          */
+        /*
+         * anchor(side) and anchor-size(dimension).
+         *
+         * Parsed here beside env() because they are the same shape: a name
+         * inside parentheses whose value is not known until later. The side
+         * goes in the value slot, so one unit serves all seven forms.
+         */
+        if ((ar__same(name, len, "anchor") || ar__same(name, len, "anchor-size")) &&
+            z->p < z->end && *z->p == '(')
+        {
+            int         size = ar__same(name, len, "anchor-size");
+            const char *sname;
+            ar_u32      slen;
+            ar_i32      side = -1;
+
+            z->p++;
+            ar__skip_ws(z);
+            slen = ar__ident(z, &sname);
+
+            if (size)
+            {
+                if (ar__same(sname, slen, "width"))
+                {
+                    side = AR_ANCHOR_SIZE_WIDTH;
+                }
+                else if (ar__same(sname, slen, "height"))
+                {
+                    side = AR_ANCHOR_SIZE_HEIGHT;
+                }
+            }
+            else if (ar__same(sname, slen, "top"))
+            {
+                side = AR_ANCHOR_SIDE_TOP;
+            }
+            else if (ar__same(sname, slen, "right"))
+            {
+                side = AR_ANCHOR_SIDE_RIGHT;
+            }
+            else if (ar__same(sname, slen, "bottom"))
+            {
+                side = AR_ANCHOR_SIDE_BOTTOM;
+            }
+            else if (ar__same(sname, slen, "left"))
+            {
+                side = AR_ANCHOR_SIDE_LEFT;
+            }
+            else if (ar__same(sname, slen, "center"))
+            {
+                side = AR_ANCHOR_SIDE_CENTER;
+            }
+
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            if (side < 0)
+            {
+                return out; /* a side nothing can resolve */
+            }
+            out.v = side;
+            out.unit = AR_UNIT_ANCHOR;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
+         * A bare custom ident, for the two properties whose value *is* a name.
+         * Hashed on the spot: nothing ever needs the text back, and keeping it
+         * would mean holding a pointer into a stylesheet the caller may free.
+         */
+        if (prop == AR_P_ANCHOR_NAME || prop == AR_P_POSITION_ANCHOR)
+        {
+            out.v = (ar_i32)ar_hash(name, len);
+            out.unit = AR_UNIT_PX;
+            out.ok = 1;
+            return out;
+        }
+
         if (ar__same(name, len, "env") && z->p < z->end && *z->p == '(')
         {
             const char *ename;
@@ -1576,7 +1672,7 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
                               ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
-                              ar_sel_simple *alt, ar_i32 *nalt)
+                              ar_sel_simple *alt, ar_i32 *nalt, ar_u8 *backdrop)
 {
     int any = 0;
 
@@ -1599,6 +1695,29 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
         {
             char mark = *z->p++;
+
+            /*
+             * A second colon is a pseudo-element, and `::backdrop` is the only
+             * one areole has. It is not part of the compound -- it selects
+             * something that is not a box -- so it sets a flag on the rule and
+             * the compound carries on being about the element.
+             */
+            if (mark == ':' && z->p < z->end && *z->p == ':')
+            {
+                z->p++;
+                len = ar__ident(z, &name);
+                if (len == 0 || !ar__same(name, len, "backdrop"))
+                {
+                    return 0; /* a pseudo-element nothing here can paint */
+                }
+                if (backdrop)
+                {
+                    *backdrop = 1;
+                }
+                any = 1;
+                continue;
+            }
+
             len = ar__ident(z, &name);
             if (len == 0)
             {
@@ -1766,7 +1885,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
             return 0; /* deeper than this holds; refused rather than truncated */
         }
         got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity, neg, &nneg,
-                                 alt, &nalt);
+                                 alt, &nalt, &rule->backdrop);
         if (!got)
         {
             return 0; /* a dangling combinator is malformed */
@@ -2187,7 +2306,7 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out)
+                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
 {
     ar_i32 i;
 
@@ -2209,6 +2328,13 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * which is exactly the shape of bug that survives a test suite.
          */
         if (r->nctx > 0)
+        {
+            continue;
+        }
+
+        /* `.dlg::backdrop` says nothing about `.dlg`, and `.dlg` says nothing
+           about its backdrop. One pass answers one of those questions. */
+        if ((int)r->backdrop != want_backdrop)
         {
             continue;
         }
@@ -2412,6 +2538,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     }
 }
 
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out)
+{
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1);
+}
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out)
 {
@@ -2419,7 +2551,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
     if (!sheet->cache_cap)
     {
-        ar__resolve_uncached(sheet, tag, klass, id, state, out);
+        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
         return;
     }
 
@@ -2434,7 +2566,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
         if (!e->used)
         {
-            ar__resolve_uncached(sheet, tag, klass, id, state, out);
+            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
             e->tag = tag;
             e->klass = klass->combined;
             e->id = id;
@@ -2457,6 +2589,6 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
        is slower than evicting something, and simpler than deciding what; an
        interface with that many colliding selectors has not been seen, and if
        one appears the counters say so. */
-    ar__resolve_uncached(sheet, tag, klass, id, state, out);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
     ++sheet->cache_misses;
 }
