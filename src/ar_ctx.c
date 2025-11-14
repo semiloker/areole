@@ -2393,6 +2393,14 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
         clip = ar_rect_intersect(n->clip, region);
 
+        if (!ar_box_paints(n))
+        {
+            /* `continue` would take the fragments and the text with it, which
+               is what is wanted: this box draws nothing. Its children are
+               reached on their own turn and answer for themselves. */
+            continue;
+        }
+
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0)
         {
