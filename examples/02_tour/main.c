@@ -347,6 +347,36 @@ static const char *AR_MIXED = "\xd8\xa7\xd9\x84\xd8\xb3\xd8\xb9\xd8\xb1 1250 "
 /* Latin, for the pages that are about rasterizing rather than about script */
 static const char *AR_LATIN = "Waltz, bad nymph, for quick jigs vex.";
 
+/*
+ * The 0.7.0 page.
+ *
+ * Three tables and one shape between them: the same four cells, laid out three
+ * ways. `.auto` lets the columns take what their contents want, `.fixed` gives
+ * them equal shares whatever the contents want, and `.coll` collapses the
+ * borders so the line between two cells is one line and not two.
+ *
+ * The spanning cell is written with CSS rather than an attribute. colspan and
+ * rowspan are attributes in HTML and there is no parser until 0.9.0, so a
+ * stylesheet is the only place to put one -- which is the whole reason those
+ * two properties cost per-box style bytes.
+ */
+static const char *SHEET_TABLE_A =
+    ".tbl  { display:table; width:260px; margin-bottom:8px; background:#f4f1ec; }"
+    ".fixd { table-layout:fixed; }"
+    ".coll { border-collapse:collapse; }"
+    ".trow { display:table-row; }"
+    ".cap  { display:table-caption; height:16px; font-size:11px; color:#6a6258;"
+    "        background:#e8dfcb; padding:2px 6px; }";
+
+static const char *SHEET_TABLE_B =
+    ".cell { display:table-cell; height:20px; font-size:11px; color:#3a352e;"
+    "        padding:3px 6px; background:#cfd8e3; }"
+    /* Not `.wide`: the scroll page already has one, 900 px and a block, and
+       the later rule would win on both boxes. */
+    ".cspan { colspan:2; background:#b9c8dc; }"
+    ".tall { rowspan:2; background:#c8d6c2; }"
+    ".coll .cell { border:2px #6a6258; }";
+
 /* ------------------------------------------------------------------------
  * Pages
  * ------------------------------------------------------------------------ */
@@ -363,11 +393,12 @@ enum
     PAGE_SCROLL,
     PAGE_SAFE,
     PAGE_LAYER,
+    PAGE_TABLE,
     PAGE_COUNT
 };
 
 static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0", "0.4.0",
-                                           "0.5.0", "0.6.0", "0.6.1", "0.6.2", "0.6.3"};
+                                           "0.5.0", "0.6.0", "0.6.1", "0.6.2", "0.6.3", "0.7.0"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The counters",
@@ -379,7 +410,8 @@ static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "Position and scroll",
                                             "Scrolling",
                                             "Sticky and safe areas",
-                                            "The top layer"};
+                                            "The top layer",
+                                            "Tables"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -392,7 +424,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Absolute, fixed, sticky, z-index, and a list you can scroll.",
     "Both axes, snapping, a styled bar, and the arrow keys.",
     "Pinned from either edge, and the display the backend described.",
-    "Above every stacking context, out of every clip, attached to an anchor."};
+    "Above every stacking context, out of every clip, attached to an anchor.",
+    "A constraint solve, not a tree walk: columns, spans and collapsed lines."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -965,6 +998,72 @@ static void page_layer(ar_ctx *ui)
     ar_text(ui, "div.dead", "inert: auto - hovering this does nothing");
 }
 
+/*
+ * 0.7.0: the first algorithm in this engine that is a solve rather than a walk.
+ *
+ * A column is as wide as its widest cell needs and a row as tall as its tallest
+ * comes to, so no cell can be placed until every cell has been looked at. The
+ * three tables below are the same four cells three ways, which is the only way
+ * to show that the width came from the contents rather than from the stylesheet.
+ */
+static void page_table(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "Automatic: the columns take what the contents want");
+    ar_text(ui, "div.dim",
+            "Nothing here states a column width. The long cell widens its own "
+            "column and the short ones stay short, which is what separates a "
+            "table from a row of boxes -- every cell in a column has a say in "
+            "how wide that column is, and none of them can be placed until all "
+            "of them have been read.");
+    ar_begin(ui, "div.tbl.auto");
+    ar_begin(ui, "div.cap");
+    ar_text(ui, "div.dim", "a caption is in no row and no column");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "a considerably longer cell");
+    ar_text(ui, "div.cell", "short");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "one");
+    ar_text(ui, "div.cell", "two");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Fixed: equal shares, whatever the contents want");
+    ar_text(ui, "div.dim",
+            "The same cells with table-layout: fixed. The columns are settled "
+            "without reading past the first row, which is the only affordable "
+            "option on a very long table and the reason the mode exists.");
+    ar_begin(ui, "div.tbl.fixd");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "a considerably longer cell");
+    ar_text(ui, "div.cell", "short");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "one");
+    ar_text(ui, "div.cell", "two");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Spans, and one line between two cells");
+    ar_text(ui, "div.dim",
+            "The top cell covers two columns and the left one covers two rows. "
+            "Borders are collapsed, so the line between two cells is one line "
+            "as wide as the wider of the two asked for -- not two borders with "
+            "a gap. Both spans are written in CSS: they are HTML attributes, "
+            "and there is no parser until 0.9.0.");
+    ar_begin(ui, "div.tbl.coll");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell.tall", "rowspan 2");
+    ar_text(ui, "div.cell.cspan", "colspan 2");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "b");
+    ar_text(ui, "div.cell", "c");
+    ar_end(ui);
+    ar_end(ui);
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -996,6 +1095,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_LAYER:
         page_layer(ui);
+        break;
+    case PAGE_TABLE:
+        page_table(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1557,6 +1659,8 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_LAYER);
     ar_stylesheet(ui, SHEET_ANCH);
     ar_stylesheet(ui, SHEET_ANCH2);
+    ar_stylesheet(ui, SHEET_TABLE_A);
+    ar_stylesheet(ui, SHEET_TABLE_B);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */

@@ -597,6 +597,118 @@ static const bench_scene SC_ANCHORED_20_OFF = {
     init_anchored_off,
     frame_anchored};
 
+/* ------------------------------------------------------------------------
+ * Real tables, at three sizes and in both layout modes.
+ *
+ * `table_1k_rows` in sc_realistic.c is deliberately left alone: it is a flex
+ * approximation of a table, and its comment says it exists to be the "before"
+ * number for content-visibility at 0.15.1. Re-pointing it at real tables would
+ * have read the criterion literally and destroyed the comparison it was put
+ * there to make. These are new scenes beside it.
+ *
+ * The three sizes are the gate for criterion 5: automatic layout must not be
+ * quadratic in row count, and 100 -> 1,000 -> 10,000 rows must grow no worse
+ * than 1.4x linear. That is a property no correctness test can see -- a
+ * quadratic implementation passes every one of them -- so it has to be a
+ * measurement, and it has to exist before there is any temptation to make the
+ * column loops ask a cell to measure itself.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_TABLE_AUTO =
+    "#root { display:block; background:#ffffff; }"
+    ".tbl { display:table; width:760px; }"
+    ".trow { display:table-row; }"
+    ".cell { display:table-cell; height:16px; padding:1px 4px; background:#fafafa; }";
+
+static const char *const SHEET_TABLE_FIXED =
+    "#root { display:block; background:#ffffff; }"
+    ".tbl { display:table; width:760px; table-layout:fixed; }"
+    ".trow { display:table-row; }"
+    ".cell { display:table-cell; height:16px; padding:1px 4px; background:#fafafa; }";
+
+static ar_i32 g_table_rows = 100;
+
+static void init_table_auto(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_TABLE_AUTO);
+}
+
+static void init_table_fixed(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_TABLE_FIXED);
+}
+
+static void frame_table_grid(bench_env *e)
+{
+    ar_i32 r, c;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    ar_begin(e->ui, "div.tbl");
+    for (r = 0; r < g_table_rows; ++r)
+    {
+        ar_begin(e->ui, "div.trow");
+        for (c = 0; c < 4; ++c)
+        {
+            ar_begin(e->ui, "div.cell");
+            ar_end(e->ui);
+        }
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static void frame_table_100(bench_env *e)
+{
+    g_table_rows = 100;
+    frame_table_grid(e);
+}
+
+static void frame_table_1k(bench_env *e)
+{
+    g_table_rows = 1000;
+    frame_table_grid(e);
+}
+
+static void frame_table_10k(bench_env *e)
+{
+    g_table_rows = 10000;
+    frame_table_grid(e);
+}
+
+static const bench_scene SC_TABLE_AUTO_100 = {
+    "table_auto_100", "layout",       "100 rows x 4 cells, automatic table layout", 800, 600, 1,
+    init_table_auto,  frame_table_100};
+
+static const bench_scene SC_TABLE_AUTO_1K = {"table_auto_1k",
+                                             "layout",
+                                             "1000 rows x 4 cells, automatic -- ten times the rows",
+                                             800,
+                                             600,
+                                             1,
+                                             init_table_auto,
+                                             frame_table_1k};
+
+static const bench_scene SC_TABLE_AUTO_10K = {"table_auto_10k",
+                                              "layout",
+                                              "10000 rows x 4 cells, automatic -- a hundred times",
+                                              800,
+                                              600,
+                                              1,
+                                              init_table_auto,
+                                              frame_table_10k};
+
+static const bench_scene SC_TABLE_FIXED_1K = {"table_fixed_1k",
+                                              "layout",
+                                              "1000 rows x 4 cells, table-layout:fixed, to compare",
+                                              800,
+                                              600,
+                                              1,
+                                              init_table_fixed,
+                                              frame_table_1k};
+
 void bench_register_layout(void)
 {
     bench_register(&SC_FLAT_100);
@@ -614,4 +726,8 @@ void bench_register_layout(void)
     bench_register(&SC_TOP_LAYER_OFF);
     bench_register(&SC_ANCHORED_20);
     bench_register(&SC_ANCHORED_20_OFF);
+    bench_register(&SC_TABLE_AUTO_100);
+    bench_register(&SC_TABLE_AUTO_1K);
+    bench_register(&SC_TABLE_AUTO_10K);
+    bench_register(&SC_TABLE_FIXED_1K);
 }

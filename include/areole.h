@@ -396,12 +396,28 @@ typedef ar_i32 ar_scroll_pos;
    than a larger struct and an invisible one. Measured at 428 of 440 rather
    than guessed, so there are twelve bytes left before this has to move again.
 
+   440 -> 456 for tables. Five properties -- table-layout, border-collapse,
+   border-spacing, colspan and rowspan -- and the sixty-fifth property, which
+   pushed the property mask from two words to three. That last one is the
+   expensive half: the mask is carried by every style, and a style is carried
+   by every box *and* every rule, so widening it cost four bytes in each of
+   two places per box. Measured at 444 of 456, so twelve bytes again.
+
+   colspan and rowspan are HTML attributes rather than CSS, and paying per-box
+   style bytes for them is a real cost of having no attributes yet. The
+   alternative was an ar_span() call writing into a side array, and the price
+   of not taking it is worth stating rather than implying: those two are the
+   sixty-fifth and sixty-sixth properties, so dropping them would have left
+   AR_P_COUNT at 64 -- exactly what two mask words hold. That is 8 bytes of
+   style per box, 8 more per rule across 256 rules, and the whole 8 KB of
+   AR_MEM_FIXED below. It was paid so that a stylesheet can set a span.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 432u
+#define AR_BYTES_PER_BOX 448u
 #else
-#define AR_BYTES_PER_BOX 440u
+#define AR_BYTES_PER_BOX 456u
 #endif
 
 /*
@@ -414,8 +430,14 @@ typedef ar_i32 ar_scroll_pos;
  * is checked by a compile-time assertion against the real structure sizes
  * rather than trusted, which is why this was a build failure and not a
  * corruption.
+ *
+ * 160 KB -> 168 KB for tables, and by two hundred bytes. A rule is 516 bytes
+ * now, so the rule table alone is 129 KB of it; the property mask going from
+ * two words to three is what tipped it over, because a rule carries two of
+ * them -- the properties it sets and the ones it marked important. Measured at
+ * 164,040 of 172,032.
  */
-#define AR_MEM_FIXED  163840u
+#define AR_MEM_FIXED  172032u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */
@@ -816,6 +838,19 @@ ar_i32  ar_node_parent(const ar_ctx *c, ar_i32 i);
 
 /* Which child of its parent this box is, counting from zero. The root is 0. */
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i);
+
+/*
+ * Whether areole made this box up.
+ *
+ * A cell declared straight inside a table needs a row to live in, and the
+ * table model needs a rectangular grid before it can solve anything, so the
+ * missing boxes are generated. They are real boxes with real rectangles and
+ * they are not in the tree the caller described -- which matters to anything
+ * comparing the two, including the layout corpora: a browser's generated boxes
+ * are not elements and never appear in a walk of the DOM, so a comparison that
+ * counted areole's would disagree on every case that has one.
+ */
+int ar_node_generated(const ar_ctx *c, ar_i32 i);
 
 /* The text this box was given, or a pointer to "" if it was given none. The
    caller's own string, not a copy -- areole never copied it. */

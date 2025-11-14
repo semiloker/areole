@@ -252,6 +252,10 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void))
 void ar_stylesheet(ar_ctx *c, const char *css)
 {
     ar_sheet_parse(&c->sheet, css);
+
+    /* Asked once here rather than once per box. Everything tables cost an
+       interface that has none is this flag being zero. */
+    ar_sheet_note_tables(&c->sheet);
 }
 
 ar_u32 ar_stylesheet_errors(const ar_ctx *c)
@@ -628,6 +632,60 @@ static void ar__mark_inert(ar_ctx *c)
     }
 }
 
+/*
+ * Which boxes belong to a table whose borders are collapsed.
+ *
+ * Written before layout rather than after it, unlike inertness, because the
+ * whole geometry of a collapsed table depends on the answer: the cells sit
+ * half a grid line closer together, the table's own border is folded into the
+ * outer lines and stops being drawn, and the intrinsic widths must not count
+ * a border that no longer belongs to the cell.
+ *
+ * The alternative was threading a flag through five helpers and three passes.
+ * A bit on the box says the same thing once, and every one of them can read
+ * it -- including the paint pass, which is on the other side of layout and has
+ * no table in scope at all.
+ *
+ * The walk is short: it only runs for table boxes, and a cell is two or three
+ * levels beneath its table. A stylesheet with no table in it never runs it.
+ */
+static void ar__mark_collapsed(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (!c->sheet.has_collapse)
+    {
+        return;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   d = n->style.v[AR_P_DISPLAY];
+        ar_i32   at;
+
+        /* A caption is deliberately not in this list. It is a table-level box
+           that is in no row and no column, so no grid line runs through it and
+           its own border is its own. */
+        if (d != AR_DISPLAY_TABLE && d != AR_DISPLAY_TABLE_ROW && d != AR_DISPLAY_TABLE_ROW_GROUP &&
+            d != AR_DISPLAY_TABLE_HEADER_GROUP && d != AR_DISPLAY_TABLE_FOOTER_GROUP &&
+            d != AR_DISPLAY_TABLE_CELL)
+        {
+            continue;
+        }
+        for (at = i; at >= 0; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE)
+            {
+                if (c->nodes[at].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
+                {
+                    n->state = (ar_u16)(n->state | AR_STATE_COLLAPSED);
+                }
+                break;
+            }
+        }
+    }
+}
+
 static void ar__diagnose(ar_ctx *c)
 {
     ar_i32 i;
@@ -800,6 +858,25 @@ static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, a
     {
         to = c->nodes[from].prev_sibling;
     }
+
+    /*
+     * Anonymous boxes are invisible to a combinator.
+     *
+     * `tr > td` has to keep matching when the row between them is one areole
+     * generated, or fixing up malformed markup would silently break the very
+     * stylesheet written against that markup -- the author would see a table
+     * appear and its styling vanish, with nothing to point at. So the step is
+     * taken again for as long as it lands on a box nobody declared.
+     *
+     * The same loop serves both directions: a generated row is skipped over
+     * going up, and a generated cell is skipped over going sideways.
+     */
+    while (to >= 0 && (c->nodes[to].state & AR_STATE_ANON))
+    {
+        to = (comb == AR_COMB_CHILD || comb == AR_COMB_DESCENDANT) ? c->nodes[to].parent
+                                                                   : c->nodes[to].prev_sibling;
+    }
+
     if (to < 0)
     {
         return 0;
@@ -1445,6 +1522,15 @@ ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i
     return f->rect;
 }
 
+int ar_node_generated(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return (c->nodes[i].state & AR_STATE_ANON) != 0;
+}
+
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
 {
     ar_i32 parent;
@@ -1665,6 +1751,13 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->frag_first = 0;
     n->frag_count = 0;
     n->rect = ar_rect_make(0, 0, 0, 0);
+    /* A node is reused frame to frame, and a collapsed edge is written only by
+       a table. Without this, a cell that was in a collapsed table one frame
+       kept its four widths into a frame where it was not in one at all. */
+    n->edge[0] = 0;
+    n->edge[1] = 0;
+    n->edge[2] = 0;
+    n->edge[3] = 0;
 
     ar__resolve(c, c->node_count - 1);
 
@@ -1702,9 +1795,255 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     return idx;
 }
 
+/* ------------------------------------------------------------------------
+ * Anonymous table boxes
+ *
+ * CSS requires the missing pieces of a malformed table to be generated: a cell
+ * with no row gets a row, a row with no table gets a table, and content sitting
+ * directly inside a table gets a cell to live in. Real markup is rarely
+ * well-formed and the algorithm has to see a rectangular grid.
+ *
+ * **Generated as the tree is declared, not afterwards**, and that is the design
+ * rather than a detail. Two invariants make the alternative impossible: a
+ * parent must sit at a lower index than its children -- ar_layout.c says so in
+ * its header and five passes rely on it -- and a box's identity is its position
+ * among its siblings, so inserting one mid-array would renumber every following
+ * sibling's key and lose its hover, its scroll offset and its repaint digest.
+ * Building the tree correctly in the first place costs neither.
+ *
+ * An anonymous box stays open after the box that caused it closes, because the
+ * next sibling usually belongs in it too: two bare cells share one row. It is
+ * closed by whichever comes first -- something arriving that cannot live in it,
+ * or the box that contains it closing.
+ * ------------------------------------------------------------------------ */
+static int ar__is_table_container(ar_i32 d)
+{
+    return d == AR_DISPLAY_TABLE || d == AR_DISPLAY_TABLE_ROW_GROUP ||
+           d == AR_DISPLAY_TABLE_HEADER_GROUP || d == AR_DISPLAY_TABLE_FOOTER_GROUP ||
+           d == AR_DISPLAY_TABLE_ROW;
+}
+
+/* Whether `disp` may sit directly inside `pd`. */
+static int ar__parent_ok(ar_i32 disp, ar_i32 pd)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return pd == AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return pd == AR_DISPLAY_TABLE_ROW_GROUP || pd == AR_DISPLAY_TABLE_HEADER_GROUP ||
+               pd == AR_DISPLAY_TABLE_FOOTER_GROUP || pd == AR_DISPLAY_TABLE;
+    case AR_DISPLAY_TABLE_COLUMN:
+        /* A column group is a column's home as much as the table is, and this
+           read only the table -- so `col` inside `colgroup`, which is how
+           almost every table that has columns at all is written, had an
+           anonymous *table* generated around it. */
+        return pd == AR_DISPLAY_TABLE || pd == AR_DISPLAY_TABLE_COLUMN_GROUP;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return pd == AR_DISPLAY_TABLE;
+    default:
+        /* Ordinary content is welcome anywhere except directly inside a table
+           box or a row, where it is a cell's worth of content with no cell. */
+        return !ar__is_table_container(pd);
+    }
+}
+
+/* The box `disp` needs immediately above it. */
+static ar_i32 ar__anon_parent_of(ar_i32 disp)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return AR_DISPLAY_TABLE_ROW_GROUP;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return AR_DISPLAY_TABLE;
+    default:
+        return AR_DISPLAY_TABLE_CELL;
+    }
+}
+
+static ar_i32 ar__open_display(const ar_ctx *c)
+{
+    if (c->depth <= 0 || c->stack[c->depth - 1] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 1]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * The display a selector would resolve to, asked before the box exists.
+ *
+ * State is taken as zero, because a box's state comes from its key and its key
+ * comes from the parent this call is trying to choose. So a rule that switches
+ * `display` to or from a table value on :hover will not regenerate the
+ * anonymous boxes around it. Named here rather than discovered later.
+ */
+static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
+{
+    ar_u32     tag = 0, id = 0;
+    ar_classes klass;
+    ar_style   st;
+
+    ar_classes_clear(&klass);
+    ar_selector_split(selector, &tag, &klass, &id);
+    ar_sheet_resolve(&c->sheet, tag, &klass, id, AR_STATE_NONE, &st);
+    return st.v[AR_P_DISPLAY];
+}
+
+static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
+{
+    ar_i32 idx = ar__push_node(c, "", 0);
+
+    if (idx < 0 || c->depth >= AR_MAX_DEPTH)
+    {
+        return -1;
+    }
+    c->nodes[idx].style.v[AR_P_DISPLAY] = (ar_i16)display;
+    c->nodes[idx].state = (ar_u16)(c->nodes[idx].state | AR_STATE_ANON);
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 1;
+    c->depth++;
+    return idx;
+}
+
+/* Closes anonymous boxes that cannot hold what is about to be declared. */
+/* The display of the box one level above the one that is open, or -1. */
+static ar_i32 ar__outer_display(const ar_ctx *c)
+{
+    if (c->depth <= 1 || c->stack[c->depth - 2] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 2]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * How many boxes would have to be invented to put `disp` inside `pd`.
+ *
+ * Four is the whole ladder -- cell, row, row group, table -- and the chain
+ * cycles if it is followed past that, so the count is bounded rather than
+ * trusted to terminate.
+ */
+static int ar__anon_cost(ar_i32 disp, ar_i32 pd)
+{
+    ar_i32 d = disp;
+    int    n = 0;
+
+    if (pd < 0)
+    {
+        return 99;
+    }
+    while (n <= 4)
+    {
+        if (ar__parent_ok(d, pd))
+        {
+            return n;
+        }
+        d = ar__anon_parent_of(d);
+        ++n;
+    }
+    return 99;
+}
+
+/*
+ * Close the anonymous boxes this one does not belong in.
+ *
+ * The old test was whether `disp` fits directly, which closed too much: a
+ * block written straight after a cell needs a cell of its own, and a cell
+ * belongs in the row the first cell was given -- but a block does not fit in a
+ * row, so the row was closed and a second one opened, putting two boxes that
+ * belong side by side on separate lines.
+ *
+ * The question is not whether `disp` fits here, but whether closing this box
+ * would mean inventing fewer. A row written after a bare cell fits the table
+ * directly, so the generated row closes and it becomes its sibling; a block
+ * written after a bare cell needs a cell either way, and needs a row as well
+ * if the generated one is closed, so the generated one stays open.
+ */
+static void ar__close_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    while (c->depth > 0 && c->is_anon[c->depth - 1] &&
+           ar__anon_cost(disp, ar__outer_display(c)) < ar__anon_cost(disp, ar__open_display(c)))
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
+}
+
+/*
+ * Opens whatever `disp` needs above it, outermost first.
+ *
+ * The chain is collected innermost-first and pushed in reverse, because the
+ * outer box has to exist before the one inside it can be its child. Getting
+ * that backwards puts the row inside the cell.
+ */
+static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    ar_i32 chain[4];
+    ar_i32 n = 0, i, d = disp;
+
+    /*
+     * Never at the document root.
+     *
+     * An anonymous table pushed with nothing open would become node 0 and take
+     * AR_STATE_ROOT with it, moving `:root` off the caller's box and rooting
+     * the paint walk at a box nobody declared. A `<tr>` on its own is not a
+     * document, and refusing is better than rehoming the root.
+     */
+    if (c->depth <= 0)
+    {
+        return;
+    }
+
+    while (n < 4)
+    {
+        ar_i32 pd = ar__open_display(c);
+
+        if (pd < 0 || ar__parent_ok(d, pd))
+        {
+            break;
+        }
+        chain[n++] = ar__anon_parent_of(d);
+        d = chain[n - 1];
+    }
+
+    for (i = n - 1; i >= 0; --i)
+    {
+        if (ar__push_anon(c, chain[i]) < 0)
+        {
+            return;
+        }
+    }
+}
+
 void ar_begin(ar_ctx *c, const char *selector)
 {
-    ar_i32 idx = ar__push_node(c, selector, 0);
+    ar_i32 idx;
+
+    /* A sheet that never mentions a table cannot need an anonymous one, and
+       almost no sheet does -- so this is the entire cost of tables to an
+       interface without any. */
+    if (c->sheet.has_table)
+    {
+        ar_i32 disp = ar__peek_display(c, selector);
+
+        ar__close_anon_for(c, disp);
+        ar__open_anon_for(c, disp);
+    }
+
+    idx = ar__push_node(c, selector, 0);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -1718,14 +2057,25 @@ void ar_begin(ar_ctx *c, const char *selector)
            the matching ar_end still balances and the subtree collapses into
            its parent instead of corrupting the stack. */
         c->stack[c->depth] = c->depth > 0 ? c->stack[c->depth - 1] : -1;
+        c->is_anon[c->depth] = 0;
         c->depth++;
         return;
     }
-    c->stack[c->depth++] = idx;
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 0;
+    c->depth++;
 }
 
 void ar_end(ar_ctx *c)
 {
+    /* Anonymous boxes sitting on top close with the box that contains them.
+       They are not closed by whichever box caused them, because the next
+       sibling usually belongs in the same one. */
+    while (c->depth > 0 && c->is_anon[c->depth - 1])
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
     if (c->depth <= 0)
     {
         c->unbalanced = 1;
@@ -2051,7 +2401,40 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
         bw = n->style.v[AR_P_BORDER_WIDTH];
         border = (ar_color)AR_WIDE(&n->style, AR_P_BORDER_COLOR);
-        if (bw > 0 && AR_ALPHA_OF(border) != 0)
+        if (n->state & AR_STATE_COLLAPSED)
+        {
+            /*
+             * A collapsed grid line is one line with two neighbours, and each
+             * of them owns a share of it that the solve worked out -- so the
+             * four sides are four different widths here and none of them is
+             * this box's `border-width`. A collapsed table's own box and its
+             * rows come through with all four at zero, which is how their
+             * borders come to be drawn by the cells instead of twice.
+             */
+            if (AR_ALPHA_OF(border) != 0)
+            {
+                ar_rect r = n->rect;
+                ar_i32  t = n->edge[0], ri = n->edge[1], b = n->edge[2], l = n->edge[3];
+
+                if (t > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
+                }
+                if (b > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
+                }
+                if (l > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
+                }
+                if (ri > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
+                }
+            }
+        }
+        else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
             ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
@@ -2960,6 +3343,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* :last-child, :only-child and :empty could not be answered while the tree
        was being built. This is the first moment they can be. */
     ar__resolve_late(c);
+    ar__mark_collapsed(c);
 
     /* Style resolution happened during tree building, between frame_begin and
        here, so closing that phase now attributes it correctly. */

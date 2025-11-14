@@ -108,7 +108,7 @@ state no size of their own.
 
 | Property | Values |
 | --- | --- |
-| `display` | `flex`, `block`, `inline-block`, `inline`, `none` |
+| `display` | `flex`, `block`, `inline-block`, `inline`, `none`, and the nine table values below |
 | `position` | `static`, `relative`, `absolute`, `fixed`, `sticky` |
 | `top` `right` `bottom` `left` | length |
 | `z-index` | integer |
@@ -121,6 +121,58 @@ state no size of their own.
 `box-sizing` defaults to `content-box`, as CSS says. areole used to treat a
 stated size as the border box, which put it 18 px from a browser on a padded
 box.
+
+### Tables
+
+| Property | Values |
+| --- | --- |
+| `display` | `table`, `table-row-group`, `table-header-group`, `table-footer-group`, `table-row`, `table-cell`, `table-column-group`, `table-column`, `table-caption` |
+| `table-layout` | `auto`, `fixed` |
+| `border-collapse` | `separate`, `collapse` |
+| `border-spacing` | length — separate model only |
+| `colspan` `rowspan` | integer, at least 1 |
+
+`colspan` and `rowspan` are **properties here, not attributes**. They are
+attributes in HTML and there is no parser until 0.9.0, so a stylesheet is the
+only place a span can be written — which is why they cost per-box style bytes
+that `include/areole.h` accounts for beside the memory budget.
+
+**The missing boxes are generated.** A cell written straight inside a table
+gets a row to live in, a row with no table gets one, and ordinary content
+beside a cell gets a cell of its own — the algorithm needs a rectangular grid
+and real markup rarely provides one. Those boxes are real nodes: they consume
+the node budget, so `AR_MEM(n)` stops meaning "n calls to `ar_begin`", and
+`ar_node_generated` tells you which is which. A combinator sees through them,
+so `.row > .cell` keeps matching across a row areole invented.
+
+The display of a box is resolved before the box exists, so a rule that switches
+`display` to or from a table value on `:hover` **will not regenerate the
+anonymous boxes**. Write the table values unconditionally and change something
+else on hover.
+
+**`tfoot` is drawn last** wherever it is written, and `thead` first. Document
+order is not row order.
+
+**A table with no stated width is as wide as its contents**, unlike every other
+block box, which fills what it is offered.
+
+**Surplus width goes to the columns that did not state one.** When every column
+has stated a width, it is shared out in proportion to what each asked for.
+
+**Collapsed borders resolve by width and then by origin** — cell, then row,
+then row group, then table. CSS resolves `border-style` first; this engine has
+one uniform `border-width` per box and no `border-style`, so there is nothing
+for that step to resolve. In the collapsed model a table, its rows and its row
+groups draw no border of their own: theirs is folded into the grid lines the
+cells now carry, and a line is split between the two boxes that meet on it,
+the left or upper one taking the larger half.
+
+One difference from a browser worth knowing before you measure against one: a
+browser's collapsed table has a **used border of half the outer line**, so its
+border box is wider than its stated width and its content starts inside it.
+areole reserves no space for any border anywhere, so the table's box stays at
+its stated width and the grid starts at its corner. Every cell size agrees;
+every offset is short by that half.
 
 ### Overflow and scrolling
 
@@ -303,7 +355,12 @@ Named so that their absence is a decision rather than an oversight:
 - attribute selectors, pseudo-elements, `:nth-child(an+b)`
 - writing modes and logical properties, so no `-inline` or `-block` longhands
 - `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
-- grid, tables
+- grid
+- `border-style`, and per-side border widths — so a collapsed border resolves by
+  width and origin and not by style
+- `caption-side`, `empty-cells`, `visibility: collapse`, and `col`/`colgroup`
+  contributing width — 0.7.1
+- table fragmentation across pages or columns
 - `env()` names beyond safe-area and titlebar — nothing can supply them
 - `<dialog>`, `popover`, `popovertarget` — HTML, and there is no parser yet
 - focus of any kind, so no focus trap, no `autofocus`, no Escape to dismiss
