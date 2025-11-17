@@ -26,6 +26,35 @@ typedef enum ar_prop
     AR_P_ALIGN,
     AR_P_GAP,
 
+    /* ------------------------------------------------------------------
+     * 0.8.0: the rest of flexbox
+     *
+     * areole shipped a subset -- direction, gap, justify, align and a `grow`
+     * keyword that is not CSS. That was the right subset to start with and it
+     * is not flexbox: anything written against real CSS uses these.
+     * ------------------------------------------------------------------ */
+    AR_P_FLEX_WRAP,
+    AR_P_FLEX_BASIS,
+
+    /*
+     * The two factors, in thousandths.
+     *
+     * `flex-grow: 2.5` is a real declaration and there is no floating point in
+     * this engine, so the value carried is 2500. Thousandths rather than
+     * hundredths because `flex: 1 1 0` against `flex-grow: 0.001` is a ratio
+     * somebody writes on purpose, and because the resolution loop divides by
+     * the sum of the factors -- a coarse unit there is a visible pixel.
+     */
+    AR_P_FLEX_GROW,
+    AR_P_FLEX_SHRINK,
+
+    AR_P_ALIGN_SELF,
+    AR_P_ALIGN_CONTENT,
+
+    /* Signed: `order: -1` is how a box is moved to the front without being
+       moved in the markup, which is the whole reason the property exists. */
+    AR_P_ORDER,
+
     AR_P_PAD_TOP,
     AR_P_PAD_RIGHT,
     AR_P_PAD_BOTTOM,
@@ -183,6 +212,49 @@ typedef enum ar_prop
     AR_P_CAPTION_SIDE,
     AR_P_EMPTY_CELLS,
 
+    /* ------------------------------------------------------------------
+     * 0.8.0: grid
+     *
+     * A track list is not a value. `grid-template-columns: repeat(3, minmax(
+     * 100px, 1fr))` is nine numbers and three kinds, and a style here is one
+     * sixteen-bit slot per property -- so what the slot holds is an *index*
+     * into a pool of tracks on the stylesheet, and the pool entry it points at
+     * is a header carrying the count.
+     *
+     * The pool is on the sheet rather than the node because a track list comes
+     * from a rule and never from a computation: it is parsed once when the
+     * stylesheet is handed over and read every frame after that. Nothing about
+     * it is per-box, and putting it per-box would have cost every box in the
+     * interface a pointer for the sake of the handful that are grids.
+     * ------------------------------------------------------------------ */
+    AR_P_GRID_COLS,
+    AR_P_GRID_ROWS,
+    AR_P_GRID_AUTO_COLS,
+    AR_P_GRID_AUTO_ROWS,
+    AR_P_GRID_FLOW,
+
+    /*
+     * Where an item sits, as line numbers.
+     *
+     * Zero means `auto` -- CSS has no line zero, lines are numbered from one,
+     * so zero is free to mean "the placement algorithm decides". A span is
+     * carried as a negative: `span 2` is -2, which is unambiguous because a
+     * negative line number in CSS counts from the end and areole does not do
+     * that yet. Named here as the shortcut it is.
+     */
+    AR_P_GRID_COL_START,
+    AR_P_GRID_COL_END,
+    AR_P_GRID_ROW_START,
+    AR_P_GRID_ROW_END,
+
+    AR_P_JUSTIFY_ITEMS,
+    AR_P_JUSTIFY_SELF,
+
+    /* `gap` sets both; these are the two halves. Flex only ever used one, and
+       a grid has two axes to put space between. */
+    AR_P_ROW_GAP,
+    AR_P_COL_GAP,
+
     /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
@@ -279,6 +351,24 @@ typedef enum ar_unit
     AR_UNIT_PCT,  /* per cent of the parent inner box */
     AR_UNIT_AUTO, /* size to content                  */
     AR_UNIT_GROW, /* take a share of the leftover     */
+    /*
+     * A bare number, carried in thousandths.
+     *
+     * Only the flex factors use it. Every other number in CSS that is not a
+     * length is a keyword, and giving those a unit of their own would mean
+     * every reader of every property checking for it.
+     */
+    AR_UNIT_NUMBER,
+    /* `flex-basis: content` -- size from the contents, which is not the same
+       as `auto`: `auto` defers to `width`, and `content` ignores it. */
+    AR_UNIT_CONTENT,
+    /*
+     * `1fr` -- a share of what is left over, and the only unit in CSS whose
+     * value depends on every other value beside it. Carried in thousandths
+     * like the flex factors, and for the same reason: `0.5fr` is a
+     * declaration people write.
+     */
+    AR_UNIT_FR,
     AR_UNIT_KEYWORD,
     AR_UNIT_COLOR,
 
@@ -442,6 +532,10 @@ enum
     AR_DISPLAY_TABLE_COLUMN,
     AR_DISPLAY_TABLE_CAPTION,
 
+    /* After every table value, so the contiguous internal range above stays
+       contiguous -- that range is compared as a range in three places. */
+    AR_DISPLAY_GRID,
+
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };
@@ -573,7 +667,16 @@ enum
     AR_JUSTIFY_START = 0,
     AR_JUSTIFY_CENTER,
     AR_JUSTIFY_END,
-    AR_JUSTIFY_BETWEEN
+    AR_JUSTIFY_BETWEEN,
+    /*
+     * `around` gives every item a half gap at each end, so the space at the
+     * edges is half the space between two items. `evenly` makes all of them
+     * equal. They look alike in a mock-up and differ by exactly one half-gap
+     * at each edge, which is the difference somebody eventually files a bug
+     * about.
+     */
+    AR_JUSTIFY_AROUND,
+    AR_JUSTIFY_EVENLY
 };
 
 enum
@@ -581,7 +684,39 @@ enum
     AR_ALIGN_START = 0,
     AR_ALIGN_CENTER,
     AR_ALIGN_END,
-    AR_ALIGN_STRETCH
+    AR_ALIGN_STRETCH,
+    /* `baseline` aligns the first lines of the items rather than their boxes,
+       which is what makes a row of labels of different sizes read as one line
+       of text rather than as boxes that happen to be near each other. */
+    AR_ALIGN_BASELINE,
+
+    /* Only on `align-self`, and its initial value: defer to the container's
+       `align-items`. Kept in the same enum so one switch serves both. */
+    AR_ALIGN_AUTO,
+
+    /* Only on `align-content`, which distributes the *lines* of a wrapped
+       container and therefore has the justify vocabulary as well. */
+    AR_ALIGN_BETWEEN,
+    AR_ALIGN_AROUND,
+    AR_ALIGN_EVENLY
+};
+
+enum
+{
+    AR_GRID_FLOW_ROW = 0,
+    AR_GRID_FLOW_COLUMN = 1,
+    /* A bit rather than a third value: `grid-auto-flow: column dense` is two
+       words and means both, so they cannot share a slot as alternatives. */
+    AR_GRID_FLOW_DENSE = 2
+};
+
+enum
+{
+    AR_WRAP_NOWRAP = 0,
+    AR_WRAP_WRAP,
+    /* The lines are stacked from the far edge instead of the near one. The
+       items inside each line keep their order; only the lines reverse. */
+    AR_WRAP_WRAP_REVERSE
 };
 
 enum
@@ -809,6 +944,18 @@ enum
      */
     AR_STATE_COLLAPSED = 1 << 12,
 
+    /*
+     * This flex item's main size is settled and the resolution loop must not
+     * move it again.
+     *
+     * Not a selector state, and not durable: it lives for the length of one
+     * call to the flex solver. It is a bit rather than an array because the
+     * loop needs one flag per item and this engine has no array to put it in
+     * -- the alternative was a field on every box in the interface for the
+     * sake of the handful that are flex items at any moment.
+     */
+    AR_STATE_FLEX_FROZEN = 1 << 13,
+
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
@@ -977,11 +1124,41 @@ typedef struct ar_cache_entry
     ar_style style;
 } ar_cache_entry;
 
+/*
+ * One track of a grid template.
+ *
+ * Every track is a range, because that is what the sizing algorithm works in:
+ * `100px` is minmax(100px, 100px), `auto` is minmax(min-content, max-content),
+ * `1fr` is minmax(auto, 1fr). Storing them all as a pair means the algorithm
+ * has one shape to handle rather than seven, and the parser is the only place
+ * that knows there was ever a shorthand.
+ */
+typedef struct ar_track
+{
+    ar_i16 min_v;
+    ar_i16 max_v;
+    ar_u8  min_u;
+    ar_u8  max_u;
+} ar_track;
+
+/* A pool entry that is a header rather than a track: `min_v` is how many
+   tracks follow it. Index 0 is never a header, so zero means "no list". */
+#define AR_TRACK_POOL 512
+
 typedef struct ar_sheet
 {
     ar_rule *rules;
     ar_u16   count;
     ar_u16   capacity;
+
+    /* Every track list every rule in this sheet declared, laid end to end.
+       See the comment beside AR_P_GRID_COLS. */
+    ar_track *tracks;
+    ar_u16    track_count;
+    ar_u16    track_cap;
+    /* Whether any rule says `display: grid`, on the same terms as has_table:
+       a sheet without one never runs the grid pass. */
+    int has_grid;
 
     /* Dropped wholesale whenever a stylesheet is added, which is the only
        thing that can invalidate it. Adding a stylesheet is a startup
@@ -1052,8 +1229,13 @@ void ar_style_inherit(ar_style *child, const ar_style *parent);
 
 /* Non-zero if this property inherits. One table, so adding a property to the
    list is a one-line change and cannot disagree with itself. */
-int  ar_prop_inherits(ar_i32 prop);
-void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
+int ar_prop_inherits(ar_i32 prop);
+
+/* The track list a template property points at, and how many tracks it holds.
+   Returns NULL when the property said nothing. */
+const ar_track *ar_sheet_tracks(const ar_sheet *sheet, ar_i32 index, ar_i32 *out_count);
+void            ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity);
+void            ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);

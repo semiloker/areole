@@ -407,6 +407,31 @@ static const char *SHEET_T71_B =
     ".rgone { visibility:collapse; }"
     ".cgone { visibility:collapse; }";
 
+/*
+ * The 0.8.0 page.
+ *
+ * Three flex rows that only a real solver gets right, and one grid.
+ *
+ * `.f3` and `.f1` are the ratio a factor names -- three shares against one --
+ * where the old subset divided by the *number* of growers and made them equal.
+ * `.capped` is the loop: three items sharing the row, one of them stopped by a
+ * maximum, and the space it cannot take going to the other two.
+ */
+static const char *SHEET_F80_A =
+    ".fbar  { display:flex; flex-direction:row; width:420px; gap:4px;"
+    "         margin-bottom:8px; }"
+    ".fit   { height:22px; font-size:11px; color:#3a352e; padding:3px 6px;"
+    "         background:#cfd8e3; flex-basis:0px; flex-grow:1; }"
+    ".f3    { flex-grow:3; background:#b9c8dc; }"
+    ".capped { max-width:60px; background:#c8d6c2; }";
+
+static const char *SHEET_F80_B =
+    ".grid  { display:grid; width:420px; grid-template-columns: 120px 1fr 2fr;"
+    "         gap:6px; margin-bottom:8px; }"
+    ".gcell { height:24px; font-size:11px; color:#3a352e; padding:3px 6px;"
+    "         background:#cfd8e3; }"
+    ".gwide { grid-column: span 2; background:#b9c8dc; }";
+
 /* ------------------------------------------------------------------------
  * Pages
  * ------------------------------------------------------------------------ */
@@ -425,12 +450,13 @@ enum
     PAGE_LAYER,
     PAGE_TABLE,
     PAGE_TABLE2,
+    PAGE_FLEXGRID,
     PAGE_COUNT
 };
 
 static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
                                            "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2",
-                                           "0.6.3", "0.7.0", "0.7.1"};
+                                           "0.6.3", "0.7.0", "0.7.1", "0.8.0"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The counters",
@@ -444,7 +470,8 @@ static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "Sticky and safe areas",
                                             "The top layer",
                                             "Tables",
-                                            "Tables that behave"};
+                                            "Tables that behave",
+                                            "Flex and grid"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -459,7 +486,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Pinned from either edge, and the display the backend described.",
     "Above every stacking context, out of every clip, attached to an anchor.",
     "A constraint solve, not a tree walk: columns, spans and collapsed lines.",
-    "A header that stays, a column that stays, and a row that is not there."};
+    "A header that stays, a column that stays, and a row that is not there.",
+    "A ratio rather than a count, a maximum that redistributes, and fr."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -1173,6 +1201,56 @@ static void page_table2(ar_ctx *ui)
     ar_end(ui);
 }
 
+/*
+ * 0.8.0: the two things a subset could not do.
+ *
+ * A flex factor is a ratio and not a flag, and a maximum makes the whole
+ * distribution a loop rather than a division. Both are visible here: the first
+ * row is three-to-one, the second has an item that stops and gives its share
+ * back to the others.
+ */
+static void page_flexgrid(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "A factor is a ratio");
+    ar_text(ui, "div.dim",
+            "The first box says flex-grow: 3 and the other two say 1, so it "
+            "takes three of the five shares. The subset areole shipped with "
+            "divided the leftover by the *number* of growing boxes, which made "
+            "all three the same width and read the factor as a flag.");
+    ar_begin(ui, "div.fbar");
+    ar_text(ui, "div.fit.f3", "grow 3");
+    ar_text(ui, "div.fit", "grow 1");
+    ar_text(ui, "div.fit", "grow 1");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A maximum makes it a loop");
+    ar_text(ui, "div.dim",
+            "The middle box has a max-width it reaches before its share runs "
+            "out, so it stops -- and what it could not take goes to the other "
+            "two rather than being left on the floor. One division never "
+            "revisits that, which is why the specification writes this step as "
+            "a loop and why areole now runs one.");
+    ar_begin(ui, "div.fbar");
+    ar_text(ui, "div.fit", "takes more");
+    ar_text(ui, "div.fit.capped", "capped");
+    ar_text(ui, "div.fit", "takes more");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Two dimensions at once");
+    ar_text(ui, "div.dim",
+            "A grid of 120px, 1fr and 2fr. The first column is what it says; "
+            "the other two share what is left in the ratio they name. The "
+            "columns line up down the whole grid, which is the thing nested "
+            "flex rows cannot do -- and the wide cell spans two of them.");
+    ar_begin(ui, "div.grid");
+    ar_text(ui, "div.gcell", "120px");
+    ar_text(ui, "div.gcell", "1fr");
+    ar_text(ui, "div.gcell", "2fr");
+    ar_text(ui, "div.gcell", "a");
+    ar_text(ui, "div.gcell.gwide", "span 2");
+    ar_end(ui);
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -1210,6 +1288,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_TABLE2:
         page_table2(ui);
+        break;
+    case PAGE_FLEXGRID:
+        page_flexgrid(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1775,6 +1856,8 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_TABLE_B);
     ar_stylesheet(ui, SHEET_T71_A);
     ar_stylesheet(ui, SHEET_T71_B);
+    ar_stylesheet(ui, SHEET_F80_A);
+    ar_stylesheet(ui, SHEET_F80_B);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */
