@@ -609,9 +609,17 @@ ar_i32 ar_grid_content_height(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, a
 /* Both defined in ar_layout.c, which owns the sizing rules; the flex solver
    is the second caller and the reason they stopped being static. */
 ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch);
-void   ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
-void   ar_table_align_cell(ar_node *nodes, ar_i32 i);
-int    ar_is_table_cell(const ar_node *n);
+
+/* min-content, max-content and fit-content on any size property. Returns 0
+   when the property is not one of them, leaving *out untouched. */
+int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 available, ar_i32 *out);
+
+/* Give a box the axis it did not state, from the one it did and its ratio.
+   Does nothing when there is no ratio, or when both axes were stated. */
+void ar_apply_ratio(ar_node *n);
+void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
+void ar_table_align_cell(ar_node *nodes, ar_i32 i);
+int  ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
    they give the table box. No width exists yet, so nothing is placed. */
