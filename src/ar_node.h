@@ -144,6 +144,25 @@ typedef struct ar_node
        that on every frame it is queried. */
     ar_i32 content_w;
 
+    /*
+     * The inner width this box's height was last settled at, or -1.
+     *
+     * Heights sweep up while widths sweep down, so a box that stacks
+     * other boxes cannot know how tall it is until its own width is
+     * known -- and its parent needs that height to place whatever comes
+     * after it. The answer is to lay the subtree out early, from
+     * ar_wrap_height, and this is what stops that costing 2^depth: the
+     * parent's stack measures a child, the forward sweep then places the
+     * same child for real, and without a memo each of those two visits
+     * would measure the whole subtree again.
+     *
+     * Paired with `content_h`, which is the height that was arrived at.
+     * Two fields would not fit -- ar_node has exactly four bytes of
+     * headroom against AR_BYTES_PER_BOX -- and `content_h` is already
+     * that number, so only the width it was true for is new.
+     */
+    ar_i32 measured_w;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;
@@ -214,6 +233,10 @@ ar_u32  ar_paint_digest(const ar_node *n);
 struct ar_ctx
 {
     ar_arena arena;
+
+    /* What the caller reserved for a parsed document at init, so
+       ar_html_parse_into does not have to be told twice. */
+    ar_u32   doc_budget;
     ar_sheet sheet;
 
     /* What the backend has said about the display it is drawing on: the
@@ -306,6 +329,29 @@ struct ar_ctx
     ar_u32 active;    /* key of the box the press started on     */
     ar_u32 clicked;   /* key of the box released on this frame   */
     int    hot_changed;
+
+    /*
+     * The hot box's ancestors, by key, innermost first -- and the whole reason
+     * `:hover` works on a document at all.
+     *
+     * CSS says an element matches `:hover` while the pointer is over it *or
+     * over a descendant of it*, and the hit test finds exactly one box: the
+     * topmost. For a hand-declared tree those are usually the same box, which
+     * is why this was never missed. For a parsed document they never are:
+     * `ar_dom_build` gives every element's text a child of its own, so the
+     * box under the cursor is always that child and the element carrying the
+     * `:hover` rule is always its parent. Hovering anything in an HTML page
+     * did nothing whatsoever.
+     *
+     * Keys rather than indices because state is resolved in `ar_begin`, while
+     * the tree is still being built, and this frame's indices do not exist
+     * yet. The chain is a path from a box to the root, so it is at most as
+     * long as the tree is deep and usually about eight.
+     */
+    ar_u32 hot_chain[AR_MAX_DEPTH];
+    ar_i32 hot_chain_n;
+    ar_u32 active_chain[AR_MAX_DEPTH];
+    ar_i32 active_chain_n;
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame
@@ -678,6 +724,9 @@ ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free);
 void   ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 
+/* Places a flex container whose cross size is whatever its lines come to. */
+void ar_flex_place_auto(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
 /* ------------------------------------------------------------------------
  * The grid formatting context, in ar_layout_grid.c
  *
@@ -697,10 +746,19 @@ int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 availab
 
 /* Give a box the axis it did not state, from the one it did and its ratio.
    Does nothing when there is no ratio, or when both axes were stated. */
-void ar_apply_ratio(ar_node *n);
+void ar_apply_ratio(ar_node *n, int w_definite);
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
-void ar_table_align_cell(ar_node *nodes, ar_i32 i);
-int  ar_is_table_cell(const ar_node *n);
+
+/*
+ * What a box's contents come to at a width, in the units fit[1] is in.
+ *
+ * For the sizing algorithms that have to know how tall an item will be
+ * before they can decide the track, row or line it sits in. A measurement
+ * only: the box is left needing to be placed again, and saying so.
+ */
+ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env);
+void   ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n);
+int    ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
    they give the table box. No width exists yet, so nothing is placed. */
@@ -737,13 +795,40 @@ void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
 
 /* Flips an anchored box to the anchor's other side when it left the viewport.
    After placement, because it is a reaction to where the box ended up. */
-void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport);
+/*
+ * Move one box and the fragments it was cut into. The only way to move a box:
+ * a split inline is painted from its fragments' own rectangles, so touching
+ * `rect` alone moves everything that reads a rectangle and nothing that is
+ * drawn.
+ */
+void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy);
 
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
-void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
+/* The same, for the box and everything beneath it. */
+void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
+                      ar_i32 dy);
+
+/*
+ * Move a box to the rectangle just written into it, taking its subtree along.
+ *
+ * `was` is where the box stood before the caller assigned its new position.
+ * Every algorithm that positions a box -- block flow, a grid track, a flex
+ * line, a table row -- must call this after writing the rectangle. A box whose
+ * contents were already laid out is *moved*, never repositioned; assigning
+ * without this leaves everything inside it where it was, which is a page with
+ * every rectangle correct and all of its text in the top-left corner.
+ *
+ * Does nothing for a box with no settled subtree, so it is always safe to call
+ * and never needs a condition at the call site.
+ */
+void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was);
+
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
+
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
+void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 int  ar_is_sticky(const ar_node *n);
-void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport);
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 /* ------------------------------------------------------------------------
  * Floats -- ar_layout_float.c

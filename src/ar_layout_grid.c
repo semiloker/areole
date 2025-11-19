@@ -623,6 +623,18 @@ static ar_i32 ar__item_contribution(const ar_node *n, ar_i32 axis, int minimum)
     v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
     prop = ar_axis_size_prop(axis);
 
+    /*
+     * A ratio is a contribution too, and on the row axis it is often the only
+     * one there is: a tile with `aspect-ratio: 3 / 2` and nothing in it has no
+     * content height at all. `rect.h` holds what the ratio came to, worked out
+     * above once the column pass had settled the width.
+     */
+    if (axis == 1 && n->style.v[AR_P_ASPECT_RATIO] > 0 &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->rect.h > v)
+    {
+        v = n->rect.h;
+    }
+
     if (n->style.unit[prop] == AR_UNIT_PX)
     {
         ar_i32 stated = ar_used_size(n, axis, n->style.v[prop]);
@@ -1292,7 +1304,48 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
         {
             it->rect.w = it->min_w;
         }
+        /*
+         * The width is definite now, so the ratio can settle the height -- and
+         * it has to happen here, before the rows are solved, because an auto
+         * row sizes itself from what its items contribute and a ratio is the
+         * only contribution an empty tile has.
+         *
+         * `ar_apply_ratio` is told the width is definite. It normally fires
+         * only when the author stated exactly one axis, and a grid item states
+         * neither: its width came from the track. That is still a *definite*
+         * size in CSS's sense, which is the word the rule is written in.
+         */
+        ar_apply_ratio(it, 1);
         ar_wrap_height(nodes, it, 1, 0, env);
+
+        /*
+         * And what the item's contents come to at that column width, which is
+         * what the row has to be sized from.
+         *
+         * ar_wrap_height will not answer for an item that is going to be
+         * stretched -- it is about to be told its height, so measuring its
+         * content would be measuring something it is not going to keep. That
+         * is right for the item and wrong for the *row*: the row's size is the
+         * contributions of its items, the stretch happens afterwards to fill
+         * it, and `align-items: stretch` is the default, so this was every
+         * ordinary grid.
+         *
+         * fit[1] is where the contribution is read from and it holds the
+         * max-content height, so a tile of prose contributed one line's worth
+         * and the row came out one line tall with three lines of text hanging
+         * out of it. Raising it here is not a lie about what fit[1] means: the
+         * column is settled, and this is what the contents come to now that it
+         * is.
+         */
+        {
+            ar_i32 iw = it->rect.w - it->style.v[AR_P_PAD_LEFT] - it->style.v[AR_P_PAD_RIGHT];
+            ar_i32 ch = ar_content_height(nodes, index[k], iw, env);
+
+            if (ch > it->fit[1])
+            {
+                it->fit[1] = ch;
+            }
+        }
     }
 
     ar__solve_axis(nodes, sheet, i, place, index, items, row, rows, 1, inner_h,
@@ -1374,11 +1427,37 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
          */
         if (am != AR_ALIGN_STRETCH)
         {
-            ar_apply_ratio(it);
+            ar_apply_ratio(it, 1);
         }
 
-        it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
-        it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
+        {
+            /*
+             * The track decides where the item goes; ar_settle_at is what
+             * takes the item's contents with it. Every placer ends this way
+             * now, and the rule is worth more than any one call site: write
+             * the rectangle, then settle.
+             *
+             * **A no-op today for an item with children**, and it is worth
+             * knowing why rather than assuming it works. The column pass above
+             * asks ar_content_height for the item's contribution, and that
+             * function forgets the subtree it measured -- memo and fragment
+             * counts, all the way down -- because it may have measured at a
+             * width the box will not keep. So the item reaches here
+             * un-memoised, the forward sweep places it again, and there is
+             * nothing stranded for this to rescue.
+             *
+             * Which means the grid still places those items twice. Closing
+             * that means noticing that the width ar_content_height was given
+             * here *is* the item's final width, so the layout it leaves behind
+             * is worth keeping -- and then this line is the only reason the
+             * result is not stranded. It is already right for that day.
+             */
+            ar_rect was = it->rect;
+
+            it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
+            it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
+            ar_settle_at(nodes, env, index[k], was);
+        }
     }
 
     /* What the contents came to, for a scroll container and for an automatic

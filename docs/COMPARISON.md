@@ -14,7 +14,7 @@ python tools/gen_compare_doc.py
 
 ```
 AMD Ryzen 7 8840HS, 8C/16T, 13.8 GB, Windows 11
-areole             0.8.2-dev
+areole             0.9.0
 clock              QueryPerformanceCounter
 iterations         200 timed frames per epoch, 3 epochs
 ```
@@ -43,11 +43,11 @@ Only `solid` rows are worth an argument.
 
 | case | what it measures | areole | Win32 GDI | who wins | confidence | fair |
 | --- | --- | --: | --: | --- | :-: | :-: |
-| `clear_uncached` | one opaque fill of the whole 1024x768 surface | 79.2 µs | 83.0 µs | **areole** by 1.05x | marginal | yes |
-| `fill_opaque` | 500 opaque 64x64 rectangles | 321.1 µs | 1252.5 µs | **areole** by 3.90x | solid | yes |
-| `fill_blend` | 500 translucent 64x64 rectangles | 2057.2 µs | 12439.7 µs | **areole** by 6.05x | solid | **no** |
-| `latin_paragraph` | 24 lines of latin text | 86.7 µs | 838.8 µs | **areole** by 9.68x | solid | **no** |
-| `hairlines` | 150 one-pixel-high fills | 27.4 µs | 336.3 µs | **areole** by 12.27x | solid | yes |
+| `clear_uncached` | one opaque fill of the whole 1024x768 surface | 79.4 µs | 83.4 µs | **areole** by 1.05x | solid | yes |
+| `fill_opaque` | 500 opaque 64x64 rectangles | 307.7 µs | 1224.7 µs | **areole** by 3.98x | solid | yes |
+| `fill_blend` | 500 translucent 64x64 rectangles | 2515.0 µs | 14803.4 µs | **areole** by 5.89x | solid | **no** |
+| `latin_paragraph` | 24 lines of latin text | 97.6 µs | 1014.9 µs | **areole** by 10.40x | solid | **no** |
+| `hairlines` | 150 one-pixel-high fills | 35.8 µs | 421.2 µs | **areole** by 11.77x | solid | yes |
 
 ### The caveats
 
@@ -61,18 +61,18 @@ Only `solid` rows are worth an argument.
 
 | case | what it measures | areole | Clay | who wins | confidence | fair |
 | --- | --- | --: | --: | --- | :-: | :-: |
-| `flat_1k` | 1000 boxes, one row per sixteen, no painting | 550.0 µs | 262.1 µs | the rival by 2.10x | solid | **no** |
-| `flat_8k` | 8000 boxes: the size Clay publishes | 5848.8 µs | 2311.3 µs | the rival by 2.53x | solid | **no** |
+| `flat_1k` | 1000 boxes, one row per sixteen, no painting | 663.6 µs | 335.2 µs | the rival by 1.98x | marginal | **no** |
+| `flat_8k` | 8000 boxes: the size Clay publishes | 7556.4 µs | 2973.3 µs | the rival by 2.54x | solid | **no** |
 
 ### The caveats
 
 **`flat_1k`** — areole resolves a stylesheet for every box and keeps damage bookkeeping per box; Clay takes its configuration inline, already resolved, and tracks nothing. areole is therefore doing strictly more work. Note that nothing is painted here, so the damage bookkeeping is pure cost in this case and can never repay itself -- in an interface that does paint it is worth up to 28x, see the scene tables. The layout column is the fair head to head.
 
-> The fair comparison for this case is **ar layout** at 225.0 µs, which is **areole** by 1.17x.
+> The fair comparison for this case is **ar layout** at 288.0 µs, which is **areole** by 1.16x.
 
 **`flat_8k`** — areole resolves a stylesheet for every box and keeps damage bookkeeping per box; Clay takes its configuration inline, already resolved, and tracks nothing. areole is therefore doing strictly more work. Note that nothing is painted here, so the damage bookkeeping is pure cost in this case and can never repay itself -- in an interface that does paint it is worth up to 28x, see the scene tables. The layout column is the fair head to head.
 
-> The fair comparison for this case is **ar layout** at 2149.0 µs, which is **areole** by 1.08x.
+> The fair comparison for this case is **ar layout** at 2622.0 µs, which is **areole** by 1.13x.
 
 ---
 
@@ -80,18 +80,18 @@ Only `solid` rows are worth an argument.
 
 | case | what it measures | areole | microui | who wins | confidence | fair |
 | --- | --- | --: | --: | --- | :-: | :-: |
-| `flat_1k` | 1000 cells in rows of sixteen, no painting | 509.6 µs | 10.8 µs | the rival by 47.62x | marginal | **no** |
-| `flat_8k` | 8000 cells in rows of sixteen, no painting | 5009.4 µs | 83.7 µs | the rival by 58.82x | solid | **no** |
+| `flat_1k` | 1000 cells in rows of sixteen, no painting | 722.7 µs | 14.4 µs | the rival by 50.00x | marginal | **no** |
+| `flat_8k` | 8000 cells in rows of sixteen, no painting | 6336.2 µs | 103.9 µs | the rival by 62.50x | solid | **no** |
 
 ### The caveats
 
 **`flat_1k`** — microui builds no tree, resolves no style and tracks no damage: mu_layout_next advances a row cursor and returns a rectangle. areole runs two passes per axis over a retained tree, after matching a stylesheet, and records what changed. Nothing is painted here, so that record is pure cost; in an interface that paints it removes the raster pass. A ratio below 1.00 is the price of the abstraction, not a defect.
 
-> The fair comparison for this case is **ar layout** at 215.0 µs, which is the rival by 20.00x.
+> The fair comparison for this case is **ar layout** at 296.0 µs, which is the rival by 20.41x.
 
 **`flat_8k`** — microui builds no tree, resolves no style and tracks no damage: mu_layout_next advances a row cursor and returns a rectangle. areole runs two passes per axis over a retained tree, after matching a stylesheet, and records what changed. Nothing is painted here, so that record is pure cost; in an interface that paints it removes the raster pass. A ratio below 1.00 is the price of the abstraction, not a defect.
 
-> The fair comparison for this case is **ar layout** at 2157.0 µs, which is the rival by 25.64x.
+> The fair comparison for this case is **ar layout** at 2601.0 µs, which is the rival by 25.00x.
 
 ---
 

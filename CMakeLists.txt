@@ -59,6 +59,45 @@ areole_set_warnings(ar_test)
 
 add_test(NAME ar_test COMMAND ar_test)
 
+# --- the public header --------------------------------------------------------
+# Note what is missing: no target_include_directories for src/. That absence is
+# the test. ar_test includes src/ar_internal.h on purpose and therefore cannot
+# tell whether a declaration is reachable from outside the repository; this can,
+# because it is compiled the way an application compiles.
+add_executable(ar_public tests/ar_public.c)
+target_link_libraries(ar_public PRIVATE areole)
+areole_set_warnings(ar_public)
+
+add_test(NAME ar_public COMMAND ar_public)
+
+# --- the html5lib conformance suites ------------------------------------------
+# Reads third_party/html5lib as it ships. Needs src/ because it drives the
+# tokenizer directly, which is not public and is not going to be.
+#
+# Not an add_test: it takes seconds rather than milliseconds and its output is a
+# report rather than a verdict. CI runs it as its own step.
+add_executable(ar_html5lib tests/ar_html5lib.c)
+target_include_directories(ar_html5lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_html5lib PRIVATE areole)
+areole_set_warnings(ar_html5lib)
+
+# --- the fuzzer ---------------------------------------------------------------
+# HTML is the one input this library takes that somebody else wrote, so the
+# parser gets a gate rather than an exercise. Links against the plain library:
+# the point is to fuzz what ships, not an instrumented variant of it.
+#
+# ctest runs a short one, because a suite that takes a minute stops being run.
+# Two hundred thousand iterations is about a second and is enough to catch "it
+# no longer terminates" and "it no longer builds". The acceptance criterion is
+# fifty million, which .github/workflows/fuzz.yml runs nightly across five
+# seeds, and which anyone can run here with `ar_fuzz --iters 5e7`.
+add_executable(ar_fuzz tests/ar_fuzz.c)
+target_include_directories(ar_fuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_fuzz PRIVATE areole)
+areole_set_warnings(ar_fuzz)
+
+add_test(NAME ar_fuzz_short COMMAND ar_fuzz --iters 200000)
+
 # --- platform backend ---------------------------------------------------------
 # Its own target because <windows.h> uses nameless unions and __int64 and will
 # not compile with language extensions disabled. The core keeps the strict
@@ -76,6 +115,8 @@ if(WIN32)
 
     add_executable(example_tour examples/02_tour/main.c)
     target_link_libraries(example_tour PRIVATE areole_win32)
+    # src/ is on the path because the 0.9.0 page parses HTML, and ar_html.h is
+    # not public API yet -- the same reason ar_bench has it for ar_text.
     areole_set_warnings(example_tour)
 
     # The block corpus. A window by default, and --dump for the browser
@@ -118,9 +159,29 @@ if(WIN32)
     target_link_libraries(example_grid PRIVATE areole_win32)
     areole_set_warnings(example_grid)
 
+    # The HTML tree corpus needs no window: its subject is a tree per case, not
+    # where boxes land. src/ is on the path because ar_html.h is not public API
+    # yet, the same reason ar_bench and the tour have it.
+    # 0.9.0's demonstration: it reads HTML and declares no boxes at all.
+    add_executable(example_document examples/13_document/main.c)
+    target_link_libraries(example_document PRIVATE areole_win32)
+    areole_set_warnings(example_document)
+
+    add_executable(example_interface examples/14_interface/main.c)
+    target_link_libraries(example_interface PRIVATE areole_win32)
+    areole_set_warnings(example_interface)
+
+    add_executable(example_html examples/12_html/main.c)
+    target_link_libraries(example_html PRIVATE areole)
+    areole_set_warnings(example_html)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
+
+    add_executable(example_real examples/15_real/main.c)
+    target_link_libraries(example_real PRIVATE areole_win32)
+    areole_set_warnings(example_real)
 endif()
 
 # --- benchmark ----------------------------------------------------------------

@@ -1120,6 +1120,16 @@ static ar_rect ar__box(ar_i32 index)
     return g_ui->nodes[index].rect;
 }
 
+/* The resolved background, for checks about state rather than geometry. */
+static ar_u32 ar__box_bg(ar_i32 index)
+{
+    if (!g_ui || index < 0 || index >= g_ui->node_count)
+    {
+        return 0;
+    }
+    return (ar_u32)AR_WIDE(&g_ui->nodes[index].style, AR_P_BACKGROUND);
+}
+
 static int ar__box_is(ar_i32 index, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
 {
     ar_rect r = ar__box(index);
@@ -8626,15 +8636,408 @@ static void test_aspect_ratio_gives_the_axis_nobody_stated(void)
         ar_frame_end(g_ui, &s);
     }
 
-    printf("      DBGR ratio=%ld,%ld,%ld  a=%ldx%ld b=%ldx%ld c=%ldx%ld\n",
-           (long)g_ui->nodes[1].style.v[AR_P_ASPECT_RATIO],
-           (long)g_ui->nodes[2].style.v[AR_P_ASPECT_RATIO],
-           (long)g_ui->nodes[3].style.v[AR_P_ASPECT_RATIO], (long)ar__box(1).w, (long)ar__box(1).h,
-           (long)ar__box(2).w, (long)ar__box(2).h, (long)ar__box(3).w, (long)ar__box(3).h);
     CHECK(ar__box(1).h == 90, "aspect-ratio: a width and a ratio make a height");
     CHECK(ar__box(2).w == 80, "aspect-ratio: a height and a ratio make a width");
     CHECK(ar__box(3).w == 100 && ar__box(3).h == 100,
           "aspect-ratio: and a box that stated both keeps both");
+}
+
+static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
+{
+    ar_surface s = ar__ui_surface(700, 400);
+
+    /*
+     * A block whose children are a run of inline boxes has to be measured at
+     * the width it actually got, because that is what decides how many lines
+     * the run takes.
+     *
+     * `ar_wrap_height` handled a box carrying its own text, which is every box
+     * a hand-declared interface makes. A parsed document has none of them --
+     * `ar_dom_build` gives every element's text a child of its own -- so a
+     * `<p>` is a block with one inline child, and its height was the unwrapped
+     * one. It was stacked as a single line and its next sibling was drawn over
+     * the top of it.
+     *
+     * Nothing here could see it: every corpus either states its heights or is
+     * wide enough not to wrap, and `compare_layout.py` excludes boxes sized by
+     * their own text from its verdict. The interface example found it by being
+     * narrow enough to wrap.
+     *
+     * The case where those children are themselves blocks is
+     * test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it, below.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:300px; }"
+                 ".p { display:block; }"
+                 ".t { display:inline; }"
+                 ".after { display:block; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+    ar_begin(g_ui, "div.p");
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across two lines");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after. */
+    CHECK(ar__box(2).h > 20, "wrap: the paragraph is taller than one line");
+    CHECK(ar__box(4).y >= ar__box(2).y + ar__box(2).h,
+          "wrap: and the block after it starts below it rather than on top of it");
+    CHECK(ar__box(1).h >= ar__box(2).h + 20, "wrap: the container is as tall as what it holds");
+}
+
+static void test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it(void)
+{
+    ar_surface s = ar__ui_surface(700, 400);
+    ar_i32     bare, nested;
+
+    /*
+     * The general case, and the one every page on the web is made of.
+     *
+     * Widths are settled on the way down and heights are only knowable on the
+     * way back up, so a box that stacks other boxes cannot know how tall it is
+     * until its own width is known -- and its parent needs that height while
+     * it is still stacking, because the box after this one goes directly
+     * below. `ar_wrap_height` is where the two directions meet.
+     *
+     * It used to meet them only for a box whose children were inline, because
+     * letting the placement reach another block would recurse. It has to
+     * recurse: `<div><p>two lines</p></div>` is the ordinary shape of a
+     * document, and the div reported the height of a single line, so whatever
+     * followed was drawn *inside* the paragraph.
+     *
+     * The check is the one a browser answers the same way: wrapping a
+     * paragraph in a div must not move what comes after it. Edge puts the
+     * following block 52 pixels below the paragraph's top whether or not the
+     * div is there; areole said 79 bare and 37 wrapped. Stated as an equality
+     * between the two rather than as a pixel count, so it holds whatever the
+     * test face measures -- and `.one` is the reference that proves the long
+     * paragraph really did wrap, rather than passing because it did not.
+     *
+     * Deliberately not checked here: that the div ends up as tall as its
+     * paragraph, or that the container ends up tall enough to hold it. Both
+     * are true even with the rule removed -- the forward sweep settles every
+     * box's own height afterwards -- so both are checks that cannot go red.
+     * The damage was never to the div's final height; it was to the siblings
+     * its parent had already stacked underneath it.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:120px; }"
+                 ".card { display:block; }"
+                 ".p { display:block; }"
+                 ".t { display:inline; }"
+                 ".after { display:block; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+
+    ar_begin(g_ui, "div.p"); /* 2: one line, for comparison */
+    ar_text(g_ui, "span.t", "one");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.p"); /* 4: the same paragraph, bare */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after"); /* 6 */
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card"); /* 7: and again, wrapped in a div */
+    ar_begin(g_ui, "div.p");    /* 8 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after"); /* 10 */
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(4).h > ar__box(2).h, "blocks: the long paragraph took more than one line");
+
+    bare = ar__box(6).y - ar__box(4).y;
+    nested = ar__box(10).y - ar__box(8).y;
+    CHECK(bare == nested, "blocks: wrapping a paragraph in a div does not move what follows it");
+    CHECK(ar__box(10).y >= ar__box(8).y + ar__box(8).h,
+          "blocks: and what follows starts below the paragraph, not inside it");
+}
+
+static void test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_them(void)
+{
+    ar_surface s = ar__ui_surface(700, 500);
+    ar_i32     one;
+
+    /*
+     * The same question the block flow answered, asked of the three sizing
+     * algorithms that each had their own way of getting it wrong.
+     *
+     * All three size a track, a line or a row from what its items contribute,
+     * and all three read that contribution from `fit[1]` -- the max-content
+     * height, which is what the box would be if nothing wrapped. A tile of
+     * prose contributed one line and the row came out one line tall with the
+     * rest of the text hanging out of it.
+     *
+     * The grid and the table are the same bug in the same words, and
+     * ar__cell_height said so in a comment: closing it needs a
+     * measure(subtree, width) entry point, and grid will want it too. That is
+     * `ar_content_height`, and both ask it the same question now.
+     *
+     * The flex container had two faults on top of each other, and needed both
+     * fixed to move. Its automatic height was never settled at all --
+     * `ar_flex_content_cross` existed, was declared in the header, and had no
+     * callers -- and underneath that, `align-items: stretch` on a nowrap line
+     * sized every item to the container while the container was waiting to be
+     * sized by its items. The circle came back out at the guess it started
+     * from, so fixing either alone changed nothing.
+     *
+     * Written as "the container is at least as tall as the box inside it",
+     * which is true of all three and needs no pixel count. `.ref` is what
+     * proves the text wrapped rather than the check passing because it did
+     * not.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".ref { display:block; width:120px; }"
+                 ".g { display:grid; grid-template-columns:120px; width:120px; }"
+                 ".f { display:flex; width:120px; }"
+                 ".tb { display:table; width:120px; }"
+                 ".tr { display:table-row; }"
+                 ".td { display:table-cell; }"
+                 ".item { display:block; }"
+                 ".inner { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+
+    ar_begin(g_ui, "div.ref"); /* 1 */
+    ar_text(g_ui, "span.t", "one");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.g"); /* 3 */
+    ar_begin(g_ui, "div.item");
+    ar_begin(g_ui, "div.inner"); /* 5 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.f"); /* 7 */
+    ar_begin(g_ui, "div.item");
+    ar_begin(g_ui, "div.inner"); /* 9 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.tb"); /* 11 */
+    ar_begin(g_ui, "div.tr");
+    ar_begin(g_ui, "div.td");
+    ar_begin(g_ui, "div.inner"); /* 14 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    one = ar__box(1).h;
+    CHECK(ar__box(5).h > one && ar__box(9).h > one && ar__box(14).h > one,
+          "sizing: the prose wrapped in all three, so there is something to measure");
+    CHECK(ar__box(3).h >= ar__box(5).h, "sizing: a grid row is as tall as the item that wrapped");
+    CHECK(ar__box(7).h >= ar__box(9).h, "sizing: a flex line is as tall as the item that wrapped");
+    CHECK(ar__box(11).h >= ar__box(14).h,
+          "sizing: a table row is as tall as the cell that wrapped");
+}
+
+/* Whether `in` lies inside `out`, which is what "the text is in its box" means
+   once a placer has had the chance to move one and not the other. */
+static int ar__within(ar_rect in, ar_rect out)
+{
+    return in.x >= out.x && in.y >= out.y && in.x + in.w <= out.x + out.w &&
+           in.y + in.h <= out.y + out.h;
+}
+
+static void test_every_placer_takes_a_settled_subtree_with_it(void)
+{
+    ar_surface s = ar__ui_surface(700, 600);
+
+    /*
+     * A grid track and a flex line each decide where a box goes. Both used to
+     * write the rectangle and walk away.
+     *
+     * That is only visible once the box has *contents that were already laid
+     * out*, which is what `measured_w` records: the height sweep settles a
+     * subtree while the width is being worked out, and from then on the box
+     * may be moved but never re-placed. A placer that assigns instead of
+     * moving leaves every word inside at the origin it had at the time -- and
+     * because the forward sweep skips a box the memo calls settled, nothing
+     * ever puts it right. It shipped exactly once and drew a whole sidebar's
+     * labels stacked in the top-left corner of the window **with every
+     * rectangle correct**, which is why this asks where the text is and not
+     * where the box is.
+     *
+     * Three things are needed to make it bite, and leaving out any one of them
+     * gives a test that passes either way:
+     *
+     *   - `align-items: start`. A stretched item is told its height by its
+     *     parent, so ar_wrap_height never settles it and there is nothing to
+     *     strand.
+     *   - **Two columns.** A single-column grid places everything at its own
+     *     origin and the parent's block stack moves the lot; the item itself
+     *     never moves relative to the grid, so the grid's own settle has
+     *     nothing to do. The second column does.
+     *   - `.pad`, so the containers are not at the top of the page.
+     *
+     * The table is deliberately absent. A cell is never memoised -- its height
+     * is its row's, and ar__place_block's automatic-height branch excludes
+     * table blocks -- so ar_settle_at is a no-op there and no check can go red
+     * when it is removed. The call is in ar_layout_table.c anyway, so the rule
+     * holds for every placer rather than for the two where it currently bites,
+     * and the comment there says exactly this.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".pad { display:block; height:40px; }"
+                 ".g { display:grid; grid-template-columns:120px 120px; width:240px;"
+                 "     align-items:start; }"
+                 ".f { display:flex; width:240px; height:200px; align-items:flex-start; }"
+                 ".item { display:block; }"
+                 ".inner { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+
+    ar_begin(g_ui, "div.pad"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.g");     /* 2 */
+    ar_begin(g_ui, "div.item");  /* 3, first column */
+    ar_begin(g_ui, "div.inner"); /* 4 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item");  /* 6, second column -- the one that moves */
+    ar_begin(g_ui, "div.inner"); /* 7 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 8 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.pad"); /* 9 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.f");                                                         /* 10 */
+    ar_begin(g_ui, "div.item");                                                      /* 11 */
+    ar_begin(g_ui, "div.inner");                                                     /* 12 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 13 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item");  /* 14, second item -- the one that moves */
+    ar_begin(g_ui, "div.inner"); /* 15 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 16 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(14).x > ar__box(11).x,
+          "placers: the second flex item really is beside the first, so there was a move");
+    CHECK(ar__within(ar__box(16), ar__box(14)),
+          "placers: a flex line took the item's text with it");
+
+    /*
+     * The grid is laid out here and deliberately not asserted on.
+     *
+     * Its ar_settle_at is a no-op for an item with children, and a check that
+     * cannot go red is worse than no check: the column pass asks
+     * ar_content_height for the item's contribution, and that forgets the
+     * subtree it measured, so the item arrives at the track un-memoised and
+     * the forward sweep places it again. Nothing is stranded because nothing
+     * was kept.
+     *
+     * It is built and rendered anyway, because the day the grid stops
+     * throwing that layout away -- which is the double placement it still
+     * pays -- this is the shape that breaks first.
+     */
+}
+static void test_a_grid_settles_its_own_height(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Two bugs an example found on its first run, and neither could be seen
+     * from the grid corpus: every grid in it is either given a height or is
+     * itself a grid item, so the container's automatic height never had to be
+     * right.
+     *
+     * **A grid item's width is definite once its track is sized**, even though
+     * the stylesheet never stated it -- which is what CSS means by definite
+     * rather than specified. So a ratio applies. It had not: `ar_apply_ratio`
+     * fires only when exactly one axis is *stated*, a grid item states
+     * neither, and a tile declared `aspect-ratio: 2 / 1` in a two-column grid
+     * came out 200 by 8. The row sized itself from the tile's content and
+     * stretch then shrank the tile to the row, so both were wrong together and
+     * neither looked like the cause.
+     *
+     * **And a grid container's automatic height is the track solve's answer**,
+     * not the block measurement's guess. The measure pass sizes a grid as a
+     * block because the track solve needs a width it does not have yet, and
+     * the comment there says the solve settles the real one at placement. It
+     * did not -- placement wrote `content_h` and nothing put it into `rect.h`.
+     * Three shapes were wrong and all of them silently: explicit rows, items
+     * with a stated height, and a ratio.
+     *
+     * `.b` is the one that shows it is not a ratio bug: two 150-tall items in
+     * *one row* gave a container 300 tall, because a block sums what a grid
+     * puts side by side.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:grid; grid-template-columns:repeat(2,1fr);"
+                 "     grid-template-rows:200px; width:400px; }"
+                 ".b { display:grid; grid-template-columns:repeat(2,1fr); width:400px; }"
+                 ".b div { height:150px; }"
+                 ".c { display:grid; grid-template-columns:repeat(2,1fr); width:400px; }"
+                 ".c div { aspect-ratio:2/1; }");
+    {
+        ar_input in;
+        ar_i32   k;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        for (k = 0; k < 3; ++k)
+        {
+            ar_begin(g_ui, k == 0 ? "div.a" : (k == 1 ? "div.b" : "div.c"));
+            ar_begin(g_ui, "div");
+            ar_end(g_ui);
+            ar_begin(g_ui, "div");
+            ar_end(g_ui);
+            ar_end(g_ui);
+        }
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1 = .a, 2 and 3 its items; 4 = .b, 5 and 6; 7 = .c, 8 and 9. */
+    CHECK(ar__box(1).h == 200, "grid: an explicit row decides the container's height");
+    CHECK(ar__box(2).h == 200 && ar__box(3).h == 200, "grid: and its items fill that row");
+
+    CHECK(ar__box(4).h == 150, "grid: two items in one row make a row, not a stack");
+    CHECK(ar__box(5).h == 150 && ar__box(6).h == 150, "grid: both of them keep their height");
+
+    CHECK(ar__box(8).w == 200 && ar__box(8).h == 100,
+          "grid: a track-sized width is definite, so a ratio gives the height");
+    CHECK(ar__box(7).h == 100, "grid: and the container is as tall as the row that came to");
 }
 
 static void test_safe_centring_never_starts_before_the_edge(void)
@@ -10724,6 +11127,110 @@ static void test_absolute_with_no_offsets_keeps_the_static_position(void)
     CHECK(ar__box(2).y == 10, "absolute: with no offsets it sits where the flow had got to");
 }
 
+static void test_absolute_takes_its_children_with_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `relative` and `sticky` both move a whole subtree and say so in their
+     * comments. `absolute` moved the box and left everything inside it where
+     * the static position had put it -- so a badge placed in the corner of a
+     * card drew its own rectangle in the corner and its label at the top left
+     * of the window.
+     *
+     * The layout corpora could not see it. `compare_layout.py` excludes boxes
+     * sized by their own text from its verdict, and a text node is the only
+     * child most positioned boxes have; every one of the eight corpus dumps is
+     * byte-identical with the fix and without it. examples/14_interface found
+     * it by putting a label in one.
+     *
+     * The inner box is checked rather than the outer, because the outer was
+     * always right -- which is what made it hard to see.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".rel { display:block; position:relative; width:400px; height:200px; }"
+                 ".abs { display:block; position:absolute; top:20px; left:30px;"
+                 "       padding:4px 9px; }"
+                 ".in { display:block; width:20px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.rel");
+    ar_begin(g_ui, "div.abs");
+    ar_begin(g_ui, "div.in");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 1 = .rel, 2 = .abs, 3 = .in. */
+    CHECK(ar__box(2).x == 30 && ar__box(2).y == 20, "absolute: the box lands where it was told");
+    CHECK(ar__box(3).x == 39 && ar__box(3).y == 24,
+          "absolute: and its children land inside it, not at the origin");
+}
+
+static void test_a_shifted_box_takes_its_fragments_with_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     k;
+    ar_rect    r;
+    ar_i32     n_frag;
+    int        bad = 0;
+
+    /*
+     * A box the line breaker cut is *painted* from its fragments' own
+     * rectangles rather than from `rect`, and those are absolute. So a shift
+     * that moves `rect` and leaves them behind moves everything that reads a
+     * rectangle -- hit testing, damage, the inspection API, this suite -- and
+     * moves nothing that is drawn.
+     *
+     * All four shifts had it: `relative`, `sticky`, `position-try`'s flip, and
+     * `absolute`. The visible symptom is a label drawn at the position its box
+     * was rejected from while the background is drawn where it ended up.
+     *
+     * No corpus could see it. `compare_layout.py` excludes boxes sized by
+     * their own text from its verdict, and a fragment is exactly that; all
+     * eight corpus dumps are byte-identical with the fix and without it.
+     *
+     * The check is that every fragment lies inside the box that owns it --
+     * which is true by construction when nothing moved, and false the moment
+     * something moves without them.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".rel { display:block; position:relative; width:200px; }"
+                 ".abs { display:block; position:absolute; top:40px; left:60px; width:90px; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.rel");
+    ar_begin(g_ui, "div.abs");
+    ar_text(g_ui, "span.t", "a label long enough that the breaker cuts it in two");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* 2 = .abs, 3 = the label. */
+    n_frag = ar_node_frag_count(g_ui, 3);
+    r = ar__box(2);
+
+    for (k = 0; k < n_frag; ++k)
+    {
+        ar_rect f = ar_node_frag(g_ui, 3, k, 0, 0);
+
+        if (f.x < r.x || f.y < r.y || f.x + f.w > r.x + r.w + 200)
+        {
+            printf("      fragment %ld at %ld,%ld outside the box at %ld,%ld\n", (long)k, (long)f.x,
+                   (long)f.y, (long)r.x, (long)r.y);
+            ++bad;
+        }
+    }
+    CHECK(n_frag > 0, "fragments: the label was cut, so there is something to move");
+    CHECK(bad == 0, "absolute: the fragments moved with the box, not just its rect");
+}
+
 /* Both edges of an axis and no size: the box stretches between them. */
 static void test_absolute_stretches_between_two_edges(void)
 {
@@ -12621,24 +13128,42 @@ static int ar__text_is(ar_span s, const char *lit)
 
 static void test_the_entity_table_is_sorted(void)
 {
+    char   prev[40];
+    char   cur[40];
     ar_i32 i;
     ar_i32 bad = 0;
+    ar_i32 truncated = 0;
     ar_i32 n = ar_html_entity_count();
 
-    /* A binary search over an unsorted table does not fail loudly. It fails on
-       one entity, in one document, and the generated table that replaces this
-       one will have two thousand more chances to do it. */
-    for (i = 1; i < n; ++i)
+    /*
+     * The match loop narrows a range of this table one byte at a time and
+     * trusts the order absolutely. An unsorted table does not fail loudly: it
+     * fails on one entity, in one document, and now there are two thousand
+     * two hundred chances to do it rather than two hundred.
+     *
+     * The order is plain byte order, which is not the order a person would
+     * write. `sup;` sorts after `sup1;` -- '1' is 0x31 and ';' is 0x3B -- and
+     * `not` sorts before `notin;` because a name comes before anything that
+     * extends it. That second one is what the longest match depends on.
+     */
+    prev[0] = 0;
+    for (i = 0; i < n; ++i)
     {
-        if (strcmp(ar_html_entity_name(i - 1), ar_html_entity_name(i)) >= 0)
+        if (ar_html_entity_name(i, cur, (ar_u32)sizeof cur) == 0)
         {
-            printf("      out of order at %ld: %s before %s\n", (long)i, ar_html_entity_name(i - 1),
-                   ar_html_entity_name(i));
+            ++truncated;
+            continue;
+        }
+        if (i > 0 && strcmp(prev, cur) >= 0)
+        {
+            printf("      out of order at %ld: %s before %s\n", (long)i, prev, cur);
             ++bad;
         }
+        memcpy(prev, cur, strlen(cur) + 1);
     }
     CHECK(bad == 0, "html: the named character reference table is sorted");
-    CHECK(n > 100, "html: and has the HTML 4 set in it");
+    CHECK(truncated == 0, "html: and every name fits the buffer it is copied into");
+    CHECK(n == 2231, "html: and holds all 2,231 references the specification defines");
 }
 
 static void test_the_tokenizer_reads_a_tag(void)
@@ -12875,6 +13400,3057 @@ static void test_the_tokenizer_copies_nothing_it_does_not_have_to(void)
           "html: and so does text with no reference in it");
 }
 
+/* ------------------------------------------------------------------------
+ * HTML tree construction
+ *
+ * These are the cases the specification exists for -- the ones where the tree
+ * is not the one the markup appears to describe. A parser that only handles
+ * well-formed input passes none of them and looks fine doing it.
+ * ------------------------------------------------------------------------ */
+
+static ar_dom_node g_dom_nodes[512];
+static ar_attr     g_dom_attrs[256];
+static char        g_dom_text[8192];
+static char        g_tree_scratch[4096];
+static ar_doc      g_doc;
+
+static ar_doc *ar__parse(const char *src)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, (ar_u32)sizeof g_tree_scratch);
+    return &g_doc;
+}
+
+/* The tree as `tag(child child)`, so a whole shape is one string to compare.
+   Text nodes are `#`, which keeps the comparison about structure. */
+static void ar__shape(const ar_doc *d, ar_i32 i, char *out, ar_u32 cap, ar_u32 *used)
+{
+    ar_i32 c;
+
+    if (i < 0 || *used + 2 >= cap)
+    {
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_TEXT)
+    {
+        out[(*used)++] = '#';
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_COMMENT)
+    {
+        out[(*used)++] = '!';
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_FRAGMENT)
+    {
+        /* Transparent, as in examples/12_html: the browser reads a template
+           through `el.content` and hands back its children directly. */
+        ar_i32 k;
+
+        for (k = d->nodes[i].first_child; k >= 0; k = d->nodes[k].next_sibling)
+        {
+            ar__shape(d, k, out, cap, used);
+        }
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_DOCTYPE)
+    {
+        out[(*used)++] = '@';
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_PI)
+    {
+        /* `?` rather than `!`, because which of the two a `<?...>` becomes is
+           decided by its target and that is the whole of what the checks
+           below are about. examples/12_html cannot spell the difference --
+           its browser twin renders a processing instruction as nothing at
+           all -- so the distinction is pinned here. */
+        out[(*used)++] = '?';
+        return;
+    }
+    {
+        ar_u32 k;
+
+        for (k = 0; k < d->nodes[i].name.n && *used + 1 < cap; ++k)
+        {
+            out[(*used)++] = d->nodes[i].name.p[k];
+        }
+    }
+    if (d->nodes[i].first_child < 0)
+    {
+        return;
+    }
+    out[(*used)++] = '(';
+    for (c = d->nodes[i].first_child; c >= 0; c = d->nodes[c].next_sibling)
+    {
+        if (c != d->nodes[i].first_child && *used + 1 < cap)
+        {
+            out[(*used)++] = ' ';
+        }
+        ar__shape(d, c, out, cap, used);
+    }
+    if (*used + 1 < cap)
+    {
+        out[(*used)++] = ')';
+    }
+}
+
+/*
+ * A fragment's shape, with the namespace spelled out.
+ *
+ * Namespaces are the whole question these checks ask -- whether a `<figure>`
+ * parsed against `math ms` is an HTML figure or a MathML one -- and the shape
+ * helper above prints a name and no namespace, so the two answers would look
+ * identical. `svg:` and `math:` are printed here and nothing is printed for
+ * HTML, which is the common case.
+ *
+ * The context is written the way html5lib writes it: `math ms`, `svg svg`, or
+ * a bare name for HTML.
+ */
+static const char *ar__fragment_shape(const char *src, const char *ctx)
+{
+    static char buf[1024];
+    ar_u32      used = 0;
+    ar_ns       ns = AR_NS_HTML;
+    const char *name = ctx;
+    ar_i32      k;
+
+    if (strncmp(ctx, "math ", 5) == 0)
+    {
+        ns = AR_NS_MATHML;
+        name = ctx + 5;
+    }
+    else if (strncmp(ctx, "svg ", 4) == 0)
+    {
+        ns = AR_NS_SVG;
+        name = ctx + 4;
+    }
+
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse_fragment(&g_doc, src, (ar_u32)strlen(src), name, ns, g_tree_scratch,
+                           (ar_u32)sizeof g_tree_scratch);
+
+    for (k = g_doc.nodes[ar_dom_root(&g_doc)].first_child; k >= 0; k = g_doc.nodes[k].next_sibling)
+    {
+        if (g_doc.nodes[k].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (used && used + 1 < sizeof buf)
+        {
+            buf[used++] = ' ';
+        }
+        if (g_doc.nodes[k].ns == AR_NS_SVG)
+        {
+            memcpy(buf + used, "svg:", 4);
+            used += 4;
+        }
+        else if (g_doc.nodes[k].ns == AR_NS_MATHML)
+        {
+            memcpy(buf + used, "math:", 5);
+            used += 5;
+        }
+        ar__shape(&g_doc, k, buf, (ar_u32)sizeof buf, &used);
+    }
+    buf[used] = 0;
+    return buf;
+}
+
+static const char *ar__tree_shape(const char *src)
+{
+    static char buf[1024];
+    ar_doc     *d = ar__parse(src);
+    ar_u32      used = 0;
+
+    ar__shape(d, ar_dom_root(d), buf, (ar_u32)sizeof buf, &used);
+    buf[used] = 0;
+    return buf;
+}
+
+/* The first element with this tag, anywhere. */
+static ar_i32 ar__find(const ar_doc *d, const char *tag)
+{
+    ar_i32 i;
+
+    for (i = 0; i < d->node_count; ++i)
+    {
+        if (d->nodes[i].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[i].name, tag))
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void test_the_optional_tags_are_optional(void)
+{
+    /* Every one of html, head and body may be omitted, and most real documents
+       omit at least one. The tree has them anyway. */
+    const char *s = ar__tree_shape("<p>hi</p>");
+
+    CHECK(strcmp(s, "html(head body(p(#)))") == 0, "html: html, head and body are implied");
+    if (strcmp(s, "html(head body(p(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    s = ar__tree_shape("<html><head></head><body><p>hi</p></body></html>");
+    CHECK(strcmp(s, "html(head body(p(#)))") == 0, "html: and written out gives the same tree");
+}
+
+static void test_a_paragraph_closes_itself(void)
+{
+    /* `<p>a<p>b` is two paragraphs. It is the first thing anyone writes by
+       accident and the first thing a naive parser gets wrong. */
+    const char *s = ar__tree_shape("<p>a<p>b");
+
+    CHECK(strcmp(s, "html(head body(p(#) p(#)))") == 0, "html: <p>a<p>b is two paragraphs");
+    if (strcmp(s, "html(head body(p(#) p(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    /* And a block-level start closes an open paragraph rather than nesting. */
+    s = ar__tree_shape("<p>a<div>b</div>");
+    CHECK(strcmp(s, "html(head body(p(#) div(#)))") == 0, "html: and a div closes one too");
+    if (strcmp(s, "html(head body(p(#) div(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_list_items_close_themselves(void)
+{
+    const char *s = ar__tree_shape("<ul><li>a<li>b</ul>");
+
+    CHECK(strcmp(s, "html(head body(ul(li(#) li(#))))") == 0,
+          "html: <li>a<li>b is two items, not one inside the other");
+    if (strcmp(s, "html(head body(ul(li(#) li(#))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_foster_parenting(void)
+{
+    /*
+     * §13.2.6.1. Content inside a table where it may not be is relocated to
+     * just before the table, not dropped and not left inside. Every browser
+     * agrees because they all implement this paragraph.
+     */
+    /*
+     * Edge, asked before this number was written:
+     *
+     *     <table><em>x</em><tr><td>y</table>
+     *       =>  html(head body(em(#) table(tbody(tr(td(#))))))
+     *
+     * The emphasis is a sibling *before* the table, and the row and cell are
+     * still inside it through a tbody nobody wrote.
+     */
+    const char *s = ar__tree_shape("<table><em>x</em><tr><td>y</table>");
+
+    CHECK(strcmp(s, "html(head body(em(#) table(tbody(tr(td(#))))))") == 0,
+          "html: table content is fostered out in front, exactly as a browser does");
+    if (strcmp(s, "html(head body(em(#) table(tbody(tr(td(#))))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_a_table_implies_its_missing_parts(void)
+{
+    /* `<table><tr><td>` has no tbody written and gets one, which is why a
+       stylesheet selecting tbody works on markup that never mentions it. */
+    const char *s = ar__tree_shape("<table><tr><td>a</table>");
+
+    CHECK(strcmp(s, "html(head body(table(tbody(tr(td(#))))))") == 0,
+          "html: a table implies tbody and closes its cells");
+    if (strcmp(s, "html(head body(table(tbody(tr(td(#))))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_the_adoption_agency(void)
+{
+    /*
+     * `<b><i></b></i>` produces the same tree in every browser and it is not
+     * the tree the markup describes. The point of the check is that the
+     * document survives with both elements present and correctly nested rather
+     * than the `<b>` swallowing the rest of it.
+     */
+    const char *s = ar__tree_shape("<b>1<i>2</b>3</i>");
+
+    /* Edge, asked before this number was written:
+           <b>1<i>2</b>3</i>  =>  html(head body(b(# i(#)) i(#)))
+       The `<i>` is split in two: the part inside the `<b>` stays there and the
+       part after it becomes a sibling. That is the whole algorithm's output in
+       one string. */
+    CHECK(strcmp(s, "html(head body(b(# i(#)) i(#)))") == 0,
+          "html: <b>1<i>2</b>3</i> splits the <i> exactly as a browser does");
+    if (strcmp(s, "html(head body(b(# i(#)) i(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    /* The simple case has to keep working: <b>x</b> is one element with the
+       text inside it. */
+    {
+        s = ar__tree_shape("<b>x</b>");
+
+        CHECK(strcmp(s, "html(head body(b(#)))") == 0, "html: and the ordinary case is ordinary");
+        if (strcmp(s, "html(head body(b(#)))") != 0)
+        {
+            printf("      got %s\n", s);
+        }
+    }
+}
+
+static void test_formatting_is_reconstructed_across_a_block(void)
+{
+    /*
+     * §13.2.4.3. `<p><b>bold</p>text` puts `text` inside a *fresh* `<b>` after
+     * the paragraph: `</p>` pops the `<b>` off the stack but leaves it in the
+     * list of active formatting elements, and the next character reopens it.
+     * Without reconstruction the bold simply stops at the paragraph.
+     *
+     * The first version of this check used `<b>one<p>two</p></b>` and failed,
+     * and the check was the thing that was wrong -- an open `<b>` is still on
+     * the stack when the `<p>` arrives, so the paragraph nests *inside* it and
+     * nothing is reconstructed. Edge was asked before the code was touched:
+     *
+     *     <b>one<p>two</p></b>   =>  html(head body(b(# p(#))))
+     *     <p><b>bold</p>text     =>  html(head body(p(b(#)) b(#)))
+     *
+     * Both are checked here, because the first is the one that looks like it
+     * should reconstruct and does not.
+     */
+    const char *s = ar__tree_shape("<b>one<p>two</p></b>");
+
+    CHECK(strcmp(s, "html(head body(b(# p(#))))") == 0,
+          "html: an open <b> keeps a paragraph inside itself");
+    if (strcmp(s, "html(head body(b(# p(#))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    s = ar__tree_shape("<p><b>bold</p>text");
+    CHECK(strcmp(s, "html(head body(p(b(#)) b(#)))") == 0,
+          "html: and a closed one is reopened for the text after it");
+    if (strcmp(s, "html(head body(p(b(#)) b(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_attributes_reach_the_tree(void)
+{
+    ar_doc *d = ar__parse("<div id=\"main\" class='a b'>x</div>");
+    ar_i32  div = ar__find(d, "div");
+
+    CHECK(div >= 0 && d->nodes[div].attr_count == 2, "html: an element keeps its attributes");
+    if (div >= 0 && d->nodes[div].attr_count == 2)
+    {
+        ar_attr *a = &d->attrs[d->nodes[div].attr_first];
+
+        CHECK(ar_span_is(a[0].name, "id") && ar__text_is(a[0].value, "main"),
+              "html: the first with its value");
+        CHECK(ar_span_is(a[1].name, "class") && ar__text_is(a[1].value, "a b"),
+              "html: and the second");
+    }
+}
+
+static void test_text_with_an_entity_survives_the_next_token(void)
+{
+    /*
+     * The tokenizer decodes references into a scratch buffer it reuses for
+     * every token, so a tree that kept the span would show the *next* token's
+     * bytes. The document copies exactly those spans and leaves the rest
+     * pointing at the input.
+     *
+     * This is the check that the copy happens. Without it the failure is not a
+     * crash -- it is one paragraph showing another paragraph's text.
+     */
+    ar_doc *d = ar__parse("<p>a&amp;b</p><p>second</p><p>third</p>");
+    ar_i32  p = ar__find(d, "p");
+    ar_i32  txt;
+
+    CHECK(p >= 0, "html: the first paragraph is there");
+    txt = d->nodes[p].first_child;
+    CHECK(txt >= 0 && d->nodes[txt].kind == AR_DOM_TEXT, "html: with a text node in it");
+    CHECK(txt >= 0 && ar__text_is(d->nodes[txt].text, "a&b"),
+          "html: whose decoded text survives two more tokens being read");
+}
+
+static void test_quirks_mode(void)
+{
+    /* Quirks is not a curiosity: it changes the box model for the whole
+       document, so getting it from the doctype is load-bearing. */
+    ar_doc *d = ar__parse("<!DOCTYPE html><p>x");
+
+    CHECK(d->quirks == AR_QUIRKS_NO, "html: <!DOCTYPE html> is no-quirks");
+
+    d = ar__parse("<p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES, "html: no doctype at all is quirks");
+
+    d = ar__parse("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES, "html: and so is HTML 4.0 Transitional");
+
+    /*
+     * 4.01 *strict* is on no list at all, so it is no-quirks -- and this
+     * assertion used to say limited, which was wrong twice over. The
+     * conditional rule names only `DTD HTML 4.01 Frameset` and `DTD HTML
+     * 4.01 Transitional`; strict is neither. Edge agrees: CSS1Compat.
+     *
+     * The corrected pair is below, and it is where the rule actually bites.
+     */
+    d = ar__parse("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_NO, "html: HTML 4.01 strict is no-quirks, list or no list");
+
+    d = ar__parse("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES,
+          "html: 4.01 transitional with no system identifier is quirks");
+
+    d = ar__parse(
+        "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"loose.dtd\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_LIMITED, "html: and limited quirks with one");
+}
+
+static void test_rawtext_content_is_not_markup(void)
+{
+    /* `<style>` holds text, and a `<` inside it is not a tag. A parser that
+       gets this wrong turns every stylesheet into a tree of nonsense. */
+    ar_doc *d = ar__parse("<style>a { content: \"<b>\"; }</style><p>after");
+    ar_i32  st = ar__find(d, "style");
+    ar_i32  b = ar__find(d, "b");
+
+    CHECK(st >= 0, "html: the style element is there");
+    CHECK(b < 0, "html: and the <b> inside it did not become an element");
+    CHECK(ar__find(d, "p") >= 0, "html: and the document carries on afterwards");
+}
+
+static void test_the_tree_builder_survives_anything(void)
+{
+    /* Every parse error has a defined recovery, so the ways to be wrong are to
+       hang, to overrun, or to give up. None of these may do any of the three. */
+    static const char *const NASTY[] = {"<b><i></b></i>",
+                                        "<table><td>x",
+                                        "</p></div></b>",
+                                        "<p><p><p><p><p>",
+                                        "<ul><li><ul><li>",
+                                        "<table><table><table>",
+                                        "<b><b><b><b><b>x",
+                                        "<!DOCTYPE><html></",
+                                        "<td>orphan",
+                                        "<a><a><a>x",
+                                        "<style><p>",
+                                        "<title></b>",
+                                        "<table><tr><td><table><tr><td>deep",
+                                        "",
+                                        "<<<<>>>>"};
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_doc *d = ar__parse(NASTY[i]);
+
+        if (d->overflowed)
+        {
+            printf("      %s overflowed\n", NASTY[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: no malformed document overruns the tree builder");
+}
+
+/* ------------------------------------------------------------------------
+ * HTML into the box tree
+ *
+ * The piece that makes the parser visible. These check that a document laid
+ * out through ar_dom_build lands where the same tree written by hand would,
+ * and that the user-agent stylesheet is doing the work that makes it so.
+ * ------------------------------------------------------------------------ */
+
+/* A whole document, from bytes to boxes, into the shared test context. */
+static void ar__render_html(ar_surface *s, const char *src, const char *author)
+{
+    ar_input in;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    if (author)
+    {
+        ar_stylesheet(g_ui, author);
+    }
+    ar__parse(src);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_the_ua_stylesheet_parses(void)
+{
+    /* Every part of it, and none may have a syntax error -- a UA sheet with a
+       bad rule in it fails silently and takes a few elements with it. */
+    ar_i32 i;
+    ar_i32 bad = 0;
+
+    for (i = 0; i < ar_ua_stylesheet_parts(); ++i)
+    {
+        ar__ui_reset("");
+        ar_stylesheet(g_ui, ar_ua_stylesheet_part(i));
+        if (ar_stylesheet_errors(g_ui))
+        {
+            printf("      part %ld has %lu problem(s)\n", (long)i,
+                   (unsigned long)ar_stylesheet_errors(g_ui));
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "ua: every part of the user-agent stylesheet parses cleanly");
+    CHECK(ar_ua_stylesheet_parts() > 5, "ua: and there is a real sheet there");
+
+    /* And all of it together, which is what an application actually does. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "ua: and the whole sheet at once");
+}
+
+static void test_a_document_lays_out_as_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * The thing the user-agent stylesheet exists for. areole's own default
+     * display is flex, so without it these paragraphs would sit in a row.
+     */
+    ar__render_html(&s, "<p>one</p><p>two</p>", "p { margin:0px; height:20px; }");
+
+    {
+        ar_i32 n = ar_node_count(g_ui);
+        ar_i32 first = -1, second = -1;
+        ar_i32 i;
+
+        for (i = 0; i < n; ++i)
+        {
+            if (ar_node_rect(g_ui, i).h == 20)
+            {
+                if (first < 0)
+                {
+                    first = i;
+                }
+                else if (second < 0)
+                {
+                    second = i;
+                }
+            }
+        }
+        CHECK(first >= 0 && second >= 0, "html: both paragraphs became boxes");
+        if (first >= 0 && second >= 0)
+        {
+            ar_rect a = ar_node_rect(g_ui, first);
+            ar_rect b = ar_node_rect(g_ui, second);
+
+            CHECK(b.y == a.y + 20, "html: and they stack down the page rather than across it");
+            CHECK(a.x == b.x, "html: at the same left edge");
+        }
+    }
+}
+
+static void test_the_class_and_id_reach_the_style(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /* The selector the walk spells out is what carries an author stylesheet
+       onto a parsed document. Without it every rule but a type selector is
+       dead. */
+    ar__render_html(&s, "<div class=\"card wide\" id=\"first\">x</div>",
+                    "body { margin:0px; } .card { height:11px; } #first { width:57px; }");
+
+    {
+        ar_i32 i;
+        int    found = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.h == 11 && r.w == 57)
+            {
+                found = 1;
+            }
+        }
+        CHECK(found, "html: a class and an id from the markup both match author rules");
+    }
+}
+
+static void test_whitespace_between_blocks_is_dropped(void)
+{
+    /*
+     * `<ul>\n  <li>a</li>\n</ul>` has text nodes between the items that a
+     * browser drops. Keeping them would put an empty box between every pair,
+     * and every hand-written document is full of them.
+     *
+     * Counted against the same markup with the whitespace taken out, rather
+     * than inspected: if the newlines generated boxes the two would differ by
+     * three.
+     *
+     * The first version of this check counted boxes with no size at all and
+     * failed -- on the implied `<head>`, which is `display: none` and is
+     * supposed to be 0x0. The heuristic was wrong, not the walk.
+     */
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     with_space;
+    ar_i32     without;
+
+    ar__render_html(&s, "<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>", "body { margin:0px; }");
+    with_space = ar_node_count(g_ui);
+
+    ar__render_html(&s, "<ul><li>a</li><li>b</li></ul>", "body { margin:0px; }");
+    without = ar_node_count(g_ui);
+
+    CHECK(with_space == without, "html: whitespace between block elements generates no boxes");
+    if (with_space != without)
+    {
+        printf("      %ld boxes with whitespace, %ld without\n", (long)with_space, (long)without);
+    }
+
+    /* html, head, body, ul, two li and two text spans. Stated so a change in
+       what the walk generates is visible rather than merely consistent. */
+    CHECK(without == 8, "html: and a two-item list is eight boxes");
+}
+
+static void test_a_table_from_markup_uses_the_table_model(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * areole has had the table formatting context since 0.7.0 and this is the
+     * first time markup reaches it: the user-agent sheet is what turns `<tr>`
+     * into `display: table-row`.
+     *
+     * The cells of a row share a top edge, which is the one property that is
+     * true of a table and of nothing else the engine could have used instead.
+     */
+    ar__render_html(&s,
+                    "<table><tr><td>a</td><td>b</td></tr>"
+                    "<tr><td>c</td><td>d</td></tr></table>",
+                    "body { margin:0px; } td { width:40px; height:10px; padding:0px; }");
+
+    {
+        ar_i32 i;
+        ar_i32 cells[8];
+        ar_i32 n = 0;
+
+        for (i = 0; i < ar_node_count(g_ui) && n < 8; ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w == 40 && r.h == 10)
+            {
+                cells[n++] = i;
+            }
+        }
+        CHECK(n == 4, "html: four cells came out of the markup");
+        if (n == 4)
+        {
+            ar_rect a = ar_node_rect(g_ui, cells[0]);
+            ar_rect b = ar_node_rect(g_ui, cells[1]);
+            ar_rect c = ar_node_rect(g_ui, cells[2]);
+
+            CHECK(a.y == b.y, "html: the two cells of a row share a top edge");
+            CHECK(c.y > a.y, "html: and the second row is below the first");
+            CHECK(b.x > a.x, "html: with the columns side by side");
+        }
+    }
+}
+
+static void test_head_content_draws_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `display: none` on head, style, script and title is what stops a
+     * stylesheet's own text appearing on the page -- which is exactly what a
+     * document without a user-agent sheet does, and it looks like a bug in the
+     * renderer rather than a missing rule.
+     */
+    ar__render_html(&s,
+                    "<html><head><title>T</title><style>p{color:#ff0000;}</style></head>"
+                    "<body><p>visible</p></body></html>",
+                    "body { margin:0px; }");
+
+    {
+        ar_i32 i;
+        ar_i32 drawn = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w > 0 && r.h > 0)
+            {
+                ++drawn;
+            }
+        }
+        /* html, body and the paragraph, and the paragraph's text. Nothing from
+           the head, which would be two more. */
+        CHECK(drawn > 0 && drawn <= 5, "html: nothing in the head generates a visible box");
+        if (drawn > 5)
+        {
+            printf("      %ld boxes have a size\n", (long)drawn);
+        }
+    }
+}
+
+static void test_a_document_survives_the_round_trip(void)
+{
+    /* Bytes to boxes, on the malformed shapes the tree builder recovers from.
+       None may leave the tree unbalanced, which is what would break every
+       layout pass after it. */
+    static const char *const DOCS[] = {"<p>a<p>b",
+                                       "<table><em>x</em><tr><td>y</table>",
+                                       "<b>1<i>2</b>3</i>",
+                                       "<ul><li>a<li>b</ul>",
+                                       "<div><span>x</span></div>",
+                                       "<!DOCTYPE html><html><body><h1>T</h1></body></html>",
+                                       "",
+                                       "</p></div>"};
+    ar_surface               s = ar__ui_surface(400, 300);
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof DOCS / sizeof DOCS[0]); ++i)
+    {
+        ar__render_html(&s, DOCS[i], "body { margin:0px; }");
+        if (ar_unbalanced(g_ui))
+        {
+            printf("      %s left the tree unbalanced\n", DOCS[i]);
+            ++bad;
+        }
+        if (ar_overflowed(g_ui))
+        {
+            printf("      %s overflowed the box budget\n", DOCS[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: every document walks into a balanced box tree");
+}
+
+/* ------------------------------------------------------------------------
+ * Encoding, and stylesheets out of the document
+ * ------------------------------------------------------------------------ */
+
+static char g_enc_out[512];
+
+static int ar__decoded_is(ar_encoding e, const char *in, ar_u32 len, const char *want)
+{
+    ar_u32 n = ar_encoding_decode(e, in, len, g_enc_out, (ar_u32)sizeof g_enc_out);
+
+    return n == (ar_u32)strlen(want) && memcmp(g_enc_out, want, n) == 0;
+}
+
+static void test_encoding_sniffing(void)
+{
+    ar_u32 skip = 99;
+
+    /*
+     * Step 1: a byte order mark beats everything after it, including a
+     * `<meta charset>` that disagrees. Authoring tools write both and
+     * contradict themselves constantly, and the specification is explicit
+     * about which wins.
+     */
+    CHECK(ar_encoding_sniff("\357\273\277<html>", 9, &skip) == AR_ENC_UTF8,
+          "enc: a UTF-8 BOM says UTF-8");
+    CHECK(skip == 3, "enc: and the three bytes of it are not content");
+
+    CHECK(ar_encoding_sniff("\376\377\0<", 4, &skip) == AR_ENC_UTF16BE, "enc: FE FF is UTF-16BE");
+    CHECK(skip == 2, "enc: two bytes of mark");
+    CHECK(ar_encoding_sniff("\377\376<\0", 4, &skip) == AR_ENC_UTF16LE, "enc: FF FE is UTF-16LE");
+
+    CHECK(ar_encoding_sniff("\357\273\277<meta charset=\"windows-1252\">", 30, &skip) ==
+              AR_ENC_UTF8,
+          "enc: and the mark beats a meta that disagrees with it");
+
+    /* Step 2: the declaration, in both spellings documents actually use. */
+    CHECK(ar_encoding_sniff("<meta charset=\"utf-8\">", 22, &skip) == AR_ENC_UTF8,
+          "enc: <meta charset> is read");
+    CHECK(skip == 0, "enc: with nothing to skip");
+    CHECK(ar_encoding_sniff("<meta charset=utf-8>", 20, &skip) == AR_ENC_UTF8, "enc: unquoted too");
+    CHECK(
+        ar_encoding_sniff("<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">",
+                          67, &skip) == AR_ENC_UTF8,
+        "enc: and the older http-equiv spelling");
+
+    /* `iso-8859-1` means windows-1252, which is the Encoding Standard's own
+       answer rather than a shortcut: a document labelled 8859-1 with a curly
+       quote in it is relying on the 1252 mapping. */
+    CHECK(ar_encoding_from_label("iso-8859-1", 10) == AR_ENC_WINDOWS1252,
+          "enc: iso-8859-1 means windows-1252");
+    CHECK(ar_encoding_from_label("Latin1", 6) == AR_ENC_WINDOWS1252, "enc: and so does latin1");
+    CHECK(ar_encoding_from_label("  UTF-8  ", 9) == AR_ENC_UTF8,
+          "enc: a label is trimmed and case-folded");
+
+    /* Step 3: no mark and no declaration. */
+    CHECK(ar_encoding_sniff("<html><body>x", 13, &skip) == AR_ENC_WINDOWS1252,
+          "enc: a document that says nothing is windows-1252, not UTF-8");
+}
+
+static void test_encoding_decoding(void)
+{
+    /* The high half of windows-1252 is where the curly quotes live, and
+       reading it as UTF-8 turns every one into a replacement character. */
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "\223hi\224", 4, "\342\200\234hi\342\200\235"),
+          "enc: windows-1252 curly quotes become the right code points");
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "caf\351", 4, "caf\303\251"),
+          "enc: and an accented letter becomes UTF-8");
+    CHECK(ar__decoded_is(AR_ENC_WINDOWS1252, "plain", 5, "plain"),
+          "enc: ASCII passes through unchanged");
+
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "h\0i\0", 4, "hi"), "enc: UTF-16LE decodes");
+    CHECK(ar__decoded_is(AR_ENC_UTF16BE, "\0h\0i", 4, "hi"), "enc: UTF-16BE decodes");
+
+    /* A surrogate pair is one character, not two. U+1F600 as UTF-16LE. */
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "\075\330\0\336", 4, "\360\237\230\200"),
+          "enc: a surrogate pair joins into one code point");
+
+    /* An unpaired surrogate is not a character and cannot be encoded. */
+    CHECK(ar__decoded_is(AR_ENC_UTF16LE, "\075\330", 2, "\357\277\275"),
+          "enc: an unpaired surrogate becomes U+FFFD");
+
+    /* Truncated rather than overrun, which is the contract every buffer in
+       this library has. */
+    {
+        char   tiny[4];
+        ar_u32 n = ar_encoding_decode(AR_ENC_WINDOWS1252, "abcdefgh", 8, tiny, (ar_u32)sizeof tiny);
+
+        CHECK(n <= (ar_u32)sizeof tiny, "enc: a small buffer truncates rather than overruns");
+    }
+}
+
+static void test_a_document_carries_its_own_stylesheet(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+    ar_i32     found;
+
+    /*
+     * The last piece that makes a document self-contained: its own `<style>`
+     * is what styles it, with no author sheet passed in beside it.
+     */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<html><head><style>body{margin:0px;} .box{width:37px;height:19px;}</style>"
+              "</head><body><div class=\"box\">x</div></body></html>");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 1, "html: the document's own <style> element is found");
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "html: and parses");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+
+    {
+        ar_i32 i;
+        int    hit = 0;
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            ar_rect r = ar_node_rect(g_ui, i);
+
+            if (r.w == 37 && r.h == 19)
+            {
+                hit = 1;
+            }
+        }
+        CHECK(hit, "html: and the rule in it reaches the box it names");
+    }
+}
+
+static void test_stylesheets_arrive_in_tree_order(void)
+{
+    /*
+     * Tree order is cascade order: two rules of equal specificity are settled
+     * by which came last. A collector that searched for the first `<style>`,
+     * or that visited them in any other order, would get this backwards on
+     * every document with two of them -- and there is no error to see, just
+     * the wrong colour.
+     */
+    ar_i32 found;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>.b{width:10px;}</style><style>.b{width:20px;}</style></head>"
+              "<body><div class=\"b\">x</div></body>");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 2, "html: both style elements are collected");
+
+    {
+        ar_surface s = ar__ui_surface(400, 300);
+        ar_input   in;
+        ar_i32     i;
+        int        second_won = 0;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, &s);
+
+        for (i = 0; i < ar_node_count(g_ui); ++i)
+        {
+            if (ar_node_rect(g_ui, i).w == 20)
+            {
+                second_won = 1;
+            }
+        }
+        CHECK(second_won, "html: and the later one wins, which is what cascade order means");
+    }
+}
+
+static void test_a_style_element_is_not_markup(void)
+{
+    /* `<style>` is RAWTEXT, so a `<` inside it is not a tag and the whole
+       sheet arrives as one text node. A parser that got this wrong would hand
+       the collector fragments. */
+    ar_i32 found;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<style>.a{width:5px;} /* <b> not a tag */ .c{width:6px;}</style><p>after");
+    found = ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(found == 1, "html: a stylesheet containing < is still one sheet");
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "html: and parses whole");
+}
+
+/* ------------------------------------------------------------------------
+ * A document in the arena, and a rule table the caller sized
+ * ------------------------------------------------------------------------ */
+
+static unsigned char g_doc_mem[AR_MEM_DOC(256, 96 * 1024)];
+
+static void test_a_larger_rule_table_is_the_callers_to_ask_for(void)
+{
+    static unsigned char big[AR_MEM_RULES(64, 600)];
+    ar_ctx              *c;
+    ar_i32               i;
+    char                 rule[64];
+
+    /*
+     * An ar_rule is 588 bytes, so the default 256 already occupy 150 KB of the
+     * 192 KB AR_MEM_FIXED promises. Raising that constant would charge every
+     * application for a stylesheet only some of them have -- so the caller
+     * asks, exactly as it already does for boxes.
+     *
+     * 0.9.1's user-agent stylesheet is around 400 rules and is the first thing
+     * that needs this.
+     */
+    c = ar_init_ex(big, (ar_u32)sizeof big, 600, 0);
+    CHECK(c != 0, "arena: a block sized with AR_MEM_RULES takes a 600 rule table");
+
+    if (c)
+    {
+        for (i = 0; i < 400; ++i)
+        {
+            sprintf(rule, ".r%ld { width:%ldpx; }", (long)i, (long)(i % 90) + 1);
+            ar_stylesheet(c, rule);
+        }
+        CHECK(ar_stylesheet_errors(c) == 0, "arena: and four hundred rules parse into it");
+    }
+
+    /* And the default is unchanged, so nothing an existing caller does moves. */
+    ar__ui_reset("");
+    CHECK(g_ui != 0, "arena: ar_init still works on a plain AR_MEM block");
+
+    /* A count below the default is raised to it rather than shrinking the
+       table, because AR_MEM_FIXED has already been paid for either way. */
+    {
+        static unsigned char small[AR_MEM(16)];
+        ar_ctx              *s = ar_init_ex(small, (ar_u32)sizeof small, 4, 0);
+
+        CHECK(s != 0, "arena: and asking for fewer than the default is not an error");
+    }
+}
+
+static void test_a_document_lives_in_the_arena(void)
+{
+    ar_ctx    *c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 64 * 1024);
+    ar_doc    *d;
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    CHECK(c != 0, "arena: a block sized with AR_MEM_DOC initialises");
+    if (!c)
+    {
+        return;
+    }
+    ar_ua_stylesheet(c);
+
+    d = ar_html_parse_into(c,
+                           "<html><head><style>.box{width:23px;height:29px;}</style></head>"
+                           "<body><div class=\"box\">x</div></body></html>",
+                           93);
+    CHECK(d != 0, "arena: and a document parses into it");
+    if (!d)
+    {
+        return;
+    }
+    CHECK(!d->overflowed, "arena: without overflowing");
+    CHECK(ar_dom_root(d) >= 0, "arena: with a root element");
+
+    /* The whole way through: the document's own stylesheet, then its boxes. */
+    ar_doc_stylesheets(c, d);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(c, &in);
+    ar_dom_build(c, d);
+    ar_frame_end(c, &s);
+
+    {
+        ar_i32 i;
+        int    hit = 0;
+
+        for (i = 0; i < ar_node_count(c); ++i)
+        {
+            ar_rect r = ar_node_rect(c, i);
+
+            if (r.w == 23 && r.h == 29)
+            {
+                hit = 1;
+            }
+        }
+        CHECK(hit, "arena: and lays out from bytes with nothing passed in beside it");
+    }
+}
+
+static void test_a_document_that_does_not_fit_says_so(void)
+{
+    static unsigned char tiny[AR_MEM_DOC(16, 8 * 1024)];
+    ar_ctx              *c = ar_init_ex(tiny, (ar_u32)sizeof tiny, 256, 5 * 1024);
+    ar_doc              *d;
+
+    /*
+     * 0.9.0 acceptance criterion 7: a document larger than the budget fails
+     * cleanly with a reported reason rather than truncating silently.
+     *
+     * The tree that comes back holds as much as it could, which is what makes
+     * the failure inspectable rather than merely fatal.
+     */
+    CHECK(c != 0, "arena: the small block initialises");
+    if (!c)
+    {
+        return;
+    }
+    d = ar_html_parse_into(c,
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>",
+                           200);
+    CHECK(d != 0, "arena: an oversized document still returns a document");
+    if (d)
+    {
+        CHECK(d->overflowed || d->node_count > 0, "arena: which either fitted or says it did not");
+    }
+
+    /* And a reservation too small to be worth trying is refused outright
+       rather than half-allocated. The budget is fixed at init, so this needs a
+       context that asked for a useless one. */
+    {
+        static unsigned char stingy[AR_MEM_DOC(16, 1024)];
+        ar_ctx              *nothing = ar_init_ex(stingy, (ar_u32)sizeof stingy, 256, 1024);
+
+        CHECK(nothing != 0, "arena: a context may reserve almost nothing for a document");
+        CHECK(nothing && ar_html_parse_into(nothing, "<p>x</p>", 8) == 0,
+              "arena: and parsing into it is refused rather than half-allocated");
+    }
+}
+
+static void test_a_document_decodes_its_own_encoding(void)
+{
+    ar_ctx *c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 32 * 1024);
+    ar_doc *d;
+
+    /*
+     * The piece the sniffer and the decoders existed for without being wired
+     * to anything: `ar_html_parse_into` reads the encoding before the
+     * tokenizer sees a byte.
+     *
+     * windows-1252 with no declaration is the case that matters -- a decade of
+     * documents are exactly that, and reading one as UTF-8 does not fail, it
+     * turns every accented letter into a replacement character.
+     */
+    CHECK(c != 0, "arena: the context initialises");
+    if (!c)
+    {
+        return;
+    }
+
+    /* `<p>caf\351</p>` -- an e-acute in windows-1252, which is not valid
+       UTF-8 and would otherwise be dropped. */
+    {
+        static const char SRC[] = "<p>caf\351</p>";
+
+        /* strlen, not a hand count. Both of these were one too many, which fed
+           the terminating NUL to the parser as content -- harmless while a NUL
+           in text was dropped, and a real U+FFFD once it was not. */
+        d = ar_html_parse_into(c, SRC, (ar_u32)(sizeof SRC - 1));
+    }
+    CHECK(d != 0 && !d->overflowed, "html: a windows-1252 document parses");
+    if (d)
+    {
+        ar_i32 p = -1;
+        ar_i32 i;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            if (d->nodes[i].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[i].name, "p"))
+            {
+                p = i;
+            }
+        }
+        CHECK(p >= 0, "html: with the paragraph in it");
+        if (p >= 0 && d->nodes[p].first_child >= 0)
+        {
+            ar_span t = d->nodes[d->nodes[p].first_child].text;
+
+            CHECK(ar__text_is(t, "caf\303\251"),
+                  "html: and its e-acute arrives as UTF-8 rather than as a dropped byte");
+        }
+    }
+
+    /* A UTF-8 byte order mark is not content and must not become text. */
+    c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 32 * 1024);
+    ar_ua_stylesheet(c);
+    {
+        static const char SRC[] = "\357\273\277<p>hi</p>";
+
+        d = ar_html_parse_into(c, SRC, (ar_u32)(sizeof SRC - 1));
+    }
+    CHECK(d != 0, "html: a document with a BOM parses");
+    if (d)
+    {
+        ar_i32 i;
+        int    bom_leaked = 0;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            ar_span t = d->nodes[i].text;
+
+            if (d->nodes[i].kind == AR_DOM_TEXT && t.n >= 3 && (unsigned char)t.p[0] == 0xEFu)
+            {
+                bom_leaked = 1;
+            }
+        }
+        CHECK(!bom_leaked, "html: and the mark does not end up in a text node");
+    }
+}
+
+static void test_the_adoption_agency_inner_loop(void)
+{
+    /*
+     * The whole algorithm, against a browser's own answers.
+     *
+     * Every expected string here came out of Edge before it was written down.
+     * The first implementation cut the inner loop and got six of these eight
+     * right anyway -- including the three-level `<b>1<i>2<em>3</b>4</em>5</i>`
+     * -- which is exactly why a corpus of the easy cases proves nothing about
+     * this algorithm.
+     *
+     * The two it failed shared one cause: step 4.14, moving the furthest block
+     * to the common ancestor. Without it a paragraph stays inside the bold
+     * instead of beside it.
+     */
+    static const char *const CASES[] = {"<b><i><p></b></i>",
+                                        "html(head body(b(i) i p(i(b))))",
+                                        "<b><i>x</b>y</i>",
+                                        "html(head body(b(i(#)) i(#)))",
+                                        "<a><b>1</a>2</b>",
+                                        "html(head body(a(b(#)) b(#)))",
+                                        "<b>1<p>2</b>3</p>",
+                                        "html(head body(b(#) p(b(#) #)))",
+                                        "<i><b>x</i>y</b>",
+                                        "html(head body(i(b(#)) b(#)))",
+                                        "<b><em><i>q</b>r</i></em>",
+                                        "html(head body(b(em(i(#))) em(i(#))))",
+                                        "<p><b>a<i>b</b>c</i></p>",
+                                        "html(head body(p(b(# i(#)) i(#))))",
+                                        "<b>1<i>2<em>3</b>4</em>5</i>",
+                                        "html(head body(b(# i(# em(#))) i(em(#) #)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: the adoption agency agrees with a browser on all eight");
+}
+
+/*
+ * A parse with a scratch buffer of a stated size, which is the whole point of
+ * these checks: everything else in this file hands the parser more room than
+ * any input needs, and the bugs below all live in the case where it does not
+ * have enough.
+ */
+static ar_doc *ar__parse_scratch(const char *src, ar_u32 scratch_cap)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    if (scratch_cap > (ar_u32)sizeof g_tree_scratch)
+    {
+        scratch_cap = (ar_u32)sizeof g_tree_scratch;
+    }
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, scratch_cap);
+    return &g_doc;
+}
+
+/* A parse with a stated node budget, which is where the tree-shape bugs are:
+   a budget nothing reaches is a budget nothing tests. */
+/* Bytes, with the unprintable ones shown, because half these expectations are
+   a tab or a combining mark and "want  got " helps nobody. */
+static void ar__print_escaped(const char *p, ar_u32 n)
+{
+    ar_u32 i;
+
+    for (i = 0; i < n; ++i)
+    {
+        unsigned char c = (unsigned char)p[i];
+
+        if (c >= 0x20u && c < 0x7Fu)
+        {
+            putchar((int)c);
+        }
+        else
+        {
+            printf("\\x%02X", (unsigned)c);
+        }
+    }
+}
+
+static void test_the_longest_named_reference_wins(void)
+{
+    /*
+     * The rule that arrives with the semicolon-less names, and the reason the
+     * lookup became a match.
+     *
+     * `&notit;` is `&not` followed by the literal text `it;`, because `not` is
+     * a reference and `notit` is not. Reading to the first non-alphanumeric
+     * and looking that up -- which is what this parser did while every name in
+     * its table ended in a semicolon and the question could not arise -- finds
+     * nothing and emits six characters of literal text.
+     *
+     * Every expectation here is from the specification's own table, and the
+     * shapes were checked against Edge.
+     */
+    static const char *const CASES[] = {
+        "&notit;", "\302\254it;",        /* &not, then text */
+        "&notin;", "\342\210\211",       /* the longer name wins outright */
+        "&amp;", "&", "&ampere", "&ere", /* &amp without its semicolon, then text */
+        "&lt;", "<", "&ltcc;", "\342\252\246", "&copy",
+        "\302\251", /* legacy, no semicolon: still a reference */
+        "&copyright", "\302\251right", "&NotEqualTilde;",
+        "\342\211\202\314\270", /* two code points, both or neither */
+        "&bne;", "=\342\203\245",
+        /* Anchored to a letter: a text node that is only whitespace is dropped
+           before <body> exists, which is the specification's rule about
+           insertion modes and not this table's business. */
+        "a&Tab;", "a\011", "a&NewLine;", "a\012", "&nosuchthing;",
+        "&nosuchthing;", /* not a reference at all */
+        "&", "&", "&#", "&#", 0, 0};
+    ar_i32 i;
+    ar_i32 wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        ar_doc *d = ar__parse(CASES[i]);
+        ar_i32  body = ar_dom_child_element(d, ar_dom_root(d), "body");
+        ar_i32  text = body >= 0 ? d->nodes[body].first_child : -1;
+
+        if (text < 0 || d->nodes[text].kind != AR_DOM_TEXT ||
+            !ar__text_is(d->nodes[text].text, CASES[i + 1]))
+        {
+            printf("      %s\n        want ", CASES[i]);
+            ar__print_escaped(CASES[i + 1], (ar_u32)strlen(CASES[i + 1]));
+            printf("\n        got  ");
+            if (text >= 0 && d->nodes[text].kind == AR_DOM_TEXT)
+            {
+                ar__print_escaped(d->nodes[text].text.p, d->nodes[text].text.n);
+            }
+            else
+            {
+                printf("(no text node)");
+            }
+            printf("\n");
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: the longest named reference in the table is the one taken");
+
+    /*
+     * And the attribute exception, which is why a decade of URLs still work.
+     * A reference without a semicolon followed by `=` or an alphanumeric is
+     * not a reference inside an attribute value: `?cite=1&copy=2` is a query
+     * string, not a copyright sign in the middle of one.
+     */
+    {
+        ar_doc *d = ar__parse("<a href=\"?cite=1&copy=2\">x</a>");
+        ar_i32  body = ar_dom_child_element(d, ar_dom_root(d), "body");
+        ar_i32  a = body >= 0 ? ar_dom_child_element(d, body, "a") : -1;
+
+        CHECK(a >= 0 && d->nodes[a].attr_count == 1 &&
+                  ar__text_is(d->attrs[d->nodes[a].attr_first].value, "?cite=1&copy=2"),
+              "html: and not inside an attribute, where a query string needs its ampersand");
+    }
+}
+
+static void test_the_encoding_corpus(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 4: encoding sniffing matches the
+     * specification on a fifty-document corpus.
+     *
+     * Fifty documents, and the expectations come from §13.2.3.2 and the
+     * Encoding Standard's label table rather than from a browser -- the
+     * criterion says specification, and for the pragma rule and the UTF-16
+     * adjustment the specification is the only thing that states the answer
+     * plainly.
+     *
+     * ------------------------------------------------------------------
+     * What this is really testing
+     *
+     * That the prescan is an *algorithm* and not a search. Roughly a third of
+     * the cases below put the word `charset` somewhere it does not count: in a
+     * comment, in an unrelated attribute value, in prose, in a `content`
+     * attribute with no `http-equiv` beside it. Each of those used to be found
+     * and taken, and each is a document decoded as something its author did
+     * not write -- which is not a subtle failure, because every accented
+     * letter in it becomes a replacement character and it looks like a font
+     * problem.
+     *
+     * The two that read oddly and are both correct:
+     *
+     *   - `<meta charset="utf-16">` means UTF-8. A document that declares
+     *     UTF-16 in a meta is lying by construction: the declaration was read
+     *     as ASCII, so the bytes were never UTF-16.
+     *   - `us-ascii` means windows-1252, because every byte ASCII can hold
+     *     means the same thing in both and the high half has to mean
+     *     something.
+     */
+    static const struct
+    {
+        const char *src;
+        ar_encoding enc;
+        ar_u32      skip;
+    } CASES[] = {
+        /* a UTF-8 BOM beats a meta that disagrees */
+        {"\357\273\277<meta charset=windows-1252>", AR_ENC_UTF8, 3},
+        /* a big-endian BOM */
+        {"\376\377<html>", AR_ENC_UTF16BE, 2},
+        /* a little-endian BOM */
+        {"\377\376<html>", AR_ENC_UTF16LE, 2},
+        /* a BOM and nothing else */
+        {"\357\273\277", AR_ENC_UTF8, 3},
+        /* quoted */
+        {"<meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* single quoted */
+        {"<meta charset='utf-8'>", AR_ENC_UTF8, 0},
+        /* unquoted */
+        {"<meta charset=utf-8>", AR_ENC_UTF8, 0},
+        /* spaces around the equals */
+        {"<meta charset = utf-8 >", AR_ENC_UTF8, 0},
+        /* and the case of both */
+        {"<meta CHARSET=\"UTF-8\">", AR_ENC_UTF8, 0},
+        /* padded, which the label rule trims */
+        {"<meta charset=\"  utf-8  \">", AR_ENC_UTF8, 0},
+        /* windows-1252 */
+        {"<meta charset=\"windows-1252\">", AR_ENC_WINDOWS1252, 0},
+        /* its most common alias */
+        {"<meta charset=\"iso-8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* without the second hyphen */
+        {"<meta charset=\"iso8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* the IBM spelling */
+        {"<meta charset=\"cp1252\">", AR_ENC_WINDOWS1252, 0},
+        /* and the shortest alias there is */
+        {"<meta charset=\"l1\">", AR_ENC_WINDOWS1252, 0},
+        /* a UTF-8 alias nobody remembers */
+        {"<meta charset=\"unicode-1-1-utf-8\">", AR_ENC_UTF8, 0},
+        /* ASCII is windows-1252 here */
+        {"<meta charset=\"us-ascii\">", AR_ENC_WINDOWS1252, 0},
+        /* UTF-16 in a meta is impossible by construction, so it means UTF-8 */
+        {"<meta charset=\"utf-16\">", AR_ENC_UTF8, 0},
+        /* and so is the big-endian label */
+        {"<meta charset=\"utf-16be\">", AR_ENC_UTF8, 0},
+        /* the pre-2010 spelling */
+        {"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">", AR_ENC_UTF8, 0},
+        /* no space after the semicolon */
+        {"<meta http-equiv='content-type' content='text/html;charset=iso-8859-1'>",
+         AR_ENC_WINDOWS1252, 0},
+        /* and in the other order */
+        {"<meta content=\"text/html; charset=utf-8\" http-equiv=\"Content-Type\">", AR_ENC_UTF8, 0},
+        /* no media type in front of it */
+        {"<meta http-equiv=\"Content-Type\" content=\"charset=windows-1252\">", AR_ENC_WINDOWS1252,
+         0},
+        /* content WITHOUT http-equiv declares nothing: the pragma rule */
+        {"<meta content=\"text/html; charset=utf-8\">", AR_ENC_WINDOWS1252, 0},
+        /* and a description that merely mentions it declares nothing */
+        {"<meta name=\"description\" content=\"charset=utf-8 is a thing\">", AR_ENC_WINDOWS1252, 0},
+        /* nor does a refresh */
+        {"<meta http-equiv=\"refresh\" content=\"0; charset=utf-8\">", AR_ENC_WINDOWS1252, 0},
+        /* a pragma with no charset in it */
+        {"<meta http-equiv=\"Content-Type\" content=\"text/html\">", AR_ENC_WINDOWS1252, 0},
+        /* a meta inside a comment declares nothing */
+        {"<!-- <meta charset=\"utf-8\"> --><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor does the word in a comment */
+        {"<!-- charset=utf-8 --><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor one in an unrelated attribute value */
+        {"<div title=\"charset=utf-8\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* nor a whole meta quoted inside one */
+        {"<div title=\"<meta charset=utf-8>\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* the comment is skipped and the real one is found */
+        {"<!-- <meta charset=utf-8> --><meta charset=\"iso-8859-1\">", AR_ENC_WINDOWS1252, 0},
+        /* and the attribute is stepped over, not stopped at */
+        {"<div title=\"charset=utf-8\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* the word in prose declares nothing */
+        {"<p>charset=utf-8</p>", AR_ENC_WINDOWS1252, 0},
+        /* the first one wins */
+        {"<meta charset=\"utf-8\"><meta charset=\"iso-8859-1\">", AR_ENC_UTF8, 0},
+        /* a label nobody knows is skipped and the next is taken */
+        {"<meta charset=\"nonsense\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* and so is an empty one */
+        {"<meta charset=\"\"><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after other elements */
+        {"<html><head><title>t</title><meta charset=\"utf-8\"></head>", AR_ENC_UTF8, 0},
+        /* after a processing instruction */
+        {"<?xml version=\"1.0\"?><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after a doctype */
+        {"<!DOCTYPE html><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* after an end tag */
+        {"</p><meta charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* a solidus where a space should be */
+        {"<meta/charset=\"utf-8\">", AR_ENC_UTF8, 0},
+        /* a meta the file ends inside */
+        {"<meta charset=utf-8", AR_ENC_UTF8, 0},
+        /* metaX is not meta */
+        {"<metaX charset=\"utf-8\"><p>x", AR_ENC_WINDOWS1252, 0},
+        /* a meta with nothing in it */
+        {"<meta>", AR_ENC_WINDOWS1252, 0},
+        /* a charset with no value */
+        {"<meta charset>", AR_ENC_WINDOWS1252, 0},
+        /*
+         * A meta inside a script string IS found, and that is correct.
+         *
+         * The prescan runs before anything is tokenized, so it has no idea
+         * what a script is; the specification walks tags and this is a tag.
+         * Every browser does the same, and a page that puts a meta element
+         * inside a string really can change its own encoding by accident.
+         *
+         * This expectation said windows-1252 when it was written, which was
+         * the guess rather than the rule.
+         */
+        {"<script>var s = \"<meta charset=utf-8>\";</script><meta charset=\"iso-8859-1\">",
+         AR_ENC_UTF8, 0},
+        /* no declaration is the windows-1252 default */
+        {"<p>hello</p>", AR_ENC_WINDOWS1252, 0},
+        /* an empty file, where there is nothing to be wrong about */
+        {"", AR_ENC_UTF8, 0},
+        /* a real encoding this build does not implement falls back rather than guessing */
+        {"<meta charset=\"shift_jis\">", AR_ENC_WINDOWS1252, 0},
+        {0, AR_ENC_UNKNOWN, 0}};
+    ar_i32 i;
+    ar_i32 n = 0;
+    ar_i32 wrong = 0;
+    ar_i32 wrong_skip = 0;
+
+    for (i = 0; CASES[i].src; ++i)
+    {
+        ar_u32      skip = 99u;
+        ar_u32      len = (ar_u32)strlen(CASES[i].src);
+        ar_encoding e = ar_encoding_sniff(CASES[i].src, len, &skip);
+
+        ++n;
+        if (e != CASES[i].enc)
+        {
+            printf("      %s\n        want %d, got %d\n", CASES[i].src, (int)CASES[i].enc, (int)e);
+            ++wrong;
+        }
+        if (skip != CASES[i].skip)
+        {
+            printf("      %s\n        want %lu bytes of mark, got %lu\n", CASES[i].src,
+                   (unsigned long)CASES[i].skip, (unsigned long)skip);
+            ++wrong_skip;
+        }
+    }
+    CHECK(n >= 50, "html: the encoding corpus has at least fifty documents");
+    CHECK(wrong == 0, "html: encoding sniffing matches the specification on every one");
+    CHECK(wrong_skip == 0, "html: and reports the byte order mark's length exactly");
+}
+
+static void test_quirks_matches_a_browser(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 5: quirks mode selection matches a browser on
+     * a thirty-doctype corpus, at 100%.
+     *
+     * Quirks is not a curiosity. It changes the box model to
+     * content-box-plus-padding, changes table cell inheritance and changes
+     * line height, so a document put in the wrong mode is wrong about its
+     * whole layout -- and the decision is made from a string nobody has read
+     * since 1999.
+     *
+     * ------------------------------------------------------------------
+     * Where the two expectations come from
+     *
+     * `back` is Edge's `document.compatMode` for the same doctype, taken by
+     * running all 34 of them through DOMParser and reading the answer. It is
+     * the browser half of the criterion and it is two-valued: BackCompat or
+     * CSS1Compat.
+     *
+     * `mode` is the three-way answer, and it comes from the specification's own
+     * table -- because *no browser API exposes limited quirks*. compatMode
+     * reports CSS1Compat for both no-quirks and limited-quirks, so a browser
+     * cannot confirm the distinction and this check does not pretend it can.
+     * The two are checked separately and the difference is stated rather than
+     * blurred.
+     *
+     * The interesting rows are the pairs. `HTML 4.01 Transitional` is quirks
+     * without a system identifier and *limited* quirks with one; `XHTML 1.0
+     * Transitional` is limited either way; and 3.2 is on the legacy list while
+     * 3.0 and 2.0 are not, which reads like an oversight and is what every
+     * browser does.
+     */
+    static const struct
+    {
+        const char *src;
+        ar_quirks   mode;
+        int         back;
+    } CASES[] = {
+        /* no doctype at all */
+        {"", AR_QUIRKS_YES, 1},
+        /* the modern one */
+        {"<!DOCTYPE html>", AR_QUIRKS_NO, 0},
+        /* and its case */
+        {"<!DOCTYPE HTML>", AR_QUIRKS_NO, 0},
+        /* and its other case */
+        {"<!doctype html>", AR_QUIRKS_NO, 0},
+        /* the legacy-compat escape hatch */
+        {"<!DOCTYPE html SYSTEM \"about:legacy-compat\">", AR_QUIRKS_NO, 0},
+        /* 4.01 strict, no system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\">", AR_QUIRKS_NO, 0},
+        /* 4.01 strict, with one */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" "
+         "\"http://www.w3.org/TR/html4/strict.dtd\">",
+         AR_QUIRKS_NO, 0},
+        /* transitional without a system id is quirks */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">", AR_QUIRKS_YES, 1},
+        /* and with one it is limited quirks */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" "
+         "\"http://www.w3.org/TR/html4/loose.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* frameset, likewise */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Frameset//EN\">", AR_QUIRKS_YES, 1},
+        /* and likewise */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Frameset//EN\" "
+         "\"http://www.w3.org/TR/html4/frameset.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* HTML 3.2 */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">", AR_QUIRKS_YES, 1},
+        /* 3.0 is NOT on the list, though 3.2 is */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.0//EN\">", AR_QUIRKS_NO, 0},
+        /* nor is 2.0 */
+        {"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 2.0//EN\">", AR_QUIRKS_NO, 0},
+        /* the IETF one */
+        {"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML//EN\">", AR_QUIRKS_YES, 1},
+        /* and a level of it */
+        {"<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML Level 1//EN\">", AR_QUIRKS_YES, 1},
+        /* XHTML 1.0 strict */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">",
+         AR_QUIRKS_NO, 0},
+        /* XHTML transitional is limited with or without a system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* and its frameset */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Frameset//EN\" "
+         "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd\">",
+         AR_QUIRKS_LIMITED, 0},
+        /* XHTML 1.1 */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\">", AR_QUIRKS_NO, 0},
+        /* XHTML Basic */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML Basic 1.0//EN\">", AR_QUIRKS_NO, 0},
+        /* the one system identifier that forces quirks by itself */
+        {"<!DOCTYPE html SYSTEM \"http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd\">",
+         AR_QUIRKS_YES, 1},
+        /* a vendor DTD from the list */
+        {"<!DOCTYPE html PUBLIC \"-//Advasoft Ltd//DTD HTML 3.0 asWedit + extensions//EN\">",
+         AR_QUIRKS_YES, 1},
+        /* another, and it starts with a plus */
+        {"<!DOCTYPE html PUBLIC \"+//Silmaril//dtd html Pro v0r11 19970101//EN\">", AR_QUIRKS_YES,
+         1},
+        /* Netscape's */
+        {"<!DOCTYPE html PUBLIC \"-//Netscape Comm. Corp.//DTD HTML//EN\">", AR_QUIRKS_YES, 1},
+        /* Spyglass's */
+        {"<!DOCTYPE html PUBLIC \"-//Spyglass//DTD HTML 2.0 Extended//EN\">", AR_QUIRKS_YES, 1},
+        /* W3O, and the trailing slashes are part of it */
+        {"<!DOCTYPE html PUBLIC \"-//W3O//DTD W3 HTML Strict 3.0//EN//\">", AR_QUIRKS_YES, 1},
+        /* the shortest legacy public identifier there is */
+        {"<!DOCTYPE html PUBLIC \"HTML\">", AR_QUIRKS_YES, 1},
+        /* a name that is not html */
+        {"<!DOCTYPE potato>", AR_QUIRKS_YES, 1},
+        /* a public identifier nobody has ever used */
+        {"<!DOCTYPE html PUBLIC \"nonsense\">", AR_QUIRKS_NO, 0},
+        /* both present and both empty */
+        {"<!DOCTYPE html PUBLIC \"\" \"\">", AR_QUIRKS_NO, 0},
+        /* a doctype with no name at all */
+        {"<!DOCTYPE>", AR_QUIRKS_YES, 1},
+        /* 4.0 rather than 4.01, no system id */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\">", AR_QUIRKS_YES, 1},
+        /* and its frameset */
+        {"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Frameset//EN\">", AR_QUIRKS_YES, 1},
+        {0, AR_QUIRKS_NO, 0}};
+    ar_i32 i;
+    ar_i32 wrong_mode = 0;
+    ar_i32 wrong_browser = 0;
+    ar_i32 n = 0;
+
+    for (i = 0; CASES[i].src; ++i)
+    {
+        ar_doc *d = ar__parse(CASES[i].src);
+        int     is_back = d->quirks == AR_QUIRKS_YES;
+
+        ++n;
+        if (d->quirks != CASES[i].mode)
+        {
+            printf("      %s\n        want mode %d, got %d\n", CASES[i].src, (int)CASES[i].mode,
+                   (int)d->quirks);
+            ++wrong_mode;
+        }
+        if (is_back != CASES[i].back)
+        {
+            printf("      %s\n        browser says %s\n", CASES[i].src,
+                   CASES[i].back ? "BackCompat" : "CSS1Compat");
+            ++wrong_browser;
+        }
+    }
+    CHECK(n >= 30, "html: the quirks corpus has at least thirty doctypes");
+    CHECK(wrong_browser == 0, "html: quirks agrees with a browser on every one of them");
+    CHECK(wrong_mode == 0,
+          "html: and with the specification on limited quirks, which no browser reports");
+}
+
+static void test_a_tag_that_never_ended_is_dropped(void)
+{
+    /*
+     * §13.2.5.10 and every state after it say the same thing about end of
+     * file: emit an end-of-file token. Not the tag. A tag the input stopped in
+     * the middle of is discarded whole, attributes and all -- so `<div id`
+     * contributes nothing at all, not a div with no attributes.
+     *
+     * This is not pedantry about a rare input. `<table><em><p>x</em` ends in
+     * an unterminated end tag, and honouring it runs the adoption agency,
+     * which moves the paragraph out of the emphasis and puts a clone of the
+     * emphasis inside it. One case in the browser corpus disagreed and every
+     * case around it agreed, which is what pointed at the tokenizer rather
+     * than at the agency.
+     *
+     * Every expectation below came out of Edge before it was written down.
+     */
+    static const char *const CASES[] = {"<p>a<div",
+                                        "html(head body(p(#)))",
+                                        "<b>x</b",
+                                        "html(head body(b(#)))",
+                                        "<div id",
+                                        "html(head body)",
+                                        "<div class=\"a",
+                                        "html(head body)",
+                                        "<br/",
+                                        "html(head body)",
+                                        "<b><p>x</b",
+                                        "html(head body(b(p(#))))",
+                                        "<table><em><p>x</em",
+                                        "html(head body(em(p(#)) table))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a tag the input ended inside is dropped, not emitted");
+}
+
+static void test_the_stack_is_cleared_back_to_a_table_context(void)
+{
+    /*
+     * Three sentences of the specification -- "clear the stack back to a table
+     * context" and its siblings for a table body and a table row -- and
+     * without them four browser-corpus cases came out with the table built
+     * inside the wrong element.
+     *
+     * Anything a table fosters out is relocated in the *tree* but stays on the
+     * stack of open elements, so it is still the current node when the next
+     * table part arrives. `<table><b><td>` therefore put the implied tbody
+     * inside the bold: the table came out empty and the whole row structure
+     * hung off a formatting element, while looking perfectly well-formed.
+     *
+     * From Edge, as above.
+     */
+    static const char *const CASES[] = {"<table><b><td><i></b>",
+                                        "html(head body(b table(tbody(tr(td(i))))))",
+                                        "<table><a><tr><td><a>x</a>",
+                                        "html(head body(a table(tbody(tr(td(a(#)))))))",
+                                        "<b><table><p></b><tr><td>",
+                                        "html(head body(b(p table(tbody(tr(td))))))",
+                                        "<table><tbody><em><tr><td><p></em>",
+                                        "html(head body(em table(tbody(tr(td(p))))))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
+}
+
+static void test_noahs_ark_and_the_rest_of_the_table_tail(void)
+{
+    /*
+     * Four rules that between them are the last of the tree-construction gap,
+     * and three of the four are the same shape as everything else in this
+     * release: the specification acts on one character or one node and areole
+     * acts on a run or a parent.
+     *
+     * **Noah's Ark.** Three entries of a kind on the active formatting list
+     * and no more. The stack is untouched -- all four `<b>` in
+     * `<p><b><b><b><b><p>x` really are nested -- so what the clause decides is
+     * how many *reopen* after the paragraph. It exists because a page that
+     * opens the same tag in a loop would otherwise nest a thousand deep, and
+     * "of a kind" means name, namespace and attributes, so four `<b>` with
+     * different ids are four entries.
+     *
+     * **A form in a table** is inserted where it stands rather than fostered,
+     * and popped straight off, so it holds nothing and the rows that follow
+     * are still the table's. A second one is ignored because the form pointer
+     * is set. A form is the one element that may not nest and a table is where
+     * authors put one by accident most often.
+     *
+     * **Fostered text joins what is already before the table.** The
+     * specification appends to "the node immediately before the insertion
+     * position", which when foster parenting is the sibling before the table
+     * and not the parent's last child -- that is past the table.
+     * `A<table><tr> B</tr> B</table>` was three text nodes where every browser
+     * has one.
+     *
+     * **The head keeps the whitespace before the body opens**, and only that.
+     * `</style> --> x` puts the space in the head and the rest in the body.
+     */
+    static const char *const CASES[] = {"<p><b><b><b><b><p>x",
+                                        "html(head body(p(b(b(b(b)))) p(b(b(b(#))))))",
+                                        "<p><b id=a><b id=b><b id=c><b id=d><p>x",
+                                        "html(head body(p(b(b(b(b)))) p(b(b(b(b(#)))))))",
+                                        "<table><form><tr><td>x</table>",
+                                        "html(head body(table(form tbody(tr(td(#))))))",
+                                        "<table><form><form><tr><td>x</table>",
+                                        "html(head body(table(form tbody(tr(td(#))))))",
+                                        "<table><li><li></table>",
+                                        "html(head body(li li table))",
+                                        "<style>s</style> --> x",
+                                        "html(head(style(#) #) body(#))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: Noah's Ark, a form in a table, and the head's whitespace");
+
+    /* Fostered text is one node, which the shape cannot show -- `#` is `#`
+       however many nodes are behind it. */
+    d = ar__parse("A<table><tr> B</tr> B</table>");
+    {
+        ar_i32 k;
+        ar_i32 texts = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT)
+            {
+                ++texts;
+            }
+        }
+        CHECK(texts == 1, "html: fostered text joins the text already before the table");
+    }
+}
+
+static void test_a_frameset_document_and_the_two_end_tags_that_break_out(void)
+{
+    /*
+     * `</br>` and `</p>` are the only two end tags that break out of foreign
+     * content, and they break out the way a start tag does: pop until the
+     * current node is HTML or an integration point, then reprocess. The
+     * general end-tag loop cannot produce that -- it stops at the first HTML
+     * element *below* the foreign one and processes the token there, leaving
+     * the svg open, so `<svg></p>` put the paragraph inside the svg.
+     *
+     * The frameset cases are two rules about whole runs against single
+     * characters. A frameset keeps the whitespace between its frames and drops
+     * the words, so `<frameset> te st` has two spaces in it and no letters --
+     * truncating at the first non-whitespace character keeps the leading space
+     * and loses the middle one, which is the version that looks right. And
+     * after `</html>` a comment belongs to the *document*, beside the html
+     * element rather than inside it.
+     *
+     * Expectations from html5lib's tests26.dat, tests2.dat and tests18.dat.
+     */
+    static const char *const CASES[] = {"<svg></p><foo>",
+                                        "html(head body(svg p foo))",
+                                        "<svg></br><foo>",
+                                        "html(head body(svg br foo))",
+                                        "<math></p><foo>",
+                                        "html(head body(math p foo))",
+                                        "<frameset> te st",
+                                        "html(head frameset(#))",
+                                        "<frameset></frameset><noframes>abc",
+                                        "html(head frameset noframes(#))",
+                                        "<body>x</body>\n   <!--c-->",
+                                        "html(head body(#) !)",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: </br> and </p> break out, and a frameset keeps its spaces");
+
+    /* The comment after `</html>` is a child of the document, which the shape
+       helper cannot show because it starts at the html element. */
+    d = ar__parse("<frameset></frameset></html><!--c-->");
+    {
+        ar_i32 k;
+        int    on_document = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_COMMENT && d->nodes[k].parent == 0)
+            {
+                on_document = 1;
+            }
+        }
+        CHECK(on_document, "html: a comment after </html> is a child of the document");
+    }
+}
+
+static void test_a_context_element_can_be_an_integration_point(void)
+{
+    /*
+     * A fragment's context element is never pushed onto the stack -- there is
+     * a synthetic html root and nothing else -- so every question the
+     * dispatcher asks about "the adjusted current node" has to be asked of the
+     * context element instead.
+     *
+     * Being in a foreign namespace was enough to answer "foreign" for every
+     * token, and it is not: a MathML text integration point is exactly where
+     * HTML resumes. `<figure>` parsed against `math ms` is an HTML figure and
+     * came out as `<math figure>`. The suite says so five times, once per
+     * MathML text element, which is what made it obvious that the fault was in
+     * the context and not in any one element.
+     *
+     * `annotation-xml` is deliberately not an integration point here: whether
+     * it is one depends on its `encoding` attribute, and a context element is
+     * a name with no attributes to read.
+     *
+     * Expectations from html5lib's foreign-fragment.dat.
+     */
+    static const char *const CASES[] = {"<figure></figure>",
+                                        "math ms",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math mi",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math mtext",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "math math",
+                                        "math:figure",
+                                        "<figure></figure>",
+                                        "svg desc",
+                                        "figure",
+                                        "<figure></figure>",
+                                        "svg svg",
+                                        "svg:figure",
+                                        0,
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 3)
+    {
+        const char *got = ar__fragment_shape(CASES[i], CASES[i + 1]);
+
+        if (strcmp(got, CASES[i + 2]) != 0)
+        {
+            printf("      %s in %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1],
+                   CASES[i + 2], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a context element that is an integration point resumes HTML");
+}
+
+static void test_a_select_is_an_insertion_mode(void)
+{
+    /*
+     * `in select` and `in select in table` were the last two named insertion
+     * modes with nothing behind them -- `<select>` was an ordinary element in
+     * `in body`, and the comment in ar__reset_mode said so.
+     *
+     * What the mode buys is the short list of tags that mean something else
+     * inside a select. `<hr>` is a separator *between* groups, so it closes an
+     * open option and optgroup before it lands: `<select><option><hr>` is two
+     * siblings, not a rule inside the option. `<input>` and a second
+     * `<select>` close the select rather than nesting. And in a table the mode
+     * is `in select in table`, where a `<tr>` closes the select and belongs to
+     * the table around it.
+     *
+     * The suite that defines this is newer than the version areole was
+     * written against, and the difference is the point: the select parser
+     * relaxation means a `<div>` inside a select is *kept*, where the older
+     * rule dropped everything it did not recognise. Formatting carries in with
+     * it, so `<select><div><i></div><option>` reopens the italic around the
+     * option. Edge agrees with all of it -- the corpus in examples/12_html
+     * checks the same eight documents against the browser.
+     *
+     * What is not here, named rather than hidden: `<selectedcontent>` mirrors
+     * the selected option's text into itself, which is four cases in
+     * webkit02.dat and a feature rather than a rule.
+     */
+    static const char *const CASES[] = {"<select><option>a<hr><option>b</select>",
+                                        "html(head body(select(option(#) hr option(#))))",
+                                        "<select><optgroup><option>a<hr></select>",
+                                        "html(head body(select(optgroup(option(#)) hr)))",
+                                        "<select><div>d</div><option>a</select>",
+                                        "html(head body(select(div(#) option(#))))",
+                                        "<select><option>a<input>x",
+                                        "html(head body(select(option(#)) input #))",
+                                        "<select><option>a<select><option>b",
+                                        "html(head body(select(option(#)) option(#)))",
+                                        "<table><tr><td><select><option>a<tr><td>b</table>",
+                                        "html(head body(table(tbody(tr(td(select(option(#)))) "
+                                        "tr(td(#))))))",
+                                        "<table><select><option>a</select></table>",
+                                        "html(head body(select(option(#)) table))",
+                                        "<select><div><i></div><option>o",
+                                        "html(head body(select(div(i) i(option(#)))))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a select is an insertion mode, and a relaxed one");
+}
+
+static void test_the_table_modes_need_a_table_to_act_on(void)
+{
+    /*
+     * Two things, and the fragment cases are what made both visible.
+     *
+     * `in column group` was in the enum, was switched to, and had no case in
+     * the dispatcher at all -- so everything inside a `<colgroup>` fell
+     * through to whatever the default was. A stray `<col>` now gets a group
+     * the way a stray `<td>` gets a row, and text inside a group is fostered
+     * out instead of lost.
+     *
+     * And every table mode's "close what is open and reprocess" needs
+     * something open to close. In a fragment the context element is *not*
+     * pushed -- there is a synthetic html root and nothing else -- so
+     * `<tr><td>` against a `tr` context has no row on the stack, and the
+     * specification's "in table scope" guard is what turns the `<tr>` into a
+     * dropped token rather than a second row. Without it the pop loops ate the
+     * synthetic root and the document came out empty.
+     *
+     * `ar__in_table`'s own `</table>` was the subtle one: `ar__pop_until` was
+     * already a no-op with no table on the stack, so the *tree* was right and
+     * the *mode* was not. It went to `in body`, and the `<tr>` after
+     * `</table>` in a `table` fragment was then a table part with no table and
+     * was dropped.
+     *
+     * Expectations from html5lib's tables01.dat, tests6.dat and
+     * tests_innerHTML_1.dat.
+     */
+    static const char *const CASES[] = {"<table><col><col></table>",
+                                        "html(head body(table(colgroup(col col))))",
+                                        "<table><colgroup>foo</table>",
+                                        "html(head body(# table(colgroup)))",
+                                        "<table><colgroup><col><tr><td>x</table>",
+                                        "html(head body(table(colgroup(col) tbody(tr(td(#))))))",
+                                        "<table><caption>c<td>x</table>",
+                                        "html(head body(table(caption(#) tbody(tr(td(#))))))",
+                                        "<table><input type=hidden></table>",
+                                        "html(head body(table(input)))",
+                                        "<table><input type=text></table>",
+                                        "html(head body(input table))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a column group is a mode, and a table part needs a table");
+}
+
+static void test_quirks_mode_changes_the_tree_not_only_the_layout(void)
+{
+    /*
+     * The one place a doctype changes tree construction rather than layout: in
+     * quirks mode a `<table>` does not close an open paragraph, so
+     * `<p><table>` nests the table inside the paragraph.
+     *
+     * Not a legacy corner. A document with no doctype at all is in quirks
+     * mode, so this is what happens to any page that forgot its first line --
+     * which is why all three quirks01 cases were about this one rule and not
+     * about the doctype table, which was already right.
+     *
+     * The last two are the whitespace rule that came out of the same file.
+     * `initial`, `before html` and `before head` ignore a whitespace character
+     * token and hand anything else on; the specification's tokens are one
+     * character each and areole's are whole runs, so ` a ` before a body was
+     * being kept whole where a browser drops the leading space. Trimming
+     * happens in the parse loop, before the mode is asked.
+     */
+    static const char *const CASES[] = {"<p>a<table><tr><td>b</table>",
+                                        "html(head body(p(# table(tbody(tr(td(#)))))))",
+                                        "<!DOCTYPE html><p>a<table><tr><td>b</table>",
+                                        "html(head body(p(#) table(tbody(tr(td(#))))))",
+                                        "<!DOCTYPE html PUBLIC \"html\"><p>a<table>",
+                                        "html(head body(p(# table)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: in quirks mode a table does not close a paragraph");
+
+    /* Leading whitespace before the document starts is dropped; whitespace
+       after it is not. */
+    d = ar__parse(" \n a ");
+    {
+        ar_i32 k;
+        ar_i32 text = -1;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT)
+            {
+                text = k;
+            }
+        }
+        CHECK(text >= 0 && d->nodes[text].text.n == 2 && d->nodes[text].text.p[0] == 'a',
+              "html: whitespace before the document starts is ignored, the rest is not");
+    }
+}
+
+static void test_in_head_noscript_has_rules_of_its_own(void)
+{
+    /*
+     * With scripting disabled -- permanently, here -- `<noscript>` in the head
+     * parses its contents as ordinary head content rather than as raw text,
+     * and `in head noscript` is a real insertion mode with three answers, not
+     * one.
+     *
+     * The pair that shows it is `</p>` against `</br>`. Any other end tag is
+     * *ignored*, so the noscript stays open and a comment after it lands
+     * inside; `</br>` alone falls through to "anything else", which closes the
+     * noscript, opens a body, and puts a `<br>` in it. Treating every end tag
+     * as "anything else" gets the second right and the first wrong.
+     *
+     * And `<style>` is the one that needed a mode rather than a rule: `in
+     * head` leaves the insertion mode as `text` and records where to come back
+     * to, so restoring the mode afterwards unconditionally threw that away.
+     * The style's text never reached `text` mode, landed in the body, and grew
+     * a second body inside the head on the way out.
+     *
+     * Expectations from html5lib's noscript01.dat.
+     */
+    static const char *const CASES[] = {"<head><noscript><style>x</style></noscript>",
+                                        "html(head(noscript(style(#))) body)",
+                                        "<head><noscript><noframes>x</noframes></noscript>",
+                                        "html(head(noscript(noframes(#))) body)",
+                                        "<head><noscript></p><!--c--></noscript>",
+                                        "html(head(noscript(!)) body)",
+                                        "<head><noscript></br><!--c--></noscript>",
+                                        "html(head(noscript) body(br !))",
+                                        "<head><noscript><p>x</noscript>",
+                                        "html(head(noscript) body(p(#)))",
+                                        "<head><noscript><meta charset=utf-8></noscript>",
+                                        "html(head(noscript(meta)) body)",
+                                        "<p>a</br>b",
+                                        "html(head body(p(# br #)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: in head noscript ignores an end tag but not </br>");
+}
+
+static void test_a_second_html_or_body_merges_its_attributes(void)
+{
+    /*
+     * A document has one html element and one body element, and a second start
+     * tag for either does not make another -- but its attributes are not
+     * thrown away. Every name the first element does not already carry is
+     * added to it, and the first value wins on a clash.
+     *
+     * The corpus in examples/12_html cannot ask this: it compares tree shapes
+     * and both documents have the same shape whether the merge happened or
+     * not. It is the attributes or nothing.
+     *
+     * A node's attributes are a contiguous run in one table, so the run is
+     * copied to the end before it grows -- otherwise it would overwrite the
+     * next element's. The check below is written against a document whose body
+     * has attributes *and* something after it with attributes of its own,
+     * which is the case that catches a merge done in place.
+     */
+    ar_doc *d = ar__parse("<body class=a><p id=p><body class=b hidden>x");
+    ar_i32  body = -1;
+    ar_i32  para = -1;
+    ar_i32  k;
+    int     saw_class_a = 0;
+    int     saw_hidden = 0;
+    int     saw_class_b = 0;
+
+    for (k = 0; k < d->node_count; ++k)
+    {
+        if (d->nodes[k].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (ar_span_is(d->nodes[k].name, "body"))
+        {
+            body = k;
+        }
+        if (ar_span_is(d->nodes[k].name, "p"))
+        {
+            para = k;
+        }
+    }
+    CHECK(body >= 0 && para >= 0, "html: a second <body> makes no second body element");
+
+    for (k = 0; k < d->nodes[body].attr_count; ++k)
+    {
+        const ar_attr *a = &d->attrs[d->nodes[body].attr_first + k];
+
+        if (ar_span_is(a->name, "class") && ar_span_is(a->value, "a"))
+        {
+            saw_class_a = 1;
+        }
+        if (ar_span_is(a->name, "class") && ar_span_is(a->value, "b"))
+        {
+            saw_class_b = 1;
+        }
+        if (ar_span_is(a->name, "hidden"))
+        {
+            saw_hidden = 1;
+        }
+    }
+    CHECK(saw_hidden, "html: a second <body> adds the attributes the first lacks");
+    CHECK(saw_class_a && !saw_class_b, "html: the first value of a repeated attribute wins");
+    CHECK(d->nodes[para].attr_count == 1 &&
+              ar_span_is(d->attrs[d->nodes[para].attr_first].name, "id"),
+          "html: growing the body's attributes does not overwrite the next element's");
+}
+
+static void test_pre_swallows_one_newline(void)
+{
+    /*
+     * `<pre>`, `<listing>` and `<textarea>` ignore a single line feed
+     * immediately after the start tag, because an author's opening tag sits on
+     * its own line and nobody means the blank line it would otherwise produce.
+     *
+     * The rule is about *the next token* -- so it is consumed in the parse
+     * loop, where the next token is, rather than in an insertion mode. Putting
+     * it in `in body` would have missed `<textarea>` entirely, whose content
+     * arrives in `text` mode.
+     *
+     * One line feed, and only a line feed. `<pre>\r` is already `\n` by the
+     * time it arrives, since §13.2.3.5 is applied where characters are
+     * produced -- but `&#x000D;` is decoded *after* the input stream is
+     * preprocessed, so it is a real carriage return in the tree and must
+     * survive. A first attempt normalised carriage returns again in the text
+     * store and broke that one case while fixing eleven.
+     *
+     * The shapes are from html5lib's tests3.dat and plain-text-unsafe.dat; the
+     * two `&#x` cases carry their text, because the shape cannot tell one
+     * character from another.
+     */
+    static const char *const CASES[] = {"<pre>\n</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>\nfoo</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<pre>\n\n</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<pre>\r</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>\r\n</pre>",
+                                        "html(head body(pre))",
+                                        "<pre>x\n</pre>",
+                                        "html(head body(pre(#)))",
+                                        "<listing>\n</listing>",
+                                        "html(head body(listing))",
+                                        "<textarea>\n</textarea>",
+                                        "html(head body(textarea))",
+                                        "<div>\n</div>",
+                                        "html(head body(div(#)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+    ar_doc                  *d;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: pre, listing and textarea swallow one leading newline");
+
+    /* A reference is decoded after the input stream is preprocessed, so
+       `&#x0a;` is an ordinary line feed the rule above does drop, and
+       `&#x0d;` is a carriage return that survives into the tree. */
+    d = ar__parse("<pre>&#x0a;&#x0a;A</pre>");
+    {
+        ar_i32 pre = -1;
+        ar_i32 k;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[k].name, "pre"))
+            {
+                pre = k;
+            }
+        }
+        CHECK(pre >= 0 && d->nodes[d->nodes[pre].first_child].text.n == 2,
+              "html: a decoded line feed after <pre> is dropped like a literal one");
+    }
+
+    d = ar__parse("FOO&#x000D;ZOO");
+    {
+        ar_i32 k;
+        int    saw_cr = 0;
+
+        for (k = 0; k < d->node_count; ++k)
+        {
+            if (d->nodes[k].kind == AR_DOM_TEXT && d->nodes[k].text.n &&
+                memchr(d->nodes[k].text.p, '\r', d->nodes[k].text.n))
+            {
+                saw_cr = 1;
+            }
+        }
+        CHECK(saw_cr, "html: a decoded carriage return is not preprocessed away");
+    }
+}
+
+static void test_the_frameset_ok_flag_decides_whether_a_body_survives(void)
+{
+    /*
+     * A `<frameset>` reaching `in body` throws the body away -- the second
+     * element on the stack is detached, everything below the root html element
+     * is popped, and the frameset takes the body's place. `<div><frameset>` is
+     * a frameset document with no div in it, which looks like data loss and is
+     * what every browser does.
+     *
+     * The frameset-ok flag is what stops it, and the list of tags that put it
+     * out reads arbitrarily because the specification names them one at a time
+     * rather than by category. `<br>` clears it and `<param>` does not; both
+     * are void, and the two documents differ in everything. `<input>` is the
+     * conditional one: a hidden input is not visible content and does not
+     * commit the document to having a body.
+     *
+     * The last two cases are here because of what fixing this found. `in head`
+     * had been accepting every void element as head content rather than the
+     * five that are, so `<br>` and `<param>` were inserted into the head and
+     * the body never opened -- which looked harmless, since a `<br>` in the
+     * head draws nothing, until it meant `<br>` cleared no flag and
+     * `<br><frameset>` built a frameset document with the `<br>` in its head.
+     *
+     * Expectations from html5lib's tests19.dat, tests6.dat and webkit01.dat.
+     */
+    static const char *const CASES[] = {"<div><frameset>",
+                                        "html(head frameset)",
+                                        "<param><frameset>",
+                                        "html(head frameset)",
+                                        "<input type=hidden><frameset>",
+                                        "html(head frameset)",
+                                        "<input type=hidDEN><frameset>",
+                                        "html(head frameset)",
+                                        "<div>x<frameset>",
+                                        "html(head body(div(#)))",
+                                        "<br><frameset>",
+                                        "html(head body(br))",
+                                        "<input><frameset>",
+                                        "html(head body(input))",
+                                        "<input type=button><frameset>",
+                                        "html(head body(input))",
+                                        "<hr><frameset>",
+                                        "html(head body(hr))",
+                                        "<body><frameset>",
+                                        "html(head body)",
+                                        "<br><p>a",
+                                        "html(head body(br p(#)))",
+                                        "<param><p>a",
+                                        "html(head body(param p(#)))",
+                                        "<meta><p>a",
+                                        "html(head(meta) body(p(#)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: frameset-ok decides whether a frameset replaces the body");
+}
+
+static void test_a_processing_instruction_target_is_narrower_than_a_name(void)
+{
+    /*
+     * `?` is a processing instruction, `!` a comment, and nothing at all is a
+     * construct the file ended inside.
+     *
+     * Three rules, and each was wrong in a way no single lookup would have
+     * caught. A target is ASCII and narrower than an XML name -- `.` and `:`
+     * are both legal in a name and neither is legal here, which is exactly the
+     * pair a reader expects to be allowed. A target beginning `xml` in any
+     * case is reserved, and by prefix rather than by equality, so
+     * `<?xml-stylesheet>` is a comment and `<?xla->` is not.
+     *
+     * And the last one is a layering rule rather than a syntax rule: the
+     * tokenizer emits an unterminated `<?A` as a comment, because the bogus
+     * comment state emits on EOF and the tokenizer suite checks that it does,
+     * while the tree construction suite wants no node. The token carries the
+     * fact and the tree builder drops it. Both suites pass and neither is
+     * fudged.
+     *
+     * Expectations from html5lib's processing-instructions.dat.
+     */
+    static const char *const CASES[] = {"<p>a<?something?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?something good?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?xla-?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?_prefix?>b",
+                                        "html(head body(p(# ? #)))",
+                                        "<p>a<?xml version=1.0?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?XML-stylesheet?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?data.v1?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?ns:tag?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?1st-place?>b",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?a$b?>c",
+                                        "html(head body(p(# ! #)))",
+                                        "<p>a<?start",
+                                        "html(head body(p(#)))",
+                                        "<p>a<?start data",
+                                        "html(head body(p(#)))",
+                                        "<p>a<?",
+                                        "html(head body(p(#)))",
+                                        "<p>a<? ",
+                                        "html(head body(p(# !)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a processing instruction target is ASCII, unreserved and finished");
+}
+
+static void test_hover_matches_an_ancestor_of_the_box_under_the_cursor(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+    ar_input   in;
+    ar_i32     lit_plain, lit_hover;
+
+    /*
+     * CSS: an element matches `:hover` while the pointer is over it *or over a
+     * descendant of it*. The hit test finds exactly one box, the topmost.
+     *
+     * For a hand-declared tree those are usually the same box, which is why
+     * this went unnoticed for five releases. For a parsed document they never
+     * are: `ar_dom_build` gives every element's text a child of its own, so the
+     * box under the cursor is always that child and the element the rule is
+     * written on is always its parent. `:hover` did nothing at all on an HTML
+     * page -- which is what somebody opening the interface example noticed
+     * first, and no check in the repository could have told them why.
+     *
+     * The chain is the hot box's ancestors by key, so this is one comparison
+     * per box against a path about eight long.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".item { display:block; width:100px; height:40px; background:#111111; }"
+                 ".item:hover { background:#eeeeee; }"
+                 ".label { display:block; width:100px; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.item");
+    ar_text(g_ui, "span.label", "hi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    lit_plain = (ar_i32)ar__box_bg(1);
+
+    /* Over the *text*, which is the child, twice -- hover resolves from the
+       previous frame. */
+    in.mouse_x = 10;
+    in.mouse_y = 10;
+    for (lit_hover = 0; lit_hover < 2; ++lit_hover)
+    {
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.item");
+        ar_text(g_ui, "span.label", "hi");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+    lit_hover = (ar_i32)ar__box_bg(1);
+
+    CHECK(lit_plain != lit_hover,
+          "hover: the cursor over a box's text hovers the box, as CSS says");
+}
+
+static void test_html_text_collapses_its_whitespace(void)
+{
+    /*
+     * `white-space: normal`: a run of whitespace is one space, and a newline is
+     * whitespace rather than a line break.
+     *
+     * The tree keeps the bytes exactly -- html5lib compares text node by node
+     * and 1,884 cases depend on it -- so the collapsing happens in
+     * `ar_dom_build`, on the way into a box, where CSS says it happens.
+     *
+     * It matters because markup is *written* with newlines. `<td>exact`
+     * followed by a newline and the next row's indentation was two lines of
+     * text here and one in a browser, which made every row of a table half
+     * again as tall as it should be.
+     *
+     * `<pre>` is exempt by name, since `white-space` is not a property here
+     * yet and the user-agent stylesheet cannot say so.
+     */
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_doc    *d = &g_doc;
+    ar_i32     k;
+    ar_i32     para_text = -1;
+    ar_i32     pre_text = -1;
+    ar_i32     in_pre = 0;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<p>one\ntwo   three</p><pre>four\nfive</pre>");
+
+    for (k = 0; k < d->node_count; ++k)
+    {
+        if (d->nodes[k].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[k].name, "pre"))
+        {
+            in_pre = k;
+        }
+        if (d->nodes[k].kind == AR_DOM_TEXT)
+        {
+            if (in_pre && d->nodes[k].parent == in_pre)
+            {
+                pre_text = k;
+            }
+            else if (para_text < 0)
+            {
+                para_text = k;
+            }
+        }
+    }
+    CHECK(para_text >= 0 && pre_text >= 0, "collapse: both text nodes are in the tree");
+
+    /* Before the walk, the tree holds the bytes as written. */
+    CHECK(memchr(d->nodes[para_text].text.p, '\n', d->nodes[para_text].text.n) != 0,
+          "collapse: the parser keeps the newline, because the suites compare it");
+
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, d);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(memchr(d->nodes[para_text].text.p, '\n', d->nodes[para_text].text.n) == 0,
+          "collapse: the walk turns it into a space");
+    CHECK(d->nodes[para_text].text.n == 13, "collapse: and a run of spaces into one");
+    CHECK(memchr(d->nodes[pre_text].text.p, '\n', d->nodes[pre_text].text.n) != 0,
+          "collapse: a <pre> keeps its newlines");
+}
+
+static void test_an_html_attribute_is_in_no_namespace(void)
+{
+    /*
+     * Every field of an attribute is written, not just the two that carry its
+     * text.
+     *
+     * areole never clears the attribute table -- the caller owns it, and
+     * clearing it would be a memset of the caller's budget on every parse for
+     * the benefit of fields the parser is supposed to fill. So a slot holds
+     * whatever the last document to reach it left there, and an unwritten
+     * field is not "zero", it is "the previous document's".
+     *
+     * `ar__insert_foreign` set `ns` and `ar__insert_element` did not, so an
+     * ordinary attribute on an ordinary element inherited a namespace from a
+     * document parsed before it. That made the html5lib score depend on run
+     * order: 1643 for the whole suite in one process, 1647 summed from one
+     * process per file, and no way to tell which number was true.
+     *
+     * The xlink document first, because the bug needs a slot to poison and
+     * this is the parse that poisons it.
+     */
+    ar_doc *d = ar__parse("<!DOCTYPE html><math xlink:href=foo></math>");
+    ar_i32  i;
+    int     saw_xlink = 0;
+    int     leaked = 0;
+
+    for (i = 0; i < d->attr_count; ++i)
+    {
+        if (d->attrs[i].ns == AR_ATTR_NS_XLINK)
+        {
+            saw_xlink = 1;
+        }
+    }
+    CHECK(saw_xlink, "html: xlink:href on a MathML element is in the xlink namespace");
+
+    d = ar__parse("<!DOCTYPE html><p title=x class=y><foo bar=baz>");
+    for (i = 0; i < d->attr_count; ++i)
+    {
+        if (d->attrs[i].ns != AR_ATTR_NS_NONE)
+        {
+            leaked = 1;
+        }
+    }
+    CHECK(!leaked, "html: an HTML attribute is in no namespace, whatever the last parse left");
+}
+
+static ar_doc *ar__parse_capped(const char *src, ar_i32 node_cap)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = node_cap < (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0])
+                         ? node_cap
+                         : (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, (ar_u32)sizeof g_tree_scratch);
+    return &g_doc;
+}
+
+/* The links, checked the way tests/ar_fuzz.c checks them, so the same
+   invariant is enforced by the suite CI runs and not only by the fuzzer. */
+static int ar__tree_links_sane(const ar_doc *d, const char *what, ar_i32 cap)
+{
+    ar_i32 i;
+
+    for (i = 0; i < d->node_count; ++i)
+    {
+        const ar_dom_node *n = &d->nodes[i];
+        ar_i32             c;
+        ar_i32             steps;
+
+        if (n->parent == i || n->first_child == i || n->last_child == i || n->next_sibling == i ||
+            n->prev_sibling == i)
+        {
+            printf("      %s at %ld nodes: node %ld points at itself\n", what, (long)cap, (long)i);
+            return 0;
+        }
+        if (n->parent >= d->node_count || n->first_child >= d->node_count ||
+            n->next_sibling >= d->node_count)
+        {
+            printf("      %s at %ld nodes: node %ld points outside the tree\n", what, (long)cap,
+                   (long)i);
+            return 0;
+        }
+        /*
+         * And it is still attached. Refusing a bad link keeps the tree sane
+         * but loses the subtree, which is the same bug wearing a hat: the
+         * paragraph in `<table><em><p>x</em` came out with no parent at all
+         * when only the self-link was guarded against. Everything except the
+         * document node has somewhere to be.
+         */
+        if (i > 0 && n->parent < 0)
+        {
+            printf("      %s at %ld nodes: node %ld was left with no parent\n", what, (long)cap,
+                   (long)i);
+            return 0;
+        }
+        steps = 0;
+        for (c = n->first_child; c >= 0; c = d->nodes[c].next_sibling)
+        {
+            if (d->nodes[c].parent != i)
+            {
+                printf("      %s at %ld nodes: node %ld has a child that disowns it\n", what,
+                       (long)cap, (long)i);
+                return 0;
+            }
+            if (++steps > d->node_count)
+            {
+                printf("      %s at %ld nodes: node %ld has a cycle in its children\n", what,
+                       (long)cap, (long)i);
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void test_no_node_is_ever_its_own_parent(void)
+{
+    /*
+     * `<table><em><p>x</em` with room for exactly eight nodes, which ar_fuzz
+     * found at iteration 604612 of seed 9 and which no corpus could have
+     * reached -- every corpus runs with a budget nothing exhausts.
+     *
+     * The tree runs out of nodes in the middle of the adoption agency. Step
+     * 4.14 moves the paragraph into the common ancestor, decides the common
+     * ancestor is a table so foster parenting applies, and then asked for the
+     * insertion point *without saying where* -- so the insertion point was
+     * worked out again from the current node, which by then was the paragraph
+     * being moved. The paragraph became its own parent and the tree had a
+     * cycle in it, which nothing notices until something walks it.
+     *
+     * Swept across every budget rather than checked at eight, because the
+     * exhaustion point that matters is a function of the document and picking
+     * it by hand is how the next one gets missed.
+     */
+    static const char *const NASTY[] = {
+        "<table><em><p>x</em", "<table><b><td><i></b>", "<table><a><tr><td><a>x</a>",
+        "<table><em>x</em><tr><td>y</table>", "<b><table><p></b><tr><td>",
+        "<table><caption><b><p></b></caption>", "<table><tbody><em><tr><td><p></em>",
+        "<b><i><table><p></b></i>",
+
+        /*
+         * ar_fuzz, iteration 8955409 of seed
+         * 3, minimised from 3413 bytes to 118.
+         *
+         * A different shape of the same
+         * failure: not a node inserted into
+         * itself but a node inserted into its
+         * own child. Foster parenting picks
+         * the table to insert before and the
+         * table's parent to insert into, and
+         * here the table's parent *is* the
+         * element being moved -- so the
+         * element became its own parent and
+         * its own first child at once.
+         *
+         * It needs the list of active
+         * formatting elements to be full,
+         * which is why it is here and not in
+         * the browser corpus: AR_HTML_FMT is
+         * this engine's cap and a browser has
+         * its own, so the trees are allowed to
+         * differ. The invariant is not.
+         */
+        "<b><i><em><<<i><em><em><em><b><i><em>"
+        "<i><b><i><em><i><em><b><i><em><<<i><b>"
+        "<i><em><table></body><i><table><em>"
+        "<p></em>",
+        "<i><table><em><p></em>", "<b><i><table><em><p></em></i></b>"};
+    ar_i32 cap;
+    ar_i32 i;
+    ar_i32 bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        for (cap = 4; cap <= 40; ++cap)
+        {
+            if (!ar__tree_links_sane(ar__parse_capped(NASTY[i], cap), NASTY[i], cap))
+            {
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a tree that runs out of nodes is still a tree");
+}
+
+static void test_a_document_past_its_budget_says_so(void)
+{
+    /*
+     * 0.9.0 acceptance criterion 7, the second half: "parsing a document
+     * larger than the budget fails cleanly with a reported reason rather than
+     * truncating silently".
+     *
+     * The check that stood here before could not fail. It asserted
+     * `d->overflowed || d->node_count > 0` -- "either it fitted or it says it
+     * did not" -- which is true of a parser that never sets the flag at all,
+     * and true of one that sets it always. A gate that cannot go red is not
+     * known to work; this release found three of those and this is the third.
+     *
+     * So: a document that certainly exceeds each of the three budgets in turn
+     * must set `overflowed`, and the partial tree it built must still be a
+     * tree -- links in range, children owning their parent, no cycles. Silent
+     * truncation is exactly the failure the criterion is about, because a
+     * caller that does not know cannot recover.
+     */
+    ar_i32 bad = 0;
+    ar_i32 quiet = 0;
+    ar_i32 i;
+
+    /* Nodes. Forty divs against caps that cannot hold them. */
+    for (i = 4; i <= 40; i += 4)
+    {
+        ar_doc *d = ar__parse_capped("<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>"
+                                     "<div><div><div><div><div><div><div><div><div><div>",
+                                     i);
+
+        if (!d->overflowed)
+        {
+            ++quiet;
+        }
+        if (!ar__tree_links_sane(d, "node budget", i))
+        {
+            ++bad;
+        }
+    }
+    CHECK(quiet == 0, "html: a document past the node budget says so rather than truncating");
+    CHECK(bad == 0, "html: and the partial tree it built is still a tree");
+
+    /* Scratch. A character reference needs somewhere to be decoded. */
+    CHECK(ar__parse_scratch("<p>&amp;&amp;&amp;&amp;&amp;", 2u)->overflowed,
+          "html: a document past the scratch budget says so");
+
+    /* Text. The document's own byte arena, which holds decoded text. */
+    {
+        static ar_dom_node nodes[64];
+        static ar_attr     attrs[8];
+        static char        text[8];
+        static char        scratch[256];
+        ar_doc             d;
+
+        memset(&d, 0, sizeof d);
+        d.nodes = nodes;
+        d.node_cap = (ar_i32)(sizeof nodes / sizeof nodes[0]);
+        d.attrs = attrs;
+        d.attr_cap = (ar_i32)(sizeof attrs / sizeof attrs[0]);
+        d.text = text;
+        d.text_cap = (ar_u32)sizeof text;
+        ar_html_parse(&d, "<p>&amp; a good deal more text than eight bytes</p>",
+                      (ar_u32)strlen("<p>&amp; a good deal more text than eight bytes</p>"),
+                      scratch, (ar_u32)sizeof scratch);
+        CHECK(d.overflowed, "html: a document past the text budget says so");
+        CHECK(ar__tree_links_sane(&d, "text budget", d.node_cap),
+              "html: and that tree is sane too");
+    }
+}
+
+static void test_the_tokenizer_always_consumes_input(void)
+{
+    /*
+     * The hang ar_fuzz found at iteration 315 of seed 1, minimised to three
+     * bytes.
+     *
+     * `&#0` is a null character reference, which the specification replaces
+     * with U+FFFD -- three bytes of UTF-8. Given room for one, the reference
+     * could not be written, the `&` that would have replaced it could not be
+     * written either, and the text loop left with the read pointer exactly
+     * where it started. The token was not empty, so the tree builder accepted
+     * it and asked for the next one, and got the same one, forever.
+     *
+     * There is no assertion here beyond the test returning at all: a hang is
+     * caught by this function finishing. Which is also why it was expensive to
+     * find -- a process that hangs prints nothing to go on.
+     */
+    static const char *const STARVED[] = {"&#0",      "&#0;",        "&amp;",
+                                          "&#xFFFD;", "<title>&#0",  "<textarea>&#0;x",
+                                          "<p>a&#0b", "&#0&#0&#0&#0"};
+    ar_u32                   cap;
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (cap = 0; cap <= 4u; ++cap)
+    {
+        for (i = 0; i < (ar_i32)(sizeof STARVED / sizeof STARVED[0]); ++i)
+        {
+            ar_doc *d = ar__parse_scratch(STARVED[i], cap);
+
+            if (d->node_count <= 0)
+            {
+                printf("      %s with %lu scratch bytes built nothing\n", STARVED[i],
+                       (unsigned long)cap);
+                ++bad;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a starved scratch buffer terminates rather than looping");
+
+    /*
+     * And it says so. A reference that did not fit is not bad markup, it is a
+     * budget too small to hold good markup, and the two have to be tellable
+     * apart -- 0.9.0 acceptance criterion 7 is failing cleanly with a reported
+     * reason rather than truncating in silence.
+     */
+    CHECK(ar__parse_scratch("&#0", 1u)->overflowed,
+          "html: and reports the overflow rather than truncating quietly");
+    CHECK(!ar__parse_scratch("&#0", 64u)->overflowed,
+          "html: while the same document with room to decode does not");
+}
+
+static void test_a_partial_code_point_never_reaches_the_tree(void)
+{
+    /*
+     * U+FFFD is three bytes. Given two, the old decoder wrote the first, ran
+     * out, and reported failure -- leaving a lone 0xEF in the buffer that the
+     * text token then carried into the tree as if it were a character.
+     *
+     * A partial sequence is not a character in any encoding, and nothing
+     * downstream -- shaping, the cascade, a caller writing the text out again
+     * -- has any defence against one. All of it or none of it.
+     */
+    ar_u32 cap;
+    ar_i32 bad = 0;
+
+    for (cap = 0; cap <= 3u; ++cap)
+    {
+        ar_doc *d = ar__parse_scratch("<p>&#xFFFD;</p>", cap);
+        ar_i32  i;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            const ar_dom_node *n = &d->nodes[i];
+            ar_u32             k;
+
+            if (n->kind != AR_DOM_TEXT)
+            {
+                continue;
+            }
+            for (k = 0; k < n->text.n; ++k)
+            {
+                unsigned char c = (unsigned char)n->text.p[k];
+                ar_u32        need;
+
+                if (c < 0x80u)
+                {
+                    continue;
+                }
+                if ((c & 0xE0u) == 0xC0u)
+                {
+                    need = 2u;
+                }
+                else if ((c & 0xF0u) == 0xE0u)
+                {
+                    need = 3u;
+                }
+                else if ((c & 0xF8u) == 0xF0u)
+                {
+                    need = 4u;
+                }
+                else
+                {
+                    /* A continuation byte with no lead is a fragment too. */
+                    printf("      %lu scratch bytes left a stray continuation\n",
+                           (unsigned long)cap);
+                    ++bad;
+                    continue;
+                }
+                if (k + need > n->text.n)
+                {
+                    printf("      %lu scratch bytes left a truncated sequence\n",
+                           (unsigned long)cap);
+                    ++bad;
+                }
+                k += need - 1u;
+            }
+        }
+    }
+    CHECK(bad == 0, "html: a code point that does not fit is not written at all");
+}
+
+static void test_the_adoption_agency_terminates_on_anything(void)
+{
+    /*
+     * The outer loop is capped at eight by the specification and the inner one
+     * needs a cap of its own, because a chain of formatting elements long
+     * enough would otherwise walk the stack forever. Step 4.13.4 -- drop a
+     * node from the list after three passes -- is the specification's own
+     * answer and is what makes these terminate.
+     */
+    static const char *const NASTY[] = {"<b><b><b><b><b><b><b><b><b><b>x</b>",
+                                        "<i><b><i><b><i><b>x</i>",
+                                        "<a><a><a><a><a>x</a>",
+                                        "<b><i><em><strong><small><big>x</b>",
+                                        "<b><p><b><p><b><p></b></p>",
+                                        "<em><b><em><b><em><b></em></b></em>"};
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_doc *d = ar__parse(NASTY[i]);
+
+        if (d->overflowed)
+        {
+            printf("      %s overflowed\n", NASTY[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: and terminates on every chain of misnested formatting");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -13094,6 +16670,11 @@ int main(void)
     test_intrinsic_keywords_work_on_the_height();
     test_fit_content_takes_a_cap();
     test_aspect_ratio_gives_the_axis_nobody_stated();
+    test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is();
+    test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it();
+    test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_them();
+    test_every_placer_takes_a_settled_subtree_with_it();
+    test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
     test_subgrid_lines_the_cards_up();
@@ -13168,6 +16749,8 @@ int main(void)
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
     test_absolute_with_no_offsets_keeps_the_static_position();
+    test_absolute_takes_its_children_with_it();
+    test_a_shifted_box_takes_its_fragments_with_it();
     test_absolute_stretches_between_two_edges();
     test_absolute_from_the_far_edges();
     test_fixed_uses_the_viewport();
@@ -13293,6 +16876,64 @@ int main(void)
     test_plaintext_never_ends();
     test_the_tokenizer_never_stalls_or_stops();
     test_the_tokenizer_copies_nothing_it_does_not_have_to();
+
+    test_the_optional_tags_are_optional();
+    test_a_paragraph_closes_itself();
+    test_list_items_close_themselves();
+    test_foster_parenting();
+    test_a_table_implies_its_missing_parts();
+    test_the_adoption_agency();
+    test_formatting_is_reconstructed_across_a_block();
+    test_attributes_reach_the_tree();
+    test_text_with_an_entity_survives_the_next_token();
+    test_quirks_mode();
+    test_rawtext_content_is_not_markup();
+    test_the_tree_builder_survives_anything();
+
+    test_the_ua_stylesheet_parses();
+    test_a_document_lays_out_as_blocks();
+    test_the_class_and_id_reach_the_style();
+    test_whitespace_between_blocks_is_dropped();
+    test_a_table_from_markup_uses_the_table_model();
+    test_head_content_draws_nothing();
+    test_a_document_survives_the_round_trip();
+
+    test_encoding_sniffing();
+    test_encoding_decoding();
+    test_a_document_carries_its_own_stylesheet();
+    test_stylesheets_arrive_in_tree_order();
+    test_a_style_element_is_not_markup();
+
+    test_a_larger_rule_table_is_the_callers_to_ask_for();
+    test_a_document_lives_in_the_arena();
+    test_a_document_that_does_not_fit_says_so();
+    test_a_document_decodes_its_own_encoding();
+
+    test_the_adoption_agency_inner_loop();
+    test_the_adoption_agency_terminates_on_anything();
+    test_a_document_past_its_budget_says_so();
+    test_the_tokenizer_always_consumes_input();
+    test_a_partial_code_point_never_reaches_the_tree();
+    test_no_node_is_ever_its_own_parent();
+    test_the_longest_named_reference_wins();
+    test_the_encoding_corpus();
+    test_quirks_matches_a_browser();
+    test_a_tag_that_never_ended_is_dropped();
+    test_the_stack_is_cleared_back_to_a_table_context();
+    test_noahs_ark_and_the_rest_of_the_table_tail();
+    test_a_frameset_document_and_the_two_end_tags_that_break_out();
+    test_a_context_element_can_be_an_integration_point();
+    test_a_select_is_an_insertion_mode();
+    test_the_table_modes_need_a_table_to_act_on();
+    test_quirks_mode_changes_the_tree_not_only_the_layout();
+    test_in_head_noscript_has_rules_of_its_own();
+    test_a_second_html_or_body_merges_its_attributes();
+    test_pre_swallows_one_newline();
+    test_the_frameset_ok_flag_decides_whether_a_body_survives();
+    test_a_processing_instruction_target_is_narrower_than_a_name();
+    test_hover_matches_an_ancestor_of_the_box_under_the_cursor();
+    test_html_text_collapses_its_whitespace();
+    test_an_html_attribute_is_in_no_namespace();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

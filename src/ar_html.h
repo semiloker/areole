@@ -2,8 +2,14 @@
  * areole - HTML tokens, and the tokenizer that produces them.
  * SPDX-License-Identifier: MIT
  *
- * Not installed. This is the front half of 0.9.0; the tree builder that turns
- * these tokens into a document is the other half and does not exist yet.
+ * **Not installed, and deliberately so.** The document half of the parser --
+ * ar_doc, ar_dom_node, ar_html_parse, ar_dom_build, the encoding functions --
+ * is public and lives in include/areole.h. What is left here is the tokenizer:
+ * thirty states and a token struct, of no use to somebody who wants a document
+ * laid out, and a header is a promise that everything in it keeps working.
+ *
+ * A caller that genuinely wants tokens can include this. It is not promised,
+ * and it will change when the tokenizer does.
  *
  * ------------------------------------------------------------------------
  * Three decisions, taken here because everything below depends on them
@@ -41,13 +47,8 @@
 
 #include "ar_internal.h"
 
-/* A run of bytes somewhere. Points into the caller's input, or into the
-   scratch buffer when a character reference had to be decoded. */
-typedef struct ar_span
-{
-    const char *p;
-    ar_u32      n;
-} ar_span;
+/* ar_span and ar_attr are in include/areole.h: a document is made of them, so
+   they are part of the promise. A token borrows the same two. */
 
 typedef enum ar_tok_kind
 {
@@ -62,20 +63,22 @@ typedef enum ar_tok_kind
 /*
  * How many attributes one tag may carry.
  *
- * ponytail: a fixed array on the token. Real markup does not reach sixteen on
- * one element -- the largest in the HTML specification's own examples is
- * eleven -- and the seventeenth is dropped with `attrs_dropped` set rather
- * than overrunning. The upgrade is an arena span, and it is worth doing when
- * something real hits the cap; the counter is there so that is a fact rather
- * than a guess.
+ * ponytail: a fixed array on the token. It was sixteen, on the reasoning that
+ * real markup does not reach it -- the largest in the HTML specification's own
+ * examples is eleven -- and the seventeenth was dropped with `attrs_dropped`
+ * set rather than overrunning.
+ *
+ * Something real hit it. html5lib's tests11.dat puts every SVG attribute whose
+ * name needs case-correcting on one element, sixty of them, to check the
+ * adjustment table in one go. That is a synthetic document, but the counter
+ * existed so the cap could be raised on a fact rather than a guess, and this
+ * is the fact.
+ *
+ * Sixty-four costs two kilobytes on one `ar_token`, which is a local in
+ * ar_html_parse and nowhere else. The upgrade to an arena span is still the
+ * right answer if anything ever reaches sixty-four.
  */
-#define AR_HTML_MAX_ATTRS 16
-
-typedef struct ar_attr
-{
-    ar_span name;
-    ar_span value;
-} ar_attr;
+#define AR_HTML_MAX_ATTRS 64
 
 typedef struct ar_token
 {
@@ -96,6 +99,22 @@ typedef struct ar_token
 
     int self_closing;
 
+    /*
+     * A `<?` construct that ran to the end of the file without its `>`.
+     *
+     * The comment is still emitted, because the tokenizer suite says so: `<?A`
+     * at the end of a file is `Comment <!--?A-->`, and the bogus comment state
+     * emits on EOF exactly as it is written. The tree construction suite says
+     * `<body><?start` leaves no node at all. Both are right about their own
+     * layer, the same way a processing instruction is a comment token here and
+     * a node of its own in the tree -- so the token carries the fact and the
+     * tree builder is where it is dropped.
+     *
+     * Not set for `<? `, which is a bogus comment rather than a target that
+     * never finished, and which the tree suite keeps.
+     */
+    int unterminated;
+
     /* The doctype quirks flags, which decide the box model for the whole
        document. A doctype that is missing, malformed, or one of the legacy
        strings forces quirks, and quirks is not a curiosity: it changes the box
@@ -114,10 +133,19 @@ typedef struct ar_token
 typedef enum ar_html_state
 {
     AR_HTML_DATA = 0,
-    AR_HTML_RCDATA,   /* title, textarea: entities yes, tags no */
-    AR_HTML_RAWTEXT,  /* style, xmp, iframe, noembed: neither */
-    AR_HTML_SCRIPT,   /* script: rawtext with the escaped states */
-    AR_HTML_PLAINTEXT /* everything to the end of the file, literally */
+    AR_HTML_RCDATA,    /* title, textarea: entities yes, tags no */
+    AR_HTML_RAWTEXT,   /* style, xmp, iframe, noembed: neither */
+    AR_HTML_SCRIPT,    /* script: rawtext with the escaped states */
+    AR_HTML_PLAINTEXT, /* everything to the end of the file, literally */
+
+    /*
+     * Inside `<![CDATA[ ... ]]>`, which exists only in foreign content.
+     *
+     * Everything to the `]]>` is character data -- `<` and `&` included, which
+     * is the point: it is how SVG and MathML carry markup-shaped text. Outside
+     * foreign content `<![CDATA[` is a bogus comment and always has been.
+     */
+    AR_HTML_CDATA
 } ar_html_state;
 
 typedef struct ar_html_tok
@@ -143,10 +171,35 @@ typedef struct ar_html_tok
     char   last_start[32];
     ar_u32 last_start_n;
 
+    /*
+     * Whether the tree builder is currently inside foreign content.
+     *
+     * The tokenizer cannot know this and the specification does not ask it to:
+     * the markup declaration open state says "if the adjusted current node is
+     * not an element in the HTML namespace", which is the tree builder's
+     * business. So the tree builder sets it before each token, exactly as it
+     * sets `state` for RCDATA and RAWTEXT, and for the same reason.
+     *
+     * It decides one thing: whether `<![CDATA[` opens a CDATA section or is a
+     * bogus comment.
+     */
+    int in_foreign;
+
     /* Parse errors are counted, never fatal. The specification defines a
        recovery for every one of them, and a tokenizer that stops is a
        tokenizer that disagrees with every browser. */
     ar_u32 errors;
+
+    /*
+     * Set when a decoded character reference did not fit in `scratch`.
+     *
+     * Distinct from `errors`, which counts things wrong with the *document*.
+     * This is something wrong with the *budget*, and it is the difference
+     * between "the author wrote bad markup" and "you did not give me enough
+     * room to hold what the author wrote". The document reports it as
+     * `overflowed`, which is 0.9.0 acceptance criterion 7.
+     */
+    int scratch_full;
 } ar_html_tok;
 
 /*
@@ -163,21 +216,32 @@ void ar_html_tok_init(ar_html_tok *t, const char *bytes, ar_u32 len, char *scrat
  */
 int ar_html_next(ar_html_tok *t, ar_token *out);
 
-/* Case-insensitive ASCII comparison of a span against a literal. Exposed
-   because the tree builder asks it of every tag name it sees. */
-int ar_span_is(ar_span s, const char *lit);
-
 /*
- * A named character reference, or 0 if the name is not one.
+ * The longest named character reference that is a prefix of these bytes.
  *
- * Returns the code point and consumes nothing; the caller has already found
- * the name. See the table in ar_html_entity.c for what is and is not in it.
+ * Returns how many bytes it used -- including the semicolon, when the name it
+ * matched has one -- or 0 for no match. Writes the code points to out[0..1]
+ * and their number, one or two, to *count.
+ *
+ * A longest match rather than a lookup, and the difference is not academic
+ * once the semicolon-less names are in the table: `&notit;` is `&not` and then
+ * the literal text `it;`, because `not` is a reference and `notit` is not.
+ * The caller hands over everything after the ampersand and is told how much
+ * was eaten.
  */
-ar_u32 ar_html_entity(const char *name, ar_u32 n);
+ar_u32 ar_html_entity_match(const char *p, ar_u32 avail, ar_u32 *out, ar_i32 *count);
 
 /* The table, walked rather than read, so ar_test can check it is sorted --
- * a binary search over an unsorted table does not fail loudly. */
-ar_i32      ar_html_entity_count(void);
-const char *ar_html_entity_name(ar_i32 i);
+ * a binary search over an unsorted table does not fail loudly. The names are
+ * not NUL-terminated in the table, so this copies; it returns the length, or
+ * 0 if `i` is out of range or `cap` is too small. */
+ar_i32 ar_html_entity_count(void);
+ar_u32 ar_html_entity_name(ar_i32 i, char *buf, ar_u32 cap);
+
+/* The user-agent stylesheet is several strings, because C89 caps one literal
+   at 509 characters. These are for the check that every part parses;
+   ar_ua_stylesheet itself is public. */
+ar_i32      ar_ua_stylesheet_parts(void);
+const char *ar_ua_stylesheet_part(ar_i32 i);
 
 #endif

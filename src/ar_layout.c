@@ -238,7 +238,18 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
  * one that uses it, and is the only one of the three anybody writes on purpose.
  */
 /*
- * `aspect-ratio`: the axis nobody stated, from the one somebody did.
+ * `aspect-ratio`: the axis nobody stated, from the one that is definite.
+ *
+ * `w_definite` says the width is settled even though the stylesheet did not
+ * state it -- which is what a grid item has once its track is sized, and what
+ * CSS means by a *definite* size rather than a specified one. Every caller
+ * outside the grid passes 0, because everywhere else a ratio only fires when
+ * the author wrote one of the two axes.
+ *
+ * Without it a grid item with a ratio and no stated width got no height at
+ * all: the row sized itself from the item's content, stretch then shrank the
+ * item to the row, and a tile declared `aspect-ratio: 3 / 2` in a four-column
+ * grid came out 193 by 8. Found by examples/14_interface on its first run.
  *
  * The ratio is width over height in thousandths, so `16 / 9` is 1777. A box
  * with a width and a ratio gets a height; a box with a height and a ratio gets
@@ -250,10 +261,10 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
  * padding-percentage trick, which is what everybody did for fifteen years and
  * which nobody could read.
  */
-void ar_apply_ratio(ar_node *n)
+void ar_apply_ratio(ar_node *n, int w_definite)
 {
     ar_i32 ratio = n->style.v[AR_P_ASPECT_RATIO];
-    int    has_w = n->style.unit[AR_P_WIDTH] != AR_UNIT_AUTO;
+    int    has_w = n->style.unit[AR_P_WIDTH] != AR_UNIT_AUTO || w_definite;
     int    has_h = n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO;
 
     if (ratio <= 0 || has_w == has_h)
@@ -342,6 +353,9 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         ar_i32   axis, cross;
         ar_i32   main_sum = 0, cross_max = 0, visible = 0;
         ar_i32   c;
+
+        /* Last frame's heights were settled at last frame's widths. */
+        n->measured_w = -1;
 
         if (ar__hidden(n))
         {
@@ -514,7 +528,8 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
     {
         /* No writing modes, so a grid's cross axis is always the block one. */
     }
-    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) && ar_axis_main(p) == 0)
+    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) &&
+             !ar_is_table_block(p) && ar_axis_main(p) == 0)
     {
         /* A flex row: the cross axis is the block axis here too. A column's
            cross axis is horizontal and its stretch settles widths, which this
@@ -549,6 +564,35 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
  * stretched by align-items has already been told how tall to be, and text that
  * does not fit that is the caller's decision to make.
  */
+static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
+/*
+ * Whether this box's parent will *move* it rather than place it outright.
+ *
+ * The memo means two things at once: this subtree is settled, so the forward
+ * sweep may skip it -- and whoever positions this box has to shift the subtree
+ * with it, because nothing else is going to.
+ *
+ * All four placers do that now. Block flow always did, through
+ * ar__place_child_at; the grid track, the flex line and the table row each
+ * assigned a rectangle and walked away, which is a box that moves while
+ * everything inside it stays behind -- and then is skipped, so it is never put
+ * right. That shipped once, and drew an entire sidebar's labels piled at the
+ * top of the window with every rectangle correct.
+ *
+ * The rule that replaced it is one line long and belongs to every placer:
+ * **write the rectangle, then call ar_settle_at.** With all four obeying it the
+ * only box left out is the root, which nothing moves.
+ *
+ * Kept as a named predicate rather than deleted, because it is the question to
+ * ask when a fifth thing learns to position a box.
+ */
+static int ar__parent_moves_subtree(const ar_node *nodes, const ar_node *n)
+{
+    (void)nodes;
+    return n->parent >= 0;
+}
+
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
 {
     /*
@@ -565,6 +609,107 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      */
     ar_i32 inner_w;
     ar_i32 h;
+
+    /*
+     * A grid answers it here for the same reason a table does, and it had not
+     * been answering it at all.
+     *
+     * A grid container's intrinsic height is measured as a block -- the sum of
+     * its children, because the track solve needs a width and the measure pass
+     * does not have one yet. The comment at that site calls it the
+     * conservative answer and says the track solve settles the real one at
+     * placement. It did not: placement wrote `content_h` and nothing ever put
+     * it into `rect.h`, so an automatic-height grid was whatever the block
+     * measurement had guessed.
+     *
+     * Three shapes, all wrong and all silent: `grid-template-rows: 200px` gave
+     * a container 16 tall around 200-tall items; two 150-tall items in one row
+     * gave 300, because a block sums what a grid puts side by side; and a tile
+     * with a ratio gave 16 around 100. The grid corpus never caught it because
+     * every grid in it is either given a height or is itself a grid item.
+     *
+     * This is the one hook that already means "the width is settled, now fix
+     * the height", which is why the table uses it -- and it has to be *here*
+     * rather than after placement, because a parent fixes its children's
+     * y-positions as it stacks them and a height corrected later would leave
+     * every following sibling where the wrong one had put it.
+     */
+    if (nodes && ar_is_grid(n) && n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env && env->sheet)
+    {
+        ar_i32 gh;
+
+        /*
+         * Answered already, at this very width.
+         *
+         * Without this the solve runs again on every visit, and a container
+         * inside a container inside a container costs 2^depth of them -- the
+         * same trap the block branch has a memo for, sprung the same way. The
+         * test suite stopped finishing.
+         */
+        if (n->measured_w == n->rect.w)
+        {
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            return;
+        }
+
+        gh = ar_grid_content_height(nodes, (ar_i32)(n - nodes), env->sheet, env);
+
+        n->rect.h = ar_clamp(gh, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        /* That was a placement, not a measurement -- ar_grid_content_height
+           runs the whole track solve and positions every item. Saying so is
+           what lets the forward sweep skip it instead of running a second
+           identical solve, and what makes the stack move the settled subtree
+           rather than leaving it behind -- but only where the stack is what
+           moves it. Under another grid, a flex line or a table the position is
+           assigned outright and the subtree would be stranded. */
+        if (ar__parent_moves_subtree(nodes, n))
+        {
+            n->measured_w = n->rect.w;
+        }
+        return;
+    }
+
+    /*
+     * A flex container's automatic height is what its lines came to.
+     *
+     * The same hole the grid had, in the same place, with the same cause: the
+     * flex algorithm knew the answer and nothing asked it.
+     * `ar_flex_content_cross` was written for exactly this, declared in the
+     * header, and had no callers at all -- so a `display: flex` row with no
+     * stated height took the block measure pass's guess, which is the tallest
+     * item's *max-content* height. A row of prose came out one line tall and
+     * whatever followed it was drawn through the middle of it.
+     *
+     * Only a row. A column's cross axis is horizontal, so `cross_total` is a
+     * width there and answering with it would be answering the wrong axis; a
+     * column's automatic height is the sum of its items' main sizes, which is
+     * a different question and is not this one. Named rather than guessed at.
+     */
+    if (nodes && env && n->first_child >= 0 && n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && ar_axis_main(n) == 0)
+    {
+        ar_i32 idx = (ar_i32)(n - nodes);
+
+        /*
+         * Answered already, at this very width. Without this the solve runs
+         * again on every visit and a container inside a container costs
+         * 2^depth of them -- the same trap the block branch has a memo for,
+         * sprung the same way. The test suite stopped finishing.
+         */
+        if (n->measured_w == n->rect.w)
+        {
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            return;
+        }
+
+        ar_flex_place_auto(nodes, idx, env);
+        n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                             AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        n->measured_w = n->rect.w;
+        return;
+    }
 
     if (nodes && ar_is_table(n))
     {
@@ -594,7 +739,65 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      */
     if (n->style.v[AR_P_ASPECT_RATIO] > 0)
     {
-        ar_apply_ratio(n);
+        ar_apply_ratio(n, 0);
+        return;
+    }
+
+    /*
+     * A block with children: lay them out at the width just settled and take
+     * the height that came to.
+     *
+     * This is the upward half of the sweep. Widths are decided on the way
+     * down -- a child fills what its parent offers -- but a height is only
+     * knowable afterwards, and the parent needs it *during* its own stack,
+     * because the box after this one goes directly below it. Measuring the
+     * subtree here is what makes the two directions meet.
+     *
+     * Two shapes were wrong, and they are the two a document is made of. A
+     * box carrying its own text was covered by the text branch below, which
+     * is every box a hand-written interface declares and none that a parsed
+     * document produces -- `ar_dom_build` gives an element's text a child of
+     * its own, so a `<p>` is a block whose height is entirely its child's.
+     * That one was fixed first, restricted to a run of inline children
+     * because letting the placement reach another block would recurse.
+     *
+     * It has to recurse. `<div><p>two lines</p></div>` is the ordinary shape
+     * of every page on the web, and the div reported the height of one line,
+     * so whatever followed it was drawn *inside* the paragraph -- 26 pixels
+     * inside, on the case that found this. Restricting the branch did not
+     * avoid the recursion, it only avoided the half of it that was visible.
+     *
+     * What makes the recursion affordable is `measured_w`. Each box is
+     * visited twice -- once by its parent's stack asking how tall it is, once
+     * by the forward sweep placing it for real -- and unmemoized those two
+     * visits each re-measure the whole subtree beneath them, which is 2^depth
+     * and is why this was left alone the first time. With the memo the first
+     * ask lays the tree out once and every later ask is a clamp, so a box is
+     * placed exactly twice and the whole thing is linear.
+     *
+     * The fragments this writes are kept, not rewound. Measuring *is* a
+     * placement and appends the fragments a split inline is painted from, and
+     * since the forward sweep now skips what was settled here, these are the
+     * only ones the box will ever have. They were briefly discarded on the way
+     * to this -- correct while every box was placed a second time, and a box
+     * with no rectangles at all the moment it was not.
+     *
+     * The guards mirror the branch in ar__place_block that decides an
+     * automatic height, because that branch is what writes the memo: a table
+     * cell takes its height from its row and a stretched item from its
+     * parent, and neither may be answered from here.
+     */
+    if (nodes && n->first_child >= 0 && ar_is_block(n) && !ar_is_table_block(n) &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env->wrap &&
+        !ar__stretched_by_parent(nodes, n))
+    {
+        if (n->measured_w == n->rect.w)
+        {
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+            return;
+        }
+        ar__place_block(nodes, (ar_i32)(n - nodes), env);
         return;
     }
 
@@ -734,10 +937,53 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
                          &su->floats, su->top + y, su->env);
 }
 
+/*
+ * Move a box to where its parent decided it goes, taking its subtree along.
+ *
+ * A box whose height was settled by the measure pass has already had its whole
+ * subtree laid out, at whatever origin it happened to hold at the time -- so
+ * from here on it may be *moved* but never re-placed, and moving it means
+ * moving everything under it. `was` is where it stood before the caller
+ * assigned its new position; this puts it back and shifts the lot.
+ *
+ * Public, because every algorithm that positions a box has to obey it and
+ * three of them are in other files. Block flow, a grid track, a flex line and
+ * a table row all decide where a box goes, and all four now say so the same
+ * way: write the rectangle, then call this. A placer that assigns and does not
+ * call it strands whatever was already laid out inside -- which is a page with
+ * every rectangle correct and all of its text in the top-left corner.
+ *
+ * The memo doing double duty is what keeps this honest. Anything that changes
+ * the box's width after it was measured -- a formatting context narrowing
+ * beside a float, a float shrinking to fit -- makes `measured_w` stop matching
+ * on its own, and then this does nothing and the forward sweep places the box
+ * again the old way. No path has to remember to say so.
+ */
+void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was)
+{
+    ar_node *ch = &nodes[i];
+    ar_i32   dx, dy;
+
+    if (ch->first_child < 0 || ch->measured_w != ch->rect.w)
+    {
+        return;
+    }
+    dx = ch->rect.x - was.x;
+    dy = ch->rect.y - was.y;
+    if (!dx && !dy)
+    {
+        return;
+    }
+    ch->rect.x = was.x;
+    ch->rect.y = was.y;
+    ar_shift_subtree(nodes, env ? env->frags : 0, env ? env->frag_used : 0, i, dx, dy);
+}
+
 static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
 {
     ar__stack_ud *su = (ar__stack_ud *)ud;
     ar_node      *ch = &su->nodes[index];
+    ar_rect       was = ch->rect;
 
     /* -1 is a float: sized here, because a float shrinks to fit rather than
        filling the container the way an in-flow block child does, and then
@@ -746,6 +992,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
     {
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
+        ar_settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -757,6 +1004,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ch->rect.x = su->left;
         ch->rect.y = su->top + y;
+        ar_settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -791,6 +1039,8 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
             ch->rect.w = avail < 0 ? 0 : avail;
         }
     }
+
+    ar_settle_at(su->nodes, su->env, index, was);
 }
 
 static ar_i32 ar__clear_to(void *ud, ar_i32 y, ar_i32 which)
@@ -846,6 +1096,8 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         ar_node *ch = &nodes[c];
         ar_i32   ml = ch->style.v[AR_P_MARGIN_LEFT];
         ar_i32   mr = ch->style.v[AR_P_MARGIN_RIGHT];
+        ar_rect  was = ch->rect;
+        ar_i32   prev_mw = ch->measured_w;
 
         if (ar__hidden(ch))
         {
@@ -926,6 +1178,23 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
         ar_wrap_height(nodes, ch, 1, 0, env);
+
+        /*
+         * If that was answered from the memo rather than by laying the subtree
+         * out again, the subtree is still standing at the old x and has to be
+         * brought across. The test is the width the memo was recorded at
+         * *before* this loop touched anything: matching it means ar_wrap_height
+         * took the cheap path, and not matching it means ar_wrap_height placed
+         * the subtree afresh at the x just assigned, where it already belongs.
+         */
+        if (ch->first_child >= 0 && prev_mw == ch->rect.w)
+        {
+            ar_rect at = ch->rect;
+
+            at.x = was.x;
+            at.y = ch->rect.y;
+            ar_settle_at(nodes, env, c, at);
+        }
     }
 
     /* The stack, by the same walk the measure pass used. */
@@ -962,7 +1231,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     /* A ratio settles the axis nobody stated, before the automatic height
        below overwrites it -- a box with a width and a ratio has a height, and
        it is not the height of its contents. */
-    ar_apply_ratio(n);
+    ar_apply_ratio(n, 0);
 
     /* An automatic height is whatever that came to. It was already measured
        intrinsically, but the children's real widths may have wrapped their
@@ -1001,7 +1270,113 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
         n->rect.h =
             ar_clamp(used, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+
+        /* `used` and `content_h` are the same number, so the height this
+           arrived at is already stored; all that is missing is the width it
+           was true for. Set here rather than at the call site so the memo
+           exists only when this exact branch produced the height -- a
+           stretched box or a table cell is settled by its parent and must
+           not be answered from here. */
+        if (ar__parent_moves_subtree(nodes, n))
+        {
+            n->measured_w = n->rect.w;
+        }
     }
+}
+
+/*
+ * What this box's contents come to at a width it has not been given yet.
+ *
+ * The `measure(subtree, width)` entry point three places have wanted and none
+ * could build: the table names it in ar__cell_height and says grid will want
+ * it too, and grid wants it in ar__item_contribution. Both had to answer from
+ * `fit[1]`, which is the max-content height -- what the box would be if
+ * nothing wrapped. For a cell or a tile holding one line that is exact, and
+ * for one holding a paragraph it is a guess that is always too short.
+ *
+ * What was missing is now here: laying a subtree out at a stated width is what
+ * ar__place_block does, and `content_h` is the number it arrives at, in the
+ * same units as `fit[1]` -- padding included, border not.
+ *
+ * It is a measurement and leaves nothing behind. The subtree it places is at
+ * the wrong width for the box's final rectangle and at whatever origin the box
+ * held at the time, so the memo and the fragment counts are cleared all the way
+ * down: every one of those boxes has to be placed again, and the forward sweep
+ * will.
+ *
+ * What it must NOT do is rewind `frag_used`, which is what the first version
+ * did on the reasoning that none of these fragments are being kept. They are
+ * not -- but the counter is a bump allocator shared with every box on the
+ * page, and boxes settled *earlier* still hold indices into it. Rewinding
+ * hands those slots out twice, and then ar_shift_node finds the old index past
+ * the end of the live range and silently skips it: the box moves and its text
+ * stays where it was. The interface example's whole sidebar piled up at y=0
+ * with correct rectangles. Wasting the slots is the cheap half of that trade.
+ *
+ * Answers `fit[1]` unchanged for anything the block placer does not lay out,
+ * which is a grid, a flex container, a table, and any leaf. Those size
+ * themselves and asking this about them would be asking the wrong algorithm.
+ */
+/*
+ * Throw away everything a measurement left on a subtree.
+ *
+ * ar_content_height places a subtree to find out how tall it is and then
+ * rewinds the fragments, because none of that layout is being kept. The memo
+ * has to go with them, and not only on the box that was asked: a descendant
+ * whose memo still matches is one the forward sweep will *skip*, so its
+ * fragment indices are never rewritten -- and they point into the rewound
+ * region, where other boxes' fragments now live. Moving that box then moves
+ * text belonging to something else. The interface example caught it exactly
+ * that way: one wheel notch moved a box by 90 pixels and its text by 720.
+ *
+ * The counts are cleared as well as the memo, so a box is a box with no
+ * fragments until it is placed again rather than a box pointing at somebody
+ * else's.
+ */
+static void ar__forget_measurement(ar_node *nodes, ar_i32 i)
+{
+    ar_i32 c;
+
+    nodes[i].measured_w = -1;
+    nodes[i].frag_first = 0;
+    nodes[i].frag_count = 0;
+    for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar__forget_measurement(nodes, c);
+    }
+}
+
+ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   saved_w, saved_h, h;
+
+    if (!env || !env->wrap || inner_w <= 0 || n->first_child < 0)
+    {
+        return n->fit[1];
+    }
+    if (ar_is_grid(n) || ar_is_table(n) || ar_is_table_internal(n))
+    {
+        return n->fit[1];
+    }
+    if (!ar_is_block(n) && !ar_is_table_block(n))
+    {
+        return n->fit[1];
+    }
+
+    saved_w = n->rect.w;
+    saved_h = n->rect.h;
+
+    n->rect.w =
+        inner_w + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT] + ar_scroll_gutter(n);
+    ar__place_block(nodes, i, env);
+    h = n->content_h;
+
+    n->rect.w = saved_w;
+    n->rect.h = saved_h;
+    ar__forget_measurement(nodes, i);
+
+    return h;
 }
 
 static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
@@ -1036,17 +1411,43 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             {
                 /* After, not before: where the contents go depends on how tall
                    they turned out, and that is what the block pass works out. */
-                ar_table_align_cell(nodes, i);
+                ar_table_align_cell(nodes, i, env->frags, env->frag_used);
             }
             continue;
         }
         if (ar_is_grid(n))
         {
+            if (n->measured_w == n->rect.w)
+            {
+                continue;
+            }
             ar_grid_place(nodes, i, env->sheet, env);
             continue;
         }
         if (ar_is_block(n))
         {
+            /*
+             * Placed once, not twice.
+             *
+             * The measure pass laid this subtree out to answer its parent's
+             * question about its height, and the stack that asked has since
+             * moved it -- and everything under it -- to where it belongs. There
+             * is nothing left for a second placement to decide, and doing it
+             * anyway was the whole cost of the height sweep: `float_gallery`
+             * spent 71% more time in layout, every microsecond of it arriving
+             * at the answer it already had.
+             *
+             * The memo is the whole test, and it fails safe. It is cleared for
+             * every box at the top of the measure sweep, it is written only by
+             * the branch that settles an automatic height, and it stops
+             * matching by itself the moment anything alters the width it was
+             * recorded at -- so a box this does not fully describe is placed
+             * the old way rather than skipped.
+             */
+            if (n->measured_w == n->rect.w)
+            {
+                continue;
+            }
             ar__place_block(nodes, i, env);
             continue;
         }
@@ -1062,6 +1463,12 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
          * because CSS gives every one an automatic one whether or not anybody
          * wrote it.
          */
+        /* Placed once: the height branch in ar_wrap_height already ran the
+           whole solve and positioned every item, and said so with the memo. */
+        if (n->measured_w == n->rect.w)
+        {
+            continue;
+        }
         ar_flex_place(nodes, i, env);
     }
 }
@@ -1095,7 +1502,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     {
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
         {
-            ar_position_out_of_flow(nodes, i, viewport);
+            ar_position_out_of_flow(nodes, i, viewport, env);
         }
     }
 
@@ -1121,14 +1528,14 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
             AR_WIDE(&nodes[i].style, AR_P_POSITION_ANCHOR))
         {
-            ar_position_out_of_flow(nodes, i, viewport);
+            ar_position_out_of_flow(nodes, i, viewport, env);
         }
     }
-    ar_position_try(nodes, count, viewport);
-    ar_position_relative(nodes, count, viewport);
+    ar_position_try(nodes, count, viewport, env);
+    ar_position_relative(nodes, count, viewport, env);
     ar_scroll_apply(nodes, count, env);
 
     /* Sticky last, because reacting to the scroll position is the whole of
        what it does. */
-    ar_position_sticky(nodes, count, viewport);
+    ar_position_sticky(nodes, count, viewport, env);
 }
