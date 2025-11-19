@@ -64,21 +64,32 @@ static ar_span ar__attr_of(const ar_doc *d, ar_i32 node, const char *name)
     return none;
 }
 
-static void ar__put(char *buf, ar_u32 *used, char c)
+/* How much of a `style=""` attribute is kept. Long enough for the inline
+   styles real markup carries -- a colour, a width, a couple of margins -- and
+   truncation cuts back to the last complete declaration rather than leaving
+   half of one, so what survives is always something the parser can read. */
+#define AR_DOM_STYLE 256
+
+/* And for the declarations built from an element's legacy attributes. Every
+   one of them is short -- a colour, a length, a keyword -- and no element
+   carries more than a handful. */
+#define AR_DOM_HINTS 160
+
+static void ar__put(char *buf, ar_u32 *used, ar_u32 cap, char c)
 {
-    if (*used + 1 < AR_DOM_SEL)
+    if (*used + 1 < cap)
     {
         buf[(*used)++] = c;
     }
 }
 
-static void ar__put_span(char *buf, ar_u32 *used, ar_span s)
+static void ar__put_span(char *buf, ar_u32 *used, ar_u32 cap, ar_span s)
 {
     ar_u32 i;
 
     for (i = 0; i < s.n; ++i)
     {
-        ar__put(buf, used, s.p[i]);
+        ar__put(buf, used, cap, s.p[i]);
     }
 }
 
@@ -94,7 +105,7 @@ static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
     ar_span klass = ar__attr_of(d, node, "class");
     ar_span id = ar__attr_of(d, node, "id");
 
-    ar__put_span(buf, &used, d->nodes[node].name);
+    ar__put_span(buf, &used, AR_DOM_SEL, d->nodes[node].name);
 
     if (klass.n > 0)
     {
@@ -112,16 +123,16 @@ static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
             }
             if (!open)
             {
-                ar__put(buf, &used, '.');
+                ar__put(buf, &used, AR_DOM_SEL, '.');
                 open = 1;
             }
-            ar__put(buf, &used, c);
+            ar__put(buf, &used, AR_DOM_SEL, c);
         }
     }
     if (id.n > 0)
     {
-        ar__put(buf, &used, '#');
-        ar__put_span(buf, &used, id);
+        ar__put(buf, &used, AR_DOM_SEL, '#');
+        ar__put_span(buf, &used, AR_DOM_SEL, id);
     }
     buf[used] = 0;
 }
@@ -236,9 +247,405 @@ static int ar__preformatted(ar_span name)
            ar_span_is(name, "xmp") || ar_span_is(name, "plaintext");
 }
 
+/*
+ * An element's `style` attribute, as a NUL-terminated declaration list.
+ *
+ * The attribute's value is a span into the document rather than a string, so
+ * it has to be copied somewhere before the style engine can be handed it. The
+ * caller's buffer is a stack one, which is why ar_begin_styled copies again --
+ * this one is gone as soon as the element's children have been walked.
+ *
+ * Truncation cuts back to the last semicolon, so a `style` longer than the
+ * buffer loses whole declarations rather than ending mid-value. A value cut in
+ * half is not merely dropped: `width: 40p` is a parse error that the sheet
+ * counts, and `color: #ff000` is a different colour.
+ *
+ * Returns the buffer, or null if there was nothing to copy.
+ */
+/* ------------------------------------------------------------------------
+ * Presentational hints
+ *
+ * The attributes HTML had before it had CSS: `<td bgcolor=red>`,
+ * `<table border=1 cellspacing=4>`, `<font size=5>`, `<p align=center>`,
+ * `<img width=200>`. The specification defines each of them as a declaration,
+ * and every browser still obeys them, because a great deal of the web was
+ * written before 1998 and has not been touched since.
+ *
+ * They are a **band of the cascade**, not a `style` attribute. Above the
+ * user-agent stylesheet, below every author rule -- so a page that says
+ * `td { background: white }` gets white however many `bgcolor`s the markup
+ * carries, and a page that says nothing gets the markup's colour. Getting that
+ * order wrong in either direction is visible on real documents: hints below
+ * the UA sheet do nothing at all, and hints above the author's make a
+ * restyled table impossible.
+ * ------------------------------------------------------------------------ */
+
+/* The digits of a legacy length: `width="200"` is pixels, `width="50%"` is a
+   percentage, and anything else is not a length at all. Returns the number of
+   characters used, or 0 -- and `pct` says which of the two it was. */
+static ar_u32 ar__legacy_len(ar_span v, ar_i32 *out, int *pct)
+{
+    ar_u32 i = 0;
+    ar_i32 n = 0;
+
+    *pct = 0;
+    while (i < v.n && (v.p[i] == ' ' || v.p[i] == '\t' || v.p[i] == '\n' || v.p[i] == '\r'))
+    {
+        ++i;
+    }
+    if (i >= v.n || v.p[i] < '0' || v.p[i] > '9')
+    {
+        return 0;
+    }
+    while (i < v.n && v.p[i] >= '0' && v.p[i] <= '9')
+    {
+        if (n < 100000)
+        {
+            n = n * 10 + (v.p[i] - '0');
+        }
+        ++i;
+    }
+    if (i < v.n && v.p[i] == '%')
+    {
+        *pct = 1;
+        ++i;
+    }
+    *out = n;
+    return i;
+}
+
+static void ar__put_str(char *buf, ar_u32 *used, ar_u32 cap, const char *s)
+{
+    while (*s)
+    {
+        ar__put(buf, used, cap, *s++);
+    }
+}
+
+static void ar__put_num(char *buf, ar_u32 *used, ar_u32 cap, ar_i32 n)
+{
+    char   tmp[12];
+    ar_i32 i = 0;
+
+    if (n <= 0)
+    {
+        ar__put(buf, used, cap, '0');
+        return;
+    }
+    while (n > 0 && i < 11)
+    {
+        tmp[i++] = (char)('0' + n % 10);
+        n /= 10;
+    }
+    while (i > 0)
+    {
+        ar__put(buf, used, cap, tmp[--i]);
+    }
+}
+
+/*
+ * `width="200"` -> `width:200px`, `width="50%"` -> `width:50%`.
+ *
+ * A value that is not a legacy length writes nothing rather than writing
+ * something the parser will reject: `width="auto"` is not a hint, it is
+ * markup a browser ignores, and turning it into a parse error would make the
+ * sheet's error tally lie about the page.
+ */
+static void ar__hint_len(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_i32 n = 0;
+    int    pct = 0;
+
+    if (v.n == 0 || ar__legacy_len(v, &n, &pct) == 0)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    ar__put_num(buf, used, AR_DOM_HINTS, n);
+    ar__put_str(buf, used, AR_DOM_HINTS, pct ? "%;" : "px;");
+}
+
+/*
+ * `colspan="2"` -> `colspan:2`, with no unit.
+ *
+ * A span is a count and not a length, and `colspan:2px` is not a thing anyone
+ * can write in CSS. It happens to *work* -- the parser stores the number and
+ * the layout reads it without asking what unit came with it -- which is why
+ * this is a matter of the declaration saying what it means rather than a bug
+ * with a symptom. A declaration that is only accidentally correct is one that
+ * stops being correct the day the unit starts mattering.
+ *
+ * Zero and one are written like any other number and mean what they say. A
+ * value that is not a number at all writes nothing, for the same reason a
+ * length that is not a length does.
+ */
+static void ar__hint_count(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_i32 n = 0;
+    int    pct = 0;
+
+    if (v.n == 0 || ar__legacy_len(v, &n, &pct) == 0 || pct)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    ar__put_num(buf, used, AR_DOM_HINTS, n);
+    ar__put(buf, used, AR_DOM_HINTS, ';');
+}
+
+/*
+ * A legacy colour, which is not a CSS colour.
+ *
+ * `bgcolor=red`, `bgcolor="#f00"` and `bgcolor=FF0000` are all legal HTML and
+ * all mean the same thing. Only the second is legal CSS, so this is a
+ * translation and not a copy -- and it is HTML's job rather than the style
+ * parser's, because these are HTML's own rules and apply to nothing else.
+ *
+ * What is handled: the sixteen colour keywords HTML names, a hash colour of
+ * three or six digits, and a bare hex triple or sextet with the hash left off.
+ * That is what markup contains. The specification's full algorithm goes
+ * further -- it pads, truncates and reinterprets anything at all into a
+ * colour, so `bgcolor="hello world"` is a real colour in a browser -- and the
+ * rest of it is deliberately not here: it turns typing mistakes into colours,
+ * and a page relying on that is not a page this engine has to match.
+ *
+ * Anything not recognised writes nothing at all, rather than writing a value
+ * the CSS parser will refuse. A refusal would be counted in the sheet's error
+ * tally, and that tally is what tells anyone whether a page's *CSS* is broken.
+ */
+static const char *const AR__HTML_COLORS[] = {
+    "black",   "#000000", "silver",  "#c0c0c0", "gray",    "#808080", "white",
+    "#ffffff", "maroon",  "#800000", "red",     "#ff0000", "purple",  "#800080",
+    "fuchsia", "#ff00ff", "green",   "#008000", "lime",    "#00ff00", "olive",
+    "#808000", "yellow",  "#ffff00", "navy",    "#000080", "blue",    "#0000ff",
+    "teal",    "#008080", "aqua",    "#00ffff", 0,         0};
+
+static void ar__hint_color(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_u32 i;
+    int    hex;
+
+    if (v.n == 0)
+    {
+        return;
+    }
+    for (i = 0; AR__HTML_COLORS[i]; i += 2)
+    {
+        if (ar_span_is(v, AR__HTML_COLORS[i]))
+        {
+            ar__put_str(buf, used, AR_DOM_HINTS, prop);
+            ar__put(buf, used, AR_DOM_HINTS, ':');
+            ar__put_str(buf, used, AR_DOM_HINTS, AR__HTML_COLORS[i + 1]);
+            ar__put(buf, used, AR_DOM_HINTS, ';');
+            return;
+        }
+    }
+
+    hex = 1;
+    for (i = (v.p[0] == '#' ? 1u : 0u); i < v.n; ++i)
+    {
+        char c = v.p[i];
+
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        {
+            hex = 0;
+            break;
+        }
+    }
+    if (!hex)
+    {
+        return;
+    }
+    i = v.p[0] == '#' ? v.n - 1u : v.n;
+    if (i != 3 && i != 6)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    if (v.p[0] != '#')
+    {
+        ar__put(buf, used, AR_DOM_HINTS, '#');
+    }
+    ar__put_span(buf, used, AR_DOM_HINTS, v);
+    ar__put(buf, used, AR_DOM_HINTS, ';');
+}
+
+/* `align` is text-align on a block and on a cell, and the two extra values
+   HTML has for it are spellings of the two CSS has. */
+static void ar__hint_align(char *buf, ar_u32 *used, ar_span v)
+{
+    const char *css = 0;
+
+    if (ar_span_is(v, "left"))
+    {
+        css = "left";
+    }
+    else if (ar_span_is(v, "right"))
+    {
+        css = "right";
+    }
+    else if (ar_span_is(v, "center") || ar_span_is(v, "middle"))
+    {
+        css = "center";
+    }
+    /* `justify` is left out on purpose. This engine has three text-align
+       values and that is not one of them, so writing it would be a
+       declaration the style parser refuses -- counted in the sheet's error
+       tally, which is what says whether a page's CSS is broken. The
+       attribute maps to nothing until the value exists. */
+    if (css)
+    {
+        ar__put_str(buf, used, AR_DOM_HINTS, "text-align:");
+        ar__put_str(buf, used, AR_DOM_HINTS, css);
+        ar__put(buf, used, AR_DOM_HINTS, ';');
+    }
+}
+
+/*
+ * Every presentational hint this element carries, as a declaration list.
+ *
+ * Which attributes are hints depends on the element -- `border` is a border on
+ * a table and on an image and nothing at all on a `<div>`, and `width` is a
+ * width on the handful of elements that ever had it. Attributes are read by
+ * name rather than walked, because an element has few of these and the walk is
+ * over every attribute it has.
+ */
+static const char *ar__hints(const ar_doc *d, ar_i32 node, char *buf)
+{
+    ar_span name = d->nodes[node].name;
+    ar_u32  used = 0;
+    int     table = ar_span_is(name, "table");
+    int     cell = ar_span_is(name, "td") || ar_span_is(name, "th");
+    int row = ar_span_is(name, "tr") || ar_span_is(name, "thead") || ar_span_is(name, "tbody") ||
+              ar_span_is(name, "tfoot");
+    /* `svg` belongs on this list and was missing from it: a drawing states its
+       size in attributes exactly as an image does, and with no rule and no
+       hint it came out the full width of the page and none of its height. */
+    int sized = table || cell || ar_span_is(name, "img") || ar_span_is(name, "col") ||
+                ar_span_is(name, "hr") || ar_span_is(name, "canvas") || ar_span_is(name, "video") ||
+                ar_span_is(name, "iframe") || ar_span_is(name, "embed") ||
+                ar_span_is(name, "object") || ar_span_is(name, "svg");
+
+    if (table || cell || row || ar_span_is(name, "body"))
+    {
+        ar__hint_color(buf, &used, "background", ar__attr_of(d, node, "bgcolor"));
+    }
+    if (ar_span_is(name, "body"))
+    {
+        ar__hint_color(buf, &used, "color", ar__attr_of(d, node, "text"));
+    }
+    if (ar_span_is(name, "font"))
+    {
+        ar__hint_color(buf, &used, "color", ar__attr_of(d, node, "color"));
+    }
+    if (sized)
+    {
+        ar__hint_len(buf, &used, "width", ar__attr_of(d, node, "width"));
+        ar__hint_len(buf, &used, "height", ar__attr_of(d, node, "height"));
+    }
+    if (table)
+    {
+        /* `border=1` is a one-pixel border on the table, and `border=0` is the
+           way a page that used tables for layout said so. */
+        ar__hint_len(buf, &used, "border-width", ar__attr_of(d, node, "border"));
+        ar__hint_len(buf, &used, "border-spacing", ar__attr_of(d, node, "cellspacing"));
+    }
+    if (cell)
+    {
+        /*
+         * `cellpadding` and `border` are written on the *table* and land on
+         * its cells, which is the one hint that is not about the element
+         * carrying it. `<table cellpadding=8>` is how every table on the old
+         * web set its padding, and reading the attribute off the cell -- where
+         * it never appears -- would have made this whole mapping look like it
+         * worked while doing nothing.
+         *
+         * The table is found by walking up rather than by remembering it,
+         * because a cell is three or four links below its table and the walk
+         * happens once per cell.
+         */
+        ar_i32 up = d->nodes[node].parent;
+
+        /*
+         * `colspan` and `rowspan` first, which are not presentational at all.
+         *
+         * They are structure: they say which cells of the grid this one
+         * occupies, and no stylesheet has ever been able to say it. They are
+         * mapped here because this is where an attribute becomes a declaration
+         * and areole carries both as properties -- and because they were
+         * mapped nowhere at all, so a `<table>` written in HTML had every span
+         * silently ignored. A two-row `rowspan` laid out as one cell of one
+         * row, and the row below it started in the column the span was
+         * holding.
+         *
+         * Being in the hint band means a stylesheet could overrule them, which
+         * no stylesheet will: there is no CSS spelling of `colspan` for an
+         * author to have written one in.
+         */
+        ar__hint_count(buf, &used, "colspan", ar__attr_of(d, node, "colspan"));
+        ar__hint_count(buf, &used, "rowspan", ar__attr_of(d, node, "rowspan"));
+
+        while (up >= 0 && !ar_span_is(d->nodes[up].name, "table"))
+        {
+            up = d->nodes[up].parent;
+        }
+        if (up >= 0)
+        {
+            ar_i32  px = 0;
+            int     pct = 0;
+            ar_span b = ar__attr_of(d, up, "border");
+
+            ar__hint_len(buf, &used, "padding", ar__attr_of(d, up, "cellpadding"));
+            /* And a table with a border gives its cells one pixel, whatever
+               number it asked for itself -- which is what `border=5` looks
+               like in a browser and why it does not look like five. */
+            if (b.n > 0 && ar__legacy_len(b, &px, &pct) > 0 && px > 0)
+            {
+                ar__put_str(buf, &used, AR_DOM_HINTS, "border-width:1px;");
+            }
+        }
+    }
+    if (ar_span_is(name, "img"))
+    {
+        ar__hint_len(buf, &used, "border-width", ar__attr_of(d, node, "border"));
+        ar__hint_len(buf, &used, "margin-left", ar__attr_of(d, node, "hspace"));
+        ar__hint_len(buf, &used, "margin-top", ar__attr_of(d, node, "vspace"));
+    }
+    ar__hint_align(buf, &used, ar__attr_of(d, node, "align"));
+
+    buf[used] = 0;
+    return used > 0 ? buf : 0;
+}
+
+static const char *ar__inline_style(const ar_doc *d, ar_i32 node, char *buf)
+{
+    ar_span style = ar__attr_of(d, node, "style");
+    ar_u32  used = 0;
+
+    if (style.n == 0)
+    {
+        return 0;
+    }
+    ar__put_span(buf, &used, AR_DOM_STYLE, style);
+    if (used < style.n)
+    {
+        while (used > 0 && buf[used - 1] != ';')
+        {
+            --used;
+        }
+    }
+    buf[used] = 0;
+    return used > 0 ? buf : 0;
+}
+
 static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
+    char   style[AR_DOM_STYLE];
+    char   hints[AR_DOM_HINTS];
     ar_i32 child;
 
     if (node < 0)
@@ -272,7 +679,13 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     }
 
     ar__selector(d, node, sel);
-    ar_begin(c, sel);
+    {
+        /* Both lists are built before the box is opened, because ar_begin
+           copies them and neither buffer survives this frame's recursion. */
+        const char *h = ar__hints(d, node, hints);
+
+        ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
+    }
     for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {
         ar__walk(c, d, child, pre);
@@ -302,10 +715,96 @@ void ar_dom_build(ar_ctx *c, ar_doc *d)
  * the whole element in RAWTEXT -- so there is no reassembly to do here, which
  * there would be if `<` inside a stylesheet had been read as markup.
  *
- * Not handled: `<link rel=stylesheet>`, which needs a resource the embedder
- * has to fetch, and there is no networking here by design. The release
- * document gives that a callback and 0.9.1 is where it lands.
+ * `<link rel=stylesheet>` is handled too, through the callback the embedder
+ * sets with ar_set_stylesheet_loader. There is no networking and no file IO
+ * here, by design, so the bytes have to come from somebody who has them --
+ * and a link with no loader behind it is counted rather than ignored.
  */
+/*
+ * Whether this `rel` names a stylesheet.
+ *
+ * A space-separated list of keywords, matched case-insensitively, because
+ * `rel="stylesheet"` and `rel="STYLESHEET"` and `rel="alternate stylesheet"`
+ * are all in real markup and the first two mean the same thing. The third does
+ * not -- an alternate sheet is one the reader may choose and is not applied
+ * until they do -- so it is refused rather than loaded.
+ */
+static int ar__rel_is_stylesheet(ar_span rel)
+{
+    ar_u32 i = 0;
+    int    saw_sheet = 0;
+    int    saw_alt = 0;
+
+    while (i < rel.n)
+    {
+        ar_u32 start;
+
+        while (i < rel.n && ar__space(rel.p[i]))
+        {
+            ++i;
+        }
+        start = i;
+        while (i < rel.n && !ar__space(rel.p[i]))
+        {
+            ++i;
+        }
+        if (i > start)
+        {
+            ar_span word;
+
+            word.p = rel.p + start;
+            word.n = i - start;
+            if (ar_span_is(word, "stylesheet"))
+            {
+                saw_sheet = 1;
+            }
+            else if (ar_span_is(word, "alternate"))
+            {
+                saw_alt = 1;
+            }
+        }
+    }
+    return saw_sheet && !saw_alt;
+}
+
+/*
+ * One `<link rel=stylesheet>`, handed to whoever can fetch it.
+ *
+ * Returns 1 if a sheet was parsed. A link with no loader, no href or a loader
+ * that declined is counted as skipped instead -- a number a caller can ask
+ * for, because a page whose design is in one external sheet renders as
+ * unstyled text either way and the difference matters.
+ */
+static int ar__collect_link(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    char        href[512];
+    ar_span     rel = ar__attr_of(d, node, "rel");
+    ar_span     h = ar__attr_of(d, node, "href");
+    const char *css;
+    ar_u32      used = 0;
+
+    if (!ar__rel_is_stylesheet(rel))
+    {
+        return 0; /* not a stylesheet link at all, so nothing was skipped */
+    }
+    if (!c->link_load || h.n == 0)
+    {
+        ++c->links_skipped;
+        return 0;
+    }
+    ar__put_span(href, &used, (ar_u32)sizeof href, h);
+    href[used] = 0;
+
+    css = c->link_load(c->link_user, href);
+    if (!css)
+    {
+        ++c->links_skipped;
+        return 0;
+    }
+    ar_stylesheet(c, css);
+    return 1;
+}
+
 static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
 {
     ar_i32 found = 0;
@@ -314,6 +813,13 @@ static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
     if (node < 0)
     {
         return 0;
+    }
+    if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "link"))
+    {
+        /* In the same walk as `<style>` and not in a pass of its own, because
+           the two interleave: `<link>` then `<style>` then `<link>` is three
+           sheets in that order, and the order is the cascade. */
+        return ar__collect_link(c, d, node);
     }
     if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "style"))
     {
@@ -334,13 +840,55 @@ static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
     return found;
 }
 
+/*
+ * The user-agent rules that apply only in quirks mode.
+ *
+ * One rule, and it is not a curiosity. A `<table>` in quirks mode does not
+ * inherit the font its container set: a page that says `body { font-size:30px }`
+ * gets a table at sixteen, which is what browsers did before CSS and still do
+ * for a document that asks for quirks. A page written that way and rendered
+ * with the table inherited is wrong everywhere there is a table, which on the
+ * old web is most pages.
+ *
+ * `font-family` belongs here too and is missing because there is no such
+ * property yet.
+ */
+static const char AR__QUIRKS_CSS[] = "table { font-size:16px; }";
+
 ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d)
 {
     if (!c || !d || d->node_count == 0)
     {
         return 0;
     }
-    return ar__collect_styles(c, d, 0);
+
+    /*
+     * The doctype decides two things about how the page's own stylesheets are
+     * read, and both are decided here because here is the first moment both
+     * the document and the sheets are in hand.
+     *
+     * The quirks rules are bracketed as the user agent's so they sort into the
+     * user-agent band -- above nothing and below everything the page says,
+     * which is where a default belongs. Written after the main sheet rather
+     * than inside it because the mode is not known when that one is loaded.
+     */
+    c->links_skipped = 0;
+    if (d->quirks == AR_QUIRKS_YES)
+    {
+        ar_sheet_begin_ua(&c->sheet);
+        ar_stylesheet(c, AR__QUIRKS_CSS);
+        ar_sheet_mark_ua(&c->sheet);
+    }
+    ar_sheet_set_strict_lengths(&c->sheet, d->quirks != AR_QUIRKS_YES);
+
+    {
+        ar_i32 n = ar__collect_styles(c, d, 0);
+
+        /* Back to lenient, so the next thing parsed -- an interface's sheet,
+           another document's -- is not styled by this document's doctype. */
+        ar_sheet_set_strict_lengths(&c->sheet, 0);
+        return n;
+    }
 }
 
 /* ------------------------------------------------------------------------

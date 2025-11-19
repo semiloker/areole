@@ -109,7 +109,46 @@ static const char *const FACES[] = {"C:/Windows/Fonts/georgia.ttf", "C:/Windows/
 #define ATLAS_BYTES (2u * 1024u * 1024u)
 #define MAX_PX      64
 
-static unsigned char g_font[8 * 1024 * 1024];
+/* The bold, italic and bold-italic companions of the face above, in the same
+   order. A face that is not there is simply not loaded, and that style draws
+   in the regular one -- which is what a browser does with an incomplete
+   family. */
+static const char *const BOLD[] = {"C:/Windows/Fonts/georgiab.ttf", "C:/Windows/Fonts/timesbd.ttf",
+                                   "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf",
+                                   0};
+static const char *const ITALIC[] = {"C:/Windows/Fonts/georgiai.ttf", "C:/Windows/Fonts/timesi.ttf",
+                                     "C:/Windows/Fonts/segoeuii.ttf", "C:/Windows/Fonts/ariali.ttf",
+                                     0};
+static const char *const BOLDIT[] = {
+    "C:/Windows/Fonts/georgiaz.ttf", "C:/Windows/Fonts/timesbi.ttf",
+    "C:/Windows/Fonts/segoeuiz.ttf", "C:/Windows/Fonts/arialbi.ttf", 0};
+
+/*
+ * A buffer per face, and that is not tidiness.
+ *
+ * areole does not copy font data -- `ar_font_load` says so and it is why the
+ * parser never allocates -- so every face must keep its own bytes for the life
+ * of the context. Reading all four into one buffer leaves four faces pointing
+ * at whichever file was read last, and the page comes out **completely
+ * blank**: every glyph lookup goes to a face whose tables describe a different
+ * file. The corpus selftest passed while that was true, because it counts
+ * boxes and does not look at pixels.
+ */
+static unsigned char g_face_bytes[4][8 * 1024 * 1024];
+
+static ar_u32 slurp(int slot, const char *path)
+{
+    FILE  *f = fopen(path, "rb");
+    ar_u32 n;
+
+    if (!f)
+    {
+        return 0;
+    }
+    n = (ar_u32)fread(g_face_bytes[slot], 1, sizeof g_face_bytes[slot], f);
+    fclose(f);
+    return n;
+}
 
 static int load_face(ar_ctx *c)
 {
@@ -117,17 +156,26 @@ static int load_face(ar_ctx *c)
 
     for (i = 0; FACES[i]; ++i)
     {
-        FILE  *f = fopen(FACES[i], "rb");
-        ar_u32 n;
+        ar_u32 n = slurp(0, FACES[i]);
 
-        if (!f)
+        if (n && ar_font_load(c, g_face_bytes[0], n, ATLAS_BYTES, MAX_PX))
         {
-            continue;
-        }
-        n = (ar_u32)fread(g_font, 1, sizeof g_font, f);
-        fclose(f);
-        if (n && ar_font_load(c, g_font, n, ATLAS_BYTES, MAX_PX))
-        {
+            ar_u32 m = slurp(1, BOLD[i]);
+
+            if (m)
+            {
+                ar_font_load_styled(c, g_face_bytes[1], m, 700, 0);
+            }
+            m = slurp(2, ITALIC[i]);
+            if (m)
+            {
+                ar_font_load_styled(c, g_face_bytes[2], m, 400, 1);
+            }
+            m = slurp(3, BOLDIT[i]);
+            if (m)
+            {
+                ar_font_load_styled(c, g_face_bytes[3], m, 700, 1);
+            }
             return 1;
         }
     }
@@ -274,6 +322,110 @@ static int report(int quiet)
     return bad;
 }
 
+/*
+ * The weight reached the *measurement*, not only the painting.
+ *
+ * A bold face has wider advances, so the same words in bold occupy more room.
+ * If `font-weight` only reached the painter, the text would be drawn bold and
+ * laid out on the regular face's widths -- lines would break in the wrong
+ * places and nothing would look obviously broken, which is the worst kind of
+ * wrong.
+ *
+ * Checked here rather than in ar_test because ar_test has no font: it runs on
+ * the built-in 8x8 bitmap face, where every glyph is one cell wide and bold
+ * cannot differ from regular by construction. This example is the only place
+ * in the tree that loads a real family.
+ */
+static int weight_check(void)
+{
+    static const char DOC[] = "<!doctype html><html><head><style>"
+                              "body{margin:0;font-size:32px}"
+                              ".r{display:block;font-weight:normal}"
+                              ".b{display:block;font-weight:bold}"
+                              ".i{display:block;font-style:italic}"
+                              "</style></head><body>"
+                              "<div class=r>Hamburgefonstiv</div>"
+                              "<div class=b>Hamburgefonstiv</div>"
+                              "<div class=i>Hamburgefonstiv</div>"
+                              "</body></html>";
+    ar_surface        surface;
+    ar_input          in;
+    static ar_u32     pixels[WIN_W * WIN_H];
+    ar_ctx           *c;
+    ar_doc           *d = 0;
+    ar_i32            i, w[3], seen = 0;
+    int               bad = 0;
+
+    c = ar_init_ex(g_memory, (ar_u32)sizeof g_memory, 4096, 9u * 1024u * 1024u);
+    if (!c)
+    {
+        printf("FAIL  weight: no context\n");
+        return 1;
+    }
+    if (!load_face(c))
+    {
+        printf("ok    weight: skipped, no TrueType family on this machine\n");
+        return 0;
+    }
+    ar_ua_stylesheet(c);
+    d = ar_html_parse_into(c, DOC, (ar_u32)(sizeof DOC - 1));
+    if (!d)
+    {
+        printf("FAIL  weight: the document did not fit\n");
+        return 1;
+    }
+    ar_doc_stylesheets(c, d);
+
+    memset(&surface, 0, sizeof surface);
+    surface.pixels = pixels;
+    surface.w = WIN_W;
+    surface.h = WIN_H;
+    surface.stride = WIN_W;
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    frame(c, d, &in, &surface);
+
+    /* The three text runs, in document order. */
+    for (i = 0; i < ar_node_count(c) && seen < 3; ++i)
+    {
+        const char *t = ar_node_text(c, i);
+
+        if (t && t[0] == 'H')
+        {
+            w[seen++] = ar_node_rect(c, i).w;
+        }
+    }
+    if (seen < 3)
+    {
+        printf("FAIL  weight: expected three runs, found %ld\n", (long)seen);
+        return 1;
+    }
+
+    if (w[1] > w[0])
+    {
+        printf("ok    weight: bold measures wider than regular, %ld vs %ld px\n", (long)w[1],
+               (long)w[0]);
+    }
+    else
+    {
+        printf("FAIL  weight: bold measured %ld and regular %ld -- the face did not reach "
+               "measurement\n",
+               (long)w[1], (long)w[0]);
+        ++bad;
+    }
+    if (w[2] != w[0])
+    {
+        printf("ok    weight: and italic is its own face, %ld vs %ld px\n", (long)w[2], (long)w[0]);
+    }
+    else
+    {
+        printf("FAIL  weight: italic measured exactly as regular, so it is the regular face\n");
+        ++bad;
+    }
+    return bad;
+}
+
 static void dump(ar_ctx *c)
 {
     ar_i32 i;
@@ -361,15 +513,29 @@ int main(int argc, char **argv)
         }
     }
 
-    if (!path)
+    /*
+     * With no arguments at all, open the first document rather than printing a
+     * table and exiting.
+     *
+     * Every other example in this tree opens a window when it is run with
+     * nothing, and this one did not -- so the obvious thing to type produced a
+     * summary and no picture, which reads as the example being broken. The
+     * table is what `--dump` is for.
+     */
+    if (!path && (want_selftest || want_dump))
     {
         int bad = report(want_selftest);
 
         if (want_selftest)
         {
+            bad += weight_check();
             printf("%s\n", bad ? "selftest FAILED" : "selftest passed");
         }
         return bad ? 1 : 0;
+    }
+    if (!path)
+    {
+        path = CORPUS[0];
     }
 
     {
@@ -405,20 +571,67 @@ int main(int argc, char **argv)
 
         {
             ar_win *win = ar_win_open("areole - a real document", WIN_W, WIN_H);
+            int     at = 0;
 
             if (!win)
             {
                 printf("could not open a window\n");
                 return 1;
             }
+            /* Where in the corpus this document is, so the arrow keys have
+               somewhere to go from. A file named on the command line that is
+               not in the corpus stays put, which is what naming one means. */
+            for (k = 0; k < CORPUS_N; ++k)
+            {
+                if (strcmp(CORPUS[k], path) == 0)
+                {
+                    at = k;
+                }
+            }
             ar_set_clock(c, ar_time_us);
-            printf("areole %s: %s, %ld nodes, %ld boxes\n", ar_version(), base(path),
-                   (long)d->node_count, (long)ar_node_count(c));
+            printf("areole %s: %s\n", ar_version(), base(path));
+            printf("left and right walk the other %d documents\n", CORPUS_N - 1);
             while (ar_win_pump(win))
             {
-                ar_i32 region;
+                const ar_input *in = ar_win_input(win);
+                ar_i32          region;
+                int             step = 0;
 
-                frame(c, d, ar_win_input(win), ar_win_surface(win));
+                if (in && (in->keys_pressed & AR_KEY_RIGHT) != 0)
+                {
+                    step = 1;
+                }
+                else if (in && (in->keys_pressed & AR_KEY_LEFT) != 0)
+                {
+                    step = -1;
+                }
+                if (step != 0)
+                {
+                    /*
+                     * A different document is a different everything: the
+                     * arena is re-initialised under it, so the old context and
+                     * the old document are both gone the moment this returns.
+                     * Nothing is kept across the switch except the window,
+                     * which owns its own pixels.
+                     */
+                    ar_doc *nd = 0;
+                    ar_ctx *nc;
+                    int     want = (at + step + CORPUS_N) % CORPUS_N;
+
+                    nc = open_document(CORPUS[want], &nd);
+                    if (nc)
+                    {
+                        c = nc;
+                        d = nd;
+                        at = want;
+                        ar_set_clock(c, ar_time_us);
+                        printf("%s\n", base(CORPUS[at]));
+                    }
+                    /* A document that would not open leaves the last one on
+                       the screen rather than a blank window. */
+                    continue;
+                }
+                frame(c, d, in, ar_win_surface(win));
                 for (region = 0; region < ar_damage_count(c); ++region)
                 {
                     ar_win_present(win, ar_damage_rect(c, region));

@@ -203,7 +203,9 @@ void ar_glyph_cache_clear(ar_glyph_cache *gc)
  */
 static ar_u32 ar__glyph_key(ar_i32 glyph, ar_i32 ppem, int antialias, ar_i32 subpx, ar_i32 face)
 {
-    return ((ar_u32)(face & 3) << 28) | ((ar_u32)(antialias ? 1 : 0) << 27) |
+    /* Three bits of face rather than two: bit 30 was free and eight faces need
+       it. Bit 31 stays the "this slot is occupied" sentinel. */
+    return ((ar_u32)(face & 7) << 28) | ((ar_u32)(antialias ? 1 : 0) << 27) |
            ((ar_u32)(subpx & 3) << 25) | (((ar_u32)ppem & 0x7Fu) << 18) |
            ((ar_u32)glyph & 0x3FFFFu) | 0x80000000u;
 }
@@ -584,7 +586,8 @@ static ar_i32 ar__measure_range_chain(const char *text, ar_i32 from, ar_i32 to,
         }
         glyph = ar_font_chain_glyph(ch, cp, &which);
         g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
-                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, ch->id[which],
+                              sc);
         if (g)
         {
             pen += g->advance;
@@ -818,7 +821,8 @@ ar_i32 ar_text_draw_chain(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const
         }
         glyph = ar_font_chain_glyph(ch, cp, &which);
         g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
-                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, ch->id[which],
+                              sc);
         if (!g)
         {
             continue;
@@ -855,7 +859,8 @@ ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 p
         }
         glyph = ar_font_chain_glyph(ch, cp, &which);
         g = ar_glyph_get_face(gc, ch->face[which], glyph, ppem,
-                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, which, sc);
+                              (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, ch->id[which],
+                              sc);
         if (g)
         {
             pen += g->advance;
@@ -960,7 +965,8 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
                 face = 0;
             }
             g = ar_glyph_get_face(gc, ch->face[face], sc->shape_glyph[i], ppem,
-                                  (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL, face, sc);
+                                  (pen % AR_ONE_PIXEL) * AR_SUBPX_STEPS / AR_ONE_PIXEL,
+                                  ch->id[face], sc);
             if (!g)
             {
                 continue;

@@ -54,7 +54,12 @@ ar_i32 ar_margin_collapse(ar_i32 a, ar_i32 b)
 
 int ar_is_block(const ar_node *n)
 {
-    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK;
+    /* A list item is a block that also draws a marker, and the marker is
+       0.5.3's. Every question this function is asked -- does it stack, does it
+       take the width, does it collapse margins -- has the same answer for
+       both. */
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_LIST_ITEM;
 }
 
 /*

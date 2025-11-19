@@ -17,7 +17,7 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 0
+#define AR_VERSION_PATCH 1
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.0"
+#define AR_VERSION_STRING "0.9.1"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -457,12 +457,29 @@ typedef ar_i32 ar_scroll_pos;
    about it is per-box. Carrying it per-box would have cost every box in the
    interface a pointer for the sake of the handful that are grids.
 
+   528 -> 536 for text at 0.9.1: `line-height`, `font-weight` and `font-style`.
+   Measured, as every line above was: ar_node went 472 -> 480 and the assertion
+   below fired at 532 against 528.
+
+   Three properties for eight bytes, because the first was free. `line-height`
+   landed in the padding the grid work had already paid for -- ar_node did not
+   move at all when it went in -- and the two font properties are what pushed
+   past the boundary. Six bytes of value and unit between them, rounded to
+   eight by the alignment of the pointer at the top of the struct.
+
+   All three had to be properties rather than anything cheaper, and for the
+   same reason `visibility` did: they inherit. `body { line-height: 1.5 }` is
+   written once and has to reach every box under it, and so is
+   `font-weight: bold` on a heading that contains a `<code>`. A call into the
+   context cannot answer an inherited question without walking to the root on
+   every box, which is the loop ar_style_inherit was rewritten to stop doing.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 520u
+#define AR_BYTES_PER_BOX 536u
 #else
-#define AR_BYTES_PER_BOX 528u
+#define AR_BYTES_PER_BOX 544u
 #endif
 
 /*
@@ -554,6 +571,43 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes);
    parsing happens once and the frame only resolves. */
 void ar_stylesheet(ar_ctx *c, const char *css);
 
+/*
+ * Where `<link rel=stylesheet>` gets its bytes.
+ *
+ * areole does no networking and no file IO, by design and in every release --
+ * so an external stylesheet is the one thing a document can ask for that this
+ * library cannot go and get. The embedder can: it knows what the document's
+ * base URL is, whether the resource is cached, whether it is allowed, and what
+ * to do when it is none of those.
+ *
+ * `load` is called once per `<link rel=stylesheet>`, in document order,
+ * interleaved with the `<style>` elements around it -- because that order is
+ * the cascade, and a sheet that arrives out of order is a sheet that wins the
+ * wrong arguments. Return the CSS as a NUL-terminated string, or null for a
+ * link that cannot be resolved; the string is parsed before the call returns
+ * and need not outlive it.
+ *
+ * `href` is NUL-terminated and is whatever the attribute said, unresolved. A
+ * relative one is relative to the document the embedder handed over, which the
+ * embedder knows and this library does not.
+ *
+ * Without a loader, `<link rel=stylesheet>` is skipped and counted -- see
+ * ar_doc_links_skipped, which is how a page that renders unstyled says why.
+ */
+void ar_set_stylesheet_loader(ar_ctx *c, const char *(*load)(void *user, const char *href),
+                              void   *user);
+
+/*
+ * How many `<link rel=stylesheet>` elements the last ar_doc_stylesheets could
+ * not resolve -- because there was no loader, or because the loader declined.
+ *
+ * A number rather than a silence. A document whose whole design is in one
+ * external sheet renders as unstyled text either way, and the difference
+ * between "this page has no CSS" and "this page's CSS did not arrive" is the
+ * first question anyone asks.
+ */
+ar_i32 ar_doc_links_skipped(const ar_ctx *c);
+
 /* Non-zero if the stylesheet had anything wrong with it. Parsing never aborts,
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
@@ -609,6 +663,31 @@ ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c);
  * should degrade an interface, not stop it.
  * ------------------------------------------------------------------------ */
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px);
+/*
+ * A face for one weight and slant.
+ *
+ * `ar_font_load` gives areole the regular face and must come first; this
+ * adds the others. `weight` is the CSS number -- 400 is normal, 700 is bold
+ * -- and anything at 600 or above selects the bold face, which is the
+ * boundary CSS Fonts 4 uses.
+ *
+ * Nothing is synthesised. A style with no face of its own is drawn in the
+ * regular one, exactly as a browser draws a family with no italic: the rule
+ * still applies and the nearest face renders it. That is a deliberate
+ * refusal -- a sheared roman and an emboldened outline have the wrong
+ * metrics, and text laid out on wrong metrics is worse than text that is
+ * honestly not italic.
+ *
+ * Up to eight faces in total, across every style and fallback.
+ *
+ * **This face's bytes are not copied either**, and each face needs its own:
+ * reading a family into one buffer leaves every face pointing at whichever
+ * file was read last, and the result is not a wrong weight, it is a blank
+ * page. Worth stating twice because the mistake is easy and its symptom looks
+ * like something else entirely.
+ */
+int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
+
 int ar_font_loaded(const ar_ctx *c);
 
 /*
@@ -733,8 +812,46 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in);
 void ar_begin(ar_ctx *c, const char *selector);
 void ar_end(ar_ctx *c);
 
+/*
+ * A box with its own declaration list, which is what an HTML `style=""`
+ * attribute is: `ar_begin_styled(c, "div.card", "color:red; width:40px")`.
+ *
+ * No selector, no braces, the same syntax and the same parser a stylesheet
+ * body uses -- so `style="color:red"` and `.card { color: red }` cannot
+ * disagree about what red is or about what a malformed value does. Errors are
+ * counted in the sheet's tally like any other.
+ *
+ * Where it sits in the cascade is the whole of its meaning: above every
+ * selector however specific, and below every `!important`. `style="color:red"`
+ * beats `#a.b.c { color: blue }` and loses to `p { color: green !important }`.
+ * An `!important` inside the declaration list beats both.
+ *
+ * The string is copied into the frame arena, so a stack buffer is fine. Pass
+ * null or "" and this is exactly ar_begin.
+ */
+void ar_begin_styled(ar_ctx *c, const char *selector, const char *style);
+
+/*
+ * A box with presentational hints as well as an inline style.
+ *
+ * Hints are what HTML's legacy attributes mean -- `<td bgcolor=red>` is
+ * `background:#ff0000`, `<font size=5>` is a font-size -- and they are a band
+ * of the cascade rather than a declaration list on top of it: above the
+ * user-agent stylesheet, below every author rule, and below `style=""`. A page
+ * can restyle `<font>` and be obeyed, which is the whole point of the
+ * distinction.
+ *
+ * Both strings are declaration lists and both may be null. Neither is cached,
+ * so a box with hints costs a full cascade walk; a box without them is
+ * resolved exactly as before.
+ */
+void ar_begin_hinted(ar_ctx *c, const char *selector, const char *hints, const char *style);
+
 /* A leaf box containing text. */
 void ar_text(ar_ctx *c, const char *selector, const char *text);
+
+/* ar_text with a declaration list of its own; see ar_begin_styled. */
+void ar_text_styled(ar_ctx *c, const char *selector, const char *text, const char *style);
 
 /* Returns non-zero on the frame the button is released, having been pressed
    on the same box. */

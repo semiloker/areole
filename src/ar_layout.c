@@ -1158,6 +1158,43 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         {
             ch->rect.w = 0;
         }
+        /*
+         * `margin: 0 auto` centres a block that has a width, and it is how
+         * every centred page on the web is centred.
+         *
+         * CSS 2.1 10.3.3: when the width is not auto and both horizontal
+         * margins are, they take equal shares of what is left. One auto margin
+         * takes all of it, which is how a box is pushed to the right. This
+         * engine read an auto margin as zero and left the box against the left
+         * edge -- the single most common thing anyone writes in a stylesheet,
+         * doing nothing.
+         *
+         * The leftover can be negative when the box is wider than the space it
+         * was offered; CSS says an auto margin becomes zero then rather than
+         * pulling the box out of its container.
+         */
+        {
+            int auto_l = ch->style.unit[AR_P_MARGIN_LEFT] == AR_UNIT_AUTO;
+            int auto_r = ch->style.unit[AR_P_MARGIN_RIGHT] == AR_UNIT_AUTO;
+
+            if (auto_l || auto_r)
+            {
+                ar_i32 rest = inner_w - ch->rect.w - (auto_l ? 0 : ml) - (auto_r ? 0 : mr);
+
+                if (rest < 0)
+                {
+                    rest = 0;
+                }
+                if (auto_l && auto_r)
+                {
+                    ml = rest / 2;
+                }
+                else if (auto_l)
+                {
+                    ml = rest;
+                }
+            }
+        }
         ch->rect.x = left + ml;
 
         switch (ch->style.unit[AR_P_HEIGHT])

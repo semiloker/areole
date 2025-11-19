@@ -50,6 +50,16 @@ typedef struct ar_node
     ar_u32 key;   /* stable across frames, for state and hit testing */
     ar_u16 state; /* hover, active, focus, and the structural pseudo-classes */
 
+    /*
+     * Where the inline declarations start inside `hints`, or 0 for none.
+     *
+     * The two lists live in one arena block, NUL-terminated one after the
+     * other, because they are always written together and a second pointer
+     * would cost eight bytes a box where this costs none -- it fits in the
+     * hole the compiler was already leaving beside `state`.
+     */
+    ar_u16 inline_at;
+
     /* What the caller declared, kept because a combinator asks about an
        ancestor or a sibling and the answer is a property of that box rather
        than of this one. Only rules with combinators read it, so a stylesheet
@@ -62,6 +72,27 @@ typedef struct ar_node
 
     ar_style    style;
     const char *text;
+
+    /*
+     * This box's own declaration list -- what a `style=""` attribute holds --
+     * or null, which is every box in an interface and most in a document.
+     *
+     * Kept on the node rather than passed through and forgotten, because
+     * ar__resolve_late resolves a second time for any box whose :last-child,
+     * :only-child or :empty state turned out differently once its parent
+     * closed. That second resolve starts from the cascade again, so without
+     * the string here it would quietly throw the inline style away -- and only
+     * for the last child of something, only in a sheet that asks about it.
+     *
+     * It points into the frame arena, copied there by ar_begin_styled, so the
+     * caller may pass a stack buffer and the pointer stays good until the next
+     * ar_frame_begin.
+     *
+     * The block starts with the *presentational hints* -- what `<td bgcolor>`
+     * and `<font size>` mean, which is a different band of the cascade -- and
+     * `inline_at` says where they end and the inline declarations begin.
+     */
+    const char *hints;
     ar_i32      scale; /* bitmap font scale derived from font-size */
 
     /* Measured while the tree is built, because that is where the loaded face
@@ -234,6 +265,12 @@ struct ar_ctx
 {
     ar_arena arena;
 
+    /* Where <link rel=stylesheet> gets its bytes, and what to hand back to
+       whoever set it. See ar_set_stylesheet_loader. */
+    const char *(*link_load)(void *user, const char *href);
+    void  *link_user;
+    ar_i32 links_skipped;
+
     /* What the caller reserved for a parsed document at init, so
        ar_html_parse_into does not have to be told twice. */
     ar_u32   doc_budget;
@@ -305,7 +342,25 @@ struct ar_ctx
 
     /* Text. Absent until ar_font_load, and the bitmap face is used until then,
        so a build that never calls it pays nothing for any of this. */
-    ar_face          face[AR_MAX_FACES];
+    ar_face face[AR_MAX_FACES];
+    ar_i32  face_used; /* how many of the pool are taken */
+
+    /*
+     * A chain per style, and which face in the pool each style got.
+     *
+     * The index is (bold ? 1 : 0) | (italic ? 2 : 0), so the four are regular,
+     * bold, italic and bold italic. `style_face` is -1 for a style nobody
+     * loaded a face for, and its chain then leads with the regular face --
+     * which is what a browser does with a family that has no bold: the rule
+     * applies and the nearest face draws it.
+     *
+     * The fallbacks are shared. A face added for coverage is appended to every
+     * style's chain, because a Japanese glyph is missing from the bold face
+     * for exactly the same reason it is missing from the regular one.
+     */
+    ar_i32        style_face[4];
+    ar_font_chain style_chain[4];
+
     ar_font_chain    chain;
     ar_shaper        shaper;
     int              shaping;
@@ -806,6 +861,10 @@ void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i
 /* The same, for the box and everything beneath it. */
 void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
                       ar_i32 dy);
+
+/* The face chain a box's text is measured and drawn through, chosen by its
+   resolved `font-weight` and `font-style`. */
+const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n);
 
 /*
  * Move a box to the rectangle just written into it, taking its subtree along.
