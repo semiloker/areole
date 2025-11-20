@@ -398,6 +398,7 @@ toolkit breaks that circle.
 - **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
 - **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet ✅
 - **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
+- **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -532,6 +533,56 @@ origin as the first sort key on every declaration. `table_1k_rows` paid 19% of t
 scenes went the other way on the place-once work: `offscreen_90pc` −29% and `top_layer_off`
 −23%. All 52 scenes are in `docs/PERFORMANCE.md`, stability column included, because a
 number this machine cannot reproduce is not a number.
+
+### 0.9.2, complete
+
+This is the content the roadmap files under 0.4.2, shipped as the release after 0.9.1 and for a
+reason worth stating: **the release that was going to be 0.9.2 is responsive images, and it cannot
+be written without this.** `<picture>`'s `<source media>` and `sizes`' media-condition list *are*
+media queries, so the next release turned out to be blocked on one four minor versions behind it.
+Responsive images keeps its scope and moves down the list; `srcset` selection still wants an image
+decoder, which is 0.11.0's.
+
+**`@supports` answers from the implementation, never from a table.** A property is supported when
+this engine's own declaration parser accepts it and sets something. A hand-maintained list of
+supported properties is a claim that drifts the moment anything changes, and `@supports` is
+precisely the tool a page uses to decide whether to trust us -- so claiming support for something
+parsed and ignored would be the most damaging lie available here. The corpus is generated from
+`AR_PROPS`, the table the parser itself looks a declaration up in.
+
+**`@media` is Media Queries Level 4**, in both the legacy `min-`/`max-` forms and the range syntax,
+including `(400px <= width <= 700px)` and the value-first form. Every feature says where its value
+comes from: three come from the window, `aspect-ratio` and `orientation` are computed from those,
+and the rest report a documented default until a backend can answer them. Two of those defaults are
+permanent rather than pending, and both are useful -- `scripting: none` is how a page tells areole
+what to do, and `display-mode: standalone` because an application is not a browser tab.
+
+| | |
+| --- | --- |
+| Media Queries Level 4 vs Chrome | **624 of 624 — 100%**, 156 queries at four viewports, gate 90% |
+| `@supports` vs the parser | **all 91 properties**, eight values each, generated from `AR_PROPS` |
+| Range against legacy syntax | **60 cases**, identical answers, boundaries included |
+| Demos | **20**, seventeen agreeing with Chrome exactly |
+| Resize, 200 rules over 40 queries | **0.006 ms**; unchanged window, free. Budget 1.2 ms on the tier |
+| Binary | **+12,764 bytes**, budget 14 KB |
+
+**A resize re-evaluates queries; it does not parse the stylesheet again.** A window drag would
+otherwise reparse sixty times a second. Each query records which parts of the media state it
+consulted, so one naming only `prefers-color-scheme` is never asked again because the window got
+wider -- and a frame where nothing moved costs three integer comparisons, which is what makes it
+safe to call from `ar_frame_begin` every frame.
+
+The demos found the hole that mattered. Media queries were answered against the viewport the *last*
+frame was drawn into, which is right for a program that draws continuously and wrong for one that
+renders a single frame -- a screenshot, a test, a document to an image -- because for it every
+frame is the first one, and there is no last viewport. Twenty demos would have shipped silently
+taking the false branch. `ar_set_media` is the answer, and the gallery renderer calls it.
+
+Three of the twenty do not agree with Chrome and cannot: `scripting` (Chrome runs scripts, areole
+never will), `display-mode` (a browser tab is not an application), and `prefers-color-scheme`,
+where the documented default is `light` until 0.16.1 wires the OS and the headless browser reports
+`dark`. Each is named in `examples/gallery/_not-gated.txt`. If the first ever agreed, something
+would be broken.
 
 ## Building
 

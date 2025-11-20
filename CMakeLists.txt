@@ -81,6 +81,11 @@ target_include_directories(ar_html5lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 target_link_libraries(ar_html5lib PRIVATE areole)
 areole_set_warnings(ar_html5lib)
 
+add_executable(ar_media_corpus tests/ar_media_corpus.c)
+target_include_directories(ar_media_corpus PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_media_corpus PRIVATE areole)
+areole_set_warnings(ar_media_corpus)
+
 add_executable(ar_hints tests/ar_hints.c)
 target_include_directories(ar_hints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_hints PRIVATE areole)

@@ -17,7 +17,7 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 1
+#define AR_VERSION_PATCH 2
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.1"
+#define AR_VERSION_STRING "0.9.2"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -205,6 +205,34 @@ void ar_draw_text(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *t
 #define AR_MOUSE_LEFT   0x01u
 #define AR_MOUSE_RIGHT  0x02u
 #define AR_MOUSE_MIDDLE 0x04u
+
+/*
+ * What a media query is answered against.
+ *
+ * Three numbers, because three is what a windowed application actually knows:
+ * the client area and the display's scale. `aspect-ratio` and `orientation`
+ * are computed from the first two rather than stored, so they cannot disagree
+ * with them. Every other media feature reports a documented default until a
+ * backend can answer it -- see docs/roadmap/responsive-and-adaptive.md, which
+ * names the version each one is wired up in.
+ *
+ * Set this before the boxes that depend on it are declared. Style is resolved
+ * in `ar_begin`, not in `ar_frame_end`, so a media state given after the tree
+ * is built applies to the next frame and not this one.
+ */
+typedef struct ar_media
+{
+    ar_i32 width;  /* client area, px */
+    ar_i32 height; /* client area, px */
+
+    /*
+     * Device pixels per CSS pixel, in thousandths: 1000 is an ordinary
+     * display, 2000 is a doubled one. Thousandths rather than a float because
+     * layout has no floating point, and `min-resolution: 1.5dppx` is a real
+     * thing to write.
+     */
+    ar_i32 resolution;
+} ar_media;
 
 typedef struct ar_input
 {
@@ -804,6 +832,29 @@ void ar_style_cache_stats(const ar_ctx *c, ar_u32 *hits, ar_u32 *misses);
    ar_time_us for this. Without one, the phase breakdown reads zero and
    everything else still works. */
 void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
+
+/*
+ * Device pixels per CSS pixel, in thousandths: 1000 is an ordinary display,
+ * 2000 a doubled one. What `@media (min-resolution: 2dppx)` is answered
+ * against, and the only part of the media state a window does not report --
+ * width and height come from the surface areole is drawn into.
+ */
+void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths);
+
+/*
+ * What media queries are answered against, stated rather than inferred.
+ *
+ * Without this the size comes from the viewport the last frame was drawn
+ * into, which is right for a program that draws continuously and wrong twice:
+ * on the very first frame, where there is no last viewport and every
+ * `min-width` query is therefore false, and on the frame a resize happens,
+ * where it is one frame behind.
+ *
+ * A program that renders a single frame -- a screenshot, a test, a document
+ * to an image -- has to call this, because for it every frame is the first
+ * one. Passing null hands the decision back to the viewport.
+ */
+void ar_set_media(ar_ctx *c, const ar_media *media);
 
 void ar_frame_begin(ar_ctx *c, const ar_input *in);
 

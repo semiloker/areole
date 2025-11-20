@@ -14,6 +14,7 @@
 #include "ar_shape.h"
 #include "ar_indic.h"
 #include "ar_css.h"
+#include "ar_supports_props.h"
 #include "ar_node.h"
 #include "ar_html.h"
 
@@ -715,9 +716,31 @@ static void test_perf_overlay_draws_and_clips(void)
 static ar_rule  g_rules[64];
 static ar_sheet g_sheet;
 
-static void ar__sheet(const char *css)
+static ar_mq g_queries[16];
+static char  g_qtext[512];
+
+static void ar__sheet_reset(void)
 {
     ar_sheet_init(&g_sheet, g_rules, 64);
+    ar_sheet_set_queries(&g_sheet, g_queries, 16, g_qtext, 512);
+}
+
+static void ar__sheet(const char *css)
+{
+    ar__sheet_reset();
+    ar_sheet_parse(&g_sheet, css);
+}
+
+/* The same, against a window of a stated size and scale. */
+static void ar__sheet_at(const char *css, ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    ar_media m;
+
+    m.width = w;
+    m.height = h;
+    m.resolution = res;
+    ar__sheet_reset();
+    ar_sheet_set_media(&g_sheet, &m);
     ar_sheet_parse(&g_sheet, css);
 }
 
@@ -967,6 +990,459 @@ static void test_css_survives_malformed_input(void)
     ar__sheet(".a { }");
     CHECK(g_sheet.count == 0 && g_sheet.errors == 0,
           "css: an empty block is legal and has no effect");
+}
+
+/*
+ * An at-rule is skipped whole: nothing inside it leaks, nothing after it dies.
+ *
+ * There was no at-rule handling at all. One failed `ar__parse_selector` and
+ * the recovery path scanned to the next `}`, which for a nested at-rule lands
+ * *inside* the block -- so the second rule in it was parsed as a top-level
+ * rule whatever the query said. Nothing in this tree nested an at-rule, so
+ * nothing had ever found it.
+ *
+ * Every case here needs two rules inside the block. With one, the old
+ * recovery swallowed it and then met the block's real closing brace with the
+ * cursor already on it, so the brace cost nothing and the rule after the block
+ * survived -- the bug hiding behind the shape of the smallest example. The
+ * second rule is the one that leaks.
+ */
+static void test_an_at_rule_is_skipped_whole(void)
+{
+    ar__sheet("@media (min-width: 1px) { .one { width: 10px; } .two { width: 20px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".two", 0, AR_P_WIDTH) != 20,
+          "at-rule: a rule inside an unevaluated block does not leak out of it");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and the rule after the block still parses");
+
+    /* Two levels of an at-rule nothing understands, so both are skipped
+       whole. The sibling sits outside the inner block and inside the outer
+       one, which is exactly what a scan for the first brace gets wrong. */
+    ar__sheet("@unknown screen { @unknown print { .deep { width: 7px; } }"
+              " .sibling { width: 8px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".sibling", 0, AR_P_WIDTH) != 8,
+          "at-rule: nesting is counted, not guessed at from the first brace");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and two levels still end where they should");
+
+    /* A statement at-rule ends at its semicolon and has no block to find.
+       Scanning for a brace instead runs into the next rule's. */
+    ar__sheet("@charset \"utf-8\";"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: a statement at-rule ends at its semicolon");
+
+    /* A brace inside a string is not a brace. Counting it ends the at-rule
+       early, in the middle of a declaration, and what follows is garbage --
+       which is an error even though the rule after it recovers. */
+    ar__sheet("@font-face { font-family: \"a}b\"; }"
+              ".after { width: 42px; }");
+    CHECK(g_sheet.errors == 0, "at-rule: a brace inside a string does not close the block");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and the rule after it is untouched");
+}
+
+/*
+ * @supports answers from the parser, never from a table.
+ *
+ * A property is supported when this engine's own declaration parser accepts
+ * it and sets something. A hand-maintained list of supported properties is a
+ * claim that drifts the moment anything changes, and `@supports` is precisely
+ * the tool a page uses to decide whether to trust us -- so claiming support
+ * for something parsed and ignored would be the most damaging lie available.
+ *
+ * Which is why the corpus for this is generated from the catalogue rather
+ * than written: see tools/gen_supports_corpus.py.
+ */
+static void test_supports_asks_the_parser(void)
+{
+    /* Supported, so the block applies. */
+    ar__sheet("@supports (display: block) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: a property the parser accepts");
+
+    /* Not supported, so it does not -- and asking was not an error. */
+    ar__sheet("@supports (flibbertigibbet: 3px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: a property it does not");
+    CHECK(g_sheet.errors == 0, "supports: a question whose answer is no is not an error");
+
+    ar__sheet("@supports not (flibbertigibbet: 3px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: not");
+
+    ar__sheet("@supports (display: block) and (width: 1px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: and, both true");
+    ar__sheet("@supports (display: block) and (flibbertigibbet: 1px) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: and, one false");
+
+    ar__sheet("@supports (flibbertigibbet: 1px) or (display: block) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: or");
+
+    /* `and` and `or` cannot be mixed without brackets. The condition is
+       invalid, which makes it false rather than something to guess at. */
+    ar__sheet("@supports (display: block) and (width: 1px) or (height: 1px)"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: mixing and with or is refused");
+
+    /* Bracketed, the same thing is legal and true. */
+    ar__sheet("@supports ((display: block) and (width: 1px)) or (flibbertigibbet: 1px)"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: brackets give it a meaning");
+
+    /* Four levels, which is what the release asks for. */
+    ar__sheet("@supports (not (not ((display: block) and (width: 1px))))"
+              " { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: nested four deep");
+
+    /* selector() asks the selector parser the same way. `::before` is refused
+       by ar__parse_compound, so this engine does not claim it. */
+    ar__sheet("@supports selector(.a > .b) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) == 5, "supports: a selector it parses");
+    ar__sheet("@supports selector(.a::before) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: a pseudo-element it does not");
+
+    /* An unknown function is general enclosed: false, and not an error. */
+    ar__sheet("@supports whatever(1) { .a { width: 5px; } }");
+    CHECK(ar__css_value(".a", 0, AR_P_WIDTH) != 5, "supports: an unknown function is false");
+
+    /* A rule after the block is untouched whichever way the answer went. */
+    ar__sheet("@supports (flibbertigibbet: 1px) { .a { width: 5px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42, "supports: and the sheet carries on");
+}
+
+/* Applies at this window? One rule, guarded, and one number to read back. */
+static int ar__mq(const char *query, ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    char css[256];
+
+    strcpy(css, "@media ");
+    strcat(css, query);
+    strcat(css, " { .a { width: 5px; } }");
+    ar__sheet_at(css, w, h, res);
+    return ar__css_value(".a", 0, AR_P_WIDTH) == 5;
+}
+
+/*
+ * Media Queries Level 4, against a window this test states.
+ *
+ * The legacy prefixes are not a second grammar: `min-width: 600px` is
+ * `width >= 600px` against the same feature, which is why the two forms have
+ * to give identical answers everywhere and why one corpus can check both.
+ */
+static void test_media_queries_answer_from_the_window(void)
+{
+    /* Lengths, both ways round, and the boundary is inclusive. */
+    CHECK(ar__mq("(min-width: 600px)", 800, 600, 1000), "media: min-width under a wide window");
+    CHECK(!ar__mq("(min-width: 600px)", 400, 600, 1000), "media: and not under a narrow one");
+    CHECK(ar__mq("(min-width: 600px)", 600, 600, 1000), "media: min- includes its own value");
+    CHECK(ar__mq("(max-width: 600px)", 400, 600, 1000), "media: max-width");
+    CHECK(!ar__mq("(max-width: 600px)", 800, 600, 1000), "media: and not past it");
+
+    /* The range syntax says the same thing, which is the point of it. */
+    CHECK(ar__mq("(width >= 600px)", 800, 600, 1000), "media: range >=");
+    CHECK(!ar__mq("(width >= 600px)", 400, 600, 1000), "media: range >= is not always true");
+    CHECK(ar__mq("(width > 600px)", 601, 600, 1000), "media: range > is strict");
+    CHECK(!ar__mq("(width > 600px)", 600, 600, 1000), "media: and excludes its own value");
+    CHECK(ar__mq("(600px <= width)", 800, 600, 1000), "media: the value may come first");
+    CHECK(ar__mq("(400px <= width <= 700px)", 500, 600, 1000), "media: a pair of bounds");
+    CHECK(!ar__mq("(400px <= width <= 700px)", 800, 600, 1000), "media: outside the pair");
+
+    /* `(width)` is true when it is not zero. */
+    CHECK(ar__mq("(width)", 800, 600, 1000), "media: the boolean form");
+    CHECK(!ar__mq("(width)", 0, 600, 1000), "media: which a zero window fails");
+
+    /* Computed from the window rather than stored beside it. */
+    CHECK(ar__mq("(orientation: landscape)", 800, 600, 1000), "media: orientation, landscape");
+    CHECK(ar__mq("(orientation: portrait)", 600, 800, 1000), "media: orientation, portrait");
+    CHECK(ar__mq("(aspect-ratio: 4/3)", 800, 600, 1000), "media: aspect-ratio");
+    CHECK(!ar__mq("(aspect-ratio: 16/9)", 800, 600, 1000), "media: a ratio it is not");
+    CHECK(ar__mq("(min-aspect-ratio: 1/1)", 800, 600, 1000), "media: a ratio with a prefix");
+
+    /* Resolution, in each of its units. */
+    CHECK(ar__mq("(resolution: 2dppx)", 800, 600, 2000), "media: resolution in dppx");
+    CHECK(ar__mq("(resolution: 2x)", 800, 600, 2000), "media: and the x shorthand");
+    CHECK(ar__mq("(min-resolution: 192dpi)", 800, 600, 2000), "media: dpi against 96 per pixel");
+    CHECK(!ar__mq("(min-resolution: 192dpi)", 800, 600, 1000),
+          "media: which an ordinary one fails");
+
+    /* Types. `print` waits for the fragmentation model at 0.5.2. */
+    CHECK(ar__mq("screen", 800, 600, 1000), "media: screen");
+    CHECK(ar__mq("all", 800, 600, 1000), "media: all");
+    CHECK(!ar__mq("print", 800, 600, 1000), "media: print is not this engine yet");
+    CHECK(!ar__mq("not screen", 800, 600, 1000), "media: not screen");
+    CHECK(ar__mq("not print", 800, 600, 1000), "media: not print");
+    CHECK(ar__mq("only screen", 800, 600, 1000), "media: only is read and discarded");
+    CHECK(ar__mq("screen and (min-width: 600px)", 800, 600, 1000), "media: a type and a condition");
+    CHECK(!ar__mq("screen and (min-width: 600px)", 400, 600, 1000), "media: both have to hold");
+
+    /* Combinators, and a comma list, which is a disjunction. */
+    CHECK(ar__mq("(min-width: 600px) and (max-width: 900px)", 800, 600, 1000), "media: and");
+    CHECK(!ar__mq("(min-width: 600px) and (max-width: 700px)", 800, 600, 1000),
+          "media: and, false");
+    CHECK(ar__mq("(max-width: 100px), (min-width: 600px)", 800, 600, 1000), "media: a comma list");
+    CHECK(!ar__mq("(max-width: 100px), (max-width: 200px)", 800, 600, 1000), "media: none of them");
+    CHECK(ar__mq("(min-width: 100px) or (min-width: 9999px)", 800, 600, 1000), "media: or");
+    CHECK(ar__mq("not (min-width: 9999px)", 800, 600, 1000), "media: not a condition");
+
+    /* The documented defaults, which have to be stated: a feature that answers
+       false to everything silently disables the common case. */
+    CHECK(ar__mq("(scripting: none)", 800, 600, 1000), "media: scripting is none, permanently");
+    CHECK(!ar__mq("(scripting: enabled)", 800, 600, 1000), "media: and never enabled");
+    CHECK(ar__mq("(display-mode: standalone)", 800, 600, 1000), "media: not in a browser tab");
+    CHECK(ar__mq("(prefers-color-scheme: light)", 800, 600, 1000), "media: the documented default");
+    CHECK(!ar__mq("(prefers-color-scheme: dark)", 800, 600, 1000), "media: and not the other one");
+    CHECK(ar__mq("(prefers-reduced-motion: no-preference)", 800, 600, 1000),
+          "media: an animation guarded this way still runs");
+    CHECK(ar__mq("(pointer: fine)", 800, 600, 1000), "media: a window has a pointer");
+    CHECK(ar__mq("(color: 8)", 800, 600, 1000), "media: bits per channel");
+
+    /* An unknown feature is false and not an error, so a stylesheet written
+       for a browser degrades here rather than losing the sheet. */
+    CHECK(!ar__mq("(flibbertigibbet: 3px)", 800, 600, 1000), "media: an unknown feature is false");
+    CHECK(g_sheet.errors == 0, "media: and asking about one is not an error");
+
+    /* A malformed query costs itself and not the list around it. */
+    CHECK(ar__mq("(min-width: 600px), (nonsense", 800, 600, 1000),
+          "media: a broken query in a list costs only itself");
+
+    /* And the rules the query guards are the only thing it decides. */
+    ar__sheet_at("@media (min-width: 9999px) { .a { width: 5px; } } .b { width: 42px; }", 800, 600,
+                 1000);
+    CHECK(ar__css_value(".b", 0, AR_P_WIDTH) == 42, "media: the sheet carries on past a false one");
+}
+
+/* Resizes the window and answers the queries again, as a frame would. */
+static void ar__resize(ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    ar_media m;
+
+    m.width = w;
+    m.height = h;
+    m.resolution = res;
+    ar_sheet_set_media(&g_sheet, &m);
+}
+
+/*
+ * A resize re-evaluates the queries it could have moved, and no others.
+ *
+ * The rules a false query guards are stored rather than dropped, which is the
+ * only way a resize can turn them on without parsing the stylesheet again --
+ * and parsing again is not an option, because a window drag would do it sixty
+ * times a second.
+ *
+ * The counter is the evidence. Without it "only the affected queries" is a
+ * claim nobody can check, which is the same as not being true.
+ */
+static void test_a_resize_re_evaluates_only_what_moved(void)
+{
+    ar_u32 after_parse;
+    ar_u32 before;
+
+    ar__sheet_at("@media (min-width: 600px) { .w { width: 5px; } }"
+                 "@media (prefers-color-scheme: light) { .c { width: 6px; } }"
+                 "@media (min-height: 400px) { .h { width: 7px; } }",
+                 400, 300, 1000);
+    after_parse = g_sheet.queries_evaluated;
+    CHECK(after_parse == 3, "resize: each query is answered once as it is parsed");
+
+    /* Narrow and short: the width and height queries are false. */
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) != 5, "resize: a false query holds its rules back");
+    CHECK(ar__css_value(".c", 0, AR_P_WIDTH) == 6, "resize: a true one lets them through");
+
+    /* Wider, and the rule appears without the sheet being parsed again. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 300, 1000);
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) == 5,
+          "resize: the guarded rule was kept, not dropped");
+    CHECK(ar__css_value(".h", 0, AR_P_WIDTH) != 7, "resize: and the height query did not move");
+
+    /* Only the queries that name width could have changed: the two that do
+       not mention it are not asked again. */
+    CHECK(g_sheet.queries_evaluated == before + 1,
+          "resize: only the query naming the feature that changed is re-evaluated");
+
+    /* Taller, and the other one turns on. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 600, 1000);
+    CHECK(ar__css_value(".h", 0, AR_P_WIDTH) == 7, "resize: height, the same way");
+    CHECK(g_sheet.queries_evaluated == before + 1, "resize: and again only the one that moved");
+
+    /* A frame where nothing moved costs nothing at all, which is what makes
+       this safe to call from ar_frame_begin every frame. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 600, 1000);
+    CHECK(g_sheet.queries_evaluated == before, "resize: an unchanged window asks nothing");
+
+    /* Narrow again, and the rule goes away. */
+    ar__resize(400, 600, 1000);
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) != 5, "resize: and it turns off again");
+
+    /* Nesting: a rule inside two queries needs both, and the inner one is
+       stored after the outer so the outer's answer is settled first. */
+    ar__sheet_at("@media (min-width: 600px) { @media (min-height: 400px) {"
+                 " .both { width: 9px; } } }",
+                 800, 300, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) != 9, "resize: nested, the inner one false");
+    ar__resize(800, 600, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) == 9, "resize: nested, both true");
+    ar__resize(400, 600, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) != 9, "resize: nested, the outer one false");
+}
+
+/*
+ * The @supports corpus: generated, so it cannot fall behind the parser.
+ *
+ * For every property the declaration parser knows -- the list comes straight
+ * out of `AR_PROPS`, see tools/gen_supports_corpus.py -- ask two questions and
+ * require the same answer:
+ *
+ *   does a rule writing `prop: value` actually set anything?
+ *   does `@supports (prop: value)` say so?
+ *
+ * They are different code paths. The first parses a real declaration block;
+ * the second runs `ar__parse_decl` on a scanner bounded by the closing bracket
+ * and puts the sheet's bookkeeping back afterwards. The entire value of
+ * `@supports` rests on them never disagreeing, and nothing but this notices
+ * when they do.
+ *
+ * Several candidate values per property because one value cannot fit them all;
+ * the property is exercised if any of them sets something.
+ */
+static void test_supports_agrees_with_the_parser_on_every_property(void)
+{
+    static const char *const VALUES[] = {"block",  "10px", "1",       "auto",
+                                         "center", "row",  "#ff0000", "none"};
+    ar_i32                   i, v;
+    ar_i32                   checked = 0;
+    ar_i32                   disagreed = 0;
+
+    for (i = 0; i < AR_SUPPORTS_PROP_N; ++i)
+    {
+        for (v = 0; v < (ar_i32)(sizeof VALUES / sizeof VALUES[0]); ++v)
+        {
+            char rule_css[192];
+            char supp_css[192];
+            int  by_rule;
+            int  by_supports;
+
+            /* Does writing it change anything? */
+            strcpy(rule_css, ".x { ");
+            strcat(rule_css, AR_SUPPORTS_PROPS[i]);
+            strcat(rule_css, ": ");
+            strcat(rule_css, VALUES[v]);
+            strcat(rule_css, "; }");
+            ar__sheet(rule_css);
+            by_rule = g_sheet.count > 0;
+
+            /* Does @supports say it would? */
+            strcpy(supp_css, "@supports (");
+            strcat(supp_css, AR_SUPPORTS_PROPS[i]);
+            strcat(supp_css, ": ");
+            strcat(supp_css, VALUES[v]);
+            strcat(supp_css, ") { .y { width: 5px; } }");
+            ar__sheet(supp_css);
+            by_supports = ar__css_value(".y", 0, AR_P_WIDTH) == 5;
+
+            checked++;
+            if (by_rule != by_supports)
+            {
+                disagreed++;
+            }
+        }
+    }
+
+    CHECK(checked == AR_SUPPORTS_PROP_N * 8, "supports corpus: every property, every value");
+    CHECK(disagreed == 0, "supports corpus: @supports agrees with the parser on all of them");
+}
+
+/*
+ * The range syntax and the legacy prefixes are one grammar, not two.
+ *
+ * `min-width: 600px` is `width >= 600px` against the same feature, so the two
+ * forms have to give the same answer at every window -- including at the
+ * boundary, which is where an off-by-one in either lives. Sixty cases: five
+ * features, four widths, and both spellings of each of min and max.
+ */
+static void test_range_and_legacy_syntax_agree(void)
+{
+    static const struct
+    {
+        const char *feature;
+        const char *value;
+    } CASES[] = {{"width", "600px"},
+                 {"width", "800px"},
+                 {"height", "400px"},
+                 {"height", "600px"},
+                 {"resolution", "2dppx"}};
+    static const ar_i32 W[] = {400, 600, 800, 1200};
+    ar_i32              c, k;
+    ar_i32              checked = 0;
+    ar_i32              disagreed = 0;
+
+    for (c = 0; c < (ar_i32)(sizeof CASES / sizeof CASES[0]); ++c)
+    {
+        for (k = 0; k < (ar_i32)(sizeof W / sizeof W[0]); ++k)
+        {
+            char   legacy[128];
+            char   range[128];
+            ar_i32 res = 1000 + (k == 3 ? 1000 : 0);
+
+            /* min- is >= */
+            strcpy(legacy, "(min-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            strcpy(range, "(");
+            strcat(range, CASES[c].feature);
+            strcat(range, " >= ");
+            strcat(range, CASES[c].value);
+            strcat(range, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+
+            /* max- is <= */
+            strcpy(legacy, "(max-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            strcpy(range, "(");
+            strcat(range, CASES[c].feature);
+            strcat(range, " <= ");
+            strcat(range, CASES[c].value);
+            strcat(range, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+
+            /* and the value-first form of the same thing */
+            strcpy(range, "(");
+            strcat(range, CASES[c].value);
+            strcat(range, " <= ");
+            strcat(range, CASES[c].feature);
+            strcat(range, ")");
+            strcpy(legacy, "(min-");
+            strcat(legacy, CASES[c].feature);
+            strcat(legacy, ": ");
+            strcat(legacy, CASES[c].value);
+            strcat(legacy, ")");
+            checked++;
+            if (ar__mq(legacy, W[k], W[k], res) != ar__mq(range, W[k], W[k], res))
+            {
+                disagreed++;
+            }
+        }
+    }
+
+    CHECK(checked == 60, "range corpus: sixty cases, as the release asks for");
+    CHECK(disagreed == 0, "range corpus: the two spellings agree on every one");
 }
 
 /* The parser must terminate on any input at all.
@@ -18415,6 +18891,12 @@ int main(void)
     test_css_keywords();
     test_css_comments_and_whitespace();
     test_css_survives_malformed_input();
+    test_an_at_rule_is_skipped_whole();
+    test_supports_asks_the_parser();
+    test_media_queries_answer_from_the_window();
+    test_a_resize_re_evaluates_only_what_moved();
+    test_supports_agrees_with_the_parser_on_every_property();
+    test_range_and_legacy_syntax_agree();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();
