@@ -1194,6 +1194,437 @@ static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, a
  * the parent's final child count force a second run, and running it twice has
  * to mean running the same thing twice.
  */
+/*
+ * ------------------------------------------------------------------------
+ * Relative lengths
+ *
+ * `em` and `vh` reach here as themselves, carrying hundredths of their unit,
+ * because neither could be converted when the sheet was parsed: one needs a
+ * font size that inheritance settles and the other a viewport that changes
+ * without the stylesheet changing. This is where they become pixels.
+ *
+ * It runs *after* inheritance and on the copy the style cache handed back,
+ * which is the same bargain env() makes. Caching a resolved `em` would be
+ * wrong twice over: the key is tag, class, id and state, and two boxes
+ * matching all four inherit different font sizes as easily as not.
+ * ------------------------------------------------------------------------
+ */
+
+/*
+ * The basis one font-relative unit measures against, in 26.6 pixels.
+ *
+ * `metric` is the offset from AR_UNIT_EM, so the order in the enum is what
+ * makes this a switch on a small integer rather than on thirty unit names.
+ *
+ * Every fallback here is the one CSS Values Level 4 names for a font that
+ * does not answer, and a font not answering is the common case rather than
+ * the odd one: sxHeight and sCapHeight only exist in OS/2 version 2 and
+ * later, and the bitmap face areole falls back to has no OS/2 table at all.
+ */
+static ar_i32 ar__font_basis(const ar_ctx *c, const ar_node *n, ar_i32 metric, ar_i32 font_px)
+{
+    const ar_font_chain *ch;
+    const ar_face       *f;
+    ar_i32               em;
+    ar_i32               v = 0;
+
+    /*
+     * The clamp is arithmetic, not taste: the product below is hundredths
+     * (up to 32767) times this basis, and 512 pixels of em keeps it inside a
+     * signed 32-bit multiply with room over. A font larger than that does not
+     * fit the slot it would be stored in either.
+     */
+    if (font_px > 512)
+    {
+        font_px = 512;
+    }
+    if (font_px < 0)
+    {
+        font_px = 0;
+    }
+    em = font_px << 6;
+
+    if (metric == 0)
+    {
+        return em; /* em, and the basis every fallback below is stated in */
+    }
+    if (metric == 5)
+    {
+        /*
+         * lh -- a line box of `n`, which is the root for `rlh` and the
+         * element itself for `lh`. The caller decides which node this is, and
+         * that is the whole reason it passes one: `rlh` taking the root's
+         * font size and the *element's* line-height would be neither unit.
+         *
+         * line-height is a multiplier when its unit is a number and a length
+         * when it is not, which is the same question ar__line_height asks.
+         */
+        ar_u8  lu = n->style.unit[AR_P_LINE_HEIGHT];
+        ar_i32 lh;
+
+        /*
+         * A line-height still carrying a relative unit is the one slot this
+         * function must not read as a number.
+         *
+         * The pass above resolves line-height before anything measures against
+         * it, so ordinarily this cannot happen -- except for a line-height in a
+         * *viewport* unit, which waits for the surface and is still hundredths
+         * of a vh when a sibling `lh` on the same box is resolved. Reading it
+         * would not be slightly wrong, it would be a pixel count of whatever
+         * hundredths were in the slot.
+         *
+         * `2lh` on a box with `line-height: 5vh` is a combination nobody has
+         * written yet, and this is a guard rather than a fix: an em is what a
+         * line box is when nothing better is known, and it is the value
+         * `normal` would give within a rounding.
+         */
+        if (lu >= AR_UNIT_REL_FIRST)
+        {
+            return em;
+        }
+        lh = lu == AR_UNIT_NUMBER ? (font_px * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000
+                                  : n->style.v[AR_P_LINE_HEIGHT];
+
+        return lh << 6;
+    }
+
+    ch = ar_chain_for(c, n);
+    f = ch->count > 0 ? ch->face[0] : &c->face[0];
+
+    if (f && f->ok && font_px > 0)
+    {
+        switch (metric)
+        {
+        case 1: /* ex -- the x-height */
+            if (f->x_height > 0)
+            {
+                v = ar_face_scale(f, f->x_height, font_px);
+            }
+            break;
+        case 2: /* ch -- the advance of "0" */
+        {
+            ar_i32 g = ar_face_glyph(f, '0');
+
+            if (g > 0)
+            {
+                v = ar_face_scale(f, ar_face_advance(f, g), font_px);
+            }
+            break;
+        }
+        case 3: /* cap -- the cap height */
+            if (f->cap_height > 0)
+            {
+                v = ar_face_scale(f, f->cap_height, font_px);
+            }
+            break;
+        case 4: /* ic -- the advance of U+6C34, the water ideograph */
+        {
+            ar_i32 g = ar_face_glyph(f, 0x6C34);
+
+            if (g > 0)
+            {
+                v = ar_face_scale(f, ar_face_advance(f, g), font_px);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    if (v > 0)
+    {
+        return v;
+    }
+
+    /* The specified fallbacks: half an em for ex and ch, and a whole one for
+       ic. `cap` has no stated fallback, and 0.7em is what the faces that do
+       carry sCapHeight average out at. */
+    switch (metric)
+    {
+    case 1:
+    case 2:
+        return em / 2;
+    case 3:
+        return em * 7 / 10;
+    default:
+        return em;
+    }
+}
+
+/*
+ * One viewport axis, in whole pixels.
+ *
+ * `axis` is the offset from AR_UNIT_VW and `family` is which of the four
+ * viewport unit families asked -- standard, small, large or dynamic.
+ *
+ * **All four families answer the same, and that is the correct answer rather
+ * than a shortcut.** They exist for a browser whose toolbar retracts during a
+ * scroll, so that the large viewport is what you get with the chrome hidden
+ * and the small one what you get with it shown. areole draws into a window
+ * that is one size, so the three are one number. The family still reaches
+ * here rather than being folded away at parse time, because a backend with a
+ * retracting panel is a real thing to build and this is the one place that
+ * would have to learn about it.
+ */
+static ar_i32 ar__viewport_axis(ar_rect view, ar_i32 axis, ar_i32 family)
+{
+    ar_i32 w = view.w;
+    ar_i32 h = view.h;
+
+    (void)family;
+
+    if (w < 0)
+    {
+        w = 0;
+    }
+    if (h < 0)
+    {
+        h = 0;
+    }
+    switch (axis)
+    {
+    case 0:
+        return w; /* vw */
+    case 1:
+        return h; /* vh */
+    case 2:
+        return w < h ? w : h; /* vmin */
+    case 3:
+        return w > h ? w : h; /* vmax */
+    /*
+     * vi and vb are the inline and block axes, which follow the writing mode.
+     * areole is horizontal-tb everywhere until writing modes ship, so inline
+     * is the width and block is the height. Named here so the day that
+     * changes has one place to change it.
+     */
+    case 4:
+        return w; /* vi */
+    default:
+        return h; /* vb */
+    }
+}
+
+/* Hundredths of a unit, and a basis in 26.6 pixels, to whole pixels. */
+static ar_i32 ar__from_font(ar_i32 hundredths, ar_i32 basis)
+{
+    ar_i32 neg = hundredths < 0;
+    ar_i32 v;
+
+    if (neg)
+    {
+        hundredths = -hundredths;
+    }
+    v = (hundredths * basis + 3200) / 6400;
+    return neg ? -v : v;
+}
+
+/* Hundredths of a viewport unit -- itself one per cent of an axis. */
+static ar_i32 ar__from_viewport(ar_i32 hundredths, ar_i32 axis_px)
+{
+    ar_i32 neg = hundredths < 0;
+    ar_i32 v;
+
+    if (neg)
+    {
+        hundredths = -hundredths;
+    }
+    v = (hundredths * axis_px + 5000) / 10000;
+    return neg ? -v : v;
+}
+
+/* One slot, whatever kind of relative unit it carries. */
+static ar_i32 ar__resolve_one(const ar_ctx *c, const ar_node *n, ar_u8 u, ar_i32 v, ar_i32 font_px,
+                              ar_i32 root_px)
+{
+    if (u >= AR_UNIT_VIEW_FIRST)
+    {
+        ar_i32 k = (ar_i32)u - AR_UNIT_VIEW_FIRST;
+
+        return ar__from_viewport(
+            v, ar__viewport_axis(c->last_viewport, k % AR_UNIT_VIEW_AXES, k / AR_UNIT_VIEW_AXES));
+    }
+    {
+        ar_i32 k = (ar_i32)u - AR_UNIT_EM;
+        ar_i32 metric = k % AR_UNIT_METRIC_COUNT;
+        ar_i32 rooted = k / AR_UNIT_METRIC_COUNT;
+
+        /* The root supplies both halves of a root-relative unit -- its font
+           size *and* the face and line box the metrics come off. Taking the
+           size from one box and the metric from another would produce a
+           number that is neither `lh` nor `rlh`. */
+        const ar_node *src = rooted && c->node_count > 0 ? &c->nodes[0] : n;
+
+        return ar__from_font(v, ar__font_basis(c, src, metric, rooted ? root_px : font_px));
+    }
+}
+
+/*
+ * The viewport lengths, once the surface for this frame is known.
+ *
+ * Separated from the pass below because the two know different things at
+ * different moments, and neither moment can be moved:
+ *
+ *   - A font-relative unit has to resolve *while the tree is being declared*,
+ *     interleaved with inheritance. `font-size: 2em` on a parent has to become
+ *     a number before the child that inherits font-size copies it, or the
+ *     child inherits the unit and resolves 2em a second time against its own
+ *     parent -- which is four times the font, not twice.
+ *
+ *   - A viewport unit must not resolve then, because the surface is not known
+ *     until ar_frame_end. Resolving it against the previous frame's size is
+ *     what a media query does, and it is why a query is documented as one
+ *     frame behind on a resize. A *length* cannot afford that: it was zero on
+ *     the very first frame, which is every document's first paint, and
+ *     `height: 50vh` drew nothing at all.
+ *
+ * So this runs from ar_frame_end with the real viewport, before layout reads a
+ * single rectangle, and only for a sheet that has a viewport unit in it.
+ */
+static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_style *st = &c->nodes[i].style;
+        ar_i32    p;
+
+        for (p = 0; p < AR_P_COUNT; ++p)
+        {
+            ar_u8 u;
+
+            if ((p & 31) == 0 && st->set.w[p >> 5] == 0)
+            {
+                p += 31;
+                continue;
+            }
+            if (!ar_pset_has(st->set, p))
+            {
+                continue;
+            }
+            u = st->unit[p];
+            if (u < AR_UNIT_VIEW_FIRST)
+            {
+                continue;
+            }
+            {
+                ar_i32 k = (ar_i32)u - AR_UNIT_VIEW_FIRST;
+
+                ar_style_put(st, p,
+                             ar__from_viewport(ar_style_get(st, p),
+                                               ar__viewport_axis(view, k % AR_UNIT_VIEW_AXES,
+                                                                 k / AR_UNIT_VIEW_AXES)));
+                st->unit[p] = AR_UNIT_PX;
+            }
+        }
+    }
+}
+
+/*
+ * Every relative length on one box.
+ *
+ * font-size goes first and on its own, because `font-size: 2em` measures
+ * against the *parent's* font and every other unit on this box measures
+ * against the answer. Getting that order wrong is not a rounding error, it is
+ * a box whose padding is a multiple of the font size it had before the
+ * stylesheet changed it.
+ */
+static void ar__resolve_units(ar_ctx *c, ar_i32 i)
+{
+    ar_node *n = &c->nodes[i];
+    ar_i32   font_px;
+    ar_i32   root_px;
+    ar_i32   p;
+
+    /*
+     * The root's own font size, for `rem`. On the root itself `rem` refers to
+     * the initial value rather than to the box's own -- otherwise
+     * `html { font-size: 2rem }` would be a definition of itself -- and the
+     * default style is where that initial value lives.
+     */
+    root_px = c->node_count > 0 ? c->nodes[0].style.v[AR_P_FONT_SIZE] : AR_FONT_H;
+    if (i == 0)
+    {
+        ar_style d;
+
+        ar_style_defaults(&d);
+        root_px = d.v[AR_P_FONT_SIZE];
+    }
+
+    /*
+     * ponytail: `font-size` in a viewport unit is the one length that still
+     * reads the previous frame's surface.
+     *
+     * It cannot wait for ar__resolve_view_units the way every other viewport
+     * length does, because the font size has to be a number before the next
+     * box inherits it, and inheritance is happening right now. So fluid type
+     * -- `font-size: 4vw` -- is one frame behind on a resize and zero on the
+     * very first frame, exactly like a media query.
+     *
+     * The ceiling is narrow and the upgrade is known: it needs the surface
+     * passed to ar_frame_begin rather than discovered at ar_frame_end, which
+     * changes a public signature and so belongs to a minor release.
+     */
+    if (n->style.unit[AR_P_FONT_SIZE] >= AR_UNIT_REL_FIRST)
+    {
+        ar_i32 parent_px = n->parent >= 0 ? c->nodes[n->parent].style.v[AR_P_FONT_SIZE] : root_px;
+
+        n->style.v[AR_P_FONT_SIZE] = (ar_i16)ar__resolve_one(
+            c, n, n->style.unit[AR_P_FONT_SIZE], n->style.v[AR_P_FONT_SIZE], parent_px, root_px);
+        n->style.unit[AR_P_FONT_SIZE] = AR_UNIT_PX;
+    }
+    font_px = n->style.v[AR_P_FONT_SIZE];
+
+    /*
+     * line-height second, for the same reason font-size went first: `lh` is a
+     * line box, and a line box stated as `1.5em` has to be a number before
+     * anything measures against it.
+     *
+     * Without this the loop below would resolve them in property-index order,
+     * so `height: 2lh` on a box that also said `line-height: 1.5em` would read
+     * whichever of the two happened to sit lower in the table -- a bug that
+     * depends on the order the enum was written in and would move the day a
+     * property was inserted above it.
+     */
+    if (n->style.unit[AR_P_LINE_HEIGHT] >= AR_UNIT_REL_FIRST &&
+        n->style.unit[AR_P_LINE_HEIGHT] < AR_UNIT_VIEW_FIRST)
+    {
+        n->style.v[AR_P_LINE_HEIGHT] = (ar_i16)ar__resolve_one(
+            c, n, n->style.unit[AR_P_LINE_HEIGHT], n->style.v[AR_P_LINE_HEIGHT], font_px, root_px);
+        n->style.unit[AR_P_LINE_HEIGHT] = AR_UNIT_PX;
+    }
+
+    /*
+     * The rest, over the properties this box actually stated. Stepping a whole
+     * word of thirty-two at a time when the box stated nothing in it is the
+     * same trick ar_style_inherit uses, and for the same reason: this runs per
+     * box per frame, and a sheet with no relative units in it must not pay for
+     * the ones it does not have.
+     */
+    for (p = 0; p < AR_P_COUNT; ++p)
+    {
+        ar_u8 u;
+
+        if ((p & 31) == 0 && n->style.set.w[p >> 5] == 0)
+        {
+            p += 31;
+            continue;
+        }
+        if (!ar_pset_has(n->style.set, p))
+        {
+            continue;
+        }
+        u = n->style.unit[p];
+        if (u < AR_UNIT_REL_FIRST || u >= AR_UNIT_VIEW_FIRST)
+        {
+            continue; /* the viewport six wait for ar__resolve_view_units */
+        }
+        ar_style_put(&n->style, p,
+                     ar__resolve_one(c, n, u, ar_style_get(&n->style, p), font_px, root_px));
+        n->style.unit[p] = AR_UNIT_PX;
+    }
+}
+
 static void ar__resolve(ar_ctx *c, ar_i32 i)
 {
     ar_node *n = &c->nodes[i];
@@ -1314,6 +1745,22 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
         ar_style root;
         ar_style_defaults(&root);
         ar_style_inherit(&n->style, &root);
+    }
+
+    /*
+     * Last, because it needs the font size the two branches above just
+     * settled. A relative unit that got past here would reach layout as
+     * itself, and a unit layout does not know reads as a pixel count of
+     * whatever hundredths happened to be in the slot.
+     *
+     * Gated on the sheet, and the gate is not a micro-optimisation: the pass
+     * walks the property table for every box, which is the cost 0.8.2 removed
+     * from ar_style_inherit and measured at more than half of style time. A
+     * stylesheet written in pixels must not pay for `em`.
+     */
+    if (c->sheet.has_rel_units)
+    {
+        ar__resolve_units(c, i);
     }
 }
 
@@ -3961,6 +4408,14 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        point walks the tree, and this is the last moment the tree changes. */
     ar__splice_contents(c);
     ar__mark_collapsed(c);
+
+    /* The viewport lengths, which needed this frame's surface and so could not
+       be done with the rest of style. Still style time as far as the phase
+       counters are concerned, because that is what it is. */
+    if (c->sheet.has_view_units)
+    {
+        ar__resolve_view_units(c, viewport);
+    }
 
     /* Style resolution happened during tree building, between frame_begin and
        here, so closing that phase now attributes it correctly. */
