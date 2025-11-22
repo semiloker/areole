@@ -23,12 +23,19 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 
 typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 1 : -1];
 
-typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) +
-                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) +
-                                      AR_TRACK_POOL * sizeof(ar_track) + 1024 <=
-                                  AR_MEM_FIXED)
-                                     ? 1
-                                     : -1];
+/* Every persistent block, counted here rather than beside here. A block that
+   is checked and a block that is used being two different numbers is how a
+   fixed budget stops being fixed -- which is why the track pool moved inside
+   this at 0.8.0, and why 0.4.3's five pools are inside it on the commit that
+   adds them. */
+typedef char ar__mem_fixed_holds
+    [(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) + AR_STYLE_CACHE * sizeof(ar_cache_entry) +
+          AR_TRACK_POOL * sizeof(ar_track) + AR_CALC_POOL * sizeof(ar_calc_op) +
+          AR_VAR_POOL * sizeof(ar_var_decl) + AR_VARREF_POOL * sizeof(ar_var_ref) +
+          AR_VAR_SCOPES * sizeof(ar_var_scope) + AR_VAR_ENTRIES * sizeof(ar_var_decl) + 1024 <=
+      AR_MEM_FIXED)
+         ? 1
+         : -1];
 
 /* ------------------------------------------------------------------------
  * Keys
@@ -256,6 +263,53 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
             return 0;
         }
         ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
+    }
+
+    {
+        /* Where every `calc()` in every stylesheet is compiled to. Persistent
+           and bounded on the same terms as the track pool above: an
+           expression is read every frame and compiled once. */
+        ar_calc_op *calcs =
+            (ar_calc_op *)ar_arena_persist(&c->arena, AR_CALC_POOL * (ar_u32)sizeof(ar_calc_op));
+        if (!calcs)
+        {
+            return 0;
+        }
+        ar_sheet_set_calcs(&c->sheet, calcs, AR_CALC_POOL);
+    }
+
+    {
+        /* The custom properties every rule declares, and every `var()` that
+           names one. Persistent for the reason the calc pool is: parsed once
+           when the sheet is read and looked at every frame. */
+        ar_var_decl *vd =
+            (ar_var_decl *)ar_arena_persist(&c->arena, AR_VAR_POOL * (ar_u32)sizeof(ar_var_decl));
+        ar_var_ref *vr =
+            (ar_var_ref *)ar_arena_persist(&c->arena, AR_VARREF_POOL * (ar_u32)sizeof(ar_var_ref));
+        if (!vd || !vr)
+        {
+            return 0;
+        }
+        ar_sheet_set_vars(&c->sheet, vd, AR_VAR_POOL, vr, AR_VARREF_POOL);
+    }
+
+    {
+        /* Where a box's own custom properties live once the cascade has
+           picked them, and the chain that says which box can see whose.
+           Persistent, because a box's scope does not change between frames
+           unless the stylesheet does. */
+        c->var_scopes = (ar_var_scope *)ar_arena_persist(
+            &c->arena, AR_VAR_SCOPES * (ar_u32)sizeof(ar_var_scope));
+        c->var_entries = (ar_var_decl *)ar_arena_persist(
+            &c->arena, AR_VAR_ENTRIES * (ar_u32)sizeof(ar_var_decl));
+        if (!c->var_scopes || !c->var_entries)
+        {
+            return 0;
+        }
+        c->var_scope_cap = AR_VAR_SCOPES;
+        c->var_entry_cap = AR_VAR_ENTRIES;
+        c->var_scope_count = 0;
+        c->var_entry_count = 0;
     }
 
     {
@@ -1480,6 +1534,89 @@ static ar_i32 ar__resolve_one(const ar_ctx *c, const ar_node *n, ar_u8 u, ar_i32
  * So this runs from ar_frame_end with the real viewport, before layout reads a
  * single rectangle, and only for a sheet that has a viewport unit in it.
  */
+/* One line box in whole pixels: a multiplier when line-height is a number and
+   a length when it is not, which is the same question ar__font_basis asks and
+   the same answer. */
+/*
+ * What `--name` means to this box.
+ *
+ * Walks the scope chain outwards, and the chain is short because a scope
+ * names the nearest *declaring* ancestor rather than the parent box -- a
+ * document with three `:root` declarations and nothing else has a chain of
+ * one however deep the tree is.
+ *
+ * Returns 0 when the name has no value here, which is not the same as a value
+ * of zero: the caller falls back, and with no fallback the declaration is
+ * invalid. That distinction is most of what `var()` is for on the pages that
+ * use it -- half the references in the Wikipedia documents under
+ * examples/15_real name properties defined in a stylesheet that was never
+ * saved, and every one of those is a fallback or nothing.
+ */
+static const ar_var_decl *ar__var_lookup(const ar_ctx *c, ar_i32 scope, ar_u32 name)
+{
+    ar_i32 guard = 0;
+
+    while (scope >= 0 && scope < (ar_i32)c->var_scope_count)
+    {
+        const ar_var_scope *sc = &c->var_scopes[scope];
+        ar_i32              k;
+
+        for (k = 0; k < (ar_i32)sc->count; ++k)
+        {
+            const ar_var_decl *d = &c->var_entries[sc->first + k];
+
+            if (d->name == name)
+            {
+                return d;
+            }
+        }
+        scope = sc->parent;
+        if (++guard > AR_VAR_SCOPES)
+        {
+            break; /* a cycle cannot happen by construction; not hanging if
+                      one ever does is cheaper than proving it again */
+        }
+    }
+    return 0;
+}
+
+/*
+ * What `var(--name)` means inside a `calc()`.
+ *
+ * A callback rather than a field on the environment, because the evaluator
+ * lives in ar_css.c and the scope chain lives on the context: handing it the
+ * context would make the CSS parser depend on the box tree, which is the one
+ * direction this codebase does not let dependencies run.
+ */
+static int ar__calc_var(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+                        ar_u8 *out_unit)
+{
+    const ar_ctx      *c = (const ar_ctx *)ctx;
+    const ar_node     *n = (const ar_node *)node;
+    const ar_var_decl *d = ar__var_lookup(c, n->var_scope, name);
+
+    if (!d || !d->ok)
+    {
+        return 0;
+    }
+    *out_v = d->v;
+    *out_unit = d->unit;
+    return 1;
+}
+
+static ar_i32 ar__line_px(const ar_style *st, ar_i32 font_px)
+{
+    if (st->unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
+    {
+        return (font_px * st->v[AR_P_LINE_HEIGHT] + 500) / 1000;
+    }
+    if (st->unit[AR_P_LINE_HEIGHT] >= AR_UNIT_REL_FIRST)
+    {
+        return font_px; /* still unresolved; an em is the honest stand-in */
+    }
+    return st->v[AR_P_LINE_HEIGHT];
+}
+
 static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
 {
     ar_i32 i;
@@ -1503,6 +1640,111 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                 continue;
             }
             u = st->unit[p];
+
+            /*
+             * A maths expression, evaluated here for the reason the pass
+             * exists: this is the one moment both halves are known. The font
+             * size was settled during style resolution and the surface is the
+             * argument to this function, so `calc(2.75rem + 2px)` and
+             * `min(50vw, 600px)` are answerable in the same walk.
+             *
+             * A refused expression -- a bare number where a length was
+             * wanted, a division by zero -- leaves the property alone rather
+             * than writing a wrong number into it. `auto` is what the slot
+             * was before the cascade reached it, and that is what CSS asks
+             * for when a declaration is invalid at computed-value time.
+             */
+            /*
+             * `var(--name)`, substituted before anything else looks at the
+             * slot -- so a custom property holding `2rem` or `50vw` is
+             * resolved by the very next branch, in the same walk, rather than
+             * needing a pass of its own.
+             */
+            if (u == AR_UNIT_VAR)
+            {
+                const ar_var_ref  *ref = ar_sheet_varref(&c->sheet, ar_style_get(st, p));
+                const ar_var_decl *d = 0;
+
+                if (ref)
+                {
+                    d = ar__var_lookup(c, c->nodes[i].var_scope, ref->name);
+                }
+                if (d && d->ok)
+                {
+                    ar_style_put(st, p, d->v);
+                    st->unit[p] = d->unit;
+                }
+                else if (ref && ref->has_fallback)
+                {
+                    ar_style_put(st, p, ref->fallback_v);
+                    st->unit[p] = ref->fallback_unit;
+                }
+                else
+                {
+                    /* No value and no fallback: invalid at computed-value
+                       time, which CSS makes the guaranteed-invalid value and
+                       this engine makes `auto`. */
+                    ar_style_put(st, p, 0);
+                    st->unit[p] = AR_UNIT_AUTO;
+                    continue;
+                }
+                u = st->unit[p];
+
+                /*
+                 * What it turned into may itself be relative, and the two
+                 * kinds are resolved in different passes: a viewport unit
+                 * falls through to the branch below, but a font-relative one
+                 * was handled during style resolution and that pass is over.
+                 *
+                 * So `--gap: 2rem` used through `var(--gap)` has to be
+                 * finished here or it reaches layout as a unit layout does
+                 * not know. The font size is settled by now, which is what
+                 * makes doing it here correct rather than merely convenient.
+                 */
+                if (u >= AR_UNIT_REL_FIRST && u < AR_UNIT_VIEW_FIRST)
+                {
+                    ar_i32 root_px =
+                        c->node_count > 0 ? c->nodes[0].style.v[AR_P_FONT_SIZE] : AR_FONT_H;
+
+                    ar_style_put(st, p,
+                                 ar__resolve_one(c, &c->nodes[i], u, ar_style_get(st, p),
+                                                 st->v[AR_P_FONT_SIZE], root_px));
+                    st->unit[p] = AR_UNIT_PX;
+                    continue;
+                }
+            }
+
+            if (u == AR_UNIT_CALC)
+            {
+                ar_calc_env ce;
+                int         ok = 0;
+                ar_i32      got;
+
+                ce.font_px = st->v[AR_P_FONT_SIZE];
+                ce.root_px = c->node_count > 0 ? c->nodes[0].style.v[AR_P_FONT_SIZE] : AR_FONT_H;
+                ce.line_px = ar__line_px(st, ce.font_px);
+                ce.rline_px =
+                    c->node_count > 0 ? ar__line_px(&c->nodes[0].style, ce.root_px) : ce.root_px;
+                ce.view_w = view.w;
+                ce.view_h = view.h;
+                ce.var_lookup = ar__calc_var;
+                ce.ud = &c->nodes[i];
+                ce.ctx = c;
+
+                got = ar_calc_eval(&c->sheet, ar_style_get(st, p), &ce, &ok);
+                if (ok)
+                {
+                    ar_style_put(st, p, got);
+                    st->unit[p] = AR_UNIT_PX;
+                }
+                else
+                {
+                    ar_style_put(st, p, 0);
+                    st->unit[p] = AR_UNIT_AUTO;
+                }
+                continue;
+            }
+
             if (u < AR_UNIT_VIEW_FIRST)
             {
                 continue;
@@ -1745,6 +1987,44 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
         ar_style root;
         ar_style_defaults(&root);
         ar_style_inherit(&n->style, &root);
+    }
+
+    /*
+     * The custom properties this box declares.
+     *
+     * A scope rather than a copy: a box that declares none points at its
+     * parent's, so the cost is paid by the boxes that actually declare
+     * something -- which in the three documents of examples/15_real that use
+     * custom properties at all is a few dozen out of thousands.
+     *
+     * Resolved here rather than folded into ar_sheet_resolve because the
+     * cache key is tag, class, id and state, and this walks a different set
+     * of rules. Gated on the sheet, so a document with no custom property in
+     * it does not walk anything.
+     */
+    n->var_scope = n->parent >= 0 ? c->nodes[n->parent].var_scope : -1;
+    if (c->sheet.has_vars)
+    {
+        ar_var_decl mine[AR_RULE_VARS];
+        ar_i32      got = ar_sheet_resolve_vars(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id,
+                                                n->state, mine, AR_RULE_VARS);
+
+        if (got > 0 && c->var_scopes && c->var_scope_count < c->var_scope_cap &&
+            (ar_i32)c->var_entry_count + got <= (ar_i32)c->var_entry_cap)
+        {
+            ar_var_scope *sc = &c->var_scopes[c->var_scope_count];
+            ar_i32        k;
+
+            sc->parent = n->var_scope;
+            sc->first = c->var_entry_count;
+            sc->count = (ar_u16)got;
+            for (k = 0; k < got; ++k)
+            {
+                c->var_entries[c->var_entry_count + k] = mine[k];
+            }
+            c->var_entry_count = (ar_u16)(c->var_entry_count + got);
+            n->var_scope = (ar_i32)c->var_scope_count++;
+        }
     }
 
     /*
@@ -2483,6 +2763,11 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     ar_arena_frame_reset(&c->arena);
 
     c->node_count = 0;
+    /* The scopes are rebuilt with the tree, so they are released with it.
+       Without this they accumulate a frame's worth per frame and a page that
+       declares one custom property stops seeing it after a few hundred. */
+    c->var_scope_count = 0;
+    c->var_entry_count = 0;
     c->depth = 0;
     c->overflowed = 0;
     c->unbalanced = 0;
@@ -4412,7 +4697,19 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* The viewport lengths, which needed this frame's surface and so could not
        be done with the rest of style. Still style time as far as the phase
        counters are concerned, because that is what it is. */
-    if (c->sheet.has_view_units)
+    /*
+     * Anything whose value is not knowable until there is a frame: a viewport
+     * length, a maths expression, a `var()`. The three are gated separately
+     * rather than by one flag, because a sheet may easily have one and none
+     * of the others -- and the pass costing nothing when it is not needed is
+     * the whole reason the flags exist.
+     *
+     * `varref_count > 1` and not `has_vars`: the pool spends index zero, so
+     * one means empty, and a sheet can reference a custom property it never
+     * declares. Half the `var()` in the Wikipedia pages under
+     * examples/15_real are exactly that, and they resolve to their fallback.
+     */
+    if (c->sheet.has_view_units || c->sheet.has_calc || c->sheet.varref_count > 1)
     {
         ar__resolve_view_units(c, viewport);
     }

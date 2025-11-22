@@ -17,7 +17,7 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 4
+#define AR_VERSION_PATCH 5
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.4"
+#define AR_VERSION_STRING "0.9.5"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -504,10 +504,28 @@ typedef ar_i32 ar_scroll_pos;
 
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
+/*
+ * 544 -> 552 at 0.4.3, for the one field custom properties need on a box:
+ * which set of them it can see.
+ *
+ * Eight bytes for a sixteen-bit index, and that is alignment rather than
+ * waste. ar_node holds a pointer, so it is eight-aligned and was exactly 488;
+ * adding two bytes rounds it to 496, and 496 + 52 of ar_slot is 548 against a
+ * budget of 544. Narrowing the field from thirty-two bits to sixteen changed
+ * nothing at all, which is worth writing down because it looked like it would.
+ *
+ * The alternative was to carry no field and derive the scope from the open
+ * element stack, which is free and would have been wrong in one place: the
+ * late pass re-resolves a box's style once `:last-child` and `:empty` are
+ * settled, and by then the stack that gave the box its depth is gone.
+ *
+ * The assertion in ar_ctx.c is what refused the first three attempts at this,
+ * on the build rather than in review.
+ */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 536u
-#else
 #define AR_BYTES_PER_BOX 544u
+#else
+#define AR_BYTES_PER_BOX 552u
 #endif
 
 /*
@@ -541,8 +559,26 @@ typedef ar_i32 ar_scroll_pos;
  * being two different numbers is how a fixed budget stops being fixed.
  * Measured: 15,136 of context, 149,504 of rules, 20,224 of style cache, 4,096
  * of tracks and 1,024 of slack, which is 189,984 of 196,608.
+ *
+ * 192 KB -> 208 KB at 0.4.3, for `calc()` and custom properties. Five new
+ * pools rather than one, and for once the rule table is not most of it:
+ *
+ *     calc programs     512 x 4    2,048
+ *     custom properties 256 x 8    2,048
+ *     var() references  256 x 8    2,048
+ *     scopes            256 x 8    2,048
+ *     scope entries     512 x 8    4,096
+ *
+ * The rule table still grew -- a rule says which run of the pool it declared,
+ * so it went 604 bytes and 256 of them is 154,624. Measured: 16,968 of
+ * context, 154,624 of rules, 20,992 of style cache, 3,072 of tracks, 12,288
+ * of the five pools above and 1,024 of slack, which is 208,968 of 212,992.
+ *
+ * Four kilobytes of headroom, which is the same uncomfortable margin the CSS
+ * size budget is kept at and for the same reason: the next release that needs
+ * more has to say so here.
  */
-#define AR_MEM_FIXED  196608u
+#define AR_MEM_FIXED  212992u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
