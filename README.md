@@ -402,6 +402,7 @@ toolkit breaks that circle.
 - **0.9.3** *It parses the awkward third* — the stack of template insertion modes, foster parenting, and twenty insertion-mode rules ✅
 - **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant ✅
 - **0.9.5** *It does arithmetic* — `calc()` and the maths functions, custom properties and `var()` ✅
+- **0.9.6** *It knows what colour means* — every notation CSS Color 4 defines, `color-mix()`, `currentColor`, the system colours and `color-scheme` ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -885,6 +886,185 @@ It is written down here rather than absorbed into the baseline silently, because
 what every later release is judged against: a number that goes in unremarked is a number that can
 never fire again. `html_render` at +0.3% is the reason it is recorded rather than treated as
 blocking -- a real page parses, styles and lays out, and pays none of this.
+
+### 0.9.6, complete
+
+**`AR_VERSION_STRING` is 0.9.6, and the baseline under it is the best-measured one in the
+repository.**
+
+| | this baseline | 0.9.5 | 0.9.4 | 0.9.3 |
+| --- | --- | --- | --- | --- |
+| Median spread | **1.90%** | 2.20% | 2.41% | 3.8% |
+| Scenes above 3% | **16 of 52** | 19 | 18 | 27 |
+
+It took four attempts and the first three are worth writing down, because the cause was different
+from 0.9.4's and the same in shape. That release found the power plan; this one found **Lenovo
+Vantage sweeping its add-ins** — sampled four seconds apart it gave 0%, 74%, 181% and 69% of a core,
+and three runs came in at 24.66%, 26.21% and 4.72% median. Intermittent load ruins a spread far more
+thoroughly than steady load does, because the benchmark measures disagreement *between epochs*: a
+sweep lands in some of them and not others, so the noise it adds does not cancel, it widens.
+
+Only one of six Vantage processes could be stopped without elevation, and that was enough — the
+remaining five sat at 0% for the rest of the session. The run after it measured 1.90%.
+
+**Two runs minutes apart disagreed by a factor of two and a half**, 4.72% against 1.90%, which is the
+argument for looking at the number rather than accepting the first one that clears the bar.
+
+### And 0.9.5's regression, found — it was an uninitialised flag
+
+0.9.5 shipped a reproducible **10% slowdown in malformed HTML parsing** without touching a line of
+the HTML parser. It named memory layout as the surviving hypothesis and named the test that would
+settle it. The test has now been run, and **the hypothesis was wrong.**
+
+Four builds of the *same* 0.9.4 source, differing only in two constants that are pure sizes -- no
+struct changes, no code changes, only where things land:
+
+| | `AR_MEM_FIXED` | `AR_BYTES_PER_BOX` | `html_malformed` p50 |
+| --- | --- | --- | --- |
+| 0.9.4 as shipped | 196,608 | 544 | 148.5, 145.6, 146.6 |
+| + the fixed block only | 212,992 | 544 | 144.2, 145.8, 145.0 |
+| + the per-box growth only | 196,608 | 552 | 146.0, 148.3, 145.4 |
+| 0.9.5's layout, 0.9.4's code | 212,992 | 552 | 146.5, 147.1, 145.0 |
+
+All four are the same number. Giving 0.9.4 exactly 0.9.5's memory layout costs nothing at all.
+
+**The cause was `has_calc`, which nothing ever set to zero.** It arrived with `calc()` in 0.4.3, and
+`ar_sheet_init` sets every other field in the sheet by name -- so the omission read as deliberate
+rather than as missing. A stale non-zero made the gate
+
+```c
+if (c->sheet.has_view_units || c->sheet.has_calc || c->sheet.varref_count > 1)
+```
+
+fire on documents that needed none of it, and behind that gate is a full walk of every node and
+every property, every frame. `html_malformed` builds a large DOM and needs no deferred values at
+all, which is exactly the shape that pays the most and benefits the least.
+
+Measured on 0.9.5's own tree, one change, two lines:
+
+| 0.9.5 | `html_malformed` p50 |
+| --- | --- |
+| as shipped | 161.5, 162.6, 158.6 |
+| `+ sheet->has_calc = 0; sheet->has_view_units = 0;` | **146.9, 145.8, 146.5** |
+
+That is the whole of it.
+
+**0.9.6 fixed this by accident**, tidying three uninitialised flags while adding a fourth, and the
+commit that did it called them *"harmless only by luck: a stale 1 costs an unnecessary pass and a
+stale 0 costs a feature."* The stale 1 was not harmless. It was the ten per cent, and it had been
+shipped and measured and written up twice as something else.
+
+**One line held two separate faults.** The gate fired when it should not have, because a flag was
+uninitialised; and it failed to fire when it should have, because system colours were not named in
+it. The second was found by six failing tests in 0.9.6 and the first by no test at all -- a pass that
+runs when it needn't produces exactly the right answer, only slower.
+
+**This section replaces a wrong one.** The commit that stamped 0.9.6 said three releases lined up
+with the layout explanation and none with an algorithmic one. The first half was a coincidence and
+the second was false: 0.9.6 removed the cost because it happened to fix the bug, not because it
+moved memory again.
+
+**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
+ships under 0.9.5's: a version may not move backwards.
+
+| | |
+| --- | --- |
+| Notations | every one CSS Color 4 defines, plus `color-mix()` in seven spaces |
+| Named colours | **148**, sorted and bisected |
+| Accuracy | worst **1 of 255** per channel over 500 colours against a float reference |
+| Demos | **16 new**, 16 of 16 gated; **13 pixel-exact** against Edge; 192 in the gallery |
+| Checks | **1,713** in `ar_test`, from 1,634 |
+| Binary | `ar_color.c` 20,281 bytes, and 20,567 more in `ar_css.c` |
+| Memory | `AR_MEM_FIXED` 208 KB -> 216 KB, `AR_BYTES_PER_BOX` 552 -> 560 |
+
+Before this the engine knew `#rgb`, `#rrggbb`, `#rrggbbaa` and `transparent`, and the comment
+beside the hex parser said a table of a hundred and forty names earns its place in a browser and
+not here. It does now, and so do `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
+`color-mix()`, `currentColor`, nineteen system colours and `color-scheme`.
+
+**Every one of them becomes eight bits per channel while the stylesheet is being read.** That beats
+the roadmap's "conversion happens once at computed-value time" by a stage, because none of these
+can change after they are read -- `oklch(0.7 0.15 30)` costs a stylesheet parse and not a frame.
+
+**There is no float and there is not going to be one.** The scale is 1/4096, chosen against two
+limits at once: fine enough that six chained conversions stay inside the 1/255 a channel is
+published to, and coarse enough that two operands multiply without the 64-bit intermediate C89 does
+not have. The sRGB transfer function is a 256-entry table and its inverse bisects that same table,
+so the two directions cannot drift apart -- all 256 bytes round trip exactly, and `ar_test` walks
+every one of them rather than a sample.
+
+**Thirteen of the sixteen demos are pixel-for-pixel identical to Edge**, the four wide-gamut
+notations among them. The three that are not each have a reason rather than a tolerance:
+`color-mix` in a polar space differs on 1.3% and 2.6% of pixels, where a hue is bisected rather
+than computed; and `system-colors` differs because the browser takes those from the desktop theme
+and this engine takes them from a fixed table, which is a disagreement by design until the theme
+hook lands at 0.16.1.
+
+### Six bugs, and two of them were in code this release did not touch
+
+**A custom property kept only half of a colour.** `ar_var_decl` carried its value in a signed
+sixteen-bit slot -- which fits every length in the engine, and does not fit `0xAARRGGBB`.
+`--brand: #c02040` stored `0x2040`: not a broken value, a different colour with an alpha of zero,
+and therefore invisible rather than visibly wrong. It shipped that way in **0.4.3**, in the
+declaration pool and in the `var()` fallback both, and was found by the first test written for
+`currentColor` -- which copied the truncated value faithfully and failed looking like an ordering
+bug in a different file.
+
+**The pass that resolves deferred colours is gated, and system colours were not in the gate.** A
+sheet with no viewport units, no `calc()` and no `var()` skips it entirely, so all six system
+colour tests failed against a parser that was working perfectly. This is the same bug 0.4.3 shipped
+and wrote down as *"a pass gated on flags that did not include the feature"*, reproduced four days
+later by the person who wrote that sentence. `currentColor` had it too and passed only because its
+test happened to use `var()` as well.
+
+**The border shorthand read a colour as a width.** It picks the colour out of its value run by
+asking which value is `AR_UNIT_COLOR`, and neither `currentColor` nor a system colour is -- both
+carry a unit saying where the colour comes from rather than what it is. So `border: 6px solid
+currentColor` found no colour, left the value in the run, and read it as the width: the border
+changed *size* instead of changing colour. Two demos disagreed with the browser on geometry and
+agreed on pixels, which is a combination that points away from colour entirely.
+
+**`hsl()` took its modulus over the wrong interval.** The `x` term is `c * (1 - |(h/60 mod 2) - 1|)`
+and that modulus is over two sixths; taken over one -- the position inside the current sixth, which
+looks equivalent -- it falls to zero at the start of every sixth instead of every other one, and
+`hsl(60 100% 50%)` comes out green. Every other primary still passed while it was wrong, which is
+the argument for walking all six.
+
+**The memory assertion had not counted the media query pool since 0.4.2.** The number it checked
+was six kilobytes under the number used, and the slack covered the gap until the ninety-fourth
+property pushed it over. It surfaced as seven failures in inline styles and presentational hints,
+and raising the budget by one kilobyte made it *eight* -- which is the tell. A short arena starves
+whichever pool is carved when it runs out, so the symptom moves with the size instead of easing.
+Non-monotonic failures under a size change mean the budget, not the feature.
+
+**And a measurement that was wrong about the code.** An early sweep put `oklab()` four 8-bit steps
+from its reference, and the extra precision added to fix it moved the worst case by nothing at all
+-- because the harness was scaling its input by 1000 and then to 4096, quantising twice, and
+comparing against a reference computed from the unquantised value. Fed the same number on both
+sides the worst error is 1. The precision work was kept anyway, and the commit says why: the
+matrices out of Oklab and Lab subtract terms of similar size to reach a small one, and below 0.0031
+the sRGB curve is a straight line of slope 12.92, so one unit of linear error there really is four
+fifths of a step.
+
+### What this release does not do
+
+**`accent-color` is deferred to 0.10.1, with the controls it tints.** There is nothing to tint yet,
+and a catalogue row that parses a value nothing reads is exactly what 0.4.1 refused to ship when it
+moved angles, times and frequencies to 0.14.0 for the same reason. The property table has two slots
+left of ninety-six, which is the other half of the argument.
+
+**`light-dark()` and `opacity` did not make it.** `light-dark()` needs a pool to hold two colours
+in a slot that fits one, and `opacity` means nothing visible until group compositing arrives at
+0.12.0. Both are named here rather than left to be discovered missing.
+
+**The 500-colour corpus against a browser was not built.** Accuracy is published against a
+floating-point reference instead -- worst 1 of 255 over 500 colours, mean 0.06 -- which is a
+stronger test of the arithmetic and a weaker one of the parser. Sixteen gated demos cover the
+parser end to end against Edge, thirteen of them exactly. The gap is real and stated.
+
+**`prefers-color-scheme` is still pinned to `light`.** The system colours and `color-scheme` are
+whole and the wire to the window manager is what is missing, which is the same shape 0.4.1 shipped
+`dvh`, `lvh` and `svh` in. `color-scheme: dark` is what selects the dark set today.
 
 ## Building
 
