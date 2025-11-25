@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orders</title>
+<style>
+html { background:#0d1117; }
+body { margin:0; padding:22px 26px; font-family:"Segoe UI"; font-size:14px; color:#c9d1d9; }
+button { font-family:inherit; }
+.head { display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+.head h1 { margin:0; font-size:22px; color:#f0f6fc; }
+.range { margin-left:auto; padding:7px 12px; border:1px solid #30363d; border-radius:6px; color:#8b949e; }
+.new { padding:8px 14px; border:1px solid #238636; border-radius:6px; background:#238636; color:#ffffff; font-size:14px; font-weight:bold; }
+.stats { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:14px; margin-bottom:14px; }
+.stat, .panel { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:16px; }
+.label { color:#8b949e; font-size:13px; }
+.value { margin-top:4px; font-size:26px; font-weight:bold; color:#f0f6fc; }
+.delta { margin-top:2px; font-size:12px; }
+.up { color:#3fb950; }
+.down { color:#f85149; }
+.split { display:grid; grid-template-columns:2fr 1fr; gap:14px; }
+.panel h2 { margin:0 0 10px 0; font-size:15px; color:#f0f6fc; }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; font-size:12px; color:#8b949e; font-weight:normal; padding:6px 8px; }
+td { padding:8px; }
+tr.alt td { background:#1c2129; }
+.num { text-align:right; }
+.pill { display:inline-block; padding:1px 9px; border-radius:10px; font-size:12px; }
+.paid { background:#12361f; color:#3fb950; }
+.pending { background:#3a2e10; color:#d29922; }
+.refund { background:#3d1518; color:#f85149; }
+.region { display:flex; justify-content:space-between; font-size:13px; }
+.bar { height:8px; border-radius:4px; background:#21262d; margin:6px 0 14px 0; }
+.fill { height:8px; border-radius:4px; background:#388bfd; }
+</style></head>
+<body>
+<div class="head">
+  <h1>Orders</h1>
+  <div class="range">Last 30 days</div>
+  <button class="new">New order</button>
+</div>
+<div class="stats">
+  <div class="stat"><div class="label">Revenue</div><div class="value">$48,210</div><div class="delta up">+12.4% on last month</div></div>
+  <div class="stat"><div class="label">Orders</div><div class="value">1,284</div><div class="delta up">+3.1% on last month</div></div>
+  <div class="stat"><div class="label">Refunds</div><div class="value">23</div><div class="delta down">+8.0% on last month</div></div>
+  <div class="stat"><div class="label">Average order</div><div class="value">$37.55</div><div class="delta up">+0.9% on last month</div></div>
+</div>
+<div class="split">
+  <div class="panel">
+    <h2>Recent orders</h2>
+    <table>
+      <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>#10482</td><td>Grace Hopper</td><td><span class="pill paid">Paid</span></td><td class="num">$129.00</td></tr>
+        <tr class="alt"><td>#10481</td><td>Alan Turing</td><td><span class="pill pending">Pending</span></td><td class="num">$42.50</td></tr>
+        <tr><td>#10480</td><td>Katherine Johnson</td><td><span class="pill paid">Paid</span></td><td class="num">$310.75</td></tr>
+        <tr class="alt"><td>#10479</td><td>Edsger Dijkstra</td><td><span class="pill refund">Refunded</span></td><td class="num">$18.20</td></tr>
+        <tr><td>#10478</td><td>Barbara Liskov</td><td><span class="pill paid">Paid</span></td><td class="num">$64.00</td></tr>
+        <tr class="alt"><td>#10477</td><td>Donald Knuth</td><td><span class="pill pending">Pending</span></td><td class="num">$256.00</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Top regions</h2>
+    <div class="region"><span>Europe</span><span>42%</span></div>
+    <div class="bar"><div class="fill" style="width:42%"></div></div>
+    <div class="region"><span>North America</span><span>31%</span></div>
+    <div class="bar"><div class="fill" style="width:31%"></div></div>
+    <div class="region"><span>Asia</span><span>19%</span></div>
+    <div class="bar"><div class="fill" style="width:19%"></div></div>
+    <div class="region"><span>Elsewhere</span><span>8%</span></div>
+    <div class="bar"><div class="fill" style="width:8%"></div></div>
+  </div>
+</div>
+</body></html>

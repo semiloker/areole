@@ -417,7 +417,8 @@ static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_
  * safe to call twice -- and it is called twice, once for everything and again
  * for the boxes hung off an anchor.
  */
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env)
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 count, ar_i32 i, ar_rect viewport,
+                             ar_layout_env *env)
 {
     ar_node *n = &nodes[i];
     ar_rect  cb = ar_containing_block(nodes, i, viewport);
@@ -433,6 +434,43 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layo
     ar__resolve_axis(n, cb.y, cb.h, AR_P_TOP, AR_P_BOTTOM, AR_P_HEIGHT,
                      auto_v ? 0 : n->style.v[AR_P_MARGIN_TOP],
                      auto_v ? 0 : n->style.v[AR_P_MARGIN_BOTTOM], auto_v, n->fit[1], &y, &h);
+
+    /*
+     * A new width means new contents, not moved ones.
+     *
+     * The flow laid this box's subtree out at its shrink-to-fit width, which
+     * is right only while nothing gives it another -- and `left` and `right`
+     * together, or a percentage width, do. So the subtree is laid out again
+     * at the width it has now, and an automatic height is then whatever that
+     * came to, resolved against the offsets a second time so a box anchored
+     * by its bottom edge still ends where it said.
+     */
+    if (env && w > 0 && w != n->rect.w && n->first_child >= 0)
+    {
+        ar_i32 mt = auto_v ? 0 : n->style.v[AR_P_MARGIN_TOP];
+        ar_i32 mb = auto_v ? 0 : n->style.v[AR_P_MARGIN_BOTTOM];
+
+        n->rect.x = x;
+        n->rect.y = y;
+        n->rect.w = w;
+        n->rect.h = h < 0 ? 0 : h;
+        ar_relayout_subtree(nodes, count, i, env);
+        if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO)
+        {
+            ar_i32 ny = y, nh = n->rect.h;
+
+            ar__resolve_axis(n, cb.y, cb.h, AR_P_TOP, AR_P_BOTTOM, AR_P_HEIGHT, mt, mb, auto_v,
+                             n->rect.h, &ny, &nh);
+            ar__shift_kids_pos(nodes, env, i, 0, ny - n->rect.y);
+            n->rect.y = ny;
+            n->rect.h = nh < 0 ? 0 : nh;
+        }
+        else
+        {
+            n->rect.h = h < 0 ? 0 : h;
+        }
+        return;
+    }
 
     ar__shift_kids_pos(nodes, env, i, x - n->rect.x, y - n->rect.y);
 
@@ -724,27 +762,45 @@ void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_lay
     {
         ar_node *n = &nodes[i];
         ar_i32   dx = 0, dy = 0;
+        ar_i32   cbw = viewport.w, cbh = viewport.h;
 
         if (n->style.v[AR_P_POSITION] != AR_POS_RELATIVE)
         {
             continue;
         }
 
+        /*
+         * A percentage is of the containing block, which for a relatively
+         * positioned box is its parent's content box -- not the viewport, which
+         * is what this measured against. Nothing noticed while every offset in
+         * every corpus was in pixels; a slider's thumb, placed by `left: 25%`
+         * along a rail 113 pixels long, landed a quarter of the way across the
+         * window.
+         */
+        if (n->parent >= 0)
+        {
+            const ar_node *p = &nodes[n->parent];
+            ar_i32         bw = p->style.v[AR_P_BORDER_WIDTH];
+
+            cbw = p->rect.w - 2 * bw - p->style.v[AR_P_PAD_LEFT] - p->style.v[AR_P_PAD_RIGHT];
+            cbh = p->rect.h - 2 * bw - p->style.v[AR_P_PAD_TOP] - p->style.v[AR_P_PAD_BOTTOM];
+        }
+
         if (ar__given(n, AR_P_LEFT))
         {
-            dx = ar__offset(n, AR_P_LEFT, viewport.w);
+            dx = ar__offset(n, AR_P_LEFT, cbw);
         }
         else if (ar__given(n, AR_P_RIGHT))
         {
-            dx = -ar__offset(n, AR_P_RIGHT, viewport.w);
+            dx = -ar__offset(n, AR_P_RIGHT, cbw);
         }
         if (ar__given(n, AR_P_TOP))
         {
-            dy = ar__offset(n, AR_P_TOP, viewport.h);
+            dy = ar__offset(n, AR_P_TOP, cbh);
         }
         else if (ar__given(n, AR_P_BOTTOM))
         {
-            dy = -ar__offset(n, AR_P_BOTTOM, viewport.h);
+            dy = -ar__offset(n, AR_P_BOTTOM, cbh);
         }
         if (!dx && !dy)
         {

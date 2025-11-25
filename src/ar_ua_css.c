@@ -99,9 +99,25 @@ static const char *const AR__UA[] = {
      * In the user-agent sheet rather than in ar_style_defaults, so it reaches
      * documents and leaves interfaces alone: an ar_begin tree that never asks
      * for this sheet still gets eight.
+     *
+     * No background on `html`. A browser's sheet has none either: the white
+     * behind a page is the canvas's own colour, `Canvas`, and the painter
+     * gives it to a document whose root and body name nothing. A white root
+     * here meant the root always had a background, so a body's never
+     * reached the canvas, and `color-scheme: dark` put a dark page on a
+     * white sheet.
      */
-    "html { display:block; background:#ffffff; font-size:16px; }"
-    "body { display:block; margin:8px; }",
+    "html { display:block; font-size:16px; }"
+    "body { display:block; margin:8px; }"
+    /*
+     * CSS's initial `display`, for every element nothing below names. areole's
+     * own initial value is `flex`, which is right for an interface and was
+     * what every unknown element in a document got: a custom element -- MDN's
+     * `<mdn-dropdown>` -- laid its button and its menu out side by side, the
+     * button stretched down the menu's whole height. A universal selector is
+     * the least specific there is, so every rule below still wins.
+     */
+    "* { display:inline; }",
 
     "head, style, script, title { display:none; }"
     "meta, link, base { display:none; }",
@@ -155,7 +171,13 @@ static const char *const AR__UA[] = {
      * only at sixteen.
      */
     "big { font-size:1.2em; }"
-    "small, sub, sup { font-size:0.8125em; }",
+    "small, sub, sup { font-size:0.8125em; }"
+    /* And where the two of them sit. `vertical-align` had four keywords
+       and neither of these was one, so a subscript and a superscript were
+       small text on the same baseline as everything else -- which is the
+       one thing they are not. */
+    "sup { vertical-align:super; }"
+    "sub { vertical-align:sub; }",
 
     "h4 { display:block; font-size:1em; margin:1.33em 0px; font-weight:bold; }"
     "h5 { display:block; font-size:0.83em; margin:1.67em 0px; font-weight:bold; }"
@@ -191,6 +213,36 @@ static const char *const AR__UA[] = {
        indent and show nothing. */
     "ul, ol, menu { display:block; margin:16px 0px; padding-left:40px; }"
     "li { display:list-item; }",
+
+    /*
+     * The markers, placed by a negative margin rather than by a positioning
+     * scheme.
+     *
+     * That is what `list-style-position: outside` is: the marker begins in the
+     * padding the list has already reserved and the content begins at the
+     * content edge, so a line that wraps lines up under the text and not under
+     * the bullet. An inline-block with `margin-left` pulled back by its own
+     * width and its gap says exactly that, and costs no new layout path.
+     *
+     * `ar-marker` is a fixed-width slot so that "9." and "10." end at the same
+     * place -- numbers are right-aligned against the text, which is the whole
+     * reason a list of ten reads as a column instead of a ragged edge. The gap
+     * is a space's width, a quarter of an em in Times: a browser's marker is
+     * "1. " ending at the content edge, so its period stops one space short.
+     */
+    "ar-marker { display:inline-block; width:1.75em; margin-left:-2em; }"
+    "ar-marker { margin-right:0.25em; text-align:right; }",
+
+    /*
+     * A bullet is a box with a radius, because the built-in face has no U+2022
+     * -- it is ASCII 32 to 126 and everything else comes out as `?`. Drawing
+     * it means it is the same shape whatever face is loaded, and it inherits
+     * its colour from the item like a glyph would.
+     */
+    "ar-bullet { display:inline-block; width:0.4em; height:0.4em; border-radius:0.4em; }"
+    "ar-bullet { margin-left:-1.05em; margin-right:0.65em; background:currentColor; }"
+    "ar-bullet.ar-circle { background:transparent; border:1px solid currentColor; }"
+    "ar-bullet.ar-square { border-radius:0px; }",
 
     /* Inline content, in fours. */
     "span, a, b, i { display:inline; }"
@@ -229,32 +281,215 @@ static const char *const AR__UA[] = {
     "hr { display:block; margin:8px 0px; border-width:1px;"
     "     border-color:#808080; }",
 
-    /* Form controls, which have no appearance of their own until 0.10.1. They
-       are given a display so they are not flex boxes, and nothing else. */
+    /*
+     * ------------------------------------------------------------------
+     * Form controls, measured against a browser
+     * ------------------------------------------------------------------
+     *
+     * Every number below was read out of Edge on Windows with no stylesheet
+     * at all -- getComputedStyle and getBoundingClientRect, and pixels sampled
+     * from its screenshot -- by tools/versus.py, which renders one page in
+     * both engines and shows the two side by side. The first version of these
+     * rules was written from memory and looked like a different toolkit.
+     *
+     * Two things about how the numbers are spelled here:
+     *
+     *   - areole reserves no space for a border (see CSS_REFERENCE), so a
+     *     browser's `padding: 1px 2px; border: 2px` becomes `padding: 3px 4px;
+     *     border: 1px` -- the same box, the same place for the text, and the
+     *     one-pixel line a browser actually draws over its two-pixel border.
+     *   - A browser's controls are 13.333px Arial; areole has whole pixels,
+     *     so they are 13px Arial, and a field's width is stated in pixels so
+     *     it matches the browser's rather than following the smaller font.
+     */
     "input, button, select, textarea { display:inline-block; }"
     "progress, meter { display:inline-block; }"
     /* `output` is inline in every browser and was inline-block here only
        because it shared a rule with two elements that are. */
     "output { display:inline; }",
 
-    /*
-     * What a form control looks like is 0.10.1. What it *measures* is not,
-     * and a control two pixels narrower than a browser's puts every following
-     * word in the wrong place -- so the sizes and the padding are here and
-     * the appearance is not.
-     *
-     * 13px is the 13.33 a browser computes from its own font shorthand,
-     * rounded; `fieldset` is 12 of padding a side rather than the 10 that was
-     * guessed at.
-     */
-    /* Two rules, because AR_MAX_SEL_LIST is four and a list of six is
-       refused whole rather than truncated -- which is the trap this
-       file's own header warns about, and which caught the first
-       version of this rule and every rule after it in the same part. */
+    /* An option has no size of its own and takes its select's, as in a
+       browser: a rule of its own here kept a select's text at 13 pixels
+       inside a select the page had made 14. */
     "input, button, select, textarea { font-size:13px; }"
-    "optgroup, option { font-size:13px; }"
-    "input, textarea, option { padding-left:2px; padding-right:2px; }"
-    "button { padding-left:6px; padding-right:6px; text-align:center; }"
+    "input, button, select { font-family:sans-serif; }",
+
+    /*
+     * A text field: 169 pixels of content, which is twenty characters of
+     * 13.333px Arial the way a browser counts them (29 + 7 per character, so
+     * `size=` moves it the same way -- see ar__hints), a one-pixel #767676
+     * border with a two-pixel radius, and its height from its text: 15 + 6 is
+     * a browser's 21.
+     */
+    "input { width:169px; padding:3px 4px; border:1px solid #767676;"
+    "        border-radius:2px; background:Field; color:FieldText; overflow:hidden; }"
+    "input:disabled { color:#6D6D6D; background:#FAFAFA; border-color:#C8C8C8; }",
+
+    /* A push button: the label plus six pixels a side, on #EFEFEF. */
+    "button, .ar-button { width:auto; padding:3px 8px; border:1px solid #767676;"
+    "                     border-radius:2px; background:#EFEFEF; color:#000000;"
+    "                     text-align:center; }"
+    "button:disabled, .ar-button:disabled { color:#6D6D6D; }",
+
+    /*
+     * A select is as wide as its widest option plus twenty-two pixels -- four
+     * before the text, eighteen for the arrow -- and is 19 tall. Every option
+     * is a box in the closed face so that width is counted, and every one but
+     * the chosen one has no height and is not drawn: a browser sizes a
+     * dropdown by everything it could show, and shows one.
+     */
+    "select { position:relative; padding:2px 15px 2px 3px; border:1px solid #767676;"
+    "         border-radius:2px; background:Field; color:FieldText; }"
+    "select > option, select > optgroup > option { display:block; height:0px;"
+    "  padding:0px 2px; visibility:hidden; }",
+
+    "select > option.ar-chosen, select > optgroup > option.ar-chosen"
+    " { height:auto; visibility:visible; }"
+    /* An option in a group is indented in the open list, and a browser counts
+       the indent when it sizes the closed one. */
+    "select > optgroup > option { padding-left:17px; }"
+    "select > optgroup > option.ar-chosen { padding-left:2px; }"
+    "select > optgroup { display:block; padding:0px; }"
+    "select:disabled { color:#6D6D6D; border-color:#C8C8C8; }"
+    /* Open, it is a stacking context above everything else, so the list it
+       hangs over the page is painted over the page -- a positioned box with
+       an automatic z-index paints its subtree as one piece, and the controls
+       after it would otherwise draw over the list. */
+    "select:open, .ar-color:open { z-index:10; }",
+
+    /* The arrow, which is a chevron the painter draws -- a glyph in a browser,
+       and the built-in face has none. */
+    "ar-chev { display:block; position:absolute; right:5px; top:7px;"
+    "          width:8px; height:5px; color:#000000; }",
+
+    /*
+     * A textarea: twenty columns of 13.333px Consolas and fifteen pixels a
+     * browser keeps for a scrollbar, two rows of fifteen -- 162 by 30, which
+     * `cols` and `rows` move by the same rule (ar__hints) -- with a resize
+     * grip drawn in the corner.
+     */
+    "textarea { width:162px; height:30px; padding:3px; border:1px solid #767676;"
+    "           border-radius:2px; background:Field; color:FieldText; overflow:auto;"
+    "           position:relative; }"
+    "textarea > ar-value { white-space:pre-wrap; }",
+
+    "ar-grip { display:block; position:absolute; right:1px; bottom:1px;"
+    "          width:7px; height:7px; color:#767676; }"
+    "textarea:disabled { color:#6D6D6D; border-color:#C8C8C8; }"
+    ".ar-hidden { display:none; }",
+
+    /*
+     * A checkbox: 13 by 13, margins 3 3 3 4, a #767676 square with a two-pixel
+     * radius -- and checked, a #0075FF square with a white tick. The blue is
+     * the browser's own and not the desktop accent, which is what Chrome and
+     * Edge draw unless a page sets `accent-color`.
+     */
+    ".ar-checkbox { width:13px; height:13px; padding:0px; margin:3px 3px 3px 4px;"
+    "               border:1px solid #767676; border-radius:2px; background:#FFFFFF; }"
+    ".ar-checkbox:checked { background:#0075FF; border-color:#0075FF; }"
+    "ar-tick { display:block; width:9px; height:9px; margin:2px 0px 0px 2px;"
+    "          color:transparent; }",
+
+    "ar-tick:checked { color:#FFFFFF; }"
+    /* A radio: the same box, round, margins 3 3 0 5; checked, a blue ring and
+       a seven-pixel blue dot three pixels in. */
+    ".ar-radio { width:13px; height:13px; padding:0px; margin:3px 3px 0px 5px;"
+    "            border:1px solid #767676; border-radius:7px; background:#FFFFFF; }"
+    ".ar-radio:checked { border-color:#0075FF; }",
+
+    "ar-mark { display:block; width:7px; height:7px; margin:3px 0px 0px 3px;"
+    "          border-radius:4px; background:transparent; }"
+    "ar-mark:checked { background:#0075FF; }",
+
+    /*
+     * The focus ring, and `:focus-visible` rather than `:focus` on purpose: a
+     * click must not draw one and a Tab must. An outline rather than a border,
+     * because a border takes space and a ring drawn with one shifts the page
+     * every time the focus moves.
+     */
+    "button:focus-visible, input:focus-visible { outline:2px solid AccentColor; }"
+    "summary:focus-visible, a:focus-visible { outline:2px solid AccentColor; }"
+    "select:focus-visible, textarea:focus-visible { outline:2px solid AccentColor; }",
+
+    /*
+     * A slider, a progress bar and a meter are all an eight-pixel pill in a
+     * sixteen-pixel box: an #EFEFEF track with a hairline edge, filled from
+     * the left. A slider adds a sixteen-pixel thumb, placed by `left: N%` on a
+     * rail one thumb narrower than the track; the document walk writes both
+     * percentages as inline styles.
+     */
+    ".ar-range { width:129px; height:16px; padding:0px; margin:2px; border-width:0px;"
+    "            background:transparent; overflow:visible; }"
+    /* On `vertical-align: -0.2em`, as a browser sets them: three pixels below
+       the baseline at the size these are drawn at. */
+    "progress { width:160px; height:16px; vertical-align:-0.2em; }"
+    "meter { width:80px; height:16px; vertical-align:-0.2em; }",
+
+    "ar-track { display:block; height:8px; margin-top:4px; background:#EFEFEF;"
+    "           border:1px solid #B2B2B2; border-radius:4px; }"
+    "ar-fill { display:block; height:8px; background:#0075FF; border-radius:4px; }"
+    "meter ar-fill { background:#107C10; }",
+
+    "ar-rail { display:block; height:16px; margin-top:-12px; margin-right:16px; }"
+    "ar-thumb { display:block; position:relative; width:16px; height:16px;"
+    "           border-radius:8px; background:#0075FF; }",
+
+    /* A colour field: a #EFEFEF button 50 by 27 with the colour in it, framed
+       in #777777; and when it is open, sixteen chips hanging under it. */
+    ".ar-color { width:40px; height:19px; padding:4px 5px; position:relative;"
+    "            overflow:visible; border:1px solid #767676; border-radius:2px;"
+    "            background:#EFEFEF; }"
+    "ar-swatch { display:block; height:19px; border:1px solid #777777; }",
+
+    "ar-palette { display:block; position:absolute; left:0px; top:100%; z-index:10;"
+    "             width:88px; padding:2px; background:Field; border:1px solid #767676; }"
+    "ar-chip { display:inline-block; width:16px; height:16px; margin:2px;"
+    "          border:1px solid #767676; }"
+    "ar-chip:checked { outline:2px solid #0075FF; }",
+
+    /* A file field is 253 pixels: a button, and the name of what was chosen. */
+    ".ar-file { width:253px; height:auto; padding:0px; border-width:0px;"
+    "           background:transparent; overflow:hidden; white-space:nowrap; }"
+    "ar-pick { display:inline-block; padding:3px 8px; margin-right:4px;"
+    "          border:1px solid #767676; border-radius:2px; background:#EFEFEF;"
+    "          color:#000000; }"
+    "ar-name { display:inline; }",
+
+    /* An open select's list hangs under it, over whatever follows, and is part
+       of it -- so a press on a row lands inside the select. */
+    "ar-listbox { display:block; position:absolute; left:0px; right:0px; top:100%;"
+    "             z-index:10; background:Field; border:1px solid #767676; }"
+    "ar-listbox > option { display:block; height:auto; padding:0px 4px; visibility:visible; }"
+    "ar-listbox optgroup > option { display:block; height:auto; padding:0px 16px;"
+    "  visibility:visible; }",
+
+    "ar-listbox option.ar-chosen, ar-listbox option:hover"
+    " { background:#1E90FF; color:#FFFFFF; }"
+    "ar-group { display:block; font-weight:bold; padding-left:4px; }",
+
+    /* A field's text is a box, so it is measured, laid out and painted by the
+       machinery that already does all three. The tag still decides by default
+       whether it keeps its spaces, and an author can say otherwise. */
+    "ar-value { display:block; }"
+    "pre, textarea { white-space:pre; }"
+    "ar-value { white-space:pre; }"
+    /* `::placeholder`, which is a class here as everything of its kind is:
+       Edge's grey, read off its pixels. */
+    ".ar-placeholder { color:#757575; }",
+
+    /* The summary's triangle, a box the painter draws -- the built-in face is
+       ASCII and U+25B8 would be a question mark. A browser's marker is the
+       glyph and a space, seventeen pixels before the text at 16px. */
+    "ar-tri-r, ar-tri-d { display:inline-block; width:8px; height:8px; }"
+    "summary > ar-tri-r, summary > ar-tri-d { margin-right:9px; }",
+
+    /* A control's label in the middle of the control when an author makes it
+       taller than its text, as every browser draws it. The marks and tracks
+       place themselves and opt back out. */
+    "button, input, select { align-content:center; }"
+    ".ar-checkbox, .ar-radio, .ar-range, .ar-color { align-content:start; }",
+
+    "summary { display:block; }"
 
     /*
      * ------------------------------------------------------------------
@@ -363,7 +598,13 @@ static const char *const AR__UA[] = {
      * thirteen.
      */
     "pre, xmp, listing, plaintext { margin:13px 0px; font-size:13px; }"
-    "code, kbd, samp, tt { font-size:13px; }",
+    "code, kbd, samp, tt { font-size:13px; }"
+    /* The family these four have always meant. Their whole purpose is that
+       a run of characters lines up with the run above it, which no
+       proportional face can do -- and it is why RFC 2616 was the one
+       document in the real corpus that did not render recognisably. */
+    "pre, code, kbd, samp { font-family:monospace; }"
+    "tt, xmp, listing, textarea { font-family:monospace; }",
 
     /*
      * A nested list has no margin of its own.
@@ -378,11 +619,29 @@ static const char *const AR__UA[] = {
        is a border rather than a margin. The specification's border is
        `2px groove`; per-side widths and border styles are not implemented, so
        this is a flat two pixels and says so. */
-    "fieldset { margin:0px 2px; padding:6px 12px 10px 12px;"
-    "           border-width:2px; border-color:#c0c0c0; }"
+    "fieldset { margin:0px 2px; padding:8px 14px 12px 14px;"
+    "           border-width:2px; border-color:#9C9C9C; }"
     "legend { padding-left:2px; padding-right:2px; }",
 
     "center { text-align:center; }",
+
+    /*
+     * A link is blue, and that is the whole rule until `text-decoration`
+     * exists.
+     *
+     * `.ar-link` rather than `a:link` because a link is an `<a>` with an
+     * `href` and there are no attribute selectors here; the document walk
+     * adds the class. LinkText is the system colour that means this, so a
+     * dark colour scheme gets the lighter blue without a second rule.
+     *
+     * The underline is drawn on the text rather than as a border, which is
+     * what lets a link that wraps get one line per fragment and none across
+     * the gap between them. A border would take space in the line and box
+     * each piece instead.
+     */
+    ".ar-link { color:LinkText; text-decoration:underline; }"
+    "u, ins { text-decoration:underline; }"
+    "s, del, strike { text-decoration:line-through; }",
 
     /*
      * Not expressible yet, and named here rather than left to be discovered:
@@ -399,10 +658,6 @@ static const char *const AR__UA[] = {
      *     `i`, `em`, `cite`, `var`, `dfn` and `address` want
      *     `font-style: italic`. Neither property exists, so nothing on a page
      *     is bold or italic.
-     *   - `sub` and `sup` want `vertical-align: sub / super` and a smaller
-     *     size. `vertical-align` has four keywords and none of them is these.
-     *   - `a:link` wants a colour and an underline. `text-decoration` does not
-     *     exist.
      *
      * Each is a missing property rather than a missing rule, which is why they
      * are listed together: the sheet is ahead of the engine, and the sheet is

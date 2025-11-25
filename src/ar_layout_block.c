@@ -63,6 +63,31 @@ int ar_is_block(const ar_node *n)
 }
 
 /*
+ * Does this box lay its *children* out as block flow?
+ *
+ * A different question from ar_is_block, and conflating the two is what left
+ * an inline-block's insides to the flex algorithm. CSS 2.1 9.2.4: an
+ * inline-block is inline on the outside and a block container on the inside.
+ * ar_is_block answers for the outside -- does this box stack among its
+ * siblings, does it take its parent's width -- and an inline-block must say no
+ * to both. Asked about the inside it also said no, and a box that is not a
+ * block, a grid or a table falls through to flex in this engine.
+ *
+ * So for eight releases an inline-block laid its children out in a row and
+ * sized each to its contents: invisible while every inline-block held one
+ * thing -- a button's label, a checkbox's mark -- and wrong the moment one
+ * held two. A slider's track and its thumb sat side by side at zero width,
+ * a colour field's swatch was zero wide and drew nothing, and a select's
+ * options lined up beside each other. A button's label was placed by the flex
+ * row rather than by its `text-align: center`, which is why it sat at the
+ * left of every button.
+ */
+int ar_is_block_container(const ar_node *n)
+{
+    return ar_is_block(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK;
+}
+
+/*
  * Does this box establish a new block formatting context?
  *
  * Margins do not collapse across the boundary of one, and a float does not
@@ -113,11 +138,93 @@ int ar_block_open_at_bottom(const ar_node *n)
  * children and no text. Such a box contributes one collapsed margin to the
  * flow rather than two margins and a zero-height gap between them.
  */
+/*
+ * Inline content that makes no line, CSS 2.1 9.4.2.
+ *
+ * "Line boxes that contain no text, no preserved white space, no inline
+ * elements with non-zero margins, padding, or borders or other in-flow
+ * content ... must be treated as zero-height line boxes ... and must be
+ * treated as not existing for any other purpose." Collapsible white space,
+ * an empty `<a>`, and inlines holding only those.
+ *
+ * The HTML standard's own page starts `<header><a class=logo></a><hgroup>`
+ * -- the logo is a background image -- and here the empty link and the space
+ * after it made a line sixteen pixels tall that also stood between the
+ * header's edge and the `<h1>`'s margin. Everything on the page sat 25 px
+ * below Edge's.
+ */
+static int ar__phantom(const ar_node *nodes, ar_i32 i)
+{
+    const ar_node *n = &nodes[i];
+    ar_i32         c;
+
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+    {
+        return 1;
+    }
+    if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || ar_is_floated(n) || ar_is_out_of_flow(n))
+    {
+        return 0;
+    }
+    if (ar_is_line_break(n))
+    {
+        return 0; /* a forced break makes a line, empty or not (CSS 2.1 9.4.2) */
+    }
+    if (n->style.v[AR_P_MARGIN_LEFT] != 0 || n->style.v[AR_P_MARGIN_RIGHT] != 0 ||
+        n->style.v[AR_P_PAD_LEFT] != 0 || n->style.v[AR_P_PAD_RIGHT] != 0 ||
+        n->style.v[AR_P_PAD_TOP] != 0 || n->style.v[AR_P_PAD_BOTTOM] != 0 ||
+        n->style.v[AR_P_BORDER_WIDTH] != 0)
+    {
+        return 0;
+    }
+    if (n->text)
+    {
+        const char *t = n->text;
+
+        if (!AR_WS_COLLAPSES(n->style.v[AR_P_WHITE_SPACE]))
+        {
+            return t[0] == 0;
+        }
+        for (; *t; ++t)
+        {
+            if (*t != ' ' && *t != '\t' && *t != '\n' && *t != '\r' && *t != '\f')
+            {
+                return 0;
+            }
+        }
+    }
+    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        if (!ar__phantom(nodes, c))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* A list item's marker, which the document walk emits as the item's first
+   box: `ar-bullet` for a drawn disc, `ar-marker` for a typed number. */
+static int ar__is_marker(const ar_node *n)
+{
+    return n->sel_tag == ar_hash("ar-bullet", 9u) || n->sel_tag == ar_hash("ar-marker", 9u);
+}
+
+/* In flow, and something: what a margin can meet. */
+static int ar__counts(const ar_node *nodes, ar_i32 c)
+{
+    return nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
+           !ar_is_out_of_flow(&nodes[c]) && !ar__phantom(nodes, c);
+}
+
 static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
 {
     ar_i32 c;
 
-    if (n->text && n->text[0])
+    /* Any text box, empty or not. The only empty ones are fields, and an empty
+       field still has a line for its caret to stand in: collapsing it took the
+       field's height down to its padding, a six-pixel sliver. */
+    if (n->text)
     {
         return 0;
     }
@@ -163,10 +270,17 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
         }
     }
 
+    /*
+     * A child that collapses through itself is no content either: an empty
+     * block inside an empty block lets the margins through both, as CSS 2.1
+     * 8.3.1 has it. Wikipedia's empty menus are a `<div>` around a `<div>`
+     * around an empty `<ul>`, and each one stopped the `<ul>`'s margins at
+     * the first `<div>`: sixteen pixels a menu that Edge does not have.
+     */
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
+        if (ar__counts(nodes, c) &&
+            !(ar_is_block(&nodes[c]) && ar__self_collapsing(&nodes[c], nodes)))
         {
             return 0;
         }
@@ -174,36 +288,38 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     return 1;
 }
 
-/* The first and last children that are in flow at all. */
-static ar_i32 ar__first_in_flow(const ar_node *n, const ar_node *nodes)
+/*
+ * The margins that meet a parent's top (or bottom) edge from inside: its first
+ * in-flow child's, and past it, while that child collapses through itself, the
+ * next one's too -- an empty block is no content, so the margin after it is
+ * as adjoining as the margin on it (CSS 2.1 8.3.1). Wikipedia opens its page
+ * body with an empty `#siteNotice` and puts its first heading under it, and
+ * that heading's twenty pixels stopped at the empty block: everything below
+ * sat four pixels above Edge's.
+ */
+static ar_i32 ar__adjoining(const ar_node *n, const ar_node *nodes, int top)
 {
+    ar_i32 m = 0;
     ar_i32 c;
 
-    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    for (c = top ? n->first_child : n->last_child; c >= 0;
+         c = top ? nodes[c].next_sibling : nodes[c].prev_sibling)
     {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
+        if (!ar__counts(nodes, c))
         {
-            return c;
+            continue;
+        }
+        if (!ar_is_block(&nodes[c]))
+        {
+            break;
+        }
+        m = ar_margin_collapse(m, top ? nodes[c].mt : nodes[c].mb);
+        if (!ar__self_collapsing(&nodes[c], nodes))
+        {
+            break;
         }
     }
-    return -1;
-}
-
-static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
-{
-    ar_i32 c;
-    ar_i32 last = -1;
-
-    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
-    {
-        if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&
-            !ar_is_out_of_flow(&nodes[c]))
-        {
-            last = c;
-        }
-    }
-    return last;
+    return m;
 }
 
 /*
@@ -236,6 +352,26 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated)
     pad = axis ? n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM]
                : n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT];
     return stated + pad;
+}
+
+/*
+ * The limits were compared with the occupied size as they stood, so
+ * `max-width: 640px` with twenty pixels of padding a side gave 600 of content
+ * where a browser gives 640: every centred article column on the web was
+ * forty pixels narrower than it should be, and wrapped its lines elsewhere.
+ */
+ar_i32 ar_used_min(const ar_node *n, ar_i32 axis)
+{
+    ar_i32 v = n->style.v[ar_axis_min_prop(axis)];
+
+    return v > 0 ? ar_used_size(n, axis, v) : v;
+}
+
+ar_i32 ar_used_max(const ar_node *n, ar_i32 axis)
+{
+    ar_i32 v = AR_WIDE(&n->style, ar_axis_max_prop(axis));
+
+    return v == 0x7FFFFFFF ? v : ar_used_size(n, axis, v);
 }
 
 int ar_is_floated(const ar_node *n)
@@ -276,21 +412,11 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
 
     if (ar__open_at_top(n))
     {
-        ar_i32 first = ar__first_in_flow(n, nodes);
-
-        if (first >= 0 && ar_is_block(&nodes[first]))
-        {
-            mt = ar_margin_collapse(mt, nodes[first].mt);
-        }
+        mt = ar_margin_collapse(mt, ar__adjoining(n, nodes, 1));
     }
     if (ar_block_open_at_bottom(n))
     {
-        ar_i32 last = ar__last_in_flow(n, nodes);
-
-        if (last >= 0 && ar_is_block(&nodes[last]))
-        {
-            mb = ar_margin_collapse(mb, nodes[last].mb);
-        }
+        mb = ar_margin_collapse(mb, ar__adjoining(n, nodes, 0));
     }
 
     /* Through itself, last, so that a box which is empty *and* open at both
@@ -305,6 +431,23 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
 
     n->mt = mt;
     n->mb = mb;
+}
+
+/*
+ * The top margin a self-collapsing box would have if it had a bottom border,
+ * which is where CSS 2.1 8.3.1 puts its top edge: its own margin collapsed
+ * with whatever escaped from its first child, and not the bottom margins it
+ * would otherwise fold in.
+ */
+static ar_i32 ar__top_through(const ar_node *n, const ar_node *nodes)
+{
+    ar_i32 mt = n->style.v[AR_P_MARGIN_TOP];
+
+    if (ar__open_at_top(n))
+    {
+        mt = ar_margin_collapse(mt, ar__adjoining(n, nodes, 1));
+    }
+    return mt;
 }
 
 /* The gap above the first child: nothing, if its margin escaped through the
@@ -400,11 +543,63 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
         if (ar_is_inline_level(ch))
         {
             ar_i32 stop = c;
+            int    phantom = 1;
+            int    marker = 0;
 
             while (stop >= 0 && (ar_is_inline_level(&nodes[stop]) ||
                                  nodes[stop].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE))
             {
+                if (!ar__phantom(nodes, stop))
+                {
+                    if (ar__is_marker(&nodes[stop]))
+                    {
+                        marker = 1;
+                    }
+                    else
+                    {
+                        phantom = 0;
+                    }
+                }
                 stop = nodes[stop].next_sibling;
+            }
+
+            /*
+             * A marker with nothing beside it but a block: it belongs on the
+             * block's first line, as an outside marker does in every browser,
+             * and not on a line of its own above it. `<li><p>`, and
+             * Wikipedia's contents -- `<li><a><div>` -- drew every bullet a
+             * line above its words. Placed where the block's first line will
+             * be, after the margin that collapses above it, and no height.
+             */
+            if (phantom && marker && stop >= 0)
+            {
+                const ar_node *next = &nodes[stop];
+                ar_i32         gap = at_start ? ar_block_top_gap(n, next) : next->mt;
+
+                if (run)
+                {
+                    (void)run(ud, c, stop, cursor + ar_margin_collapse(pending, gap));
+                }
+                c = next->prev_sibling;
+                continue;
+            }
+            phantom = phantom && !marker;
+
+            /* A run that makes no line is placed -- its boxes need somewhere
+               to be -- and is otherwise not there: no height, and the margins
+               either side of it still meet. */
+            if (phantom)
+            {
+                if (run)
+                {
+                    (void)run(ud, c, stop, cursor + pending);
+                }
+                if (stop < 0)
+                {
+                    break;
+                }
+                c = nodes[stop].prev_sibling;
+                continue;
             }
             cursor += pending;
             pending = 0;
@@ -436,13 +631,16 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
              * Its own top edge sits below the margin immediately before it,
              * not below the whole collapsed run -- the run carries on past
              * this box and positions whatever comes next. And "the margin
-             * immediately before it" means the one the author wrote, not the
-             * collapsed pair already stored on the node, which is why the
-             * style is read directly here.
+             * immediately before it" is its top margin as though it had a
+             * bottom border (ar__top_through), not the collapsed pair stored
+             * on the node -- and nothing at all for a first child whose
+             * margin already escaped through the parent, or it is applied
+             * twice, once outside and once in.
              */
             if (place)
             {
-                ar_i32 own = ar_margin_collapse(pending, ch->style.v[AR_P_MARGIN_TOP]);
+                ar_i32 own =
+                    ar_margin_collapse(pending, at_start ? mt : ar__top_through(ch, nodes));
 
                 place(ud, c, cursor + own, 0);
             }

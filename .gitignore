@@ -28,3 +28,7 @@ __pycache__/
 # The images themselves are 1.4 MB each and are regenerated on demand.
 examples/gallery/_golden/
 docs/gallery/
+
+# tools/comparison.py writes areole-beside-Edge pictures of whole pages here;
+# regenerated on demand, like the gallery's.
+docs/comparison/

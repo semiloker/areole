@@ -200,6 +200,37 @@ static ar_u32 ar__mix(ar_u32 h, ar_u32 word)
     return h;
 }
 
+/*
+ * Where this box's pixels are, which is not where its box is.
+ *
+ * An outline is drawn *outside* the border box -- that is the whole reason it
+ * exists, so a focus ring can appear without moving the page -- and damage was
+ * `n->rect`, which is the one rectangle the ring is guaranteed not to be in.
+ * So even once the digest noticed the ring (see ar_paint_digest), the repaint
+ * it asked for covered the box and the paint pass clipped the four ring
+ * rectangles to the damage band and wrote nothing.
+ *
+ * Both halves are the same mistake told twice: the box was treated as the
+ * extent of its own painting. Everything that asks "what did this box cover"
+ * asks here instead, and the slot remembers this rather than `n->rect`, so the
+ * frame that loses the focus erases the ring it had.
+ *
+ * Border and background stay inside the box, so this is the only property that
+ * widens it today. If a second one arrives -- a shadow, a glow -- it widens
+ * this function and nothing else.
+ */
+ar_rect ar_painted_bounds(const ar_node *n)
+{
+    ar_i32   ow = n->style.v[AR_P_OUTLINE_WIDTH];
+    ar_color oc = (ar_color)AR_WIDE(&n->style, AR_P_OUTLINE_COLOR);
+
+    if (ow <= 0 || AR_ALPHA_OF(oc) == 0 || !ar_box_paints(n))
+    {
+        return n->rect;
+    }
+    return ar_rect_make(n->rect.x - ow, n->rect.y - ow, n->rect.w + 2 * ow, n->rect.h + 2 * ow);
+}
+
 ar_u32 ar_paint_digest(const ar_node *n)
 {
     /* Exactly what ar__paint reads, and nothing else. If a property is added
@@ -220,12 +251,24 @@ ar_u32 ar_paint_digest(const ar_node *n)
        AR_P_SCROLLBAR_GUTTER through ar_scroll_bar_visible, and this list was
        left alone. A frame where hover changed nothing but the bar's colour
        produced no damage and the bar kept the colour it had -- right geometry,
-       wrong pixels, which every geometry test in the suite is blind to. */
+       wrong pixels, which every geometry test in the suite is blind to.
+
+       The two outline entries are the third time, and the most expensive: the
+       focus ring is a property that changes *only* between frames, so the
+       digest was the only thing that could have noticed. A Tab moved the
+       focus, the style resolved with `outline: 2px solid AccentColor` on the
+       newly focused box, this list said the box was untouched, and the paint
+       pass was never reached. The ring did not fail to draw -- nothing asked
+       it to. An unconditional outline in the same document drew perfectly,
+       because the first frame damages everything, which is exactly why the
+       property looked implemented and the ring looked broken. */
     static const int PAINTED[] = {AR_P_DISPLAY,         AR_P_OVERFLOW,         AR_P_OVERFLOW_X,
                                   AR_P_BACKGROUND,      AR_P_BORDER_WIDTH,     AR_P_BORDER_COLOR,
                                   AR_P_PAD_LEFT,        AR_P_PAD_TOP,          AR_P_COLOR,
                                   AR_P_SCROLLBAR_WIDTH, AR_P_SCROLLBAR_GUTTER, AR_P_SCROLLBAR_THUMB,
-                                  AR_P_SCROLLBAR_TRACK, AR_P_VISIBILITY,       AR_P_EMPTY_CELLS};
+                                  AR_P_SCROLLBAR_TRACK, AR_P_VISIBILITY,       AR_P_EMPTY_CELLS,
+                                  AR_P_OUTLINE_WIDTH,   AR_P_OUTLINE_COLOR,    AR_P_BORDER_RADIUS,
+                                  AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY,      AR_P_OPACITY};
     ar_u32           h = 2166136261u;
     ar_u32           i;
     ar_u32           count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
@@ -235,6 +278,10 @@ ar_u32 ar_paint_digest(const ar_node *n)
         h = ar__mix(h, (ar_u32)ar_style_get(&n->style, PAINTED[i]));
     }
     h = ar__mix(h, (ar_u32)n->scale);
+
+    /* A box inside one that went transparent did not change, and must still
+       be painted over: its own opacity is still one. */
+    h = ar__mix(h, (n->state & AR_STATE_TRANSPARENT) ? 1u : 0u);
 
     /*
      * Not style, but the paint pass reads it all the same.

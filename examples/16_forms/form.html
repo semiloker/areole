@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Delivery</title></head>
+<body>
+<h1 id="title">Delivery</h1>
+<form id="order" action="/order" method="post">
+<p id="p-name"><label id="l-name" for="name">Name</label>
+<input id="name" name="name" type="text" value=""></p>
+<p id="p-note"><label id="l-note" for="note">Note for the driver</label>
+<input id="note" name="note" type="text" value="leave at the door"></p>
+<p id="p-pin"><label id="l-pin" for="pin">Door PIN</label>
+<input id="pin" name="pin" type="password" value="1234" maxlength="8"></p>
+<p id="p-qty"><label id="l-qty" for="qty">How many</label>
+<input id="qty" name="qty" type="number" value="2" min="1" max="9"></p>
+<p id="p-addr"><label id="l-addr" for="addr">Address</label>
+<textarea id="addr" name="addr">12 Mill Lane</textarea></p>
+<p id="p-size"><label id="l-size" for="size">Box size</label>
+<select id="size" name="size">
+<option value="s">Small</option>
+<option value="m" selected>Medium</option>
+<optgroup label="Bulky">
+<option value="l">Large</option>
+<option value="xl">Extra large</option>
+</optgroup></select></p>
+<p id="p-tip"><label id="l-tip" for="tip">Tip</label>
+<input id="tip" name="tip" type="range" min="0" max="20" value="5"></p>
+<p id="p-ribbon"><label id="l-ribbon" for="ribbon">Ribbon colour</label>
+<input id="ribbon" name="ribbon" type="color" value="#c02040"></p>
+<p id="p-photo"><label id="l-photo" for="photo">Photo of the door</label>
+<input id="photo" name="photo" type="file"></p>
+<fieldset id="when"><legend id="when-legend">When</legend>
+<p id="p-soon"><input id="soon" type="radio" name="when" value="soon" checked>
+<label id="l-soon" for="soon">As soon as possible</label></p>
+<p id="p-evening"><input id="evening" type="radio" name="when" value="evening">
+<label id="l-evening" for="evening">This evening</label></p>
+<p id="p-weekend"><input id="weekend" type="radio" name="when" value="weekend">
+<label id="l-weekend" for="weekend">At the weekend</label></p>
+</fieldset>
+<p id="p-gift"><input id="gift" name="gift" type="checkbox">
+<label id="l-gift" for="gift">Wrap it as a gift</label></p>
+<p id="p-news"><label id="l-news"><input id="news" name="news" type="checkbox" checked>
+Email me about offers</label></p>
+<details id="more"><summary id="more-summary">Delivery instructions</summary>
+<p>The gate code is 4417.</p></details>
+<p id="p-packing"><label id="l-packing" for="packing">Packing</label>
+<progress id="packing" value="0.6" max="1"></progress></p>
+<p id="p-fragile"><label id="l-fragile" for="fragile">Fragility</label>
+<meter id="fragile" min="0" max="10" value="7"></meter></p>
+<input type="hidden" name="src" value="example16">
+<p id="p-buttons"><button id="send" name="go" value="send">Place order</button>
+<input id="clear" type="reset" value="Start again"></p>
+</form>
+<p id="p-off"><input id="off" type="text" value="not editable" disabled>
+<label id="l-off" for="off">A disabled field is not a tab stop</label></p>
+</body></html>

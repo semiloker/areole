@@ -38,7 +38,71 @@
  */
 typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES_PER_BOX) ? 1 : -1];
 
-#define AR_MAX_RULES 256
+/*
+ * The slack the assertion above carries, and why it is not 1,024.
+ *
+ * It was, and that hid a real overflow twice: once at 0.9.6, when the media
+ * query pool turned out never to have been counted, and once here, when two
+ * arrays of 256 shorts went onto ar_ctx and the assertion still passed while
+ * thirteen tests failed.
+ *
+ * The second time the sum was right and the slack was wrong, and the reason is
+ * the slot table. It is `ar__round_pow2(boxes * 2)` entries -- twice the box
+ * count, rounded *up to a power of two* -- while AR_BYTES_PER_BOX budgets one
+ * slot per box. So between one and four slots per box are allocated against a
+ * budget for one, and the difference lands in whatever slack is left over. A
+ * fixed slack cannot cover a term that scales with the box count.
+ *
+ * Bisected: the assertion was satisfied at 227,960 and the tests needed
+ * 230,113, so 2,153 bytes were invisible to it. Raised to 8 KB, which covers
+ * the rounding at every box count a static AR_MEM buffer is likely to ask for,
+ * and the real fix is named in the roadmap rather than done here: the per-box
+ * budget should count the slots the way they are allocated.
+ */
+#define AR_MEM_SLACK 8192
+
+/* Defined with the rest of the field machinery, used by ar_frame_begin and
+   ar__push_node, which both come first. */
+static void ar__edit_apply(ar_ctx *c);
+static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n);
+static void ar__edit_release(ar_ctx *c);
+static void ar__ctl_memo(ar_ctx *c, ar_i32 dom, ar_u32 key);
+
+/* A number field and a slider with no `min` or `max`: far enough out that no
+   value anybody types reaches them, near enough that thousandths still fit. */
+#define AR_NUM_LO (-2000000000)
+#define AR_NUM_HI 2000000000
+
+/* Windows' default caret blink, GetCaretBlinkTime's 530 ms. A constant rather
+   than the platform's setting, which a backend that cares can still honour by
+   driving frames at its own rate -- the phase is read off the clock it lent. */
+#define AR_CARET_BLINK_US 530000u
+
+/*
+ * 256 -> 320, and this is the release that had to.
+ *
+ * A rule costs a *selector*, not a declaration block: `pre, code, kbd, samp
+ * { ... }` is four of them. The user-agent sheet reached 240 of 256 adding
+ * list markers, link decoration, `sub`/`sup`, control appearances and a
+ * monospace family -- and a rule that does not fit is refused **whole and
+ * silently**, which is the failure ar_ua_css.c's header describes, where
+ * paragraphs stayed flex items and nothing said so. Sixteen rules of headroom
+ * in front of a silent cliff is not a margin.
+ *
+ * The price, stated because it is every embedder's and not only this sheet's:
+ * an ar_rule is 636 bytes, so sixty-four more is **40,704 bytes** and
+ * AR_MEM_FIXED goes 248 KB -> 288 KB. That is a real cost for a library whose
+ * floor is a machine with 64 MB, and it buys 80 rules of room rather than 16.
+ *
+ * It is the expensive way to buy that room, and the cheap way is named here so
+ * the next person does not have to rediscover it: **a rule carries a whole
+ * ar_style to state the two or three properties it actually sets.** 600 of
+ * those 636 bytes are slots no rule uses. A property-value pool would cut it
+ * by an order of magnitude and make this ceiling stop mattering instead of
+ * moving it, and it would give back most of the 199 KB the table costs today.
+ * Not scheduled, and the number is here so the trade stays visible.
+ */
+#define AR_MAX_RULES 320
 
 /* Distinct selector-and-state tuples in an interface, not boxes: a thousand
    cards sharing one class occupy one entry. The shipped example uses eleven.
@@ -54,12 +118,23 @@ typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 
    fixed budget stops being fixed -- which is why the track pool moved inside
    this at 0.8.0, and why 0.4.3's five pools are inside it on the commit that
    adds them. */
+/*
+ * The public sizing macro and the private struct, tied together.
+ *
+ * AR_BYTES_PER_RULE is what AR_MEM_RULES charges a caller per rule past the
+ * default; sizeof(ar_rule) is what ar_init_ex then carves out. They were 588
+ * and 636, so a block sized by the macro was 48 bytes a rule short and init
+ * refused it. A comment asking the two to be kept equal had been there and
+ * had not worked, which is the argument for an assertion over a comment.
+ */
+typedef char ar__rule_price_is_honest[(AR_BYTES_PER_RULE == sizeof(ar_rule)) ? 1 : -1];
+
 typedef char ar__mem_fixed_holds
     [(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) + AR_STYLE_CACHE * sizeof(ar_cache_entry) +
           AR_TRACK_POOL * sizeof(ar_track) + AR_CALC_POOL * sizeof(ar_calc_op) +
           AR_VAR_POOL * sizeof(ar_var_decl) + AR_VARREF_POOL * sizeof(ar_var_ref) +
           AR_VAR_SCOPES * sizeof(ar_var_scope) + AR_VAR_ENTRIES * sizeof(ar_var_decl) +
-          AR_QUERY_POOL * sizeof(ar_mq) + AR_QUERY_TEXT + 1024 <=
+          AR_QUERY_POOL * sizeof(ar_mq) + AR_QUERY_TEXT + AR_MEM_SLACK <=
       AR_MEM_FIXED)
          ? 1
          : -1];
@@ -228,6 +303,41 @@ static ar_u32 ar__round_pow2(ar_u32 v)
  * because a document viewer wanting 400 rules and an embedded panel wanting 11
  * should not be charged the same 235 KB.
  */
+/*
+ * The interaction state whose "nothing" is not zero.
+ *
+ * The context is cleared to zero, and zero is a real DOM node -- the first one
+ * -- so every "no element" here has to be said as -1, or a hand-declared
+ * checkbox would claim to be the document's root. An unset number field's
+ * limits are the far ends of what thousandths can hold.
+ */
+static void ar__interaction_init(ar_ctx *c)
+{
+    ar_i32 i;
+
+    c->next_dom = -1;
+    c->edit_dom = -1;
+    c->edit_box = -1;
+    c->edit_field_box = -1;
+    c->submit_form = -1;
+    c->submit_by = -1;
+    c->reset_form = -1;
+    c->file_wanted = -1;
+    c->implicit_from = -1;
+    c->next_lo = AR_NUM_LO;
+    c->next_hi = AR_NUM_HI;
+    c->edit_lo = AR_NUM_LO;
+    c->edit_hi = AR_NUM_HI;
+    for (i = 0; i < AR_CTL_MEMO; ++i)
+    {
+        c->ctl_memo_dom[i] = -1;
+    }
+    for (i = 0; i < AR_VALUES; ++i)
+    {
+        c->value_dom[i] = -1;
+    }
+}
+
 ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
 {
     ar_arena a;
@@ -264,6 +374,8 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     }
     ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
     c->media_resolution = 1000;
+    c->render_scale = 1000;
+    c->painted_scale = 1000;
     c->media_from_caller = 0;
     c->media.width = 0;
     c->media.height = 0;
@@ -382,6 +494,7 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     c->box_budget = (ar_i32)boxes;
     c->doc_budget = doc_bytes;
     c->frame = 1; /* zero means an unused slot, so frames start at one */
+    ar__interaction_init(c);
     ar_perf_reset(&c->perf);
     return c;
 }
@@ -534,6 +647,8 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
         }
     }
     c->style_face[0] = 0; /* the primary face is the regular one */
+    c->mono_face = -1;
+    c->sans_face = -1;
     c->face_used = 1;
     ar__rebuild_chains(c);
 
@@ -584,6 +699,37 @@ static void ar__rebuild_chains(ar_ctx *c)
             ch->count++;
         }
     }
+
+    /* And the monospace family, on the same terms: its own face first, then
+       the shared coverage fallbacks, because a monospace face is no more
+       likely to carry CJK than the body one is. */
+    c->mono_chain.count = 0;
+    if (c->mono_face >= 0)
+    {
+        c->mono_chain.face[0] = &c->face[c->mono_face];
+        c->mono_chain.id[0] = (ar_u8)c->mono_face;
+        c->mono_chain.count = 1;
+        for (k = 1; k < c->chain.count && c->mono_chain.count < AR_MAX_FACES; ++k)
+        {
+            c->mono_chain.face[c->mono_chain.count] = c->chain.face[k];
+            c->mono_chain.id[c->mono_chain.count] = c->chain.id[k];
+            c->mono_chain.count++;
+        }
+    }
+
+    c->sans_chain.count = 0;
+    if (c->sans_face >= 0)
+    {
+        c->sans_chain.face[0] = &c->face[c->sans_face];
+        c->sans_chain.id[0] = (ar_u8)c->sans_face;
+        c->sans_chain.count = 1;
+        for (k = 1; k < c->chain.count && c->sans_chain.count < AR_MAX_FACES; ++k)
+        {
+            c->sans_chain.face[c->sans_chain.count] = c->chain.face[k];
+            c->sans_chain.id[c->sans_chain.count] = c->chain.id[k];
+            c->sans_chain.count++;
+        }
+    }
 }
 
 /* Which of the four a resolved style asks for. 600 is the boundary CSS Fonts 4
@@ -604,9 +750,35 @@ const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
 {
     ar_i32 slot = ar__style_slot(&n->style);
 
+    /* The family first, because it decides which set of style slots to look
+       in -- and there is only one monospace face, so asking for a bold
+       `<code>` gets the monospace regular rather than the body bold. Falling
+       through when no monospace face was loaded is deliberate: a document that
+       says `font-family: monospace` on a build with one face renders in that
+       face, which is what it did before this existed. */
+    if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_MONOSPACE && c->mono_chain.count > 0)
+    {
+        return &c->mono_chain;
+    }
+    if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_SANS && c->sans_chain.count > 0)
+    {
+        return &c->sans_chain;
+    }
     if (c->style_chain[slot].count > 0)
     {
         return &c->style_chain[slot];
+    }
+    /* Bold italic with no face of its own takes the nearest one there is --
+       the weight first, which is what a browser keeps when it slants a bold
+       face to stand in. Falling to regular drew a `<dfn>` inside an `<h2>`,
+       bold and italic in Edge, as neither. */
+    if (slot == 3 && c->style_chain[1].count > 0)
+    {
+        return &c->style_chain[1];
+    }
+    if (slot == 3 && c->style_chain[2].count > 0)
+    {
+        return &c->style_chain[2];
     }
     return &c->chain;
 }
@@ -635,6 +807,67 @@ int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight,
     /* Nothing cached becomes wrong -- the face index is part of every glyph
        key -- but text that was drawn in the regular face because there was no
        bold one is now drawn in the bold one, so the window has to repaint. */
+    ar_invalidate_all(c);
+    return 1;
+}
+
+/*
+ * The face `font-family: monospace` draws with.
+ *
+ * Separate from ar_font_load_styled because it is a different axis: that one
+ * picks a weight within a family, this one picks a family. One face and not
+ * four -- see the comment beside `mono_face` for why a bold `<code>` is not
+ * worth three more.
+ *
+ * An embedder that never calls this loses nothing it had: a document asking
+ * for monospace draws in the body face, exactly as it did before the property
+ * existed. That is the reason ar_chain_for falls through rather than refusing.
+ */
+int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size)
+{
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || n <= 0 || n >= AR_MAX_FACES)
+    {
+        return 0;
+    }
+    if (c->mono_face >= 0)
+    {
+        return 0; /* already loaded; twice is a caller bug, as with a style */
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    c->mono_face = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
+
+    /* Text that drew in the body face because there was no monospace one now
+       draws in the monospace one, so the window repaints -- and the *widths*
+       change with it, so this is a relayout and not only a repaint. */
+    ar_invalidate_all(c);
+    return 1;
+}
+
+/* The face `font-family: sans-serif` draws with -- and so every control,
+   because the user-agent sheet puts them in sans-serif as a browser's does.
+   Without it they draw in the body face, as they always did. */
+int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size)
+{
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || n <= 0 || n >= AR_MAX_FACES || c->sans_face >= 0)
+    {
+        return 0;
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    c->sans_face = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
     ar_invalidate_all(c);
     return 1;
 }
@@ -883,6 +1116,30 @@ void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
    inertness is settled long before that point in the file. */
 static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root);
 
+/*
+ * Which boxes are drawn at opacity zero: their own, or any box around them.
+ *
+ * One pass, because boxes are in tree order and a parent is always seen
+ * before its children. Not a property that inherits -- a child saying
+ * `opacity: 1` does not come back, since its opacity is a fraction of its
+ * parent's -- so it is a state, set here after the cascade.
+ */
+static void ar__mark_transparent(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+
+        if (n->style.v[AR_P_OPACITY] == 0 ||
+            (n->parent >= 0 && (c->nodes[n->parent].state & AR_STATE_TRANSPARENT)))
+        {
+            n->state = (ar_u32)(n->state | AR_STATE_TRANSPARENT);
+        }
+    }
+}
+
 static void ar__mark_inert(ar_ctx *c)
 {
     ar_i32 modal = -1;
@@ -916,7 +1173,7 @@ static void ar__mark_inert(ar_ctx *c)
         }
         if (inert)
         {
-            n->state = (ar_u16)(n->state | AR_STATE_INERT);
+            n->state = (ar_u32)(n->state | AR_STATE_INERT);
         }
     }
 }
@@ -967,7 +1224,7 @@ static void ar__mark_collapsed(ar_ctx *c)
             {
                 if (c->nodes[at].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
                 {
-                    n->state = (ar_u16)(n->state | AR_STATE_COLLAPSED);
+                    n->state = (ar_u32)(n->state | AR_STATE_COLLAPSED);
                 }
                 break;
             }
@@ -1792,18 +2049,31 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
          * `color` may itself have been a var() that the loop above only just
          * substituted.
          *
-         * Four properties by name rather than a scan of all hundred-odd. A
+         * The properties by name rather than a scan of all hundred-odd. A
          * second full property walk per box is exactly the shape of the ten
          * per cent 0.9.5 put into malformed parsing without touching the
          * parser, and this one would run on every box of every frame. The
-         * colour properties are a closed set; when a fifth arrives it goes in
-         * this list and nothing will remind anyone, which is why the list sits
-         * beside the comment on AR_WIDE that names the same five.
+         * colour properties are a closed set; when a new one arrives it goes
+         * in this list and nothing will remind anyone, which is why the list
+         * sits beside the comment on AR_WIDE that names the same ones.
+         *
+         * `outline-color` is the one that proved the warning. 0.10.0 added it,
+         * left this list alone, and the user-agent sheet's `outline: 2px solid
+         * AccentColor` reached the paint pass still holding 17 -- the system
+         * colour's *index*. An index has no alpha, the paint pass skips a
+         * transparent outline, and so the focus ring was never drawn. It read
+         * as "the outline property does not work", which it does: an outline
+         * stated in a literal colour drew correctly the whole time.
+         *
+         * AR_P_COLOR stays last, and the counts are derived rather than
+         * typed: currentColor is resolved for every entry *before* it, since
+         * it is what they copy from.
          */
         {
-            static const ar_prop COLOR_PROPS[5] = {AR_P_BACKGROUND, AR_P_BORDER_COLOR,
-                                                   AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
-                                                   AR_P_COLOR};
+            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,      AR_P_BORDER_COLOR,
+                                                  AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
+                                                  AR_P_OUTLINE_COLOR,   AR_P_COLOR};
+            const ar_i32         COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
             ar_i32               k;
             ar_i32               cur;
             int                  dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
@@ -1814,7 +2084,7 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
              * written and currentColor would otherwise copy the index rather
              * than the colour it stands for.
              */
-            for (k = 0; k < 5; ++k)
+            for (k = 0; k < COLOR_N; ++k)
             {
                 ar_prop cp = COLOR_PROPS[k];
 
@@ -1827,7 +2097,7 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
 
             cur = ar_style_get(st, AR_P_COLOR);
 
-            for (k = 0; k < 4; ++k)
+            for (k = 0; k < COLOR_N - 1; ++k)
             {
                 ar_prop cp = COLOR_PROPS[k];
 
@@ -2131,6 +2401,104 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
  * flows the right way on the second pass. A sheet that uses none of these
  * three never gets here.
  */
+/*
+ * A block inside an inline, CSS 2.1 9.2.1.1.
+ *
+ * The inline box is broken around the block: its inline content before and
+ * after goes into anonymous blocks, and the block sits between them, stacked.
+ * Here it fell to the line filler instead, which put the block on the line as
+ * one item beside whatever preceded it -- MDN's navigation, an unknown element
+ * (so inline) holding a `<button>` and a `<div>` of links, drew as a button
+ * stretched down the whole height of its menu with the menu beside it. And it
+ * is the shape of every card that is a link: `<a><div>...</div></a>`.
+ *
+ * So an inline box with an in-flow block-level child is laid out as a block,
+ * which gives the same stacking: its inline children make anonymous lines and
+ * its blocks stack between them. Children first -- a box is decided after the
+ * boxes inside it, so an inline holding an inline holding a block becomes a
+ * block too.
+ *
+ * ponytail: the inline is not split, it is promoted. The difference shows only
+ * where the inline sat inside a line with text before it: that text ends its
+ * line here, where the specification would continue it beside the inline's
+ * own first words. The split proper is anonymous-box work in the line filler.
+ */
+/* Whether a container's children are flex or grid items rather than a flow. */
+static int ar__lays_out_items(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+}
+
+/* Whether a text is nothing but white space. */
+static int ar__all_white(const char *t)
+{
+    for (; *t; ++t)
+    {
+        if (*t != ' ' && *t != '\t' && *t != '\n' && *t != '\r' && *t != '\f')
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void ar__blockify_inlines(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = c->node_count - 1; i >= 0; --i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   k;
+
+        /*
+         * White space alone between flex or grid items is not rendered, what
+         * ever `white-space` says (Flexbox 4, Grid 6). ar_dom keeps the newline
+         * after an inline, because between two inlines it can be the only
+         * thing separating two words -- and after the last `<a>` of a sidebar
+         * it became a flex item one line tall, a gap a browser does not have.
+         */
+        if (n->parent >= 0 && n->first_child < 0 && n->text && n->text[0] &&
+            ar__lays_out_items(&c->nodes[n->parent]) && ar__all_white(n->text))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_NONE;
+            continue;
+        }
+        if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || n->first_child < 0)
+        {
+            continue;
+        }
+
+        /*
+         * A flex or grid item is blockified, CSS Display 3: an `<a>` or a
+         * `<span>` that is a flex item is a block there. An inline box whose
+         * children join a line is placed by the line filler of the block
+         * around it -- and a flex container has no line filler, so the text
+         * of every such item was never placed at all: a sidebar of links in a
+         * flex column drew its highlight and none of its words. A box that
+         * carries its own text is already an item the algorithms place, and is
+         * left as it is.
+         */
+        if (n->parent >= 0 && !(n->text && n->text[0]) && ar__lays_out_items(&c->nodes[n->parent]))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_BLOCK;
+            continue;
+        }
+        for (k = n->first_child; k >= 0; k = c->nodes[k].next_sibling)
+        {
+            const ar_node *ch = &c->nodes[k];
+
+            if (ch->style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_inline_level(ch) &&
+                !ar_is_floated(ch) && !ar_is_out_of_flow(ch))
+            {
+                n->style.v[AR_P_DISPLAY] = AR_DISPLAY_BLOCK;
+                break;
+            }
+        }
+    }
+}
+
 static void ar__resolve_late(ar_ctx *c)
 {
     ar_i32 i;
@@ -2177,7 +2545,16 @@ static void ar__resolve_late(ar_ctx *c)
  * layout made room for is the same line paint draws -- the two drifting apart
  * is the classic way text ends up overflowing a box that looks the right size.
  * ------------------------------------------------------------------------ */
-#define AR_MAX_LINES 64
+/*
+ * 512, for a textarea.
+ *
+ * It was 64, which no block of prose on any page in the corpus reached and a
+ * 2,000 character text area at the default width passes in its first third --
+ * and a line past the table is not drawn and not made room for. Two kilobytes
+ * of stack at the two places that hold one, against a release whose budget is
+ * written in terms of exactly that text area.
+ */
+#define AR_MAX_LINES 512
 
 /* The bitmap face's adapter for ar_text_wrap_by. It measures in whole pixels
    where the outline path measures in 1/AR_ONE_PIXEL, so it scales up. */
@@ -2191,12 +2568,55 @@ static ar_i32 ar__wrap_bitmap(void *ud, const char *t, ar_i32 from, ar_i32 to)
     return ar_text_width_range(t, from, to, ((ar__bmp_ud *)ud)->scale) * AR_ONE_PIXEL;
 }
 
+/*
+ * Lines at the newlines and nowhere else, which is what a box that may not
+ * wrap is made of.
+ *
+ * Not ar_text_wrap_by with an enormous width: that measures from the start of
+ * the line at every break opportunity, which is quadratic in the length of a
+ * line that never breaks -- and a field holding a long value is exactly that
+ * line. This measures nothing at all.
+ */
+static ar_i32 ar__hard_lines(const char *text, ar_i32 *starts, ar_i32 cap)
+{
+    ar_i32 lines = 0, i;
+
+    if (cap <= 0)
+    {
+        return 0;
+    }
+    starts[lines++] = 0;
+    for (i = 0; text[i]; ++i)
+    {
+        if (text[i] == '\n' && text[i + 1] && lines < cap)
+        {
+            starts[lines++] = i + 1;
+        }
+    }
+    return lines;
+}
+
 static ar_i32 ar__wrap_lines(ar_ctx *c, const ar_node *n, const char *text, ar_i32 font_px,
                              ar_i32 scale, ar_i32 max_w, ar_i32 *starts, ar_i32 cap)
 {
     if (!text || max_w <= 0)
     {
         return 0;
+    }
+
+    /*
+     * `white-space` decides whether this text may wrap at all.
+     *
+     * The inline line filler has asked since 0.10.0's white-space commit; this
+     * path -- a block carrying its own text, which is what a field's value is
+     * -- never did, and a test said so as a known fault: the computed value
+     * reached the field's text box as `pre` and the text wrapped anyway. So a
+     * long value in a narrow field folded onto three lines where every real
+     * field scrolls.
+     */
+    if (n && !AR_WS_WRAPS(n->style.v[AR_P_WHITE_SPACE]))
+    {
+        return ar__hard_lines(text, starts, cap);
     }
     if (c->have_face)
     {
@@ -2428,6 +2848,20 @@ static ar_i32 ar__range_px(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
         return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
     }
     return ar_text_width_range(n->text, from, to, n->scale);
+}
+
+/* ar__range_px without the rounding, for the line filler's sums. Handed to
+   the layout only when an outline face is loaded. */
+static ar_i32 ar__range_fx_cb(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
+{
+    ar_ctx *c = (ar_ctx *)ud;
+
+    if (!n->text || to <= from)
+    {
+        return 0;
+    }
+    return ar_text_range_chain(n->text, from, to, ar_chain_for(c, n), n->style.v[AR_P_FONT_SIZE],
+                               &c->glyphs, &c->glyph_scratch);
 }
 
 /* Where a scroll container currently is, read from its slot. */
@@ -2804,6 +3238,21 @@ ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
+void ar_set_render_scale(ar_ctx *c, ar_i32 thousandths)
+{
+    if (!c)
+    {
+        return;
+    }
+    thousandths = thousandths < 250 ? 250 : thousandths > 8000 ? 8000 : thousandths;
+    c->render_scale = thousandths;
+}
+
+ar_i32 ar_render_scale(const ar_ctx *c)
+{
+    return c ? c->render_scale : 1000;
+}
+
 void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths)
 {
     if (c && dppx_thousandths > 0)
@@ -2835,8 +3284,13 @@ void ar_set_media(ar_ctx *c, const ar_media *media)
 void ar_frame_begin(ar_ctx *c, const ar_input *in)
 {
     ar_u32 room;
+    ar_u32 per_box;
+    ar_u32 str_reserve;
 
     ar_perf_begin(&c->perf, ar__now(c));
+
+    /* The tree ar_frame_blink would repaint from is about to go. */
+    c->frame_standing = 0;
 
     /* Releasing the whole previous tree. One integer store. */
     ar_arena_frame_reset(&c->arena);
@@ -2891,11 +3345,83 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        counts as a click if it lands on the same one. Dragging off a button
        and letting go therefore does nothing, which is what every other
        toolkit does and what people expect. */
+    /* The focusable list and the focused box's index belong to one frame; the
+       focused *key* outlives the frame, which is the whole point of it being a
+       key. */
+    c->focusable_n = 0;
+    c->focus_index = -1;
+    c->control_n = 0;
+
+    /*
+     * Tab, before the tree is rebuilt, walking the list the previous frame
+     * left behind.
+     *
+     * That is a frame of lag and it is the same lag hover has, for the same
+     * reason: the list of tab stops is a property of the tree, and this
+     * frame's tree does not exist yet. It is invisible in practice because a
+     * Tab that arrives is followed by a frame.
+     */
+    if (in && (in->keys_pressed & (AR_KEY_TAB | AR_KEY_TAB_BACK)))
+    {
+        ar_focus_next(c, (in->keys_pressed & AR_KEY_TAB_BACK) ? 1 : 0);
+    }
+
+    /*
+     * Typing is recorded here and applied when the field is reached.
+     *
+     * It cannot be applied here. A Tab and a character arrive in the same
+     * frame, the character belongs to the field the Tab moved to, and which
+     * box that is is not known until the tree is built -- so applying it now
+     * means the first character after a Tab goes to the field that just lost
+     * the caret, or to nothing at all. That is exactly the bug a test caught:
+     * focus a field, type immediately, and the character vanishes.
+     */
+    c->pending_text = in ? in->text : 0;
+    c->pending_text_len = in ? in->text_len : 0;
+    c->pending_keys = in ? in->keys_pressed : 0;
+    c->pending_done = 0;
+
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
         ar_i32 k;
 
         c->active = c->hot;
+
+        /*
+         * A press moves focus to the nearest focusable box at or above the
+         * cursor, and that focus is *not* visible.
+         *
+         * This is the whole of `:focus-visible`: a click focuses a control so
+         * that typing goes to it, and must not draw a ring; a Tab focuses the
+         * same control and must. Pages ship `outline: none` because engines
+         * used to draw a ring for both.
+         *
+         * A press on nothing focusable clears the focus rather than leaving it
+         * where it was, which is what a browser does and what makes clicking
+         * the page background a way out of a form.
+         */
+        {
+            ar_i32 f;
+            ar_u32 hit = 0;
+
+            for (k = 0; k < c->hot_chain_n && !hit; ++k)
+            {
+                for (f = 0; f < c->focusable_prev_n; ++f)
+                {
+                    if (c->focusables_prev[f] == c->hot_chain[k])
+                    {
+                        hit = c->hot_chain[k];
+                        break;
+                    }
+                }
+            }
+            c->focus_key = hit;
+            c->focus_visible = 0;
+            if (!hit)
+            {
+                c->focus_chain_n = 0;
+            }
+        }
 
         /* The ancestors latch with it, for the reason `:hover` has them: the
            box under the cursor in a document is the text, and the rule that
@@ -2917,21 +3443,93 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
         c->active_chain_n = 0;
     }
 
+    /*
+     * The interaction state that belongs to one frame.
+     *
+     * Everything here is either rebuilt with the tree -- which box holds the
+     * caret, this frame's sliders -- or is a request the end of the frame
+     * answers and the next frame must not see again: a submission, a reset, a
+     * file chooser, what to put on the clipboard.
+     */
+    c->edit_box = -1;
+    c->edit_field_box = -1;
+    c->range_n = 0;
+    c->post_keys = 0;
+    c->submit_form = -1;
+    c->submit_by = -1;
+    c->reset_form = -1;
+    c->file_wanted = -1;
+    c->implicit_from = -1;
+    c->clip = 0;
+    c->clip_len = 0;
+    c->frame_doc = 0;
+    c->next_dom = -1;
+    c->next_lo = AR_NUM_LO;
+    c->next_hi = AR_NUM_HI;
+    c->clicks = (in && in->clicks) ? in->clicks : 1u;
+
+    /* The composition, copied because the input's pointer is borrowed, and cut
+       at a codepoint rather than mid-character when it is longer than the
+       buffer. A change to it restarts the blink like any keystroke. */
+    {
+        ar_u32 n = (in && in->compose) ? in->compose_len : 0u;
+        ar_u32 i;
+
+        if (n > AR_COMPOSE_CAP - 1)
+        {
+            n = AR_COMPOSE_CAP - 1;
+            while (n > 0 && ((unsigned char)in->compose[n] & 0xC0) == 0x80)
+            {
+                --n;
+            }
+        }
+        if (n != c->compose_len || (n > 0 && memcmp(c->compose, in->compose, n) != 0))
+        {
+            c->caret_epoch = ar__now(c);
+        }
+        for (i = 0; i < n; ++i)
+        {
+            c->compose[i] = in->compose[i];
+        }
+        c->compose_len = (ar_u16)n;
+    }
+
+    /* A field the focus has left keeps its text and loses the caret. Without
+       this the caret went on being drawn in a field nobody was typing in, and
+       ar_field_text went on answering for it. */
+    if (c->edit_key != 0 && c->edit_key != c->focus_key)
+    {
+        ar__edit_release(c);
+    }
+
     /* The tree has to be contiguous to be indexed, so the whole array is
        reserved up front rather than grown a box at a time. It is capped at the
        budget the caller sized the block for, not at whatever happens to be
        left: reserving every spare byte would make the arena figure in the
        overlay meaningless and would hide a runaway tree instead of reporting
        it. */
+    /*
+     * The per-box cost includes a slice for the strings the frame will copy
+     * in after this -- inline styles, presentational hints, a field's text.
+     *
+     * Dividing by the three arrays alone is what made those strings live on
+     * the arena's rounding error: the clamp fitted the box count to the space
+     * exactly, ar__keep got whatever alignment happened to leave behind, and
+     * the second `style=""` on a page was dropped. See AR_FRAME_STR_PER_BOX.
+     */
+    per_box = (ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) + (ar_u32)sizeof(ar_i32) +
+              AR_FRAME_STR_PER_BOX;
+
     room = ar_arena_available(&c->arena);
     c->node_cap = c->box_budget;
-    if ((ar_u32)c->node_cap *
-            ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) + (ar_u32)sizeof(ar_i32)) >
-        room)
+    if ((ar_u32)c->node_cap * per_box > room)
     {
-        c->node_cap = (ar_i32)(room / ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) +
-                                       (ar_u32)sizeof(ar_i32)));
+        c->node_cap = (ar_i32)(room / per_box);
     }
+    /* What the strings get, held back from the two reservations below so that
+       neither can spend it -- `frag_cap` in particular falls back to "all the
+       room there is", which is exactly how the reserve would be lost again. */
+    str_reserve = (ar_u32)c->node_cap * AR_FRAME_STR_PER_BOX;
     c->nodes =
         c->node_cap > 0
             ? (ar_node *)ar_arena_frame(&c->arena, (ar_u32)c->node_cap * (ar_u32)sizeof(ar_node))
@@ -2949,6 +3547,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
      */
     c->frag_count = 0;
     room = ar_arena_available(&c->arena);
+    room = room > str_reserve ? room - str_reserve : 0u;
     c->frag_cap = c->node_cap;
     if ((ar_u32)c->frag_cap * (ar_u32)sizeof(ar_frag) > room)
     {
@@ -2968,6 +3567,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        existed, and wrong rather than blank. */
     c->order_count = 0;
     room = ar_arena_available(&c->arena);
+    room = room > str_reserve ? room - str_reserve : 0u;
     c->order =
         (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32) <= room && c->node_cap > 0
             ? (ar_i32 *)ar_arena_frame(&c->arena, (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32))
@@ -3052,7 +3652,17 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     ar_classes klass;
     ar_u32     key;
     ar_slot   *slot;
-    ar_u8      state = AR_STATE_NONE;
+    /*
+     * Thirty-two bits, and it was eight two commits ago.
+     *
+     * `n->state` has been an ar_u16 all along and the local that feeds it was
+     * half that width, which cost nothing for six releases by coincidence: the
+     * three bits above the eighth that existed -- :last-child, :only-child and
+     * :empty -- are all set by the late pass directly on `n->state`, and never
+     * travel through here. `:focus-visible` and `:focus-within` do, and arrived
+     * as zero.
+     */
+    ar_u32 state = AR_STATE_NONE;
 
     if (c->node_count >= c->node_cap)
     {
@@ -3091,6 +3701,169 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     {
         state |= AR_STATE_ACTIVE;
     }
+
+    /*
+     * Focus, from the same place and for the same reason: it is settled by the
+     * previous frame's tree, because this frame's has not been laid out yet.
+     *
+     * `:focus-visible` is not a second kind of focus, it is the same focus
+     * qualified by how it arrived -- so it is the focus bit and the remembered
+     * keyboard flag, and never one without the other.
+     */
+    if (c->focus_key != 0 && key == c->focus_key)
+    {
+        state |= AR_STATE_FOCUS;
+        if (c->focus_visible)
+        {
+            state |= AR_STATE_FOCUS_VISIBLE;
+        }
+        c->focus_index = (ar_i32)idx;
+    }
+    if (ar__in_chain(c->focus_chain, c->focus_chain_n, key))
+    {
+        state |= AR_STATE_FOCUS_WITHIN;
+    }
+
+    /* Whatever the caller said this box is, taken once and cleared so it
+       cannot leak into the next box -- which is the failure mode of every
+       "apply to the next thing" API and is worth one line to prevent. */
+    state |= c->next_state;
+    c->next_state = 0;
+
+    /*
+     * A control's checkedness comes from the slot once anybody has touched it,
+     * and from the markup until then.
+     *
+     * Which way round that goes is the whole of it. The markup says what the
+     * control starts as; a click says what it is now. Reading the markup every
+     * frame makes a box with `checked` spring back the moment it is
+     * unchecked -- and reading the slot every frame makes a box that has never
+     * been clicked ignore its own markup. TOUCHED is what tells the two
+     * apart, and it is the bit that is easy not to think of.
+     */
+    if (c->next_kind == AR_CTL_CHECKBOX || c->next_kind == AR_CTL_RADIO)
+    {
+        if (slot && (slot->flags & AR_SLOT_TOUCHED))
+        {
+            state &= ~(ar_u32)AR_STATE_CHECKED;
+            if (slot->flags & AR_SLOT_CHECKED)
+            {
+                state |= AR_STATE_CHECKED;
+            }
+        }
+        else if (slot && (state & AR_STATE_CHECKED))
+        {
+            /* Seed the slot from the markup, so the first click has something
+               to toggle away from rather than toggling into the state it is
+               already in. */
+            slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED);
+        }
+    }
+    if ((c->next_kind == AR_CTL_DETAILS || c->next_kind == AR_CTL_SELECT ||
+         c->next_kind == AR_CTL_COLOR) &&
+        slot)
+    {
+        /* Same TOUCHED rule as a checkbox: the `open` attribute is where it
+           started, the slot is what has happened since. A select and a colour
+           field have no attribute for it and start shut, which the same rule
+           gives them for nothing. */
+        if (slot->flags & AR_SLOT_TOUCHED)
+        {
+            state &= ~(ar_u32)AR_STATE_OPEN;
+            if (slot->flags & AR_SLOT_OPEN)
+            {
+                state |= AR_STATE_OPEN;
+            }
+        }
+        else if (state & AR_STATE_OPEN)
+        {
+            slot->flags = (ar_u8)(slot->flags | AR_SLOT_OPEN);
+        }
+    }
+
+    /*
+     * A summary carries the key of the `<details>` it opens, in the field a
+     * radio uses for its group.
+     *
+     * Two meanings in one field, which is worth a sentence rather than a
+     * fourth array of 256 keys: for a radio the group is "which radios am I
+     * exclusive with", for a summary it is "which box do I toggle". Both are
+     * "the thing this control acts on", and the parent is known here and not
+     * in the document walk, which is why it is filled in here.
+     */
+    if (c->next_kind == AR_CTL_SUMMARY && parent >= 0)
+    {
+        c->next_group = c->nodes[parent].key;
+    }
+
+    /*
+     * A text field with the caret in it takes the buffer.
+     *
+     * Here rather than at focus time because this is where the key is known
+     * and where the markup's own value is to hand -- and because a field that
+     * has never been focused should not cost a buffer copy for existing.
+     */
+    if (c->next_kind == AR_CTL_TEXT)
+    {
+        c->field_flags_cur = c->next_field;
+        if (c->focus_key == key)
+        {
+            /* The old field's text goes to the pool under the old field's
+               element, before the new field's limits overwrite it. */
+            if (c->edit_key != key)
+            {
+                ar__edit_release(c);
+            }
+            c->edit_flags = c->next_field;
+            c->edit_lo = c->next_lo;
+            c->edit_hi = c->next_hi;
+            c->edit_step = c->next_step;
+            c->edit_dom = c->next_dom;
+            ar__edit_follow_focus(c, key, c->next_value, c->next_value_len);
+            c->edit.max_cp =
+                (ar_u16)(c->next_maxlen > 0 && c->next_maxlen < AR_EDIT_CAP ? c->next_maxlen : 0);
+            ar__edit_apply(c);
+            c->edit_field_box = idx;
+        }
+    }
+    c->next_value = 0;
+    c->next_value_len = 0;
+
+    /* A slider's limits, kept for the end of the frame, which turns a press
+       into a value and needs them to do it. */
+    if (c->next_kind == AR_CTL_RANGE && c->range_n < AR_RANGES)
+    {
+        c->range_key[c->range_n] = key;
+        c->range_lo[c->range_n] = c->next_lo;
+        c->range_hi[c->range_n] = c->next_hi;
+        c->range_step[c->range_n] = c->next_step;
+        c->range_box[c->range_n] = idx;
+        c->range_n++;
+    }
+
+    if (c->next_kind != AR_CTL_NONE && c->control_n < AR_MAX_FOCUSABLES)
+    {
+        c->control_key[c->control_n] = key;
+        c->control_group[c->control_n] = c->next_group;
+        c->control_kind[c->control_n] = c->next_kind;
+        c->control_dom[c->control_n] = c->next_dom;
+        c->control_val[c->control_n] = c->next_val;
+        c->control_box[c->control_n] = idx;
+        c->control_n++;
+        if (c->next_dom >= 0)
+        {
+            ar__ctl_memo(c, c->next_dom, key);
+        }
+    }
+    c->next_kind = AR_CTL_NONE;
+    c->next_group = 0;
+    c->next_dom = -1;
+    c->next_val = 0;
+    c->next_field = 0;
+    c->next_lo = AR_NUM_LO;
+    c->next_hi = AR_NUM_HI;
+    c->next_step = 0;
+    c->next_maxlen = 0;
 
     /* The structural bits that position among siblings already settles. The
        other three wait for the parent to close; see ar__resolve_late. */
@@ -3409,6 +4182,1340 @@ static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
     }
 }
 
+void ar_state_next(ar_ctx *c, ar_u32 bits)
+{
+    if (c)
+    {
+        c->next_state |= bits;
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Text fields
+ *
+ * One edit buffer, because only one field has the caret. What that costs is
+ * that undo does not survive leaving a field -- named in ar_node.h beside the
+ * buffer rather than discovered. The text does survive, in a shared pool of
+ * thirty-two, because losing what somebody typed is not a trade-off.
+ * ------------------------------------------------------------------------ */
+
+static ar_i32 ar__value_find(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (key == 0)
+    {
+        return -1;
+    }
+    for (i = 0; i < AR_VALUES; ++i)
+    {
+        if (c->value_key[i] == key)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Forget one entry and close the gap its bytes leave, so the run stays packed
+   and a free entry always means free bytes at the end. */
+static void ar__value_drop(ar_ctx *c, ar_i32 at)
+{
+    ar_u16 off = c->value_off[at];
+    ar_u16 len = c->value_len[at];
+    ar_i32 i;
+
+    memmove(c->value_bytes + off, c->value_bytes + off + len, (size_t)(c->value_used - off - len));
+    c->value_used = (ar_u16)(c->value_used - len);
+    for (i = 0; i < AR_VALUES; ++i)
+    {
+        if (c->value_key[i] != 0 && c->value_off[i] > off)
+        {
+            c->value_off[i] = (ar_u16)(c->value_off[i] - len);
+        }
+    }
+    c->value_key[at] = 0;
+    c->value_len[at] = 0;
+    c->value_dom[at] = -1;
+}
+
+/*
+ * Keep a field's text, evicting the least recently seen until there is room.
+ *
+ * Eviction loses text, which is why both limits are written down beside the
+ * pool. A field's text is at most AR_EDIT_CAP and the pool is four times
+ * that, so the loop always ends with the text stored.
+ */
+static void ar__value_store(ar_ctx *c, ar_u32 key, ar_i32 dom, const char *text, ar_u32 len)
+{
+    ar_i32 at = ar__value_find(c, key);
+    ar_i32 i, free_at;
+
+    if (key == 0)
+    {
+        return;
+    }
+    if (len > AR_EDIT_CAP)
+    {
+        len = AR_EDIT_CAP;
+    }
+    if (at >= 0)
+    {
+        ar__value_drop(c, at);
+    }
+    for (;;)
+    {
+        ar_i32 oldest = -1;
+
+        free_at = -1;
+        for (i = 0; i < AR_VALUES; ++i)
+        {
+            if (c->value_key[i] == 0)
+            {
+                if (free_at < 0)
+                {
+                    free_at = i;
+                }
+            }
+            else if (oldest < 0 || c->value_seen[i] < c->value_seen[oldest])
+            {
+                oldest = i;
+            }
+        }
+        if (free_at >= 0 && (ar_u32)c->value_used + len <= AR_VALUE_BYTES)
+        {
+            break;
+        }
+        if (oldest < 0)
+        {
+            return;
+        }
+        ar__value_drop(c, oldest);
+    }
+    if (len > 0)
+    {
+        memcpy(c->value_bytes + c->value_used, text, len);
+    }
+    c->value_key[free_at] = key;
+    c->value_dom[free_at] = dom;
+    c->value_off[free_at] = c->value_used;
+    c->value_len[free_at] = (ar_u16)len;
+    c->value_seen[free_at] = c->frame;
+    c->value_used = (ar_u16)(c->value_used + len);
+}
+
+int ar_field_value_of(const ar_ctx *c, ar_u32 key, const char **text, ar_u32 *len)
+{
+    ar_i32 at;
+
+    if (!c || key == 0)
+    {
+        return 0;
+    }
+    if (key == c->edit_key)
+    {
+        *text = c->edit.text;
+        *len = c->edit.len;
+        return 1;
+    }
+    at = ar__value_find(c, key);
+    if (at < 0)
+    {
+        return 0;
+    }
+    *text = c->value_bytes + c->value_off[at];
+    *len = c->value_len[at];
+    return 1;
+}
+
+/* The field losing the caret keeps its text and loses its history -- the cost
+   of one buffer, named in ar_node.h beside it. */
+static void ar__edit_release(ar_ctx *c)
+{
+    if (c->edit_key != 0)
+    {
+        ar__value_store(c, c->edit_key, c->edit_dom, c->edit.text, c->edit.len);
+        c->edit_key = 0;
+        c->edit_drag = 0;
+    }
+}
+
+/*
+ * Bring the buffer to whichever field has the caret now.
+ *
+ * The old field's text goes to the pool first, then the new field's comes back
+ * from it -- or from its markup, if nobody has touched it. Doing it in that
+ * order is the whole of it: the other way round and tabbing between two fields
+ * copies the first one's text into the second.
+ */
+static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n)
+{
+    ar_i32 at;
+
+    if (c->edit_key == key)
+    {
+        return;
+    }
+    ar__edit_release(c);
+
+    at = ar__value_find(c, key);
+    if (at >= 0)
+    {
+        ar_edit_init_n(&c->edit, c->value_bytes + c->value_off[at], c->value_len[at]);
+        c->value_seen[at] = c->frame;
+    }
+    else
+    {
+        /*
+         * The markup's value, by length rather than to a NUL.
+         *
+         * It is a span of the document's own buffer and is not terminated:
+         * copying to a NUL walks into whatever element came next, which is a
+         * field that starts out holding the rest of the page.
+         */
+        ar_edit_init_n(&c->edit, initial, initial ? n : 0);
+    }
+    c->edit_key = key;
+    c->edit_scroll_x = 0;
+    c->caret_epoch = ar__now(c);
+}
+
+/* ------------------------------------------------------------------------
+ * Numbers, for `<input type=number>`
+ *
+ * Thousandths, the unit every other number in this engine's markup reading
+ * already uses, so `step="0.25"` and `value="1.5"` are exact and nothing here
+ * goes near floating point.
+ * ------------------------------------------------------------------------ */
+
+static int ar__num_parse(const char *t, ar_u32 n, ar_i32 *out)
+{
+    ar_u32 i = 0;
+    ar_i32 whole = 0, frac = 0, digits = 0, sign = 1;
+    int    any = 0;
+
+    while (i < n && t[i] == ' ')
+    {
+        ++i;
+    }
+    if (i < n && (t[i] == '-' || t[i] == '+'))
+    {
+        sign = t[i] == '-' ? -1 : 1;
+        ++i;
+    }
+    while (i < n && t[i] >= '0' && t[i] <= '9')
+    {
+        if (whole < 1000000)
+        {
+            whole = whole * 10 + (t[i] - '0');
+        }
+        ++i;
+        any = 1;
+    }
+    if (i < n && t[i] == '.')
+    {
+        ++i;
+        while (i < n && t[i] >= '0' && t[i] <= '9')
+        {
+            if (digits < 3)
+            {
+                frac = frac * 10 + (t[i] - '0');
+                ++digits;
+            }
+            ++i;
+            any = 1;
+        }
+    }
+    while (digits < 3)
+    {
+        frac *= 10;
+        ++digits;
+    }
+    *out = sign * (whole * 1000 + frac);
+    return any;
+}
+
+/* As many decimals as the step has, so stepping 1.5 by 0.5 reads "2" and then
+   "2.5" rather than "2.000" -- which is what a browser shows, and what the
+   person who wrote `step="0.5"` meant. */
+static ar_u32 ar__num_format(ar_i32 v, ar_i32 step, char *buf)
+{
+    ar_u32 n = 0;
+    ar_i32 whole, frac, decimals = 0;
+    char   tmp[16];
+    ar_i32 k = 0;
+
+    if (step % 1000)
+    {
+        decimals = (step % 100) ? ((step % 10) ? 3 : 2) : 1;
+    }
+    if (v < 0)
+    {
+        buf[n++] = '-';
+        v = -v;
+    }
+    whole = v / 1000;
+    frac = v % 1000;
+    do
+    {
+        tmp[k++] = (char)('0' + whole % 10);
+        whole /= 10;
+    } while (whole > 0);
+    while (k > 0)
+    {
+        buf[n++] = tmp[--k];
+    }
+    if (decimals > 0)
+    {
+        ar_i32 d, div = 100;
+
+        buf[n++] = '.';
+        for (d = 0; d < decimals; ++d)
+        {
+            buf[n++] = (char)('0' + (frac / div) % 10);
+            div /= 10;
+        }
+    }
+    return n;
+}
+
+/* Up and Down on a number field, as one undo step each. An empty or unreadable
+   field steps from zero, pulled into range -- which is what a browser does
+   with the first arrow press on a blank field. */
+static void ar__num_step(ar_ctx *c, ar_i32 dir)
+{
+    ar_i32 v = 0;
+    ar_i32 step = c->edit_step > 0 ? c->edit_step : 1000;
+    char   buf[24];
+    ar_u32 n;
+
+    if (!ar__num_parse(c->edit.text, c->edit.len, &v))
+    {
+        v = 0;
+    }
+    else
+    {
+        /* Snap onto the step grid from `min` first, so 3 with step 2 from 0
+           goes to 4 rather than 5 -- the specification's "step base". */
+        ar_i32 base = c->edit_lo != AR_NUM_LO ? c->edit_lo : 0;
+        ar_i32 off = (v - base) % step;
+
+        if (off != 0)
+        {
+            v -= off;
+            if (off < 0)
+            {
+                v -= step;
+            }
+            if (dir < 0)
+            {
+                dir = 0; /* snapping down already moved it */
+            }
+        }
+        v += dir * step;
+    }
+    if (v < c->edit_lo)
+    {
+        v = c->edit_lo;
+    }
+    if (v > c->edit_hi)
+    {
+        v = c->edit_hi;
+    }
+    n = ar__num_format(v, step, buf);
+    ar_edit_replace_all(&c->edit, buf, n);
+}
+
+/*
+ * What a field accepts from what was typed or pasted.
+ *
+ * A single-line field holds no newline, and a paste that brings some loses
+ * them -- the sanitisation HTML specifies, rather than refusing the paste. A
+ * textarea keeps its newlines and drops the carriage returns beside them, so
+ * Windows text arrives as one newline per line rather than two. A number field
+ * takes what could be part of a number and nothing else.
+ */
+static ar_u32 ar__field_filter(ar_u32 flags, const char *in, ar_u32 n, char *out, ar_u32 cap)
+{
+    ar_u32 i, k = 0;
+
+    for (i = 0; i < n && k < cap; ++i)
+    {
+        unsigned char ch = (unsigned char)in[i];
+
+        if (ch == '\r')
+        {
+            continue;
+        }
+        if (ch == '\n')
+        {
+            if (flags & AR_FIELD_MULTI)
+            {
+                out[k++] = '\n';
+            }
+            continue;
+        }
+        if (ch < 0x20 && ch != '\t')
+        {
+            continue;
+        }
+        if (ch == '\t' && !(flags & AR_FIELD_MULTI))
+        {
+            continue;
+        }
+        if ((flags & AR_FIELD_NUMBER) && !((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' ||
+                                           ch == '+' || ch == 'e' || ch == 'E'))
+        {
+            continue;
+        }
+        out[k++] = (char)ch;
+    }
+    return k;
+}
+
+/*
+ * One frame's worth of typing, applied to the field once it is known.
+ *
+ * Applied here rather than in ar_frame_begin because a Tab and a character can
+ * arrive together: the character belongs to the field the Tab moved to, and
+ * which box that is is not settled until the tree is built. Applying it early
+ * sends the first character after a Tab to the field that just lost the caret.
+ *
+ * Text and keys are two different inputs and stay that way -- the platform
+ * turns a key event into a character, because the key that produced `@` is
+ * Shift and 2 on one layout and AltGr and Q on another.
+ *
+ * Keys that need lines -- Up and Down in a textarea, Home and End there -- are
+ * held for after layout, because a line is something layout decides.
+ */
+static void ar__edit_apply(ar_ctx *c)
+{
+    ar_u32 keys, flags;
+    int    extend, word, multi, ro;
+    ar_u16 lo, hi;
+
+    if (!c || c->edit_key == 0 || c->pending_done)
+    {
+        return;
+    }
+    c->pending_done = 1;
+    keys = c->pending_keys;
+    flags = c->edit_flags;
+    extend = (keys & AR_KEY_SHIFT) != 0;
+    word = (keys & AR_KEY_CTRL) != 0;
+    multi = (flags & AR_FIELD_MULTI) != 0;
+    ro = (flags & (AR_FIELD_READONLY | AR_FIELD_DISABLED)) != 0;
+
+    /* Anything at all restarts the blink with the caret showing. */
+    if ((keys & ~(ar_u32)(AR_KEY_SHIFT | AR_KEY_CTRL)) || (c->pending_text && c->pending_text_len))
+    {
+        c->caret_epoch = ar__now(c);
+    }
+
+    /*
+     * The clipboard first, so copy and cut see the selection as it was when
+     * the key went down rather than after whatever else arrived with it.
+     *
+     * A cut's text is the deleted half of the step it just recorded, so the
+     * clipboard borrows it from the undo log rather than keeping a copy -- a
+     * four-kilobyte buffer on the context for a string that already exists.
+     */
+    if ((keys & (AR_KEY_COPY | AR_KEY_CUT)) && !(flags & AR_FIELD_PASSWORD) &&
+        ar_edit_selection(&c->edit, &lo, &hi))
+    {
+        if ((keys & AR_KEY_CUT) && !ro)
+        {
+            const ar_edit_step *st;
+
+            ar_edit_backspace(&c->edit);
+            st = &c->edit.steps[c->edit.steps_at - 1];
+            c->clip = c->edit.log + st->off;
+            c->clip_len = st->del_n;
+        }
+        else
+        {
+            c->clip = c->edit.text + lo;
+            c->clip_len = (ar_u32)(hi - lo);
+        }
+    }
+
+    if (c->pending_text && c->pending_text_len > 0 && !ro)
+    {
+        char   clean[AR_EDIT_CAP];
+        ar_u32 n = ar__field_filter(flags, c->pending_text, c->pending_text_len, clean,
+                                    (ar_u32)sizeof clean);
+
+        if (n > 0)
+        {
+            if (keys & AR_KEY_PASTE)
+            {
+                ar_edit_paste(&c->edit, clean, n);
+            }
+            else
+            {
+                ar_edit_insert(&c->edit, clean, n);
+            }
+        }
+    }
+    if (keys & AR_KEY_ENTER)
+    {
+        if (multi && !ro)
+        {
+            ar_edit_insert(&c->edit, "\n", 1);
+        }
+        else if (!multi)
+        {
+            /* Implicit submission. Which form, and which button counts as
+               having been pressed, is decided at the end of the frame, where
+               the document is certain to be complete. */
+            c->implicit_from = c->edit_dom;
+        }
+    }
+    if ((keys & AR_KEY_BACKSPACE) && !ro)
+    {
+        if (word)
+        {
+            ar_edit_backspace_word(&c->edit);
+        }
+        else
+        {
+            ar_edit_backspace(&c->edit);
+        }
+    }
+    if ((keys & AR_KEY_DELETE) && !ro)
+    {
+        if (word)
+        {
+            ar_edit_delete_word(&c->edit);
+        }
+        else
+        {
+            ar_edit_delete(&c->edit);
+        }
+    }
+    if (keys & AR_KEY_LEFT)
+    {
+        if (word)
+        {
+            ar_edit_move_word(&c->edit, -1, extend);
+        }
+        else
+        {
+            ar_edit_move(&c->edit, -1, extend);
+        }
+    }
+    if (keys & AR_KEY_RIGHT)
+    {
+        if (word)
+        {
+            ar_edit_move_word(&c->edit, 1, extend);
+        }
+        else
+        {
+            ar_edit_move(&c->edit, 1, extend);
+        }
+    }
+    if (keys & (AR_KEY_HOME | AR_KEY_END))
+    {
+        /* Ctrl+Home and Ctrl+End are the ends of the text, which need no
+           lines; plain Home and End in a textarea are the ends of a line. */
+        if (multi && !word)
+        {
+            c->post_keys |= keys & (AR_KEY_HOME | AR_KEY_END | AR_KEY_SHIFT);
+        }
+        else if (keys & AR_KEY_HOME)
+        {
+            ar_edit_home(&c->edit, extend);
+        }
+        else
+        {
+            ar_edit_end(&c->edit, extend);
+        }
+    }
+    if (keys & (AR_KEY_UP | AR_KEY_DOWN | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN))
+    {
+        if ((flags & AR_FIELD_NUMBER) && !ro && (keys & (AR_KEY_UP | AR_KEY_DOWN)))
+        {
+            ar__num_step(c, (keys & AR_KEY_UP) ? 1 : -1);
+        }
+        else if (multi)
+        {
+            c->post_keys |=
+                keys & (AR_KEY_UP | AR_KEY_DOWN | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN | AR_KEY_SHIFT);
+        }
+    }
+    if (keys & AR_KEY_SELECT_ALL)
+    {
+        ar_edit_select_all(&c->edit);
+    }
+    if ((keys & AR_KEY_UNDO) && !ro)
+    {
+        ar_edit_undo(&c->edit);
+    }
+    if ((keys & AR_KEY_REDO) && !ro)
+    {
+        ar_edit_redo(&c->edit);
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * What a field shows, which is not always what it holds
+ *
+ * A password shows one mask per cluster; an input method's composition shows
+ * at the caret without being in the buffer. So the text box is built from a
+ * display string, and the caret and selection are mapped onto it -- which is
+ * the one place the two offsets differ, and the one place to get it right.
+ * ------------------------------------------------------------------------ */
+
+/* U+2022 with a face, `*` without: the built-in face is ASCII and would draw
+   the bullet as a question mark, which is the same wall the list marker hit. */
+static ar_u32 ar__mask_len(const ar_ctx *c)
+{
+    return c->have_face ? 3u : 1u;
+}
+
+static void ar__put_mask(const ar_ctx *c, char *out)
+{
+    if (c->have_face)
+    {
+        out[0] = (char)0xE2;
+        out[1] = (char)0x80;
+        out[2] = (char)0xA2;
+    }
+    else
+    {
+        out[0] = '*';
+    }
+}
+
+/* Where buffer offset `b` of the edited field falls in what is drawn. */
+static ar_i32 ar__disp_off(const ar_ctx *c, ar_u16 b)
+{
+    if (c->edit_flags & AR_FIELD_PASSWORD)
+    {
+        return (ar_i32)(ar_cluster_count(c->edit.text, b) * ar__mask_len(c));
+    }
+    if (c->compose_len > 0 && b >= c->edit.caret)
+    {
+        return (ar_i32)b + (ar_i32)c->compose_len;
+    }
+    return (ar_i32)b;
+}
+
+/* And back: the buffer offset a drawn offset belongs to. Inside a composition
+   is the caret, because the composition is not in the buffer yet. */
+static ar_u16 ar__buf_off(const ar_ctx *c, ar_i32 d)
+{
+    if (d <= 0)
+    {
+        return 0;
+    }
+    if (c->edit_flags & AR_FIELD_PASSWORD)
+    {
+        ar_u32 k = (ar_u32)d / ar__mask_len(c);
+        ar_u16 at = 0;
+
+        while (k > 0 && at < c->edit.len)
+        {
+            at = ar_cluster_next(c->edit.text, c->edit.len, at);
+            --k;
+        }
+        return at;
+    }
+    if (c->compose_len > 0)
+    {
+        if (d <= (ar_i32)c->edit.caret)
+        {
+            return (ar_u16)d;
+        }
+        if (d < (ar_i32)c->edit.caret + (ar_i32)c->compose_len)
+        {
+            return c->edit.caret;
+        }
+        d -= (ar_i32)c->compose_len;
+    }
+    return (ar_u16)(d > (ar_i32)c->edit.len ? c->edit.len : d);
+}
+
+/*
+ * A field's text comes from one of three places, in this order.
+ *
+ * The buffer if this field has the caret, the pool if it has been edited and
+ * left, and the markup if neither -- which is the same order the field itself
+ * is loaded in and has to be, or a field would draw one thing and edit
+ * another.
+ *
+ * And when all three are empty, the `placeholder`, in the same box with a
+ * class that greys it: shown with the caret in the field too, until the first
+ * character, as every browser does. The same box rather than a second one,
+ * because the caret is measured against this box's text from offset zero --
+ * which is where an empty field's caret is whatever the box holds -- and a
+ * click into the hint lands at the end of an empty buffer, which is zero.
+ */
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n, const char *placeholder, ar_u32 pn)
+{
+    ar_u32      key;
+    const char *src = 0;
+    ar_u32      len = 0;
+    ar_u32      out_len, i, k;
+    ar_u32      flags;
+    int         edited;
+    char       *kept;
+
+    if (!c || c->node_count <= 0)
+    {
+        return;
+    }
+    key = c->nodes[c->node_count - 1].key;
+    flags = c->field_flags_cur;
+    edited = key != 0 && key == c->edit_key;
+
+    if (!ar_field_value_of(c, key, &src, &len) && fallback)
+    {
+        src = fallback;
+        len = n > AR_EDIT_CAP ? AR_EDIT_CAP : n;
+    }
+
+    if (flags & AR_FIELD_PASSWORD)
+    {
+        out_len = ar_cluster_count(src ? src : "", len) * ar__mask_len(c);
+    }
+    else
+    {
+        out_len = len + (edited ? c->compose_len : 0u);
+    }
+
+    /*
+     * Copied into the frame arena, because ar_text borrows the pointer.
+     *
+     * One scratch buffer served every field once, and every field pointed at
+     * it and drew whatever the last one happened to hold. That read as "the
+     * value attribute is not arriving" rather than as an aliasing bug -- two
+     * fields showing the same text is only obviously wrong when the two texts
+     * differ. And the caret is measured against this copy, never against a
+     * shared buffer: it was measured against the last field built, which
+     * agreed with the focused one exactly as often as the two held the same
+     * text.
+     */
+    kept = (char *)ar_arena_frame(&c->arena, out_len + 1u);
+    if (!kept)
+    {
+        c->overflowed = 1;
+        return;
+    }
+    if (flags & AR_FIELD_PASSWORD)
+    {
+        for (i = 0; i + ar__mask_len(c) <= out_len; i += ar__mask_len(c))
+        {
+            ar__put_mask(c, kept + i);
+        }
+    }
+    else if (edited && c->compose_len > 0)
+    {
+        ar_u32 at = c->edit.caret;
+
+        k = 0;
+        for (i = 0; i < at; ++i)
+        {
+            kept[k++] = src[i];
+        }
+        for (i = 0; i < c->compose_len; ++i)
+        {
+            kept[k++] = c->compose[i];
+        }
+        for (i = at; i < len; ++i)
+        {
+            kept[k++] = src[i];
+        }
+    }
+    else
+    {
+        for (i = 0; i < len; ++i)
+        {
+            kept[i] = src[i];
+        }
+    }
+    kept[out_len] = 0;
+
+    /*
+     * An empty field still gets its text box.
+     *
+     * Without one the caret has nothing to measure against and no line box to
+     * sit in, so the first character typed would move it -- and an empty field
+     * would be the one place the caret is drawn somewhere else.
+     */
+    if (edited)
+    {
+        c->edit_box = c->node_count;
+    }
+    if (out_len == 0 && placeholder && pn > 0)
+    {
+        char *hint;
+
+        pn = pn > AR_EDIT_CAP ? AR_EDIT_CAP : pn;
+        hint = (char *)ar_arena_frame(&c->arena, pn + 1u);
+        if (hint)
+        {
+            for (i = 0; i < pn; ++i)
+            {
+                hint[i] = placeholder[i];
+            }
+            hint[pn] = 0;
+            ar_text(c, "ar-value.ar-placeholder", hint);
+            return;
+        }
+    }
+    ar_text(c, "ar-value", kept);
+}
+
+/*
+ * A text box whose string is copied rather than borrowed.
+ *
+ * `ar_text` keeps the pointer it is given, which is right for everything that
+ * had one already -- a document's text lives in the document's own buffer and
+ * outlives the frame. A caller that *built* the string has nowhere to put it,
+ * and handing over a stack buffer leaves every box pointing at whatever the
+ * last one happened to spell. That is not hypothetical: it is what a field's
+ * value did before ar_field_child copied it, and it read as "the value
+ * attribute is not arriving" rather than as aliasing.
+ *
+ * A list marker is the second caller, because "3." exists nowhere in the
+ * document -- the document says `<li>` and the number is counted.
+ */
+void ar_text_kept(ar_ctx *c, const char *selector, const char *text, ar_u32 n)
+{
+    char  *kept;
+    ar_u32 i;
+
+    if (!c || !text)
+    {
+        return;
+    }
+    kept = (char *)ar_arena_frame(&c->arena, n + 1u);
+    if (!kept)
+    {
+        /* The box still exists, it just has nothing in it -- the same failure
+           the tree itself takes, and reported the same way. */
+        c->overflowed = 1;
+        return;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        kept[i] = text[i];
+    }
+    kept[n] = 0;
+    ar_text(c, selector, kept);
+}
+
+const char *ar_field_text(ar_ctx *c, ar_u32 *len)
+{
+    if (!c || c->edit_key == 0)
+    {
+        if (len)
+        {
+            *len = 0;
+        }
+        return 0;
+    }
+    if (len)
+    {
+        *len = c->edit.len;
+    }
+    return c->edit.text;
+}
+
+ar_rect ar_caret_rect(const ar_ctx *c)
+{
+    if (!c)
+    {
+        return ar_rect_make(0, 0, 0, 0);
+    }
+    return c->caret_rect;
+}
+
+ar_u32 ar_caret_wait_us(const ar_ctx *c)
+{
+    ar_u32 elapsed;
+
+    if (!c || !c->clock || ar_rect_is_empty(c->caret_rect))
+    {
+        return 0;
+    }
+    elapsed = c->clock() - c->caret_epoch;
+    return AR_CARET_BLINK_US - elapsed % AR_CARET_BLINK_US;
+}
+
+const char *ar_clipboard_text(const ar_ctx *c, ar_u32 *len)
+{
+    if (len)
+    {
+        *len = c ? c->clip_len : 0;
+    }
+    return (c && c->clip_len > 0) ? c->clip : 0;
+}
+
+ar_i32 ar_form_submitted(const ar_ctx *c, ar_i32 *submitter)
+{
+    if (submitter)
+    {
+        *submitter = c ? c->submit_by : -1;
+    }
+    return c ? c->submit_form : -1;
+}
+
+ar_i32 ar_file_wanted(const ar_ctx *c)
+{
+    return c ? c->file_wanted : -1;
+}
+
+/* The chosen name lives where a field's typed text lives, under the file
+   field's key, so it is shown, survives the frame and is submitted by the same
+   code that does all three for text. */
+void ar_file_chosen(ar_ctx *c, ar_i32 node, const char *name, ar_u32 len)
+{
+    ar_u32 key = ar_ctl_key_of(c, node);
+
+    if (!c || key == 0 || !name)
+    {
+        return;
+    }
+    ar__value_store(c, key, node, name, len);
+    c->a11y_gen++;
+}
+
+ar_u32 ar_a11y_generation(const ar_ctx *c)
+{
+    return c ? c->a11y_gen : 0;
+}
+
+void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group, ar_i32 dom, ar_i32 val)
+{
+    if (c)
+    {
+        c->next_kind = kind;
+        c->next_group = group;
+        c->next_dom = dom;
+        c->next_val = val;
+    }
+}
+
+void ar_value_next(ar_ctx *c, const char *value, ar_u32 len)
+{
+    if (c)
+    {
+        c->next_value = value;
+        c->next_value_len = len;
+    }
+}
+
+void ar_field_next(ar_ctx *c, ar_u32 flags, ar_i32 lo, ar_i32 hi, ar_i32 step, ar_i32 maxlen)
+{
+    if (c)
+    {
+        c->next_field = flags;
+        c->next_lo = lo;
+        c->next_hi = hi;
+        c->next_step = step;
+        c->next_maxlen = maxlen;
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Control values: the select, the slider and the colour, as left
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__cval_find(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (key == 0)
+    {
+        return -1;
+    }
+    for (i = 0; i < AR_CVALS; ++i)
+    {
+        if (c->cval_key[i] == key)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+ar_i32 ar_ctl_value(const ar_ctx *c, ar_u32 key, ar_i32 dflt)
+{
+    ar_i32 at;
+
+    if (!c)
+    {
+        return dflt;
+    }
+    at = ar__cval_find(c, key);
+    return at >= 0 ? c->cval[at] : dflt;
+}
+
+/* The sixty-fifth control to be touched evicts the one seen longest ago, which
+   puts it back to its markup -- a reset nobody asked for, and the reason the
+   number is written down beside the table. */
+void ar_ctl_set_value(ar_ctx *c, ar_u32 key, ar_i32 v)
+{
+    ar_i32 at, i, oldest = 0;
+
+    if (!c || key == 0)
+    {
+        return;
+    }
+    at = ar__cval_find(c, key);
+    if (at < 0)
+    {
+        for (i = 0; i < AR_CVALS; ++i)
+        {
+            if (c->cval_key[i] == 0)
+            {
+                at = i;
+                break;
+            }
+            if (c->cval_seen[i] < c->cval_seen[oldest])
+            {
+                oldest = i;
+            }
+        }
+        if (at < 0)
+        {
+            at = oldest;
+        }
+    }
+    c->cval_key[at] = key;
+    c->cval[at] = v;
+    c->cval_seen[at] = c->frame;
+}
+
+void ar_ctl_forget(ar_ctx *c, ar_u32 key)
+{
+    ar_i32 at;
+
+    if (!c)
+    {
+        return;
+    }
+    at = ar__cval_find(c, key);
+    if (at >= 0)
+    {
+        c->cval_key[at] = 0;
+    }
+    at = ar__value_find(c, key);
+    if (at >= 0)
+    {
+        ar__value_drop(c, at);
+    }
+    if (key != 0 && key == c->edit_key)
+    {
+        /* Back to the markup next frame, history and all. */
+        c->edit_key = 0;
+    }
+}
+
+/* Which box a control element last became. See ar_ctx.ctl_memo_dom. */
+static void ar__ctl_memo(ar_ctx *c, ar_i32 dom, ar_u32 key)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR_CTL_MEMO; ++i)
+    {
+        if (c->ctl_memo_dom[i] == dom && c->ctl_memo_key[i] != 0)
+        {
+            c->ctl_memo_key[i] = key;
+            return;
+        }
+    }
+    c->ctl_memo_dom[c->ctl_memo_next] = dom;
+    c->ctl_memo_key[c->ctl_memo_next] = key;
+    c->ctl_memo_next = (c->ctl_memo_next + 1) % AR_CTL_MEMO;
+}
+
+ar_u32 ar_ctl_key_of(const ar_ctx *c, ar_i32 dom)
+{
+    ar_i32 i;
+
+    if (!c || dom < 0)
+    {
+        return 0;
+    }
+    /* This frame first: a box built now is the truth, the memo a fallback. */
+    for (i = 0; i < c->control_n; ++i)
+    {
+        if (c->control_dom[i] == dom)
+        {
+            return c->control_key[i];
+        }
+    }
+    for (i = 0; i < AR_CTL_MEMO; ++i)
+    {
+        if (c->ctl_memo_dom[i] == dom && c->ctl_memo_key[i] != 0)
+        {
+            return c->ctl_memo_key[i];
+        }
+    }
+    return 0;
+}
+
+ar_i32 ar_box_value(const ar_ctx *c, ar_i32 dflt)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return dflt;
+    }
+    return ar_ctl_value(c, c->nodes[c->node_count - 1].key, dflt);
+}
+
+int ar_box_state(const ar_ctx *c, ar_i32 box, ar_u32 bits)
+{
+    if (!c || box < 0 || box >= c->node_count)
+    {
+        return 0;
+    }
+    return (c->nodes[box].state & bits) != 0;
+}
+
+ar_u32 ar_box_key(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return 0;
+    }
+    return c->nodes[c->node_count - 1].key;
+}
+
+void ar_frame_doc(ar_ctx *c, ar_doc *d)
+{
+    if (!c)
+    {
+        return;
+    }
+    if (d != c->memo_doc)
+    {
+        /* A different document: its node numbers mean nothing to the memo. */
+        ar_i32 i;
+
+        for (i = 0; i < AR_CTL_MEMO; ++i)
+        {
+            c->ctl_memo_key[i] = 0;
+            c->ctl_memo_dom[i] = -1;
+        }
+        c->memo_doc = d;
+    }
+    c->frame_doc = d;
+}
+
+/* Does a stop with index `a` come after one with index `b`? Zero means
+   document order and sorts last; positives sort among themselves ascending. */
+static int ar__tab_after(ar_i16 a, ar_i16 b)
+{
+    if (a == b)
+    {
+        return 0;
+    }
+    if (a == 0)
+    {
+        return b > 0;
+    }
+    if (b == 0)
+    {
+        return 0;
+    }
+    return a > b;
+}
+
+void ar_focusable(ar_ctx *c, ar_i32 tabindex)
+{
+    if (!c || c->node_count <= 0 || c->focusable_n >= AR_MAX_FOCUSABLES || tabindex < 0)
+    {
+        return;
+    }
+
+    /*
+     * The index and not the key, because the inert test cannot be made here.
+     *
+     * `inert` is settled by a late pass, after the tree is complete -- a modal
+     * makes everything outside it inert and there is no modal until the tree
+     * has one. So this records where the box is and the filtering happens when
+     * the list is published, which is after that pass. Indices are valid for
+     * exactly one frame, which is exactly how long this list lives.
+     */
+    c->focus_order[c->focusable_n] = (ar_i16)(tabindex > 32767 ? 32767 : tabindex);
+    c->focusables[c->focusable_n++] = (ar_u32)(c->node_count - 1);
+}
+
+int ar_focus_next(ar_ctx *c, int backwards)
+{
+    ar_i32 n, i, at = -1;
+
+    if (!c)
+    {
+        return 0;
+    }
+    n = c->focusable_prev_n;
+    if (n <= 0)
+    {
+        return 0;
+    }
+
+    for (i = 0; i < n; ++i)
+    {
+        if (c->focusables_prev[i] == c->focus_key)
+        {
+            at = i;
+            break;
+        }
+    }
+
+    /*
+     * Nothing focused yet means Tab takes the first stop and Shift-Tab the
+     * last, which is what a browser does with a fresh document. Wrapping at
+     * both ends rather than stopping, because a document is not a modal and
+     * there is nowhere else for the focus to go yet -- focus trapping is a
+     * 0.10.0 problem and needs something to trap it in.
+     */
+    if (at < 0)
+    {
+        at = backwards ? n - 1 : 0;
+    }
+    else
+    {
+        at = backwards ? at - 1 : at + 1;
+        if (at < 0)
+        {
+            at = n - 1;
+        }
+        if (at >= n)
+        {
+            at = 0;
+        }
+    }
+
+    c->focus_key = c->focusables_prev[at];
+    c->focus_visible = 1;
+    c->focus_moved = 1;
+    return 1;
+}
+
+void ar_focus_clear(ar_ctx *c)
+{
+    if (c)
+    {
+        c->focus_key = 0;
+        c->focus_visible = 0;
+        c->focus_chain_n = 0;
+        c->focus_index = -1;
+    }
+}
+
+/*
+ * The computed `white-space` of the box most recently opened.
+ *
+ * The document walk asks, because collapsing is a property of the element the
+ * text is inside and that element's style is resolved by the time its children
+ * are walked. Before this the walk decided from the tag -- `<pre>` and nothing
+ * else -- so `white-space: pre` on a div did nothing and `white-space: normal`
+ * on a `<pre>` did nothing either.
+ */
+/*
+ * Is the last box opened inside the current one inline-level?
+ *
+ * The document walk asks before dropping a whitespace-only text node. Such a
+ * node is ignorable *between blocks* and significant between inlines:
+ * `<li>a</li>
+<li>b</li>` has a newline nobody should see, and
+ * `<small>a</small> <strong>b</strong>` has a space everybody should.
+ *
+ * Answered from the previous sibling rather than the next because the previous
+ * one has been built and has a computed display, and the next one has not.
+ * That also gives the right answer at both ends: whitespace before the first
+ * inline child and after the last is dropped, which is what a browser does
+ * with the whitespace at the start and end of a line.
+ */
+int ar_last_child_is_inline(const ar_ctx *c)
+{
+    ar_i32 parent, last;
+
+    if (!c || c->depth <= 0)
+    {
+        return 0;
+    }
+    parent = c->stack[c->depth - 1];
+    if (parent < 0 || parent >= c->node_count)
+    {
+        return 0;
+    }
+    last = c->nodes[parent].last_child;
+    if (last < 0)
+    {
+        return 0;
+    }
+    return ar_is_inline_level(&c->nodes[last]) || c->nodes[last].text != 0;
+}
+
+ar_i32 ar_box_white_space(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return AR_WS_NORMAL;
+    }
+    return c->nodes[c->node_count - 1].style.v[AR_P_WHITE_SPACE];
+}
+
+int ar_box_is_checked(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return 0;
+    }
+    return (c->nodes[c->node_count - 1].state & AR_STATE_CHECKED) != 0;
+}
+
+int ar_box_is_open(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return 0;
+    }
+    return (c->nodes[c->node_count - 1].state & AR_STATE_OPEN) != 0;
+}
+
+ar_i32 ar_tab_stops(const ar_ctx *c)
+{
+    return c ? c->focusable_prev_n : 0;
+}
+
+int ar_has_focus(const ar_ctx *c)
+{
+    return c && c->focus_key != 0;
+}
+
+int ar_focus_is_visible(const ar_ctx *c)
+{
+    return c && c->focus_key != 0 && c->focus_visible;
+}
+
+/*
+ * Which box has the focus, by index into this frame's tree.
+ *
+ * -1 when nothing is focused, and also when the focused box is not in *this*
+ * frame's tree -- a focus survives the box going away, because the key outlives
+ * the node, and a caller asking where to draw must be told "nowhere" rather
+ * than given the index the box used to have.
+ *
+ * `focus_index` is written during the build pass, when the key is matched, so
+ * it is settled before layout and correct by the time anyone can ask.
+ */
+ar_i32 ar_focus_node(const ar_ctx *c)
+{
+    if (!c || c->focus_key == 0)
+    {
+        return -1;
+    }
+    return c->focus_index;
+}
+
 void ar_begin(ar_ctx *c, const char *selector)
 {
     ar_begin_styled(c, selector, 0);
@@ -3514,12 +5621,84 @@ int ar_button(ar_ctx *c, const char *selector, const char *label)
  */
 #define AR_LINE_BUF 512
 
+/* ------------------------------------------------------------------------
+ * Painting at a render scale
+ *
+ * Every rectangle the painter draws goes through these, which are the
+ * primitives with the layout's pixels turned into the surface's. A rectangle
+ * is scaled by its edges rather than by its origin and size, so two boxes
+ * that touch at 1000 still touch at 1500 instead of leaving a seam or an
+ * overlap; and anything at least a pixel wide stays at least a pixel wide, so
+ * a hairline border survives 500. At 1000 each is one comparison.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__k(const ar_ctx *c, ar_i32 v)
+{
+    ar_i32 k = c->render_scale;
+
+    return v >= 0 ? v * k / 1000 : -((-v * k + 999) / 1000);
+}
+
+static ar_rect ar__kr(const ar_ctx *c, ar_rect r)
+{
+    ar_rect out;
+
+    if (c->render_scale == 1000)
+    {
+        return r;
+    }
+    out.x = ar__k(c, r.x);
+    out.y = ar__k(c, r.y);
+    out.w = ar__k(c, r.x + r.w) - out.x;
+    out.h = ar__k(c, r.y + r.h) - out.y;
+    if (r.w > 0 && out.w < 1)
+    {
+        out.w = 1;
+    }
+    if (r.h > 0 && out.h < 1)
+    {
+        out.h = 1;
+    }
+    return out;
+}
+
+static ar_i32 ar__kw(const ar_ctx *c, ar_i32 v)
+{
+    ar_i32 w = ar__k(c, v);
+
+    return v > 0 && w < 1 ? 1 : w;
+}
+
+static void ar__fill(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_rect clip, ar_color col)
+{
+    ar_fill_rect(dst, ar__kr(c, r), ar__kr(c, clip), col);
+}
+
+static void ar__fill_round(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 radius, ar_rect clip,
+                           ar_color col)
+{
+    ar_fill_round_rect(dst, ar__kr(c, r), ar__kw(c, radius), ar__kr(c, clip), col);
+}
+
+static void ar__stroke_round(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 radius,
+                             ar_i32 width, ar_rect clip, ar_color col)
+{
+    ar_stroke_round_rect(dst, ar__kr(c, r), ar__kw(c, radius), ar__kw(c, width), ar__kr(c, clip),
+                         col);
+}
+
+static void ar__fill_tri_k(const ar_ctx *c, ar_surface *dst, ar_rect r, ar_i32 dir, ar_rect clip,
+                           ar_color col)
+{
+    ar_fill_tri(dst, ar__kr(c, r), dir, ar__kr(c, clip), col);
+}
+
 static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y,
                           const ar_node *n, ar_i32 from, ar_i32 to, ar_color col)
 {
     char   buf[AR_LINE_BUF];
     ar_i32 len = 0;
     ar_i32 i;
+    ar_i32 adv = 0;
 
     if (!n->text)
     {
@@ -3566,13 +5745,94 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         /* A font puts the baseline below the top of the line box; the bitmap
            face has no baseline and draws from the top, so the two paths take
            different y values for the same text. */
-        ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, ar_chain_for(c, n),
-                            c->shaping ? &c->shaper : 0, n->style.v[AR_P_FONT_SIZE], col,
-                            &c->glyphs, &c->glyph_scratch, 0);
+        /* At a render scale the glyphs are shaped and rasterized at the
+           scaled size -- that is the point of drawing larger -- and the
+           advance comes back in the surface's pixels, so it is taken back to
+           the layout's for the decoration below. */
+        ar_i32 ppem = ar__kw(c, n->style.v[AR_P_FONT_SIZE]);
+
+        adv = ar_text_draw_shaped(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y + n->ascent), buf,
+                                  ar_chain_for(c, n), c->shaping ? &c->shaper : 0, ppem, col,
+                                  &c->glyphs, &c->glyph_scratch, 0);
+        if (c->render_scale != 1000 && adv > 0)
+        {
+            adv = adv * 1000 / c->render_scale;
+        }
     }
     else
     {
-        ar_draw_text(s, clip, x, y, buf, n->scale, col);
+        ar_i32 cell = n->scale * c->render_scale / 1000;
+
+        ar_draw_text(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y), buf, cell > 0 ? cell : 1, col);
+        /* Measured below, and only if something is going to be drawn with it:
+           this path reports no advance, and charging every line in every
+           undecorated document for a second pass over its own text to support
+           a property almost nothing sets is the wrong way round. */
+        adv = -1;
+    }
+
+    /*
+     * The line under, over or through it.
+     *
+     * Drawn here rather than in the box pass because a decoration belongs to
+     * the *text* and not to the box: a wrapped link is one box and five
+     * fragments, and a rectangle the width of the box would underline the
+     * white space at the end of every line and the gap before the first word.
+     * The advance the drawing call just returned is exactly what was inked.
+     *
+     * One pixel until the face is large, because a hairline is what a browser
+     * draws at a reading size and anything computed from the font size rounds
+     * to one there anyway. The offset is below the baseline rather than on it,
+     * so a descender crosses the line instead of sitting on it.
+     */
+    {
+        ar_i32 decor = n->style.v[AR_P_TEXT_DECORATION];
+
+        if (decor != AR_DECOR_NONE && adv < 0)
+        {
+            adv = ar_text_width(buf, n->scale);
+        }
+        if (decor != AR_DECOR_NONE && adv > 0)
+        {
+            ar_i32 thick = n->style.v[AR_P_FONT_SIZE] / 14;
+            ar_i32 base, ly;
+
+            if (thick < 1)
+            {
+                thick = 1;
+            }
+
+            /*
+             * Where the baseline is, and the two faces disagree about it for
+             * the same reason the drawing calls do: an outline face puts the
+             * baseline under its ascent, and the built-in bitmap face has no
+             * baseline at all and fills its whole line box with glyph.
+             *
+             * For the bitmap face the underline therefore goes *inside* the
+             * bottom of the text rather than below it. Putting it below is
+             * what the first version did, and the line fell outside the text
+             * box -- so it was clipped away and the decoration drew nothing at
+             * all on every build without a TrueType face, which is every test
+             * in this suite.
+             */
+            if (c->have_face)
+            {
+                base = y + n->ascent;
+                ly = base + thick;
+            }
+            else
+            {
+                base = y + n->text_h;
+                ly = base - thick;
+            }
+            if (decor == AR_DECOR_LINE_THROUGH)
+            {
+                /* Through the middle of the lower case, which is about a third
+                   of the way up from the baseline for every Latin face. */
+                ly = base - n->style.v[AR_P_FONT_SIZE] / 3;
+            }
+            ar__fill(c, s, ar_rect_make(x, ly, adv, thick), clip, col);
+        }
     }
 }
 
@@ -3738,15 +5998,1219 @@ static void ar__paint_bars(ar_ctx *c, ar_surface *s, ar_rect region)
            transparent and equally invisible, so reading the two the same way
            loses nothing. */
         ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
-        ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
-        ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
+        ar__fill(c, s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
+        ar__fill(c, s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
     }
+}
+
+/* ------------------------------------------------------------------------
+ * The field with the caret, once layout has said where its lines are
+ *
+ * Typing changes the text and so has to happen before layout; everything that
+ * needs to know where a line is -- a click, Up and Down in a textarea, keeping
+ * the caret in view -- has to happen after it. This pass is the second half,
+ * and it runs before paint, so the caret painted is the caret settled.
+ * ------------------------------------------------------------------------ */
+
+/* The width of text[from, to) in 1/AR_ONE_PIXEL, unrounded, so that a run of
+   them can be summed without the drift that rounding each one would add. */
+static ar_i32 ar__range_fx(ar_ctx *c, const ar_node *n, ar_i32 from, ar_i32 to)
+{
+    if (!n->text || to <= from)
+    {
+        return 0;
+    }
+    if (c->have_face)
+    {
+        return ar_text_range_chain(n->text, from, to, ar_chain_for(c, n),
+                                   n->style.v[AR_P_FONT_SIZE], &c->glyphs, &c->glyph_scratch);
+    }
+    return ar_text_width_range(n->text, from, to, n->scale) * AR_ONE_PIXEL;
+}
+
+static ar_i32 ar__text_len(const char *t)
+{
+    ar_i32 n = 0;
+
+    while (t && t[n])
+    {
+        ++n;
+    }
+    return n;
+}
+
+/* The lines of a text box exactly as the paint pass draws them -- the same
+   call with the same width, which is what keeps the caret on the line the
+   characters are on. */
+static ar_i32 ar__field_lines(ar_ctx *c, const ar_node *n, ar_i32 *starts)
+{
+    ar_i32 inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    ar_i32 lines = ar__wrap_lines(c, n, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, inner_w,
+                                  starts, AR_MAX_LINES);
+
+    if (lines < 1)
+    {
+        starts[0] = 0;
+        lines = 1;
+    }
+
+    /*
+     * A newline at the very end opens a line with nothing on it yet, which
+     * the wrap does not report: it draws text, and there is none to draw.
+     * The caret is what stands on that line -- without it, Enter at the end
+     * of a textarea left the caret beside the last word, and only the next
+     * character typed went down a line.
+     */
+    {
+        ar_i32 len = ar__text_len(n->text);
+
+        if (len > 0 && n->text[len - 1] == '\n' && lines < AR_MAX_LINES && starts[lines - 1] < len)
+        {
+            starts[lines++] = len;
+        }
+    }
+    return lines;
+}
+
+/* The line a drawn offset is on: the last one starting at or before it. An
+   offset exactly at a soft wrap belongs to the line below, which is where the
+   next character typed would appear. */
+static ar_i32 ar__line_of(const ar_i32 *starts, ar_i32 lines, ar_i32 d)
+{
+    ar_i32 li = 0;
+
+    while (li + 1 < lines && starts[li + 1] <= d)
+    {
+        ++li;
+    }
+    return li;
+}
+
+static ar_i32 ar__x_of(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar_i32 lines, ar_i32 d)
+{
+    ar_i32 li = ar__line_of(starts, lines, d);
+
+    return (ar__range_fx(c, n, starts[li], d) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+}
+
+/*
+ * The buffer offset nearest `x` on line `li`.
+ *
+ * Walked by cluster through the buffer rather than by byte through what is
+ * drawn, so a click can only ever land on a boundary -- and summed a cluster
+ * at a time, because measuring from the start of the line at every candidate
+ * is quadratic in the line, and a field's single line is four kilobytes long.
+ */
+static ar_u16 ar__hit_line(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar_i32 lines,
+                           ar_i32 tl, ar_i32 li, ar_i32 x)
+{
+    ar_i32 ls = starts[li];
+    ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+    ar_u16 b = ar__buf_off(c, ls);
+    ar_u16 best = b;
+    ar_i32 want = x * AR_ONE_PIXEL;
+    ar_i32 prev_d = ar__disp_off(c, b);
+    ar_i32 acc = ar__range_fx(c, n, ls, prev_d);
+    ar_i32 best_dist = acc > want ? acc - want : want - acc;
+
+    while (b < c->edit.len)
+    {
+        ar_u16 nb = ar_cluster_next(c->edit.text, c->edit.len, b);
+        ar_i32 nd = ar__disp_off(c, nb);
+        ar_i32 dist;
+
+        /* The start of the next line is not on this one -- except on the last
+           line, whose end is a place the caret can stand. */
+        if (nd > le || (nd == le && li + 1 < lines))
+        {
+            break;
+        }
+        acc += ar__range_fx(c, n, prev_d, nd);
+        dist = acc > want ? acc - want : want - acc;
+        if (dist < best_dist)
+        {
+            best_dist = dist;
+            best = nb;
+        }
+        prev_d = nd;
+        b = nb;
+    }
+    return best;
+}
+
+/* Where a press at (mx, my) lands in the edited text, as a buffer offset. */
+static ar_u16 ar__hit_field(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar_i32 lines,
+                            ar_i32 tl, ar_i32 mx, ar_i32 my)
+{
+    ar_i32 ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+    ar_i32 adv = n->line_h > 0 ? n->line_h : 1;
+    ar_i32 li = my < ty ? 0 : (my - ty) / adv;
+
+    if (li >= lines)
+    {
+        li = lines - 1;
+    }
+    return ar__hit_line(c, n, starts, lines, tl, li,
+                        mx - (n->rect.x + n->style.v[AR_P_PAD_LEFT]) + c->edit_scroll_x);
+}
+
+/* Up, Down, Home and End in a textarea, which are about lines. */
+static void ar__field_line_keys(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar_i32 lines,
+                                ar_i32 tl)
+{
+    ar_u32 keys = c->post_keys;
+    int    extend = (keys & AR_KEY_SHIFT) != 0;
+    ar_i32 d = ar__disp_off(c, c->edit.caret);
+    ar_i32 li = ar__line_of(starts, lines, d);
+    ar_i32 x = ar__x_of(c, n, starts, lines, d);
+    ar_u16 target = c->edit.caret;
+
+    if (keys & AR_KEY_HOME)
+    {
+        target = ar__buf_off(c, starts[li]);
+    }
+    else if (keys & AR_KEY_END)
+    {
+        ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+
+        /* Before the newline or the space the line broke at, not after it --
+           after it is the start of the next line. */
+        if (li + 1 < lines && le > starts[li] &&
+            (n->text[le - 1] == '\n' || n->text[le - 1] == ' '))
+        {
+            --le;
+        }
+        target = ar__buf_off(c, le);
+    }
+    else if (keys & (AR_KEY_UP | AR_KEY_DOWN | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN))
+    {
+        ar_i32 step = 1;
+        ar_i32 nl;
+
+        if ((keys & (AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN)) && c->edit_field_box >= 0 && n->line_h > 0)
+        {
+            step = c->nodes[c->edit_field_box].rect.h / n->line_h - 1;
+            if (step < 1)
+            {
+                step = 1;
+            }
+        }
+        nl = li + ((keys & (AR_KEY_UP | AR_KEY_PAGE_UP)) ? -step : step);
+
+        /* Off the top goes to the start and off the bottom to the end, which
+           is what a browser's textarea does and what makes Up from the first
+           line still do something. */
+        if (nl < 0)
+        {
+            target = 0;
+        }
+        else if (nl >= lines)
+        {
+            target = c->edit.len;
+        }
+        else
+        {
+            target = ar__hit_line(c, n, starts, lines, tl, nl, x);
+        }
+    }
+    ar_edit_set_caret(&c->edit, target, extend);
+}
+
+static int ar__caret_showing(const ar_ctx *c)
+{
+    if (!c->clock)
+    {
+        return 1; /* no clock, no blink: a steady caret is a correct caret */
+    }
+    return ((c->clock() - c->caret_epoch) / AR_CARET_BLINK_US) % 2u == 0;
+}
+
+static void ar__field_after_layout(ar_ctx *c)
+{
+    ar_node *n;
+    ar_i32   starts[AR_MAX_LINES];
+    ar_i32   lines, tl, d, li, cx, sx;
+    ar_u32   h;
+
+    c->caret_rect = ar_rect_make(0, 0, 0, 0);
+    c->caret_on = 0;
+    c->edit_hash = 0;
+    if (c->edit_box < 0 || c->edit_box >= c->node_count || c->edit_key == 0 ||
+        c->edit_key != c->focus_key)
+    {
+        c->edit_drag = 0;
+        return;
+    }
+    n = &c->nodes[c->edit_box];
+    if (!n->text || n->parent < 0 || c->nodes[n->parent].key != c->edit_key)
+    {
+        return;
+    }
+    lines = ar__field_lines(c, n, starts);
+    tl = ar__text_len(n->text);
+
+    /*
+     * The mouse. A press that lands in the field puts the caret under it --
+     * two in a row select a word and three select everything -- and while the
+     * button stays down the selection follows the pointer.
+     *
+     * "Lands in the field" is the hover chain, which is the previous frame's
+     * hit test: the same one the press used to give the field the focus.
+     */
+    if ((c->mouse_pressed & AR_MOUSE_LEFT) && c->mouse_inside &&
+        ar__in_chain(c->hot_chain, c->hot_chain_n, c->edit_key))
+    {
+        ar_u16 at = ar__hit_field(c, n, starts, lines, tl, c->mouse_x, c->mouse_y);
+
+        if (c->clicks >= 3)
+        {
+            ar_edit_select_all(&c->edit);
+        }
+        else if (c->clicks == 2)
+        {
+            ar_edit_select_word(&c->edit, at);
+        }
+        else
+        {
+            ar_edit_set_caret(&c->edit, at, (c->keys & AR_KEY_SHIFT) != 0);
+        }
+        c->edit_drag = c->clicks < 2;
+        c->caret_epoch = ar__now(c);
+    }
+    else if (c->edit_drag && (c->mouse_down & AR_MOUSE_LEFT))
+    {
+        ar_edit_set_caret(&c->edit, ar__hit_field(c, n, starts, lines, tl, c->mouse_x, c->mouse_y),
+                          1);
+    }
+    if (!(c->mouse_down & AR_MOUSE_LEFT))
+    {
+        c->edit_drag = 0;
+    }
+
+    if (c->post_keys)
+    {
+        ar__field_line_keys(c, n, starts, lines, tl);
+        c->caret_epoch = ar__now(c);
+    }
+
+    d = ar__disp_off(c, c->edit.caret);
+    li = ar__line_of(starts, lines, d);
+    cx = ar__x_of(c, n, starts, lines, d);
+
+    /*
+     * Keep the caret in view.
+     *
+     * A single-line field scrolls sideways: the text is drawn shifted left by
+     * `edit_scroll_x`, moved only as far as the caret needs and never past the
+     * end of the text -- so deleting from the end of a long value pulls the
+     * text back rather than leaving a gap. A textarea is a scroll container
+     * and scrolls the ordinary way, its offset moved and its text box moved
+     * with it, so this frame paints what the next frame would.
+     */
+    if (!(c->edit_flags & AR_FIELD_MULTI))
+    {
+        ar_i32 inner = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+        ar_i32 tw = (ar__range_fx(c, n, 0, tl) + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+
+        sx = c->edit_scroll_x;
+        if (cx - sx > inner - 1)
+        {
+            sx = cx - inner + 1;
+        }
+        if (cx < sx)
+        {
+            sx = cx;
+        }
+        if (sx > tw - inner + 1)
+        {
+            sx = tw - inner + 1;
+        }
+        if (sx < 0)
+        {
+            sx = 0;
+        }
+        c->edit_scroll_x = sx;
+    }
+    else if (c->edit_field_box >= 0 && ar_is_scroll_container(&c->nodes[c->edit_field_box]))
+    {
+        ar_node *f = &c->nodes[c->edit_field_box];
+        ar_slot *slot = ar_ctx_slot(c, f->key);
+        ar_i32   inset = f->style.v[AR_P_BORDER_WIDTH];
+        ar_i32   top = n->rect.y + n->style.v[AR_P_PAD_TOP] + li * n->line_h;
+        ar_i32   bottom = top + (n->text_h > 0 ? n->text_h : n->line_h);
+        ar_i32   port_top = f->rect.y + inset + f->style.v[AR_P_PAD_TOP];
+        ar_i32   port_bottom = f->rect.y + f->rect.h - inset - f->style.v[AR_P_PAD_BOTTOM];
+        ar_i32   delta = 0;
+
+        if (top < port_top)
+        {
+            delta = top - port_top;
+        }
+        else if (bottom > port_bottom)
+        {
+            delta = bottom - port_bottom;
+        }
+        if (delta != 0 && slot)
+        {
+            ar_i32 want = ar_scroll_clamp(f, slot->scroll + delta);
+
+            delta = want - slot->scroll;
+            if (delta != 0)
+            {
+                slot->scroll = (ar_scroll_pos)want;
+                ar_shift_subtree(c->nodes, c->frags, c->frag_count, c->edit_box, 0, -delta);
+                ar_damage_add(&c->damage, f->rect);
+            }
+        }
+        c->edit_scroll_x = 0;
+        sx = 0;
+    }
+    else
+    {
+        c->edit_scroll_x = 0;
+        sx = 0;
+    }
+
+    c->caret_rect = ar_rect_make(n->rect.x + n->style.v[AR_P_PAD_LEFT] + cx - sx,
+                                 n->rect.y + n->style.v[AR_P_PAD_TOP] + li * n->line_h, 1,
+                                 n->text_h > 0 ? n->text_h : n->line_h);
+    c->caret_on = ar__caret_showing(c);
+
+    /* What the paint pass reads for this box that no property records. Mixed
+       into its digest below, so a caret that moves repaints the field -- and
+       a caret that only blinks repaints one column of it. */
+    h = ar__mix(2166136261u, ((ar_u32)c->edit.caret << 16) | c->edit.anchor);
+    h = ar__mix(h, ((ar_u32)c->compose_len << 16) ^ (ar_u32)sx);
+    h = ar__mix(h, (ar_u32)c->caret_rect.y);
+    c->edit_hash = h ? h : 1u;
+}
+
+/*
+ * The edited field's text, with its selection behind it, its composition
+ * underlined and its caret in front.
+ *
+ * The same lines the layout made room for, shifted by the field's scroll --
+ * and the selection drawn per line, because a selection across a wrap is two
+ * rectangles and not one box from its first character to its last.
+ */
+static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect tclip)
+{
+    ar_i32   starts[AR_MAX_LINES];
+    ar_i32   lines = ar__field_lines(c, n, starts);
+    ar_i32   tl = ar__text_len(n->text);
+    ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT] - c->edit_scroll_x;
+    ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+    ar_i32   adv = n->line_h;
+    ar_i32   th = n->text_h > 0 ? n->text_h : n->line_h;
+    ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
+    ar_i32   li;
+    ar_u16   lo, hi;
+
+    if (ar_edit_selection(&c->edit, &lo, &hi))
+    {
+        ar_i32   dlo = ar__disp_off(c, lo), dhi = ar__disp_off(c, hi);
+        ar_color hl = (ar_color)ar_sys_color_default(AR_SYS_HIGHLIGHT, 0);
+
+        for (li = 0; li < lines; ++li)
+        {
+            ar_i32 ls = starts[li];
+            ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+            ar_i32 a = dlo > ls ? dlo : ls;
+            ar_i32 b = dhi < le ? dhi : le;
+            ar_i32 x0, x1;
+
+            if (a >= b)
+            {
+                continue;
+            }
+            x0 = (ar__range_fx(c, n, ls, a) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+            x1 = (ar__range_fx(c, n, ls, b) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+            if (x1 <= x0)
+            {
+                x1 = x0 + 2; /* a selected newline still shows as selected */
+            }
+            ar__fill(c, s, ar_rect_make(tx + x0, ty + li * adv, x1 - x0, th), tclip, hl);
+        }
+    }
+
+    for (li = 0; li < lines; ++li)
+    {
+        ar__draw_line(c, s, tclip, tx, ty + li * adv, n, starts[li],
+                      (li + 1 < lines) ? starts[li + 1] : -1, tc);
+    }
+
+    /* The composition, underlined: the convention every input method draws to
+       say these characters are not committed yet. */
+    if (c->compose_len > 0 && !(c->edit_flags & AR_FIELD_PASSWORD))
+    {
+        ar_i32 d0 = (ar_i32)c->edit.caret, d1 = d0 + (ar_i32)c->compose_len;
+
+        for (li = 0; li < lines; ++li)
+        {
+            ar_i32 ls = starts[li];
+            ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+            ar_i32 a = d0 > ls ? d0 : ls;
+            ar_i32 b = d1 < le ? d1 : le;
+            ar_i32 x0, x1;
+
+            if (a >= b)
+            {
+                continue;
+            }
+            x0 = (ar__range_fx(c, n, ls, a) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+            x1 = (ar__range_fx(c, n, ls, b) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+            ar__fill(c, s, ar_rect_make(tx + x0, ty + li * adv + th - 1, x1 - x0, 1), tclip, tc);
+        }
+    }
+
+    /* One pixel wide, and always at least one: a caret that scales with the
+       font disappears at small sizes and doubles at large ones, and every
+       toolkit draws it as a hairline for that reason. */
+    if (c->caret_on && c->caret_rect.w > 0)
+    {
+        ar__fill(c, s, c->caret_rect, tclip, tc);
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Controls, at the end of the frame
+ * ------------------------------------------------------------------------ */
+
+/* Is the box at this index one of this frame's tab stops? A label's click may
+   only move the focus to something the focus could have reached anyway. */
+static int ar__is_stop(const ar_ctx *c, ar_i32 idx)
+{
+    ar_i32 f;
+
+    for (f = 0; f < c->focusable_n; ++f)
+    {
+        if ((ar_i32)c->focusables[f] == idx)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* A slider's value for a pointer at x: the thumb's centre under the pointer,
+   snapped to the step from `min`, as the specification's step base asks. */
+static ar_i32 ar__range_at(const ar_ctx *c, ar_i32 r, ar_i32 x)
+{
+    ar_i32 lo = c->range_lo[r], hi = c->range_hi[r];
+    ar_i32 step = c->range_step[r] > 0 ? c->range_step[r] : 1000;
+    ar_i32 box = c->range_box[r];
+    ar_i32 rail = box >= 0 ? c->nodes[box].first_child : -1;
+    ar_i32 thumb_w = 0, left, span;
+    ar_i32 v, k;
+
+    /*
+     * The rail, by its name. "The first child with a child of its own" found
+     * the track once the track held a fill, and took the fill for the thumb --
+     * and the fill's width *is* the value, so a press on the thumb moved it
+     * left and a held one wandered while the value fed back into itself.
+     */
+    while (rail >= 0 && c->nodes[rail].sel_tag != ar_hash("ar-rail", 7u))
+    {
+        rail = c->nodes[rail].next_sibling;
+    }
+    if (rail >= 0 && c->nodes[rail].first_child >= 0)
+    {
+        thumb_w = c->nodes[c->nodes[rail].first_child].rect.w;
+    }
+    left = rail >= 0 ? c->nodes[rail].rect.x : c->nodes[box].rect.x;
+    span = rail >= 0 ? c->nodes[rail].rect.w : c->nodes[box].rect.w;
+    if (span <= 0 || hi <= lo)
+    {
+        return lo;
+    }
+    x -= left + thumb_w / 2;
+    if (x < 0)
+    {
+        x = 0;
+    }
+    if (x > span)
+    {
+        x = span;
+    }
+    /* In two halves so (hi - lo) * x cannot overflow for a range of millions,
+       and the first in thousandths of the span, so the step's rounding below
+       sees the fraction: truncated to whole units first, a press exactly on
+       the thumb came out one step to its left. */
+    v = lo + (ar_i32)(((hi - lo) / 1000) * (x * 1000 / span) + ((hi - lo) % 1000) * x / span);
+    k = (v - lo + step / 2) / step;
+    v = lo + k * step;
+    return v > hi ? hi : v;
+}
+
+static ar_i32 ar__range_index(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 r;
+
+    for (r = 0; r < c->range_n; ++r)
+    {
+        if (c->range_key[r] == key)
+        {
+            return r;
+        }
+    }
+    return -1;
+}
+
+/* What a control does when it is clicked, or Space or Enter reaches it. */
+static void ar__activate(ar_ctx *c, ar_i32 ci, int by_key)
+{
+    ar_u32   key = c->control_key[ci];
+    ar_slot *slot = ar_ctx_slot(c, key);
+
+    if (!slot)
+    {
+        return;
+    }
+    c->a11y_gen++;
+    switch (c->control_kind[ci])
+    {
+    case AR_CTL_CHECKBOX:
+        slot->flags = (ar_u8)((slot->flags ^ AR_SLOT_CHECKED) | AR_SLOT_TOUCHED);
+        break;
+
+    case AR_CTL_SUMMARY:
+    {
+        ar_slot *det = ar_ctx_slot(c, c->control_group[ci]);
+
+        if (det)
+        {
+            det->flags = (ar_u8)((det->flags ^ AR_SLOT_OPEN) | AR_SLOT_TOUCHED);
+        }
+        break;
+    }
+
+    case AR_CTL_RADIO:
+    {
+        ar_i32 k;
+
+        /*
+         * A radio turns on and never off by its own activation, and every
+         * other radio of the same name turns off. That asymmetry is the
+         * control: a group with nothing selected is reachable from the markup
+         * and not from the user.
+         */
+        for (k = 0; k < c->control_n; ++k)
+        {
+            ar_slot *other;
+
+            if (c->control_kind[k] != AR_CTL_RADIO || c->control_group[k] != c->control_group[ci])
+            {
+                continue;
+            }
+            other = ar_ctx_slot(c, c->control_key[k]);
+            if (other)
+            {
+                other->flags = (ar_u8)((other->flags & ~(ar_u8)AR_SLOT_CHECKED) | AR_SLOT_TOUCHED);
+            }
+        }
+        slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED | AR_SLOT_TOUCHED);
+        break;
+    }
+
+    case AR_CTL_SUBMIT:
+        /* The form is found from the document, which is only certain to be
+           whole now. A button outside any form submits nothing. */
+        c->submit_form = c->frame_doc ? ar_dom_form_of(c->frame_doc, c->control_dom[ci]) : -1;
+        c->submit_by = c->submit_form >= 0 ? c->control_dom[ci] : -1;
+        break;
+
+    case AR_CTL_RESET:
+        c->reset_form = c->frame_doc ? ar_dom_form_of(c->frame_doc, c->control_dom[ci]) : -1;
+        break;
+
+    case AR_CTL_SELECT:
+    case AR_CTL_COLOR:
+        slot->flags = (ar_u8)((slot->flags ^ AR_SLOT_OPEN) | AR_SLOT_TOUCHED);
+        break;
+
+    case AR_CTL_OPTION:
+    case AR_CTL_SWATCH:
+    {
+        /* A choice made in an open list: the owner takes the value and
+           closes, and keeps the focus -- the list was a part of it. */
+        ar_u32   owner = c->control_group[ci];
+        ar_slot *os = ar_ctx_slot(c, owner);
+
+        ar_ctl_set_value(c, owner, c->control_val[ci]);
+        if (os)
+        {
+            os->flags = (ar_u8)((os->flags & ~(ar_u8)AR_SLOT_OPEN) | AR_SLOT_TOUCHED);
+        }
+        c->focus_key = owner;
+        break;
+    }
+
+    case AR_CTL_FILE:
+        c->file_wanted = c->control_dom[ci];
+        break;
+
+    default:
+        break;
+    }
+    (void)by_key;
+}
+
+/*
+ * The keys a focused control takes, and everything else that happens to
+ * controls once the frame is laid out: an open list closing when the press
+ * lands elsewhere, a slider following the pointer.
+ *
+ * Returns the keys the control consumed, which the caller takes out of what
+ * scrolls. That was missing: Space on a focused checkbox ticked it *and*
+ * paged the document down, and End in a text field scrolled to the bottom of
+ * the page while it moved the caret.
+ */
+static ar_u32 ar__controls_after(ar_ctx *c)
+{
+    ar_u32 consumed = 0;
+    ar_i32 k, fi = -1;
+    ar_u32 arrows = AR_KEY_UP | AR_KEY_DOWN | AR_KEY_LEFT | AR_KEY_RIGHT;
+
+    /* An open list closes on Escape, or on a press that is not inside it. */
+    if ((c->mouse_pressed & AR_MOUSE_LEFT) || (c->keys & AR_KEY_ESCAPE))
+    {
+        for (k = 0; k < c->control_n; ++k)
+        {
+            ar_slot *slot;
+
+            if (c->control_kind[k] != AR_CTL_SELECT && c->control_kind[k] != AR_CTL_COLOR)
+            {
+                continue;
+            }
+            slot = ar_ctx_slot(c, c->control_key[k]);
+            if (!slot || !(slot->flags & AR_SLOT_OPEN))
+            {
+                continue;
+            }
+            if ((c->keys & AR_KEY_ESCAPE) ||
+                !ar__in_chain(c->hot_chain, c->hot_chain_n, c->control_key[k]))
+            {
+                slot->flags = (ar_u8)((slot->flags & ~(ar_u8)AR_SLOT_OPEN) | AR_SLOT_TOUCHED);
+                consumed |= AR_KEY_ESCAPE;
+                c->a11y_gen++;
+                ar_damage_add(&c->damage, c->nodes[c->control_box[k]].rect);
+            }
+        }
+    }
+
+    /* A slider held under the pointer follows it, from the press onwards. */
+    if (c->mouse_down & AR_MOUSE_LEFT)
+    {
+        ar_i32 r;
+
+        for (r = 0; r < c->range_n; ++r)
+        {
+            ar_i32 ci;
+
+            if (!ar__in_chain(c->active_chain, c->active_chain_n, c->range_key[r]))
+            {
+                continue;
+            }
+            for (ci = 0; ci < c->control_n; ++ci)
+            {
+                if (c->control_key[ci] == c->range_key[r])
+                {
+                    ar_i32 v = ar__range_at(c, r, c->mouse_x);
+
+                    if (v != ar_ctl_value(c, c->range_key[r], c->control_val[ci]))
+                    {
+                        ar_ctl_set_value(c, c->range_key[r], v);
+                        ar_damage_add(&c->damage, c->nodes[c->range_box[r]].rect);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    for (k = 0; k < c->control_n; ++k)
+    {
+        if (c->control_key[k] == c->focus_key && c->focus_key != 0)
+        {
+            fi = k;
+            break;
+        }
+    }
+    if (fi < 0)
+    {
+        return consumed;
+    }
+
+    switch (c->control_kind[fi])
+    {
+    case AR_CTL_TEXT:
+        consumed |= AR_KEY_SPACE | AR_KEY_LEFT | AR_KEY_RIGHT | AR_KEY_HOME | AR_KEY_END |
+                    AR_KEY_ENTER | AR_KEY_BACKSPACE | AR_KEY_DELETE;
+        if (c->edit_flags & (AR_FIELD_MULTI | AR_FIELD_NUMBER))
+        {
+            consumed |= AR_KEY_UP | AR_KEY_DOWN | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN;
+        }
+        break;
+
+    case AR_CTL_RADIO:
+        consumed |= AR_KEY_SPACE | AR_KEY_ENTER;
+        if (c->keys & arrows)
+        {
+            /*
+             * Arrows move within the group and check what they land on, which
+             * is how a radio group is operated from the keyboard everywhere --
+             * Tab enters the group once and the arrows choose.
+             */
+            ar_i32 dir = (c->keys & (AR_KEY_UP | AR_KEY_LEFT)) ? -1 : 1;
+            ar_i32 at = fi, tries;
+
+            for (tries = 0; tries < c->control_n; ++tries)
+            {
+                at += dir;
+                if (at < 0)
+                {
+                    at = c->control_n - 1;
+                }
+                if (at >= c->control_n)
+                {
+                    at = 0;
+                }
+                if (c->control_kind[at] == AR_CTL_RADIO &&
+                    c->control_group[at] == c->control_group[fi])
+                {
+                    break;
+                }
+            }
+            if (at != fi)
+            {
+                ar__activate(c, at, 1);
+                c->focus_key = c->control_key[at];
+                c->focus_visible = 1;
+            }
+            consumed |= arrows;
+        }
+        break;
+
+    case AR_CTL_SELECT:
+    {
+        ar_i32 count = (c->control_val[fi] >> 16) & 0xFFFF;
+        ar_i32 cur = ar_ctl_value(c, c->control_key[fi], c->control_val[fi] & 0xFFFF);
+        ar_i32 want = cur;
+
+        consumed |= AR_KEY_SPACE | AR_KEY_ENTER | arrows | AR_KEY_HOME | AR_KEY_END |
+                    AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN;
+        if (c->keys & (AR_KEY_UP | AR_KEY_LEFT))
+        {
+            --want;
+        }
+        if (c->keys & (AR_KEY_DOWN | AR_KEY_RIGHT))
+        {
+            ++want;
+        }
+        if (c->keys & (AR_KEY_HOME | AR_KEY_PAGE_UP))
+        {
+            want = 0;
+        }
+        if (c->keys & (AR_KEY_END | AR_KEY_PAGE_DOWN))
+        {
+            want = count - 1;
+        }
+        if (want < 0)
+        {
+            want = 0;
+        }
+        if (want > count - 1)
+        {
+            want = count - 1;
+        }
+        if (want != cur && want >= 0)
+        {
+            ar_ctl_set_value(c, c->control_key[fi], want);
+            ar_damage_add(&c->damage, c->nodes[c->control_box[fi]].rect);
+            c->a11y_gen++;
+        }
+        break;
+    }
+
+    case AR_CTL_RANGE:
+    {
+        ar_i32 r = ar__range_index(c, c->control_key[fi]);
+
+        consumed |= arrows | AR_KEY_HOME | AR_KEY_END | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN;
+        if (r >= 0 &&
+            (c->keys & (arrows | AR_KEY_HOME | AR_KEY_END | AR_KEY_PAGE_UP | AR_KEY_PAGE_DOWN)))
+        {
+            ar_i32 lo = c->range_lo[r], hi = c->range_hi[r];
+            ar_i32 step = c->range_step[r] > 0 ? c->range_step[r] : 1000;
+            ar_i32 cur = ar_ctl_value(c, c->control_key[fi], c->control_val[fi]);
+            ar_i32 v = cur;
+            ar_i32 page = (hi - lo) / 10;
+
+            /* A page is a tenth of the range, rounded to the step, and never
+               less than one step -- what every browser's slider does. */
+            page = page / step * step;
+            if (page < step)
+            {
+                page = step;
+            }
+            if (c->keys & (AR_KEY_UP | AR_KEY_RIGHT))
+            {
+                v += step;
+            }
+            if (c->keys & (AR_KEY_DOWN | AR_KEY_LEFT))
+            {
+                v -= step;
+            }
+            if (c->keys & AR_KEY_PAGE_UP)
+            {
+                v += page;
+            }
+            if (c->keys & AR_KEY_PAGE_DOWN)
+            {
+                v -= page;
+            }
+            if (c->keys & AR_KEY_HOME)
+            {
+                v = lo;
+            }
+            if (c->keys & AR_KEY_END)
+            {
+                v = hi;
+            }
+            if (v < lo)
+            {
+                v = lo;
+            }
+            if (v > hi)
+            {
+                v = hi;
+            }
+            if (v != cur)
+            {
+                ar_ctl_set_value(c, c->control_key[fi], v);
+                ar_damage_add(&c->damage, c->nodes[c->control_box[fi]].rect);
+            }
+        }
+        break;
+    }
+
+    default:
+        /* A button, a checkbox, a summary, a colour field, a file field:
+           Space and Enter are theirs, and nothing else is. */
+        consumed |= AR_KEY_SPACE | AR_KEY_ENTER;
+        break;
+    }
+    return consumed;
+}
+
+/*
+ * One tab stop per radio group: the checked radio, or the first when none is.
+ *
+ * Tab enters a group and the arrows move within it, so a group of twelve is
+ * one Tab and not twelve -- which is the difference between a form you can
+ * get through by keyboard and one you give up on. Applied while the list is
+ * still box indices, before it is published.
+ */
+static void ar__radio_stops(ar_ctx *c)
+{
+    ar_u32 groups[64];
+    ar_u32 chosen[64];
+    ar_u8  has_checked[64];
+    ar_i32 ng = 0, k, f, w;
+
+    for (k = 0; k < c->control_n; ++k)
+    {
+        ar_i32 g;
+        int    checked;
+
+        if (c->control_kind[k] != AR_CTL_RADIO)
+        {
+            continue;
+        }
+        checked = (c->nodes[c->control_box[k]].state & AR_STATE_CHECKED) != 0;
+        for (g = 0; g < ng; ++g)
+        {
+            if (groups[g] == c->control_group[k])
+            {
+                break;
+            }
+        }
+        if (g == ng)
+        {
+            if (ng >= 64)
+            {
+                continue; /* past 64 groups a frame, every radio stays a stop */
+            }
+            groups[ng] = c->control_group[k];
+            chosen[ng] = c->control_key[k]; /* the first, until one is checked */
+            has_checked[ng] = 0;
+            ++ng;
+        }
+        if (checked && !has_checked[g])
+        {
+            chosen[g] = c->control_key[k];
+            has_checked[g] = 1;
+        }
+    }
+    if (ng == 0)
+    {
+        return;
+    }
+
+    for (f = 0, w = 0; f < c->focusable_n; ++f)
+    {
+        ar_i32 idx = (ar_i32)c->focusables[f];
+        int    keep = 1;
+
+        for (k = 0; k < c->control_n; ++k)
+        {
+            if (c->control_box[k] == idx && c->control_kind[k] == AR_CTL_RADIO)
+            {
+                ar_i32 g;
+
+                for (g = 0; g < ng; ++g)
+                {
+                    if (groups[g] == c->control_group[k])
+                    {
+                        keep = chosen[g] == c->control_key[k] || c->control_key[k] == c->focus_key;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        if (keep)
+        {
+            c->focusables[w] = c->focusables[f];
+            c->focus_order[w] = c->focus_order[f];
+            ++w;
+        }
+    }
+    c->focusable_n = w;
+}
+
+/* One pixel, clipped -- the unit the parts below are drawn in. */
+static void ar__dot(const ar_ctx *c, ar_surface *s, ar_i32 x, ar_i32 y, ar_rect clip, ar_color col)
+{
+    ar__fill(c, s, ar_rect_make(x, y, 1, 1), clip, col);
+}
+
+/*
+ * The small parts of controls a browser draws natively, pixel for pixel as
+ * Edge draws them at their default size -- sampled from its screenshot by
+ * tools/versus.py rather than designed:
+ *
+ *   0  a checkbox's tick, two pixels thick: the short stroke down from (1,4)
+ *      to (3,6), the long one up to (7,1), in a nine-pixel box;
+ *   1  a select's chevron, a V of two-pixel strokes eight wide and four tall;
+ *   2  a textarea's grip, two dotted diagonals in the corner.
+ *
+ * Integer steps and no anti-aliasing, so the edges are a pixel harder than
+ * Edge's; the shapes and their places are the same.
+ */
+static void ar__paint_part(const ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect clip,
+                           ar_color col, int which)
+{
+    ar_i32 x = n->rect.x, y = n->rect.y, k;
+
+    if (which == 0)
+    {
+        for (k = 0; k <= 2; ++k)
+        {
+            ar__dot(c, s, x + 1 + k, y + 4 + k, clip, col);
+            ar__dot(c, s, x + 1 + k, y + 5 + k, clip, col);
+        }
+        for (k = 0; k <= 4; ++k)
+        {
+            ar__dot(c, s, x + 3 + k, y + 6 - k, clip, col);
+            ar__dot(c, s, x + 3 + k, y + 5 - k, clip, col);
+        }
+    }
+    else if (which == 1)
+    {
+        for (k = 0; k < 4; ++k)
+        {
+            ar__fill(c, s, ar_rect_make(x + k, y + k, 2, 1), clip, col);
+            ar__fill(c, s, ar_rect_make(x + 6 - k, y + k, 2, 1), clip, col);
+        }
+    }
+    else
+    {
+        for (k = 0; k < 3; ++k)
+        {
+            ar__dot(c, s, x + 1 + 2 * k, y + 5 - 2 * k, clip, col);
+        }
+        for (k = 0; k < 2; ++k)
+        {
+            ar__dot(c, s, x + 4 + 2 * k, y + 5 - 2 * k, clip, col);
+        }
+    }
+}
+
+/*
+ * A fieldset's border: the groove a browser draws, and broken behind the
+ * legend.
+ *
+ * A groove is two lines: dark outside and light inside along the top and the
+ * left, the other way round along the bottom and the right -- #9C9C9C and
+ * #F0F0F0 in Edge. And the top line runs through the middle of the legend,
+ * which stands on it, and stops either side of it rather than striking the
+ * legend through.
+ */
+static void ar__paint_fieldset(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect clip,
+                               ar_color dark)
+{
+    ar_color light = AR_RGBA(0xF0, 0xF0, 0xF0, 0xFF);
+    ar_rect  r = n->rect;
+    ar_i32   top = r.y, gap0 = 0, gap1 = 0, k;
+    ar_i32   right = r.x + r.w, bottom = r.y + r.h;
+
+    for (k = n->first_child; k >= 0; k = c->nodes[k].next_sibling)
+    {
+        if (c->nodes[k].state & AR_STATE_LEGEND)
+        {
+            ar_rect lg = c->nodes[k].rect;
+
+            top = lg.y + lg.h / 2 - 1;
+            gap0 = lg.x;
+            gap1 = lg.x + lg.w;
+            break;
+        }
+    }
+    if (top >= bottom - 2)
+    {
+        return;
+    }
+
+    /* The top, either side of the legend. */
+    for (k = 0; k < 2; ++k)
+    {
+        ar_color col = k == 0 ? dark : light;
+        ar_i32   y = top + k;
+        ar_i32   x0 = r.x + k, x1 = right - 1 - k;
+
+        if (gap1 > gap0)
+        {
+            if (gap0 > x0)
+            {
+                ar__fill(c, s, ar_rect_make(x0, y, gap0 - x0, 1), clip, col);
+            }
+            if (x1 > gap1)
+            {
+                ar__fill(c, s, ar_rect_make(gap1, y, x1 - gap1, 1), clip, col);
+            }
+        }
+        else
+        {
+            ar__fill(c, s, ar_rect_make(x0, y, x1 - x0, 1), clip, col);
+        }
+    }
+    /* Left: dark, then light inside it. */
+    ar__fill(c, s, ar_rect_make(r.x, top, 1, bottom - top - 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(r.x + 1, top + 1, 1, bottom - top - 3), clip, light);
+    /* Right and bottom: dark inside, light outside. */
+    ar__fill(c, s, ar_rect_make(right - 2, top, 1, bottom - top - 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(right - 1, top, 1, bottom - top), clip, light);
+    ar__fill(c, s, ar_rect_make(r.x, bottom - 2, r.w - 1, 1), clip, dark);
+    ar__fill(c, s, ar_rect_make(r.x, bottom - 1, r.w, 1), clip, light);
+}
+
+/*
+ * Whose background the canvas takes, CSS 2.1 14.2, or -1 for nobody's.
+ *
+ * The root's, when it has one; and in an HTML document whose root has none,
+ * the body's -- the rule that makes `body { background: ... }` colour the whole
+ * window rather than a box that stops where the text does. Beside a browser,
+ * the document example drew its page colour in a rectangle with white down
+ * both sides and under the last paragraph, which is the body's box and not
+ * the canvas.
+ */
+static ar_i32 ar__canvas_box(const ar_ctx *c)
+{
+    ar_i32 k;
+
+    if (c->node_count <= 0 || c->nodes[0].parent >= 0)
+    {
+        return -1;
+    }
+    if (AR_ALPHA_OF((ar_color)AR_WIDE(&c->nodes[0].style, AR_P_BACKGROUND)) != 0)
+    {
+        return 0;
+    }
+    if (c->nodes[0].sel_tag != ar_hash("html", 4u))
+    {
+        return -1;
+    }
+    for (k = c->nodes[0].first_child; k >= 0; k = c->nodes[k].next_sibling)
+    {
+        if (c->nodes[k].sel_tag == ar_hash("body", 4u) &&
+            c->nodes[k].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            return AR_ALPHA_OF((ar_color)AR_WIDE(&c->nodes[k].style, AR_P_BACKGROUND)) != 0 ? k
+                                                                                            : -1;
+        }
+    }
+    return -1;
 }
 
 static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
+
+    /* The canvas first, under everything, and the box it came from does not
+       paint the same colour again -- which matters for a translucent one. */
+    ar_i32 canvas = ar__canvas_box(c);
+    int    document =
+        c->node_count > 0 && c->nodes[0].parent < 0 && c->nodes[0].sel_tag == ar_hash("html", 4u);
+
+    /*
+     * ponytail: two markers the painter knows by tag name.
+     *
+     * A `<summary>`'s disclosure triangle and a `<select>`'s arrow are a glyph
+     * in every other engine, and a glyph is what this one cannot use for them:
+     * the built-in face is ASCII 32 to 126, so U+25B8 draws as a question mark
+     * on any build without a TrueType face. They are boxes instead, and a box
+     * has no way to say "draw me as a triangle" without a property -- which
+     * would cost eight bytes on every box in every interface to serve two
+     * markers.
+     *
+     * So the painter recognises two synthetic tags, hashed once per frame
+     * rather than per box. The ceiling is that an author who writes
+     * `<ar-tri-d>` gets a triangle; the names are reserved and documented in
+     * ar_ua_css.c beside `.ar-checkbox` and the rest.
+     *
+     * The upgrade path is `content` and `::marker`, which is 0.5.3's work.
+     * When that lands these two go with it and this block comes out.
+     */
+    ar_u32 tag_tri_r = ar_hash("ar-tri-r", 8u);
+    ar_u32 tag_tri_d = ar_hash("ar-tri-d", 8u);
+
+    /* Three more of the same kind, for the controls: a checkbox's tick, a
+       select's chevron and a textarea's resize grip. Each is a glyph or a
+       native part in a browser, and each was measured off Edge's own pixels
+       rather than drawn from memory. And `fieldset`, whose border is a groove
+       that a legend interrupts. */
+    ar_u32 tag_tick = ar_hash("ar-tick", 7u);
+    ar_u32 tag_chev = ar_hash("ar-chev", 7u);
+    ar_u32 tag_grip = ar_hash("ar-grip", 7u);
+    ar_u32 tag_fieldset = ar_hash("fieldset", 8u);
+    ar_u32 tag_value = ar_hash("ar-value", 8u);
+
+    if (canvas >= 0)
+    {
+        ar__fill(c, s, region, region, (ar_color)AR_WIDE(&c->nodes[canvas].style, AR_P_BACKGROUND));
+    }
+    else if (document)
+    {
+        /* Nobody named a colour, so it is the canvas's own: `Canvas`, in the
+           root's colour scheme -- white, or near-black for a dark page. An
+           interface built with ar_begin has no root `html` and keeps
+           whatever the surface held, as it always has. */
+        ar__fill(c, s, region, region,
+                 (ar_color)ar_sys_color_default(
+                     AR_SYS_CANVAS, c->nodes[0].style.v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK));
+    }
 
     for (ord = 0; ord < painted; ++ord)
     {
@@ -3755,8 +7219,9 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         ar_rect  clip;
         ar_color bg, border;
         ar_i32   bw;
+        ar_i32   radius;
 
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || (n->state & AR_STATE_TRANSPARENT))
         {
             continue;
         }
@@ -3784,7 +7249,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             fill = (ar_color)AR_WIDE(&bd, AR_P_BACKGROUND);
             if (AR_ALPHA_OF(fill) != 0)
             {
-                ar_fill_rect(s, c->last_viewport, region, fill);
+                ar__fill(c, s, c->last_viewport, region, fill);
             }
         }
 
@@ -3798,10 +7263,77 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
-        bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
-        if (AR_ALPHA_OF(bg) != 0)
+        /* `border-radius` was parsed and stored from 0.10.0 and read by
+           nothing, so a radio button was a square with a square dot in it and
+           the property was a catalogue row for a feature that did not exist.
+           One value, all four corners: the per-corner form is four more
+           properties and no control has ever wanted it. */
+        radius = n->style.v[AR_P_BORDER_RADIUS];
+
+        if (n->sel_tag == tag_tri_r || n->sel_tag == tag_tri_d)
         {
-            ar_fill_rect(s, n->rect, clip, bg);
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
+
+            if (AR_ALPHA_OF(tc) != 0)
+            {
+                ar__fill_tri_k(c, s, n->rect, n->sel_tag == tag_tri_d ? AR_TRI_DOWN : AR_TRI_RIGHT,
+                               clip, tc);
+            }
+            continue;
+        }
+
+        if (n->sel_tag == tag_tick || n->sel_tag == tag_chev || n->sel_tag == tag_grip)
+        {
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
+
+            if (AR_ALPHA_OF(tc) != 0)
+            {
+                ar__paint_part(c, s, n, clip, tc,
+                               n->sel_tag == tag_tick ? 0 : (n->sel_tag == tag_chev ? 1 : 2));
+            }
+            continue;
+        }
+
+        bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
+        if (AR_ALPHA_OF(bg) != 0 && i != canvas)
+        {
+            if (radius > 0)
+            {
+                ar__fill_round(c, s, n->rect, radius, clip, bg);
+            }
+            else
+            {
+                ar__fill(c, s, n->rect, clip, bg);
+            }
+        }
+
+        /*
+         * The outline, before the border and outside the box.
+         *
+         * Outside is the whole point: an outline contributes nothing to
+         * layout, so it can appear and disappear as the focus moves without
+         * the page shifting under it. A border cannot do this job, and a focus
+         * ring drawn with one moves every box after it the moment somebody
+         * presses Tab.
+         *
+         * Drawn as four rectangles around `rect` rather than as one larger
+         * rectangle behind it, because it has to sit over whatever is beside
+         * the box and under nothing of the box's own -- and because a filled
+         * rectangle behind a transparent background would tint the box itself.
+         */
+        {
+            ar_i32   ow = n->style.v[AR_P_OUTLINE_WIDTH];
+            ar_color oc = (ar_color)AR_WIDE(&n->style, AR_P_OUTLINE_COLOR);
+
+            if (ow > 0 && AR_ALPHA_OF(oc) != 0)
+            {
+                ar_rect r = n->rect;
+
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x - ow, r.y, ow, r.h), clip, oc);
+                ar__fill(c, s, ar_rect_make(r.x + r.w, r.y, ow, r.h), clip, oc);
+            }
         }
 
         bw = n->style.v[AR_P_BORDER_WIDTH];
@@ -3823,29 +7355,44 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
                 if (t > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
                 }
                 if (b > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
                 }
                 if (l > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
                 }
                 if (ri > 0)
                 {
-                    ar_fill_rect(s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
+                    ar__fill(c, s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
                 }
             }
+        }
+        else if (bw > 0 && AR_ALPHA_OF(border) != 0 && n->sel_tag == tag_fieldset)
+        {
+            ar__paint_fieldset(c, s, n, clip, border);
         }
         else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
-            ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
-            ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+
+            if (radius > 0)
+            {
+                /* One ring rather than four rectangles: four would meet at the
+                   corners the radius has just removed, and each would stop at
+                   a square edge inside the curve. */
+                ar__stroke_round(c, s, r, radius, bw, clip, border);
+            }
+            else
+            {
+                ar__fill(c, s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
+                ar__fill(c, s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
+            }
         }
 
         /*
@@ -3865,7 +7412,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
                 if (bg >> 24)
                 {
-                    ar_fill_rect(s, f->rect, clip, bg);
+                    ar__fill(c, s, f->rect, clip, bg);
                 }
                 ar__draw_line(c, s, fclip, f->rect.x + n->style.v[AR_P_PAD_LEFT],
                               f->rect.y + n->style.v[AR_P_PAD_TOP], n, f->from, f->to,
@@ -3874,7 +7421,13 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
-        if (n->text)
+        if (n->text && i == c->edit_box && c->edit_hash != 0)
+        {
+            /* The field with the caret: its text scrolled, its selection, its
+               composition and the caret itself. */
+            ar__paint_field(c, s, n, ar_rect_intersect(clip, n->rect));
+        }
+        else if (n->text)
         {
             /* Text starts inside the padding box. Anything more elaborate is
                alignment, which belongs to the box, not to the glyphs. */
@@ -3895,6 +7448,23 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_i32 advance = n->line_h;
             ar_i32 li;
 
+            /*
+             * `text-align` for a box's own text. A line of children is aligned
+             * where the line is filled; text a box carries itself was always
+             * drawn from the left, so a list's numbers -- a fixed slot with its
+             * text right-aligned against the item -- sat at the left of their
+             * slot, a word's width from where a browser puts them. A field's
+             * text stays left: its caret is measured from there.
+             */
+            ar_i32 align = n->style.v[AR_P_TEXT_ALIGN];
+            int    aligned = (align == AR_TEXT_ALIGN_RIGHT || align == AR_TEXT_ALIGN_CENTER) &&
+                             n->sel_tag != tag_value;
+            ar_i32 len = 0;
+
+            while (aligned && n->text[len])
+            {
+                ++len;
+            }
             if (lines < 1)
             {
                 lines = 1;
@@ -3909,8 +7479,22 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                 ar_i32 from = starts[li];
                 ar_i32 to = (li + 1 < lines) ? starts[li + 1] : -1;
                 ar_i32 ly = ty + li * advance;
+                ar_i32 lx = tx;
 
-                ar__draw_line(c, s, tclip, tx, ly, n, from, to, tc);
+                if (aligned)
+                {
+                    /* Trailing spaces hang, as they do at a wrap anywhere. */
+                    ar_i32 end = to < 0 ? len : to;
+                    ar_i32 w;
+
+                    while (end > from && (n->text[end - 1] == ' ' || n->text[end - 1] == '\n'))
+                    {
+                        --end;
+                    }
+                    w = (ar__range_fx(c, n, from, end) + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+                    lx += align == AR_TEXT_ALIGN_RIGHT ? inner_w - w : (inner_w - w) / 2;
+                }
+                ar__draw_line(c, s, tclip, lx, ly, n, from, to, tc);
             }
         }
     }
@@ -4159,16 +7743,14 @@ static void ar__apply_wheel(ar_ctx *c)
  * Runs beside ar__apply_wheel and settles into the same place, so a key and a
  * notch cannot disagree about where a container ended up.
  *
- * Which container? There is no focus in areole, so the honest answer is the
- * same one the wheel would move: the innermost scrollable box under the
- * cursor. That is a deviation from a browser, where the keyboard follows focus
- * and the wheel follows the pointer, and it is named here rather than left to
- * be discovered. Focus arrives with the rest of keyboard handling in 0.10.0
- * and this becomes a one-line change when it does.
+ * Which container? The one holding the focus, and when nothing is focused,
+ * the one under the cursor.
  *
- * A page is the viewport less an overlap, which is what every reader expects:
- * the last line of the old page is the first line of the new one, so nothing
- * is skipped over the fold.
+ * This said "there is no focus in areole, so the honest answer is the
+ * cursor" from 0.6.1 until 0.10.0, and named itself a deviation from a
+ * browser while it did. There is a focus now. The cursor rule stayed as the
+ * fallback rather than being replaced, because a document nobody has tabbed
+ * into has no focus and Page Down should still do something there.
  */
 #define AR_KEY_LINE     40
 #define AR_PAGE_OVERLAP 24
@@ -4205,7 +7787,26 @@ static void ar__apply_keys(ar_ctx *c)
 {
     ar_i32 i;
 
-    if (c->keys == 0 || !c->mouse_inside || c->drag_key)
+    /*
+     * The keyboard follows the focus when there is one, and the cursor when
+     * there is not.
+     *
+     * Until 0.10.0 it followed the cursor always, and the comment above this
+     * function said why: "There is no focus in areole, so the honest answer
+     * is the cursor." That was honest and it was a deviation -- in a browser
+     * the keyboard follows focus, and scrolling a pane you are not pointing
+     * at is exactly what Tab and then Page Down is for.
+     *
+     * The cursor fallback stays and is not a consolation prize: a document
+     * nobody has tabbed into yet has no focus, and Page Down there should
+     * still scroll whatever is under the pointer. The wheel is left alone
+     * entirely -- a wheel scrolls what it points at, in every toolkit.
+     */
+    if (c->keys == 0 || c->drag_key)
+    {
+        return;
+    }
+    if (!ar_has_focus(c) && !c->mouse_inside)
     {
         return;
     }
@@ -4217,7 +7818,22 @@ static void ar__apply_keys(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want, travel;
 
-        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n))
+        {
+            continue;
+        }
+        /* With a focus, the container holding it; without one, the container
+           under the pointer. `focus_chain` is the path from the focused box to
+           the root, so a hit in it is exactly "this container contains the
+           focus". */
+        if (ar_has_focus(c))
+        {
+            if (!ar__in_chain(c->focus_chain, c->focus_chain_n, n->key))
+            {
+                continue;
+            }
+        }
+        else if (!ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -4320,6 +7936,27 @@ static void ar__update_hot(ar_ctx *c)
         while (at >= 0 && c->hot_chain_n < AR_MAX_DEPTH)
         {
             c->hot_chain[c->hot_chain_n++] = c->nodes[at].key;
+            at = c->nodes[at].parent;
+        }
+    }
+
+    /*
+     * And the focus chain, for `:focus-within`.
+     *
+     * Built from the index ar_begin recorded rather than by searching, and
+     * rebuilt every frame because the tree is: a key that was focused last
+     * frame and is not declared this frame keeps its key and loses its index,
+     * which is exactly what should happen -- the focus survives a box going
+     * away and comes back with it.
+     */
+    c->focus_chain_n = 0;
+    if (c->focus_index >= 0)
+    {
+        ar_i32 at = c->focus_index;
+
+        while (at >= 0 && c->focus_chain_n < AR_MAX_DEPTH)
+        {
+            c->focus_chain[c->focus_chain_n++] = c->nodes[at].key;
             at = c->nodes[at].parent;
         }
     }
@@ -4677,7 +8314,7 @@ static ar__move ar__region_move(ar_ctx *c, ar_surface *s, ar_rect viewport)
             }
         }
     }
-    if (mw <= 0)
+    if (mw <= 0 || c->render_scale != 1000)
     {
         return m;
     }
@@ -4720,7 +8357,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         c->depth = 0;
     }
 
-    viewport = ar_rect_make(0, 0, s ? s->w : 0, s ? s->h : 0);
+    /* The page is laid out in the surface's size at the render scale: a
+       surface twice the window at 2000 lays out at the window's size. */
+    viewport = ar_rect_make(0, 0, s ? s->w * 1000 / c->render_scale : 0,
+                            s ? s->h * 1000 / c->render_scale : 0);
 
     /*
      * `viewport-fit: auto` lays out inside the safe rectangle.
@@ -4771,6 +8411,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Before the collapse marking and before layout: everything after this
        point walks the tree, and this is the last moment the tree changes. */
     ar__splice_contents(c);
+    ar__blockify_inlines(c);
     ar__mark_collapsed(c);
 
     /* The viewport lengths, which needed this frame's surface and so could not
@@ -4803,6 +8444,11 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
         env.wrap = ar__wrap_cb;
         env.measure = ar__range_px;
+        /* Only an outline face rounds: the bitmap face's widths are whole
+           pixels already, its pieces sum exactly, and the unrounded path
+           would be a second call per word for nothing -- 5% of the layout
+           of a page of wrapped paragraphs, measured. */
+        env.measure_fx = c->have_face ? ar__range_fx_cb : 0;
         env.ud = c;
         env.sheet = &c->sheet;
         env.scroll_of = ar__scroll_of;
@@ -4819,6 +8465,26 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        move a subtree and both of those read the final rectangles. */
     ar__anchor(c);
 
+    /* The caret, a click in a field, Up and Down in a textarea: everything
+       about a field that needs to know where its lines are. */
+    ar__field_after_layout(c);
+
+    /*
+     * A Tab brings what it focused into view.
+     *
+     * The minimum scroll that shows it, through the same call an embedder
+     * uses, so a focused field below the fold is scrolled to rather than
+     * typed into blind. Lands next frame, as a key scroll does.
+     */
+    if (c->focus_moved)
+    {
+        if (c->focus_index >= 0)
+        {
+            ar_node_scroll_into_view(c, c->focus_index);
+        }
+        c->focus_moved = 0;
+    }
+
     /* Paint order, once the rectangles are final: a stacking context's bucket
        depends on nothing layout decides, but its subtree has to be walked and
        there is no reason to walk it twice. */
@@ -4828,15 +8494,20 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
        before anything asks for either. */
     ar__content_widths(c);
     ar__mark_inert(c);
+    ar__mark_transparent(c);
     ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
     /* A resize repaints everything: every box moved, and the surface behind
        them is new memory. */
-    if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h)
+    /* A new scale leaves the same layout and not one pixel standing that is
+       right: everything is repainted, as for a new size. */
+    if (viewport.w != c->last_viewport.w || viewport.h != c->last_viewport.h ||
+        c->render_scale != c->painted_scale)
     {
         ar_damage_add_all(&c->damage);
+        c->painted_scale = c->render_scale;
     }
     c->last_viewport = viewport;
     ar_damage_set_viewport(&c->damage, viewport);
@@ -4870,11 +8541,22 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar_slot *slot = ar_ctx_slot(c, n->key);
         ar_u32   digest = ar_paint_digest(n);
 
+        /* Not n->rect: an outline is painted outside the border box, so the
+           box is not the extent of its own pixels. ar_painted_bounds is the
+           one place that knows the difference, and the slot remembers it so
+           the frame that loses a focus ring erases the one it had. */
+        ar_rect bounds = ar_painted_bounds(n);
+
+        if (i == c->edit_box && c->edit_hash != 0)
+        {
+            digest = ar__mix(digest, c->edit_hash) | 1u;
+        }
+
         if (!slot)
         {
             /* No slot means no memory of this box, so no way to know it did
                not change. Repaint it. */
-            ar_damage_add(&c->damage, n->rect);
+            ar_damage_add(&c->damage, bounds);
             other_damage = 1;
             continue;
         }
@@ -4886,11 +8568,18 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
         if (slot->seen != c->frame - 1 || slot->digest != digest)
         {
-            ar_damage_add(&c->damage, n->rect);
+            /* Both, because the change may be the ring going away: the new
+               bounds are then the bare box and say nothing about the pixels
+               the ring left behind. */
+            ar_damage_add(&c->damage, bounds);
+            if (slot->seen == c->frame - 1)
+            {
+                ar_damage_add(&c->damage, slot->rect);
+            }
             other_damage = 1;
         }
-        else if (slot->rect.x != n->rect.x || slot->rect.y != n->rect.y ||
-                 slot->rect.w != n->rect.w || slot->rect.h != n->rect.h)
+        else if (slot->rect.x != bounds.x || slot->rect.y != bounds.y || slot->rect.w != bounds.w ||
+                 slot->rect.h != bounds.h)
         {
             /*
              * A box inside a container whose pixels were just moved is already
@@ -4899,21 +8588,21 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
              * that stayed put, or anything the move did not explain, falls
              * through and is repainted as usual.
              */
-            if (move.container >= 0 && n->rect.x == slot->rect.x &&
-                n->rect.y == slot->rect.y - move.dy && n->rect.w == slot->rect.w &&
-                n->rect.h == slot->rect.h && ar__is_within(c, i, move.container))
+            if (move.container >= 0 && bounds.x == slot->rect.x &&
+                bounds.y == slot->rect.y - move.dy && bounds.w == slot->rect.w &&
+                bounds.h == slot->rect.h && ar__is_within(c, i, move.container))
             {
                 /* Its pixels were moved, not repainted. */
             }
             else
             {
                 ar_damage_add(&c->damage, slot->rect);
-                ar_damage_add(&c->damage, n->rect);
+                ar_damage_add(&c->damage, bounds);
                 other_damage = 1;
             }
         }
 
-        slot->rect = n->rect;
+        slot->rect = bounds;
         slot->digest = digest;
         slot->seen = c->frame;
         slot->last_frame = c->frame;
@@ -4942,6 +8631,32 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         }
     }
     c->seen_last = survivors;
+
+    /*
+     * A blink, as damage.
+     *
+     * Nothing in the box changed -- not its text, not its caret position, not
+     * its digest -- so the walk above saw nothing to repaint. The caret's own
+     * column is all that differs, and it is all that gets painted: one pixel
+     * by a line, which is 0.10.0's "fewer than 2,000 pixels a blink" with two
+     * orders of magnitude to spare.
+     */
+    if (c->caret_on != c->caret_painted_on || c->caret_rect.x != c->caret_painted.x ||
+        c->caret_rect.y != c->caret_painted.y || c->caret_rect.h != c->caret_painted.h)
+    {
+        if (c->caret_painted_on && !ar_rect_is_empty(c->caret_painted))
+        {
+            ar_damage_add(&c->damage, c->caret_painted);
+            other_damage = 1;
+        }
+        if (c->caret_on && !ar_rect_is_empty(c->caret_rect))
+        {
+            ar_damage_add(&c->damage, c->caret_rect);
+            other_damage = 1;
+        }
+    }
+    c->caret_painted = c->caret_rect;
+    c->caret_painted_on = c->caret_on;
 
     damage = ar_damage_bounds(&c->damage, viewport);
 
@@ -4988,6 +8703,221 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     {
         ar__paint(c, s, damage);
     }
+    /*
+     * Activation, and it is settled here because here is where both halves are
+     * known: the tree is complete, so every control is registered, and the
+     * click has been resolved against it.
+     *
+     * The effect lands on the next frame. That is the same one-frame model
+     * hover, focus and everything else in this file uses, and for the same
+     * reason: the state a box is styled with has to be settled before the box
+     * is styled, and this is after.
+     */
+    {
+        ar_i32 ci, hit = -1;
+        ar_u32 fired = 0;
+        int    by_key = 0;
+
+        /*
+         * A click on a control, or a key on the focused one, or an assistive
+         * tool asking for either. Space and Enter both activate; Space only
+         * reaches here when something is focused, because otherwise it has
+         * already paged the view down.
+         *
+         * The click is matched against the *chain* and not against the box it
+         * landed on, for the reason `:hover` needs a chain: in a parsed
+         * document every element's text is a child box, so a press on
+         * `<summary>head</summary>` lands on the text and never on the summary.
+         * An `<input>` has no text child and worked without this, which is
+         * exactly the sort of coincidence that makes the bug look like it is
+         * about `<details>`.
+         */
+        if (c->synth_fire)
+        {
+            fired = c->synth_fire;
+            c->synth_fire = 0;
+        }
+        else if (c->clicked)
+        {
+            ar_i32 h;
+
+            for (h = 0; h < c->hot_chain_n && !fired; ++h)
+            {
+                ar_i32 k;
+
+                for (k = 0; k < c->control_n; ++k)
+                {
+                    if (c->control_key[k] == c->hot_chain[h])
+                    {
+                        fired = c->hot_chain[h];
+                        break;
+                    }
+                }
+            }
+        }
+        else if (c->focus_key && (c->keys & (AR_KEY_ENTER | AR_KEY_SPACE)))
+        {
+            fired = c->focus_key;
+            by_key = 1;
+        }
+
+        for (ci = 0; fired && ci < c->control_n; ++ci)
+        {
+            if (c->control_key[ci] == fired)
+            {
+                hit = ci;
+                break;
+            }
+        }
+
+        /*
+         * A label passes its click to the control it labels.
+         *
+         * Clicking "Wrap it as a gift" ticks the box beside it, which is the
+         * whole reason forms put labels on checkboxes -- the box is thirteen
+         * pixels and the words are the target anybody actually aims at. A
+         * field or a list takes the focus instead, because that is what a
+         * click on one does.
+         */
+        if (hit >= 0 && c->control_kind[hit] == AR_CTL_LABEL)
+        {
+            ar_i32 target = c->control_val[hit], k;
+
+            hit = -1;
+            for (k = 0; k < c->control_n; ++k)
+            {
+                ar_u8 kk = c->control_kind[k];
+
+                if (c->control_dom[k] == target && kk != AR_CTL_LABEL && kk != AR_CTL_OPTION &&
+                    kk != AR_CTL_SWATCH)
+                {
+                    hit = k;
+                    break;
+                }
+            }
+            if (hit >= 0)
+            {
+                ar_u8 kk = c->control_kind[hit];
+
+                if (ar__is_stop(c, c->control_box[hit]))
+                {
+                    c->focus_key = c->control_key[hit];
+                    c->focus_visible = 0;
+                }
+                if (kk == AR_CTL_TEXT || kk == AR_CTL_SELECT || kk == AR_CTL_RANGE ||
+                    kk == AR_CTL_COLOR)
+                {
+                    hit = -1;
+                }
+            }
+        }
+
+        if (hit >= 0)
+        {
+            ar__activate(c, hit, by_key);
+        }
+    }
+
+    /* What the focused control takes from the keyboard is not the page's to
+       scroll with. */
+    c->keys &= ~ar__controls_after(c);
+
+    /*
+     * Enter in a single-line field submits its form, through its first
+     * submit button -- which is what makes Enter in a login form log in. A
+     * disabled default button blocks it, which is the specification's rule
+     * and the reason a form can be made unsubmittable by markup alone.
+     */
+    if (c->implicit_from >= 0 && c->frame_doc && c->submit_form < 0)
+    {
+        ar_i32 form = ar_dom_form_of(c->frame_doc, c->implicit_from);
+        ar_i32 by = form >= 0 ? ar_dom_first_submit(c->frame_doc, form) : -1;
+
+        if (form >= 0 && by != -2)
+        {
+            c->submit_form = form;
+            c->submit_by = by;
+        }
+    }
+    if (c->reset_form >= 0 && c->frame_doc)
+    {
+        ar_dom_form_reset(c, c->frame_doc, c->reset_form);
+        c->a11y_gen++;
+    }
+
+    ar__radio_stops(c);
+
+    /*
+     * The frame's tab stops become the list Tab and a click walk next frame.
+     *
+     * Here rather than inside ar__update_hot, which is where it went first:
+     * that function returns early when the cursor is outside the window, so on
+     * a machine where nobody had touched the mouse the list was never
+     * published and Tab did nothing at all. Focus is the one kind of input
+     * that has to work when the mouse does not.
+     *
+     * Copied rather than swapped, because the live list is cleared at the top
+     * of every frame and a swap would hand the next frame a stale one whenever
+     * a frame declared no focusable boxes.
+     */
+    {
+        ar_i32 fk;
+
+        /*
+         * Index to key, dropping anything inert on the way.
+         *
+         * An inert subtree is not in the tab order, and that is the whole of
+         * focus trapping: not a mode with a stack of its own, but the ordinary
+         * traversal refusing to enter a subtree that has been switched off.
+         * The top layer has marked everything outside a modal since 0.6.3 and
+         * nothing had ever asked.
+         */
+        c->focusable_prev_n = 0;
+        for (fk = 0; fk < c->focusable_n; ++fk)
+        {
+            ar_i32 idx = (ar_i32)c->focusables[fk];
+
+            if (idx < 0 || idx >= c->node_count)
+            {
+                continue;
+            }
+            if (c->nodes[idx].state & AR_STATE_INERT)
+            {
+                continue;
+            }
+            c->focusables_prev[c->focusable_prev_n] = c->nodes[idx].key;
+            c->focus_order_prev[c->focusable_prev_n] = c->focus_order[fk];
+            c->focusable_prev_n++;
+        }
+
+        /*
+         * Sorted by tabindex, stably, so that equal indices keep document
+         * order. An insertion sort because the list is short and almost always
+         * already in order -- every stop with tabindex 0, which is every stop
+         * on a page that has not tried to be clever.
+         *
+         * A positive tabindex ahead of every zero is a rule that makes pages
+         * worse and has to be honoured regardless: an author who numbers three
+         * fields and leaves the rest alone expects those three first, and an
+         * engine that ignores it tabs somewhere else entirely.
+         */
+        for (fk = 1; fk < c->focusable_prev_n; ++fk)
+        {
+            ar_u32 key = c->focusables_prev[fk];
+            ar_i16 ord = c->focus_order_prev[fk];
+            ar_i32 j = fk - 1;
+
+            while (j >= 0 && ar__tab_after(c->focus_order_prev[j], ord))
+            {
+                c->focusables_prev[j + 1] = c->focusables_prev[j];
+                c->focus_order_prev[j + 1] = c->focus_order_prev[j];
+                --j;
+            }
+            c->focusables_prev[j + 1] = key;
+            c->focus_order_prev[j + 1] = ord;
+        }
+    }
+
     ar__update_hot(c);
     ar__apply_drag(c);
     ar__apply_wheel(c);
@@ -5024,6 +8954,12 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     ar_perf_mark(&c->perf, AR_PHASE_RASTER, ar__now(c));
 
+    if (c->node_count != c->a11y_shape)
+    {
+        c->a11y_shape = c->node_count;
+        c->a11y_gen++;
+    }
+
     c->perf.cur.nodes = (ar_u32)c->node_count;
     /* What the frame actually used, not what it reserved. Reporting the
        reservation would show a flat number that never moves and would say
@@ -5032,7 +8968,43 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     /* The frame is left open on purpose: ar_frame_presented closes it, once
        the caller has actually put the pixels on screen. */
+    c->frame_standing = s != 0;
     return damage;
+}
+
+/*
+ * The blink, from the frame that is standing.
+ *
+ * Everything the caret's column shows is still here: the tree ar_frame_end
+ * laid out, its paint order, its clips, the caret's rectangle. A full frame
+ * at this point would rebuild all of that, find every digest unchanged and
+ * repaint exactly this column -- the blink-as-damage block above -- so this
+ * does the last step alone, through the same ar__paint, and leaves
+ * caret_painted saying what is on screen so the next real frame agrees.
+ */
+ar_rect ar_frame_blink(ar_ctx *c, ar_surface *s)
+{
+    ar_rect r = ar_rect_make(0, 0, 0, 0);
+    int     on;
+
+    if (!c || !s || !c->frame_standing || !c->clock || ar_rect_is_empty(c->caret_rect))
+    {
+        return r;
+    }
+    on = ar__caret_showing(c);
+    if (on == c->caret_painted_on)
+    {
+        return r;
+    }
+    c->caret_on = on;
+    r = ar_rect_intersect(c->caret_rect, c->last_viewport);
+    if (!ar_rect_is_empty(r))
+    {
+        ar__paint(c, s, r);
+    }
+    c->caret_painted = c->caret_rect;
+    c->caret_painted_on = on;
+    return r;
 }
 
 void ar_invalidate(ar_ctx *c, ar_rect r)
