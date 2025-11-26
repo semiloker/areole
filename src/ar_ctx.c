@@ -3417,6 +3417,22 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             }
             c->focus_key = hit;
             c->focus_visible = 0;
+
+            /*
+             * Except into a text field. Selectors 4 suggests showing focus
+             * when the pointer moves it to something that takes typing, and
+             * every engine does: a field clicked into is ringed, a button
+             * clicked is not. Without this a field showed no ring until it
+             * was reached with Tab.
+             */
+            for (k = 0; hit && k < c->text_keys_prev_n; ++k)
+            {
+                if (c->text_keys_prev[k] == hit)
+                {
+                    c->focus_visible = 1;
+                    break;
+                }
+            }
             if (!hit)
             {
                 c->focus_chain_n = 0;
@@ -8801,8 +8817,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
                 if (ar__is_stop(c, c->control_box[hit]))
                 {
+                    /* A label clicked focuses its field, ringed like a field
+                       clicked directly. */
                     c->focus_key = c->control_key[hit];
-                    c->focus_visible = 0;
+                    c->focus_visible = kk == AR_CTL_TEXT;
                 }
                 if (kk == AR_CTL_TEXT || kk == AR_CTL_SELECT || kk == AR_CTL_RANGE ||
                     kk == AR_CTL_COLOR)
@@ -8872,6 +8890,14 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
          * The top layer has marked everything outside a modal since 0.6.3 and
          * nothing had ever asked.
          */
+        c->text_keys_prev_n = 0;
+        for (fk = 0; fk < c->control_n && c->text_keys_prev_n < AR_MAX_FOCUSABLES; ++fk)
+        {
+            if (c->control_kind[fk] == AR_CTL_TEXT)
+            {
+                c->text_keys_prev[c->text_keys_prev_n++] = c->control_key[fk];
+            }
+        }
         c->focusable_prev_n = 0;
         for (fk = 0; fk < c->focusable_n; ++fk)
         {
