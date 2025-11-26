@@ -440,6 +440,7 @@ typedef struct ar__liner
     ar_i32 line_w;     /* and how much of it is left                */
     ar_i32 line_frag0; /* the first fragment on this line           */
     ar_i32 line_has;   /* whether anything has been put on it yet   */
+    ar_i32 hang;       /* trailing spaces past the edge, not content */
 
     /* The fragment being accumulated: a run of one node's pieces that have all
        landed on the current line. */
@@ -646,13 +647,15 @@ static ar_i32 ar__close_line(ar__liner *L)
     }
     height = max_ascent + max_descent;
 
+    /* Hanging spaces are not the line's content, so they do not count
+       against its alignment either. */
     if (L->align == AR_TEXT_ALIGN_RIGHT)
     {
-        shift = L->line_w - L->x;
+        shift = L->line_w - (L->x - L->hang);
     }
     else if (L->align == AR_TEXT_ALIGN_CENTER)
     {
-        shift = (L->line_w - L->x) / 2;
+        shift = (L->line_w - (L->x - L->hang)) / 2;
     }
     if (shift < 0)
     {
@@ -713,6 +716,7 @@ static void ar__break_line(ar__liner *L, const ar_float_ctx *fc, ar_i32 abs_top)
     L->y += ar__close_line(L);
     L->x = 0;
     L->line_has = 0;
+    L->hang = 0;
     L->line_frag0 = L->env->frags ? L->env->frag_used : 0;
     ar__line_band(fc, abs_top + L->y, L->left, L->inner_w, &L->line_off, &L->line_w);
 }
@@ -750,6 +754,7 @@ static void ar__add_piece(ar__liner *L, ar_i32 c, ar_i32 from, ar_i32 to, ar_i32
     L->open_fx += fx;
     L->x += w;
     L->line_has = 1;
+    L->hang = 0;
 }
 
 /*
@@ -912,6 +917,46 @@ static int ar__flow(ar__liner *L, ar_i32 first, ar_i32 stop, const ar_float_ctx 
                  * a newline in `pre` text breaks the line whatever the
                  * wrapping says, which is the whole of what `pre` means.
                  */
+                /*
+                 * A word is a piece with the spaces after it, and those spaces
+                 * hang past the edge rather than count against it (CSS Text 3
+                 * 4.1.3): a word that fits stays on the line even when its
+                 * space does not. Measured again without them only when the
+                 * whole piece does not fit, which is once a line rather than
+                 * once a word. Georgia's "rendered it" fitted a 640-pixel
+                 * column with 2.6 to spare and went down a line, because its
+                 * space did not (#20).
+                 */
+                if (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L->x > 0 &&
+                    L->x + w > L->line_w && AR_WS_COLLAPSES(ch->style.v[AR_P_WHITE_SPACE]))
+                {
+                    ar_i32 end = next;
+
+                    while (end > at && (ch->text[end - 1] == ' ' || ch->text[end - 1] == '\t' ||
+                                        ch->text[end - 1] == '\n' || ch->text[end - 1] == '\r' ||
+                                        ch->text[end - 1] == '\f'))
+                    {
+                        --end;
+                    }
+                    if (end > at && end < next)
+                    {
+                        ar_i32 fx_word;
+                        ar_i32 word = ar__piece_w(L, ch, at, end, L->open_node == c, &fx_word);
+
+                        if (L->x + word <= L->line_w)
+                        {
+                            ar__add_piece(L, c, at, next, w, fx);
+                            L->hang = w - word;
+                            *anything = 1;
+                            at = next;
+                            if (kind == AR_BREAK_MANDATORY && ch->text[at])
+                            {
+                                ar__break_line(L, fc, abs_top);
+                            }
+                            continue;
+                        }
+                    }
+                }
                 if (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L->x > 0 && L->x + w > L->line_w)
                 {
                     ar__break_line(L, fc, abs_top);
@@ -1077,6 +1122,7 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
     L.y = 0;
     L.x = 0;
     L.line_has = 0;
+    L.hang = 0;
     L.line_frag0 = env->frags ? env->frag_used : 0;
 
     /*

@@ -23015,6 +23015,36 @@ static void test_a_field_clicked_into_is_ringed(void)
           "focus ring: and so is a textarea");
 }
 
+/*
+ * A word that fits stays on its line when the space after it does not (#20):
+ * the space hangs past the edge.
+ */
+static char g_hang_html[256];
+
+static void test_a_trailing_space_hangs(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     w, t;
+
+    /* The words and their spaces in one text node, as a paragraph has them,
+       in a box exactly as wide as "aaa bbb": "bbb " overflows by its space,
+       and "bbb" fits. */
+    ar__render_html(&s,
+                    "<html><body><span id=\"m\" style=\"white-space:nowrap\">aaa bbb</span>"
+                    "</body></html>",
+                    "body { margin:0 }");
+    w = ar__box(ar__first_tag_id("m")).w;
+    sprintf(g_hang_html,
+            "<html><body><div id=\"d\" style=\"width:%ldpx\">aaa bbb ccc</div></body></html>",
+            (long)w);
+    ar__render_html(&s, g_hang_html, "body { margin:0 }");
+    t = g_ui->nodes[ar__first_tag_id("d")].first_child;
+    CHECK(w > 0 && t >= 0 && ar_node_frag_count(g_ui, t) == 2,
+          "hang: three words in a box two words wide are two lines");
+    CHECK(t >= 0 && ar_node_frag(g_ui, t, 0, 0, 0).w >= w,
+          "hang: and the first holds both words, its space hanging past the edge");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24327,6 +24357,7 @@ int main(void)
     test_a_slider_follows_the_pointer();
     test_enter_moves_the_caret_down();
     test_a_field_clicked_into_is_ringed();
+    test_a_trailing_space_hangs();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();
