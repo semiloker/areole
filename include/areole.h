@@ -892,6 +892,11 @@ typedef ar_i32 ar_scroll_pos;
  * rules is the 20,480 bytes this moves by: 342,712 measured of 348,160, the
  * same five kilobytes of headroom as before. The rule table is the whole of
  * it; nothing else in the fixed block holds a class.
+ *
+ * Unchanged since, and 3,112 bytes closer to it: four more faces in the pool
+ * and the bold, italic and bold-italic chains of the sans-serif and monospace
+ * families (#21), and the previous frame's text fields for the focus ring
+ * (#25). 345,824 measured of 348,160, with the slack.
  */
 #define AR_MEM_FIXED  348160u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
@@ -1093,6 +1098,14 @@ int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size);
    sans, and a page that matches one has to be able to do both. Without it,
    sans-serif draws in the body face, as it always did. */
 int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size);
+
+/* A bold, italic or bold-italic face for the sans-serif or the monospace
+   family, as ar_font_load_styled gives one to the default family. Load the
+   family's regular face first. A style with no face draws in the family's
+   regular one, as before. Returns 0 for the regular style, a face already
+   loaded, a family with no regular face, or no room. */
+int ar_font_load_sans_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
+int ar_font_load_mono_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
 
 int ar_font_loaded(const ar_ctx *c);
 

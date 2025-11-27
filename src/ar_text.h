@@ -176,7 +176,7 @@ ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char 
  * the whole table is under one and a half kilobytes of the context and nothing
  * per box.
  */
-#define AR_MAX_FACES 8
+#define AR_MAX_FACES 12
 
 typedef struct ar_font_chain
 {
