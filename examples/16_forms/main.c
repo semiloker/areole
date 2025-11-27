@@ -720,8 +720,9 @@ static int selftest(ar_ctx *c, ar_surface *s)
     /*
      * And the other half of the pair, which is the whole of `:focus-visible`.
      *
-     * A click focuses the field so typing arrives and draws *no* ring, because
-     * you know where you just clicked.
+     * A click into a text field keeps the ring, as a browser's does, because
+     * a field takes typing (#25). A click on a checkbox focuses it and draws
+     * *no* ring, because you know where you just clicked.
      */
     {
         ar_rect     box = ar_node_rect(c, ar_focus_node(c));
@@ -748,9 +749,30 @@ static int selftest(ar_ctx *c, ar_surface *s)
         frame(c, &in, s);
 
         WANT(ar_has_focus(c), "a click focuses too");
-        WANT(!ar_focus_is_visible(c), "but says its focus should not be drawn");
+        WANT(ar_focus_is_visible(c), "and a text field clicked into keeps its ring");
+        ok = ring_check(c, s, 1, &why);
+        WANT(ok, why);
+
+        /* Twice, so the box ends as it started for the checks further down. */
+        CLICK("gift");
+        CLICK("gift");
+        WANT(!ar_focus_is_visible(c), "but a checkbox clicked says its focus should not be drawn");
         ok = ring_check(c, s, 0, &why);
         WANT(ok, why);
+
+        /* And the field again, which the Tabs below expect to start from. */
+        memset(&in, 0, sizeof in);
+        in.mouse_x = box.x + box.w / 2;
+        in.mouse_y = box.y + box.h / 2;
+        in.mouse_inside = 1;
+        frame(c, &in, s);
+        in.mouse_pressed = 1;
+        in.mouse_down = 1;
+        frame(c, &in, s);
+        in.mouse_pressed = 0;
+        in.mouse_down = 0;
+        in.mouse_released = 1;
+        frame(c, &in, s);
     }
 
     /* Back to the keyboard, so the field the checks below type into is the one
