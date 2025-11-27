@@ -18040,6 +18040,10 @@ static void test_the_mark_is_a_box_that_appears(void)
         /* Checked, the box itself turns the browser's blue and the tick inside
            it white -- what Edge draws, sampled from its pixels. */
         ar__press_at(&s, 5, 5);
+        /* With the pointer gone: under it, a checked box is the hovered
+           blue, as in Edge. */
+        ar__reframe(&s);
+        ar__reframe(&s);
         CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c")), AR_P_BACKGROUND) == 0xFF0075FFu,
               "ua: and the box turns blue once checked");
         CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_COLOR)) !=
@@ -19345,7 +19349,9 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
      * 200 -> 220 at 0.10.0, which spent 203 of it on controls, then 220 -> 232
      * for list markers, a link's colour and underline and `sub`/`sup`, and now
      * 232 -> 244 for the control appearances and the monospace family.
-     * **240 today.**
+     * Then to 272 by 0.10.0's end, and 274 for the controls' hover and
+     * pressed colours (#23) -- two rules, the colours in custom properties.
+     * **274 today.**
      *
      * The wall was AR_MAX_RULES at 256, the warning fired three times in one
      * sitting, and sixteen rules of headroom in front of a silent cliff is not
@@ -23144,6 +23150,62 @@ static void test_sans_serif_has_a_bold(void)
     CHECK(m == &g_ui->mono_chain, "sans bold: and bold monospace with no bold face its regular");
 }
 
+/* The pointer over (x, y), held down or not, for two frames: hover and press
+   are settled a frame behind, as every state is. */
+static void ar__point_at(ar_surface *s, ar_i32 x, ar_i32 y, int held)
+{
+    ar_input in;
+    int      k;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = x;
+    in.mouse_y = y;
+    in.mouse_inside = 1;
+    for (k = 0; k < 3; ++k)
+    {
+        in.mouse_down = held ? AR_MOUSE_LEFT : 0;
+        in.mouse_pressed = held && k == 0 ? AR_MOUSE_LEFT : 0;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, s);
+    }
+}
+
+/*
+ * Controls answer the pointer with Edge's own colours: a button and a slider
+ * at rest, hovered and pressed (#23).
+ */
+static void test_controls_answer_the_pointer(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    b, r;
+    ar_i32     bx, by, tx, ty;
+
+    ar__render_html(&s,
+                    "<html><body><button id=\"b\" style=\"width:80px; height:24px\"></button>"
+                    "<br><input id=\"r\" type=\"range\" value=\"50\"></body></html>",
+                    "body { margin:0; background:#ffffff }");
+    ar__reframe(&s);
+    b = ar__box(ar__first_tag_id("b"));
+    r = ar__box(ar__first_tag_id("r"));
+    bx = b.x + 6;
+    by = b.y + b.h / 2;
+    tx = r.x + r.w / 2;
+    ty = r.y + r.h / 2;
+    ar__point_at(&s, 390, 290, 0);
+    CHECK(ar__pixel_at(bx, by) == 0xEFEFEFu && ar__pixel_at(tx, ty) == 0x0075FFu,
+          "pointer: at rest, #EFEFEF and the accent");
+    ar__point_at(&s, bx, by, 0);
+    CHECK(ar__pixel_at(bx, by) == 0xE5E5E5u && ar__pixel_at(b.x, by) == 0x4F4F4Fu,
+          "pointer: a hovered button darkens, fill and edge");
+    ar__point_at(&s, bx, by, 1);
+    CHECK(ar__pixel_at(bx, by) == 0xF5F5F5u && ar__pixel_at(b.x, by) == 0x8D8D8Du,
+          "pointer: and a pressed one lightens");
+    ar__point_at(&s, tx, ty, 0);
+    CHECK(ar__pixel_at(tx, ty) == 0x005CC8u, "pointer: a hovered slider's thumb darkens");
+    ar__point_at(&s, 390, 290, 0);
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24459,6 +24521,7 @@ int main(void)
     test_a_trailing_space_hangs();
     test_an_inline_background_is_its_fonts_height();
     test_sans_serif_has_a_bold();
+    test_controls_answer_the_pointer();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();
