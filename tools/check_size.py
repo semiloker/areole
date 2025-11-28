@@ -178,12 +178,18 @@ ENTITY_OBJECT = "ar_html_entity.c"
 # and the four font family keywords that name a sans face the other 96. The
 # sheet is counted here and in the HTML total both, so the same bytes moved two
 # lines; this one moves by 4 KB and leaves 2,760.
+#
+# **Raised to 102 KB at 0.10.1.** 103,200 measured against 102,400: the
+# `cursor` property's thirty-one keywords, the resize arrows' aliases among
+# them, and the user-agent sheet's controls reading their colours through
+# custom properties so that hover and pressed cost two rules rather than
+# twenty-six (#23, #24). It leaves 1,248.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
     "ar_color.c",
 ]
-CSS_BUDGET = 100 * 1024
+CSS_BUDGET = 102 * 1024
 
 # The interaction subsystem, added at 0.10.0 -- and added for the reason the CSS
 # one was. ar_css.c sat outside every size gate until 0.4.2 noticed, so a CSS

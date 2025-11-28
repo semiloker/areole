@@ -171,6 +171,9 @@ typedef enum ar_prop
        point is that nobody should have to ask for it. */
     AR_P_OVERFLOW_ANCHOR,
 
+    /* Which pointer the box asks for: AR_CURSOR_*, inherited (#24). */
+    AR_P_CURSOR,
+
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
