@@ -96,6 +96,8 @@ static unsigned char g_face_mono[8u * 1024u * 1024u];
 static unsigned char g_face_bold[8u * 1024u * 1024u];
 static unsigned char g_face_italic[8u * 1024u * 1024u];
 static unsigned char g_face_bold_italic[8u * 1024u * 1024u];
+static unsigned char g_face_sans_bold[8u * 1024u * 1024u];
+static unsigned char g_face_mono_bold[8u * 1024u * 1024u];
 /* A fallback for what the primary face does not cover -- CJK, mostly -- and
    CJK collections are large: Yu Gothic is fourteen megabytes. */
 static unsigned char g_face_fallback[24u * 1024u * 1024u];
@@ -641,6 +643,7 @@ int main(int argc, char **argv)
     ar_i32      scale = 1000;
     const char *font_body = 0, *font_sans = 0, *font_mono = 0, *font_bold = 0;
     const char *font_italic = 0, *font_bold_italic = 0, *font_fallback = 0;
+    const char *font_sans_bold = 0, *font_mono_bold = 0;
     int         want_geometry = 0;
     int         want_ids = 0;
     int         k;
@@ -703,6 +706,14 @@ int main(int argc, char **argv)
         else if (strcmp(argv[k], "--fallback") == 0 && k + 1 < argc)
         {
             font_fallback = argv[++k];
+        }
+        else if (strcmp(argv[k], "--sans-bold") == 0 && k + 1 < argc)
+        {
+            font_sans_bold = argv[++k];
+        }
+        else if (strcmp(argv[k], "--mono-bold") == 0 && k + 1 < argc)
+        {
+            font_mono_bold = argv[++k];
         }
         else if (strcmp(argv[k], "--size") == 0 && k + 1 < argc)
         {
@@ -776,6 +787,16 @@ int main(int argc, char **argv)
             (n = read_face(font_bold_italic, g_face_bold_italic, sizeof g_face_bold_italic)) > 0)
         {
             ar_font_load_styled(c, g_face_bold_italic, n, 700, 1);
+        }
+        if (font_sans_bold &&
+            (n = read_face(font_sans_bold, g_face_sans_bold, sizeof g_face_sans_bold)) > 0)
+        {
+            ar_font_load_sans_styled(c, g_face_sans_bold, n, 700, 0);
+        }
+        if (font_mono_bold &&
+            (n = read_face(font_mono_bold, g_face_mono_bold, sizeof g_face_mono_bold)) > 0)
+        {
+            ar_font_load_mono_styled(c, g_face_mono_bold, n, 700, 0);
         }
     }
     ar_ua_stylesheet(c);

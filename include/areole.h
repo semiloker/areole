@@ -699,11 +699,14 @@ typedef ar_i32 ar_scroll_pos;
  * (AR_MAX_CLASSES, in ar_css.h, says why four was wrong). Sixteen bytes of
  * hashes, measured, and `opacity` beside them cost nothing -- three bytes the
  * style's alignment had already rounded away.
+ *
+ * 600 -> 608 for `cursor` (#24): three bytes again, and this time alignment
+ * rounds them to eight. Measured: a node of 552 and its slot of 56.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 600u
+#define AR_BYTES_PER_BOX 608u
 #else
-#define AR_BYTES_PER_BOX 600u
+#define AR_BYTES_PER_BOX 608u
 #endif
 
 /*
@@ -892,8 +895,16 @@ typedef ar_i32 ar_scroll_pos;
  * rules is the 20,480 bytes this moves by: 342,712 measured of 348,160, the
  * same five kilobytes of headroom as before. The rule table is the whole of
  * it; nothing else in the fixed block holds a class.
+ *
+ * Then 3,112 bytes closer to it: four more faces in the pool and the bold,
+ * italic and bold-italic chains of the sans-serif and monospace families
+ * (#21), and the previous frame's text fields for the focus ring (#25) --
+ * 345,824 of 348,160 -- and then over it, by `cursor` (#24): eight bytes on
+ * each of the 320 rules is 2,560 more, 348,896 measured.
+ *
+ * 340 KB -> 344 KB: 348,896 of 352,256, three kilobytes of headroom.
  */
-#define AR_MEM_FIXED  348160u
+#define AR_MEM_FIXED  352256u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /*
@@ -911,9 +922,9 @@ typedef ar_i32 ar_scroll_pos;
  * The assertion below now ties the two together, because a comment could not.
  *
  * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
- * it was four.
+ * it was four. 700 -> 708 for `cursor`, the eight bytes a style grew by.
  */
-#define AR_BYTES_PER_RULE 700u
+#define AR_BYTES_PER_RULE 708u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting
@@ -1093,6 +1104,14 @@ int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size);
    sans, and a page that matches one has to be able to do both. Without it,
    sans-serif draws in the body face, as it always did. */
 int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size);
+
+/* A bold, italic or bold-italic face for the sans-serif or the monospace
+   family, as ar_font_load_styled gives one to the default family. Load the
+   family's regular face first. A style with no face draws in the family's
+   regular one, as before. Returns 0 for the regular style, a face already
+   loaded, a family with no regular face, or no room. */
+int ar_font_load_sans_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
+int ar_font_load_mono_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
 
 int ar_font_loaded(const ar_ctx *c);
 
@@ -1320,6 +1339,35 @@ ar_i32 ar_tab_stops(const ar_ctx *c);
  * frame painted rather than the one it was going to.
  */
 ar_rect ar_caret_rect(const ar_ctx *c);
+
+/*
+ * The pointer the box under the mouse asks for: the `cursor` property, and
+ * for `auto` what a browser picks -- an I-beam over a text field and over
+ * text, the arrow over a button, a checkbox or anything else. As of the last
+ * ar_frame_end; a backend sets the platform's pointer from it (the Win32 one
+ * does, in ar_win_after_frame).
+ */
+enum
+{
+    AR_CURSOR_AUTO = 0,
+    AR_CURSOR_DEFAULT,
+    AR_CURSOR_POINTER,
+    AR_CURSOR_TEXT,
+    AR_CURSOR_MOVE,
+    AR_CURSOR_NOT_ALLOWED,
+    AR_CURSOR_GRAB,
+    AR_CURSOR_GRABBING,
+    AR_CURSOR_CROSSHAIR,
+    AR_CURSOR_WAIT,
+    AR_CURSOR_PROGRESS,
+    AR_CURSOR_HELP,
+    AR_CURSOR_EW_RESIZE,
+    AR_CURSOR_NS_RESIZE,
+    AR_CURSOR_NESW_RESIZE,
+    AR_CURSOR_NWSE_RESIZE,
+    AR_CURSOR_NONE
+};
+ar_i32 ar_cursor(const ar_ctx *c);
 
 /*
  * How long until the caret next blinks, in microseconds, or 0 when there is

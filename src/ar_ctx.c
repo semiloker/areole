@@ -649,6 +649,15 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     c->style_face[0] = 0; /* the primary face is the regular one */
     c->mono_face = -1;
     c->sans_face = -1;
+    {
+        ar_i32 st;
+
+        for (st = 0; st < 4; ++st)
+        {
+            c->mono_styled[st] = -1;
+            c->sans_styled[st] = -1;
+        }
+    }
     c->face_used = 1;
     ar__rebuild_chains(c);
 
@@ -730,6 +739,41 @@ static void ar__rebuild_chains(ar_ctx *c)
             c->sans_chain.count++;
         }
     }
+
+    /* The two families' styled faces, each led by its own face -- or, for
+       bold italic with none, by the bold, then the italic -- and the shared
+       fallbacks after. A style with no face at all has an empty chain, and
+       ar_chain_for draws it in the family's regular face. */
+    for (st = 1; st < 4; ++st)
+    {
+        ar_i32 fam;
+
+        for (fam = 0; fam < 2; ++fam)
+        {
+            const ar_i32  *slots = fam ? c->sans_styled : c->mono_styled;
+            ar_font_chain *ch = fam ? &c->sans_styled_chain[st] : &c->mono_styled_chain[st];
+            ar_i32         lead = slots[st];
+
+            if (lead < 0 && st == 3)
+            {
+                lead = slots[1] >= 0 ? slots[1] : slots[2];
+            }
+            ch->count = 0;
+            if (lead < 0)
+            {
+                continue;
+            }
+            ch->face[0] = &c->face[lead];
+            ch->id[0] = (ar_u8)lead;
+            ch->count = 1;
+            for (k = 1; k < c->chain.count && ch->count < AR_MAX_FACES; ++k)
+            {
+                ch->face[ch->count] = c->chain.face[k];
+                ch->id[ch->count] = c->chain.id[k];
+                ch->count++;
+            }
+        }
+    }
 }
 
 /* Which of the four a resolved style asks for. 600 is the boundary CSS Fonts 4
@@ -758,11 +802,13 @@ const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
        face, which is what it did before this existed. */
     if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_MONOSPACE && c->mono_chain.count > 0)
     {
-        return &c->mono_chain;
+        return slot && c->mono_styled_chain[slot].count > 0 ? &c->mono_styled_chain[slot]
+                                                            : &c->mono_chain;
     }
     if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_SANS && c->sans_chain.count > 0)
     {
-        return &c->sans_chain;
+        return slot && c->sans_styled_chain[slot].count > 0 ? &c->sans_styled_chain[slot]
+                                                            : &c->sans_chain;
     }
     if (c->style_chain[slot].count > 0)
     {
@@ -870,6 +916,42 @@ int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size)
     ar__rebuild_chains(c);
     ar_invalidate_all(c);
     return 1;
+}
+
+/* A styled face for one of the two families: `slots` is that family's, and
+   `regular` its regular face, which has to be loaded first. */
+static int ar__load_family_styled(ar_ctx *c, ar_i32 *slots, ar_i32 regular, const void *data,
+                                  ar_u32 size, ar_i32 weight, int italic)
+{
+    ar_i32 slot = (weight >= 600 ? 1 : 0) | (italic ? 2 : 0);
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || regular < 0 || slot == 0 || n <= 0 || n >= AR_MAX_FACES ||
+        slots[slot] >= 0)
+    {
+        return 0; /* no family yet, the regular style, no room, or loaded twice */
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    slots[slot] = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
+    ar_invalidate_all(c);
+    return 1;
+}
+
+int ar_font_load_sans_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic)
+{
+    return c ? ar__load_family_styled(c, c->sans_styled, c->sans_face, data, size, weight, italic)
+             : 0;
+}
+
+int ar_font_load_mono_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic)
+{
+    return c ? ar__load_family_styled(c, c->mono_styled, c->mono_face, data, size, weight, italic)
+             : 0;
 }
 
 int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
@@ -3417,6 +3499,22 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             }
             c->focus_key = hit;
             c->focus_visible = 0;
+
+            /*
+             * Except into a text field. Selectors 4 suggests showing focus
+             * when the pointer moves it to something that takes typing, and
+             * every engine does: a field clicked into is ringed, a button
+             * clicked is not. Without this a field showed no ring until it
+             * was reached with Tab.
+             */
+            for (k = 0; hit && k < c->text_keys_prev_n; ++k)
+            {
+                if (c->text_keys_prev[k] == hit)
+                {
+                    c->focus_visible = 1;
+                    break;
+                }
+            }
             if (!hit)
             {
                 c->focus_chain_n = 0;
@@ -5022,6 +5120,38 @@ const char *ar_field_text(ar_ctx *c, ar_u32 *len)
         *len = c->edit.len;
     }
     return c->edit.text;
+}
+
+/*
+ * `auto`, decided the way a browser decides it: up from the box under the
+ * pointer, a text field asks for the I-beam and any other control for the
+ * arrow -- a button's label is not text anybody selects -- and outside every
+ * control a box with words in it asks for the I-beam (#24).
+ */
+ar_i32 ar_cursor(const ar_ctx *c)
+{
+    ar_i32 at, k;
+
+    if (!c || c->hot_index < 0 || c->hot_index >= c->node_count)
+    {
+        return AR_CURSOR_DEFAULT;
+    }
+    if (c->nodes[c->hot_index].style.v[AR_P_CURSOR] != AR_CURSOR_AUTO)
+    {
+        return c->nodes[c->hot_index].style.v[AR_P_CURSOR];
+    }
+    for (at = c->hot_index; at >= 0; at = c->nodes[at].parent)
+    {
+        for (k = 0; k < c->control_n; ++k)
+        {
+            if (c->control_box[k] == at && c->control_kind[k] != AR_CTL_LABEL)
+            {
+                return c->control_kind[k] == AR_CTL_TEXT ? AR_CURSOR_TEXT : AR_CURSOR_DEFAULT;
+            }
+        }
+    }
+    return c->nodes[c->hot_index].text && c->nodes[c->hot_index].text[0] ? AR_CURSOR_TEXT
+                                                                         : AR_CURSOR_DEFAULT;
 }
 
 ar_rect ar_caret_rect(const ar_ctx *c)
@@ -7153,6 +7283,59 @@ static ar_i32 ar__canvas_box(const ar_ctx *c)
     return -1;
 }
 
+/*
+ * The rectangle an inline box paints its background, border and outline
+ * into: its font's content area -- ascent and descent around the baseline --
+ * and its vertical padding and border outside that, whatever `line-height`
+ * made the line (CSS 2.1 10.6.1). The box's own rectangle is a line tall, and
+ * painted from that an inline `<code>` at line-height 1.6 drew a background
+ * 24 pixels tall where every browser draws 20 (#22).
+ *
+ * A box on one line only. One split across lines is painted as one block from
+ * its own rectangle, as before -- a limitation of its own.
+ */
+static ar_rect ar__inline_paint_rect(const ar_ctx *c, const ar_node *n)
+{
+    const ar_font_chain *ch;
+    const ar_face       *f;
+    ar_rect              r = n->rect;
+    ar_i32               ppem, asc, desc, base, pt, pb, bw;
+
+    /* An outline face only. The built-in bitmap face draws from the top of
+       its line rather than from a baseline and has no content area to
+       speak of; it keeps the line box it always painted. */
+    if (!c->have_face || !ar_flows_children(n) || n->line_h <= 0 || r.h >= 2 * n->line_h)
+    {
+        return r;
+    }
+    ch = ar_chain_for(c, n);
+    f = ch->count > 0 ? ch->face[0] : &c->face[0];
+    ppem = n->style.v[AR_P_FONT_SIZE];
+    if (!f || !f->ok || ppem <= 0)
+    {
+        return r;
+    }
+    /* The Windows metrics where the face has them, which is what a browser
+       on Windows sizes the box by; hhea otherwise. */
+    if (f->win_ascent > 0)
+    {
+        asc = ar__round_px(ar_face_scale(f, f->win_ascent, ppem));
+        desc = ar__round_px(ar_face_scale(f, f->win_descent, ppem));
+    }
+    else
+    {
+        asc = ar__round_px(ar_face_scale(f, f->ascender, ppem));
+        desc = ar__round_px(-ar_face_scale(f, f->descender, ppem));
+    }
+    base = r.y + n->ascent;
+    pt = n->style.v[AR_P_PAD_TOP];
+    pb = n->style.v[AR_P_PAD_BOTTOM];
+    bw = n->style.v[AR_P_BORDER_WIDTH];
+    r.y = base - asc - pt - bw;
+    r.h = asc + desc + pt + pb + 2 * bw;
+    return r;
+}
+
 static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
@@ -7216,7 +7399,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
     {
         ar_i32   i = c->order ? c->order[ord] : ord;
         ar_node *n = &c->nodes[i];
-        ar_rect  clip;
+        ar_rect  clip, box;
         ar_color bg, border;
         ar_i32   bw;
         ar_i32   radius;
@@ -7294,16 +7477,17 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
+        box = ar__inline_paint_rect(c, n);
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0 && i != canvas)
         {
             if (radius > 0)
             {
-                ar__fill_round(c, s, n->rect, radius, clip, bg);
+                ar__fill_round(c, s, box, radius, clip, bg);
             }
             else
             {
-                ar__fill(c, s, n->rect, clip, bg);
+                ar__fill(c, s, box, clip, bg);
             }
         }
 
@@ -7327,7 +7511,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
             if (ow > 0 && AR_ALPHA_OF(oc) != 0)
             {
-                ar_rect r = n->rect;
+                ar_rect r = box;
 
                 ar__fill(c, s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
                 ar__fill(c, s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
@@ -7350,7 +7534,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
              */
             if (AR_ALPHA_OF(border) != 0)
             {
-                ar_rect r = n->rect;
+                ar_rect r = box;
                 ar_i32  t = n->edge[0], ri = n->edge[1], b = n->edge[2], l = n->edge[3];
 
                 if (t > 0)
@@ -7377,7 +7561,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         }
         else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
-            ar_rect r = n->rect;
+            ar_rect r = box;
 
             if (radius > 0)
             {
@@ -7894,10 +8078,7 @@ static void ar__update_hot(ar_ctx *c)
 
     c->hot = 0;
     c->hot_index = -1;
-    if (!c->mouse_inside)
-    {
-        return;
-    }
+
     /*
      * Front to back, in reverse paint order: the first box found under the
      * cursor is the one on top, which is the one the cursor is actually over.
@@ -7906,8 +8087,13 @@ static void ar__update_hot(ar_ctx *c)
      * is the same answer only while paint order and declaration order agree.
      * The moment anything is positioned they stop agreeing, and clicking a
      * dropdown would have hit whatever was behind it.
+     *
+     * Only the hit test waits for a pointer inside the window. This returned
+     * early instead, before the chain below was cleared, so a control kept
+     * `:hover` after the pointer left the window -- invisible until controls
+     * had a hover look (#23) -- and `:focus-within` was not rebuilt either.
      */
-    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    for (i = c->mouse_inside ? (c->order ? c->order_count : c->node_count) - 1 : -1; i >= 0; --i)
     {
         ar_i32   at = c->order ? c->order[i] : i;
         ar_node *n = &c->nodes[at];
@@ -8801,8 +8987,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
                 if (ar__is_stop(c, c->control_box[hit]))
                 {
+                    /* A label clicked focuses its field, ringed like a field
+                       clicked directly. */
                     c->focus_key = c->control_key[hit];
-                    c->focus_visible = 0;
+                    c->focus_visible = kk == AR_CTL_TEXT;
                 }
                 if (kk == AR_CTL_TEXT || kk == AR_CTL_SELECT || kk == AR_CTL_RANGE ||
                     kk == AR_CTL_COLOR)
@@ -8872,6 +9060,14 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
          * The top layer has marked everything outside a modal since 0.6.3 and
          * nothing had ever asked.
          */
+        c->text_keys_prev_n = 0;
+        for (fk = 0; fk < c->control_n && c->text_keys_prev_n < AR_MAX_FOCUSABLES; ++fk)
+        {
+            if (c->control_kind[fk] == AR_CTL_TEXT)
+            {
+                c->text_keys_prev[c->text_keys_prev_n++] = c->control_key[fk];
+            }
+        }
         c->focusable_prev_n = 0;
         for (fk = 0; fk < c->focusable_n; ++fk)
         {

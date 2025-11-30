@@ -64,6 +64,12 @@ typedef struct ar_face
     ar_i32 x_height;                      /* font units; 0 if the font does not say */
     ar_i32 cap_height;
 
+    /* OS/2 usWinAscent and usWinDescent, both positive; 0 without an OS/2
+       table. What Windows -- and so a browser on it -- takes for the height
+       of an inline box's content area, where it differs from hhea: Consolas
+       is 11 + 4 pixels at 15 by hhea and 14 + 4 by these. */
+    ar_i32 win_ascent, win_descent;
+
     ar_u32 cmap_sub; /* offset of the chosen subtable */
     ar_i32 cmap_format;
 

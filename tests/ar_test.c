@@ -18040,6 +18040,10 @@ static void test_the_mark_is_a_box_that_appears(void)
         /* Checked, the box itself turns the browser's blue and the tick inside
            it white -- what Edge draws, sampled from its pixels. */
         ar__press_at(&s, 5, 5);
+        /* With the pointer gone: under it, a checked box is the hovered
+           blue, as in Edge. */
+        ar__reframe(&s);
+        ar__reframe(&s);
         CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c")), AR_P_BACKGROUND) == 0xFF0075FFu,
               "ua: and the box turns blue once checked");
         CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_COLOR)) !=
@@ -19345,7 +19349,9 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
      * 200 -> 220 at 0.10.0, which spent 203 of it on controls, then 220 -> 232
      * for list markers, a link's colour and underline and `sub`/`sup`, and now
      * 232 -> 244 for the control appearances and the monospace family.
-     * **240 today.**
+     * Then to 272 by 0.10.0's end, and 274 for the controls' hover and
+     * pressed colours (#23) -- two rules, the colours in custom properties.
+     * **274 today.**
      *
      * The wall was AR_MAX_RULES at 256, the warning fired three times in one
      * sitting, and sixteen rules of headroom in front of a silent cliff is not
@@ -22986,6 +22992,259 @@ static void test_resampling_a_scaled_picture(void)
           "resample: a smaller picture is mixed between its pixels, not blocked");
 }
 
+/*
+ * A text field clicked into shows its focus ring, as in a browser; a button
+ * clicked does not (#25). Tab rings both.
+ */
+static void test_a_field_clicked_into_is_ringed(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    f, b, t;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\"><button id=\"b\">Go</button>"
+                    "<textarea id=\"t\"></textarea></body></html>",
+                    "body { margin:0 }");
+    ar__reframe(&s);
+    f = ar__box(ar__first_tag_id("f"));
+    b = ar__box(ar__first_tag_id("b"));
+    t = ar__box(ar__first_tag_id("t"));
+    ar__press_at(&s, f.x + f.w / 2, f.y + f.h / 2);
+    CHECK(g_ui->nodes[ar__first_tag_id("f")].state & AR_STATE_FOCUS_VISIBLE,
+          "focus ring: a text field clicked into is ringed");
+    ar__press_at(&s, b.x + b.w / 2, b.y + b.h / 2);
+    CHECK(!(g_ui->nodes[ar__first_tag_id("b")].state & AR_STATE_FOCUS_VISIBLE) &&
+              (g_ui->nodes[ar__first_tag_id("b")].state & AR_STATE_FOCUS),
+          "focus ring: a button clicked is focused and not ringed");
+    ar__press_at(&s, t.x + t.w / 2, t.y + t.h / 2);
+    CHECK(g_ui->nodes[ar__first_tag_id("t")].state & AR_STATE_FOCUS_VISIBLE,
+          "focus ring: and so is a textarea");
+}
+
+/*
+ * A word that fits stays on its line when the space after it does not (#20):
+ * the space hangs past the edge.
+ */
+static char g_hang_html[256];
+
+static void test_a_trailing_space_hangs(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     w, t;
+
+    /* The words and their spaces in one text node, as a paragraph has them,
+       in a box exactly as wide as "aaa bbb": "bbb " overflows by its space,
+       and "bbb" fits. */
+    ar__render_html(&s,
+                    "<html><body><span id=\"m\" style=\"white-space:nowrap\">aaa bbb</span>"
+                    "</body></html>",
+                    "body { margin:0 }");
+    w = ar__box(ar__first_tag_id("m")).w;
+    sprintf(g_hang_html,
+            "<html><body><div id=\"d\" style=\"width:%ldpx\">aaa bbb ccc</div></body></html>",
+            (long)w);
+    ar__render_html(&s, g_hang_html, "body { margin:0 }");
+    t = g_ui->nodes[ar__first_tag_id("d")].first_child;
+    CHECK(w > 0 && t >= 0 && ar_node_frag_count(g_ui, t) == 2,
+          "hang: three words in a box two words wide are two lines");
+    CHECK(t >= 0 && ar_node_frag(g_ui, t, 0, 0, 0).w >= w,
+          "hang: and the first holds both words, its space hanging past the edge");
+}
+
+/*
+ * An inline box's background covers its font's content area and its padding,
+ * not the line's height (#22).
+ */
+static void test_an_inline_background_is_its_fonts_height(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    code;
+    ar_i32     y, top = -1, bottom = -1, x;
+    ar_input   in;
+
+    /* An outline face, which has a baseline and a content area: the test
+       font's one glyph is 'A'. */
+    ar__ui_reset("");
+    CHECK(ar_font_load(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 64),
+          "inline background: the outline face loads");
+    ar_ua_stylesheet(g_ui);
+    ar_stylesheet(g_ui, "body { margin:0; background:#ffffff; font-size:20px } "
+                        "p { margin:0; line-height:3 } code { background:#ff0000; padding:1px 4px; "
+                        "font-family:inherit; font-size:20px }");
+    ar__parse("<html><body><p id=\"p\">A <code id=\"c\">AA</code> A</p></body></html>");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    code = ar__box(ar__first_tag_id("c"));
+    x = code.x + code.w / 2;
+    for (y = 0; y < 100; ++y)
+    {
+        if (ar__pixel_at(x, y) == 0xFF0000u)
+        {
+            top = top < 0 ? y : top;
+            bottom = y;
+        }
+    }
+    CHECK(top >= 0 && bottom - top + 1 < code.h,
+          "inline background: shorter than a line three times the font");
+    {
+        ar_i32 inside = 0, outside = 0, xx;
+
+        /* Ink rows on the background, and off it: the glyph's antialiased
+           top may sit a row above the content area, as a browser's does. */
+        for (y = code.y; y < code.y + code.h; ++y)
+        {
+            for (xx = code.x; xx < code.x + code.w; ++xx)
+            {
+                if ((ar__pixel_at(xx, y) & 0xFFu) < 0x40u &&
+                    ((ar__pixel_at(xx, y) >> 16) & 0xFFu) < 0x40u)
+                {
+                    inside += y >= top && y <= bottom;
+                    outside += y < top - 1 || y > bottom + 1;
+                }
+            }
+        }
+        CHECK(inside > 0 && outside == 0, "inline background: and its text is on it");
+    }
+}
+
+/*
+ * Bold sans-serif draws in the sans family's bold face when there is one, and
+ * in its regular face when there is not (#21).
+ */
+static void test_sans_serif_has_a_bold(void)
+{
+    ar_surface           s = ar__ui_surface(400, 300);
+    ar_input             in;
+    const ar_font_chain *b, *r, *m;
+
+    ar__ui_reset("");
+    CHECK(ar_font_load(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 64) &&
+              ar_font_load_sans(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT) &&
+              ar_font_load_mono(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT),
+          "sans bold: the families load");
+    CHECK(!ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 400, 0),
+          "sans bold: the regular style is not a styled face");
+    CHECK(ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 700, 0) &&
+              !ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 700, 0),
+          "sans bold: a bold face loads, once");
+    ar_ua_stylesheet(g_ui);
+    ar_stylesheet(g_ui, ".s { font-family:sans-serif } .b { font-weight:bold } "
+                        ".m { font-family:monospace }");
+    ar__parse("<html><body><p id=\"b\" class=\"s b\">A</p><p id=\"r\" class=\"s\">A</p>"
+              "<p id=\"m\" class=\"m b\">A</p></body></html>");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    b = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("b")]);
+    r = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("r")]);
+    m = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("m")]);
+    CHECK(b == &g_ui->sans_styled_chain[1] && r == &g_ui->sans_chain,
+          "sans bold: bold sans-serif takes the sans bold face, regular the regular");
+    CHECK(m == &g_ui->mono_chain, "sans bold: and bold monospace with no bold face its regular");
+}
+
+/* The pointer over (x, y), held down or not, for two frames: hover and press
+   are settled a frame behind, as every state is. */
+static void ar__point_at(ar_surface *s, ar_i32 x, ar_i32 y, int held)
+{
+    ar_input in;
+    int      k;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = x;
+    in.mouse_y = y;
+    in.mouse_inside = 1;
+    for (k = 0; k < 3; ++k)
+    {
+        in.mouse_down = held ? AR_MOUSE_LEFT : 0;
+        in.mouse_pressed = held && k == 0 ? AR_MOUSE_LEFT : 0;
+        ar_frame_begin(g_ui, &in);
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, s);
+    }
+}
+
+/*
+ * Controls answer the pointer with Edge's own colours: a button and a slider
+ * at rest, hovered and pressed (#23).
+ */
+static void test_controls_answer_the_pointer(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    b, r;
+    ar_i32     bx, by, tx, ty;
+
+    ar__render_html(&s,
+                    "<html><body><button id=\"b\" style=\"width:80px; height:24px\"></button>"
+                    "<br><input id=\"r\" type=\"range\" value=\"50\"></body></html>",
+                    "body { margin:0; background:#ffffff }");
+    ar__reframe(&s);
+    b = ar__box(ar__first_tag_id("b"));
+    r = ar__box(ar__first_tag_id("r"));
+    bx = b.x + 6;
+    by = b.y + b.h / 2;
+    tx = r.x + r.w / 2;
+    ty = r.y + r.h / 2;
+    ar__point_at(&s, 390, 290, 0);
+    CHECK(ar__pixel_at(bx, by) == 0xEFEFEFu && ar__pixel_at(tx, ty) == 0x0075FFu,
+          "pointer: at rest, #EFEFEF and the accent");
+    ar__point_at(&s, bx, by, 0);
+    CHECK(ar__pixel_at(bx, by) == 0xE5E5E5u && ar__pixel_at(b.x, by) == 0x4F4F4Fu,
+          "pointer: a hovered button darkens, fill and edge");
+    ar__point_at(&s, bx, by, 1);
+    CHECK(ar__pixel_at(bx, by) == 0xF5F5F5u && ar__pixel_at(b.x, by) == 0x8D8D8Du,
+          "pointer: and a pressed one lightens");
+    ar__point_at(&s, tx, ty, 0);
+    CHECK(ar__pixel_at(tx, ty) == 0x005CC8u, "pointer: a hovered slider's thumb darkens");
+    ar__point_at(&s, 390, 290, 0);
+}
+
+/*
+ * The pointer a box asks for: `cursor` as stated and inherited, and for `auto`
+ * an I-beam over a field and over text, the arrow over a control (#24).
+ */
+static void test_the_pointer_shape(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\"><button id=\"b\">Go</button>"
+                    "<p id=\"t\">words</p><a id=\"a\" href=\"#\">link</a>"
+                    "<div id=\"m\" style=\"cursor:move; height:20px\"><span>in</span></div>"
+                    "<div id=\"e\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 } p { margin:0 } a, div { display:block }");
+    ar__reframe(&s);
+    CHECK(g_ui->nodes[ar__first_tag_id("m")].style.v[AR_P_CURSOR] == AR_CURSOR_MOVE &&
+              g_ui->nodes[ar__first_tag_id("m") + 1].style.v[AR_P_CURSOR] == AR_CURSOR_MOVE,
+          "cursor: parsed, and inherited by a child");
+    r = ar__box(ar__first_tag_id("f"));
+    ar__point_at(&s, r.x + r.w / 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_TEXT, "cursor: an I-beam over a text field");
+    r = ar__box(ar__first_tag_id("b"));
+    ar__point_at(&s, r.x + r.w / 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_DEFAULT, "cursor: the arrow over a button and its label");
+    r = ar__box(ar__first_tag_id("t"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_TEXT, "cursor: an I-beam over words");
+    r = ar__box(ar__first_tag_id("a"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_POINTER, "cursor: a hand over a link");
+    r = ar__box(ar__first_tag_id("m"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_MOVE, "cursor: what the page asked for");
+    r = ar__box(ar__first_tag_id("e"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_DEFAULT, "cursor: and the arrow over nothing");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24297,6 +24556,12 @@ int main(void)
     test_max_width_is_the_contents();
     test_a_slider_follows_the_pointer();
     test_enter_moves_the_caret_down();
+    test_a_field_clicked_into_is_ringed();
+    test_a_trailing_space_hangs();
+    test_an_inline_background_is_its_fonts_height();
+    test_sans_serif_has_a_bold();
+    test_controls_answer_the_pointer();
+    test_the_pointer_shape();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();

@@ -576,21 +576,22 @@ struct ar_ctx
     ar_font_chain style_chain[4];
 
     /*
-     * The monospace family, which is one face and not four.
-     *
-     * `<pre>` and `<code>` are the whole reason it exists and neither is
-     * commonly bold or italic, so a second set of four style slots would be
-     * three faces of arena for a case nobody writes. A bold `<code>` draws in
-     * the monospace regular, which is what a family with no bold does
-     * everywhere else in this file.
+     * The monospace and sans-serif families: a regular face each, and the
+     * same three styled slots the default family has, indexed the same way
+     * (1 bold, 2 italic, 3 both; 0 unused). A style nobody loaded a face for
+     * draws in the family's regular face, as a family with no bold does
+     * everywhere else in this file. They were one face each, and a bold
+     * sans-serif heading -- or a bold button -- drew regular (#21).
      */
     ar_i32        mono_face;
     ar_font_chain mono_chain;
+    ar_i32        mono_styled[4];
+    ar_font_chain mono_styled_chain[4];
 
-    /* And the sans-serif family, on the same terms: one face, for controls
-       and for anything that asks for sans-serif. */
     ar_i32        sans_face;
     ar_font_chain sans_chain;
+    ar_i32        sans_styled[4];
+    ar_font_chain sans_styled_chain[4];
 
     ar_font_chain    chain;
     ar_shaper        shaper;
@@ -747,6 +748,11 @@ struct ar_ctx
        document that stops at whatever box is open. */
     ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
     ar_i32 focusable_prev_n;
+
+    /* The previous frame's text fields, by key: a press that focuses one of
+       these keeps :focus-visible, as a browser's does (#25). */
+    ar_u32 text_keys_prev[AR_MAX_FOCUSABLES];
+    ar_i32 text_keys_prev_n;
 
     /* The `tabindex` of each stop, in the same order. A positive one sorts
        ahead of every zero, which is the rule nobody should rely on and every
