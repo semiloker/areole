@@ -1394,6 +1394,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
          * a stated height: an automatic one is exactly as tall as its contents
          * and there is no room to distribute.
          */
+        n->text_dy = 0;
         if (n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO)
         {
             ar_i32 ac = n->style.v[AR_P_ALIGN_CONTENT] & AR_ALIGN_MODE_MASK;
@@ -1407,6 +1408,9 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
                 {
                     ar_shift_subtree(nodes, env->frags, env->frag_used, c, 0, dy);
                 }
+                /* And the box's own text, which is not a child and was left
+                   where it was: see text_dy in ar_node.h. */
+                n->text_dy = (ar_i16)(dy < 32767 ? dy : 32767);
             }
         }
     }
@@ -1561,6 +1565,35 @@ ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env
     return h;
 }
 
+/*
+ * align-content for a box with no children: its own text, moved the way
+ * ar__place_block moves a container's contents.
+ *
+ * A leaf is never placed -- its parent sized it and there is nothing inside to
+ * arrange -- so the alignment ar__place_block does was never done for one, and
+ * a leaf with a stated height and a label of its own is exactly what ar_button
+ * makes. Block containers only: an inline box's height is not its own to state.
+ */
+static void ar__align_own_text(ar_node *n)
+{
+    ar_i32 ac, room;
+
+    n->text_dy = 0;
+    if (!n->text || n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO || !ar_is_block_container(n))
+    {
+        return;
+    }
+    ac = n->style.v[AR_P_ALIGN_CONTENT] & AR_ALIGN_MODE_MASK;
+    room = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM] -
+           ar__text_block_height(n);
+    if ((ac == AR_ALIGN_CENTER || ac == AR_ALIGN_END) && room > 0)
+    {
+        ar_i32 dy = ac == AR_ALIGN_CENTER ? room / 2 : room;
+
+        n->text_dy = (ar_i16)(dy < 32767 ? dy : 32767);
+    }
+}
+
 static void ar__place_range(ar_node *nodes, ar_i32 from, ar_i32 to, ar_layout_env *env)
 {
     ar_i32 i;
@@ -1569,8 +1602,13 @@ static void ar__place_range(ar_node *nodes, ar_i32 from, ar_i32 to, ar_layout_en
     {
         ar_node *n = &nodes[i];
 
-        if (ar__hidden(n) || n->first_child < 0)
+        if (ar__hidden(n))
         {
+            continue;
+        }
+        if (n->first_child < 0)
+        {
+            ar__align_own_text(n);
             continue;
         }
 

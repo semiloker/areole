@@ -13606,6 +13606,53 @@ static void test_an_absolute_child_does_not_widen_a_shrink_to_fit_box(void)
     CHECK(ar__box(1).w == 50, "absolute child: an inline-block is as wide as what is in flow");
 }
 
+/*
+ * A button made by ar_button carries its label as its own text, not as a
+ * child. align-content moved a stated-height box's children to the middle and
+ * left its own text where it was, so the one kind of button an immediate-mode
+ * caller builds drew its label against the top edge -- while a parsed
+ * `<button>`, whose label is a child, drew it in the middle. PetalSoft's theme
+ * switch found this one too.
+ */
+static void test_a_buttons_own_label_sits_in_the_middle(void)
+{
+    ar_surface s = ar__ui_surface(120, 60);
+    ar_rect    b;
+    ar_i32     x, y, top = -1, bottom = -1, above, below;
+
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 "button.b { display:block; width:100px; height:40px; padding:0; border:0;"
+                 " background:#ffffff; color:#000000; align-content:center; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_button(g_ui, "button.b", "Go");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    b = ar__box(1);
+    for (y = b.y; y < b.y + b.h; ++y)
+    {
+        for (x = b.x; x < b.x + b.w; ++x)
+        {
+            if ((s.pixels[y * s.stride + x] & 0x00FFFFFFu) != 0x00FFFFFFu)
+            {
+                if (top < 0)
+                {
+                    top = y;
+                }
+                bottom = y;
+            }
+        }
+    }
+    above = top - b.y;
+    below = b.y + b.h - 1 - bottom;
+
+    CHECK(top >= 0, "own label: the label is drawn");
+    CHECK(above >= 10 && above - below <= 2 && below - above <= 2,
+          "own label: as much room above it as below it in a 40px button");
+}
+
 /* With no offsets it stays at the static position: where the flow had reached.
    That is what makes `position: absolute` alone look like nothing happened. */
 static void test_absolute_with_no_offsets_keeps_the_static_position(void)
@@ -24363,6 +24410,7 @@ int main(void)
     test_absolute_is_out_of_the_flow();
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
+    test_a_buttons_own_label_sits_in_the_middle();
     test_absolute_with_no_offsets_keeps_the_static_position();
     test_absolute_takes_its_children_with_it();
     test_a_shifted_box_takes_its_fragments_with_it();

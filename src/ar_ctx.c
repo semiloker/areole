@@ -4010,6 +4010,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     n->edge[1] = 0;
     n->edge[2] = 0;
     n->edge[3] = 0;
+    n->text_dy = 0;
 
     ar__resolve(c, c->node_count - 1);
 
@@ -6272,7 +6273,7 @@ static ar_u16 ar__hit_line(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar
 static ar_u16 ar__hit_field(ar_ctx *c, const ar_node *n, const ar_i32 *starts, ar_i32 lines,
                             ar_i32 tl, ar_i32 mx, ar_i32 my)
 {
-    ar_i32 ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+    ar_i32 ty = n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy;
     ar_i32 adv = n->line_h > 0 ? n->line_h : 1;
     ar_i32 li = my < ty ? 0 : (my - ty) / adv;
 
@@ -6466,7 +6467,7 @@ static void ar__field_after_layout(ar_ctx *c)
         ar_node *f = &c->nodes[c->edit_field_box];
         ar_slot *slot = ar_ctx_slot(c, f->key);
         ar_i32   inset = f->style.v[AR_P_BORDER_WIDTH];
-        ar_i32   top = n->rect.y + n->style.v[AR_P_PAD_TOP] + li * n->line_h;
+        ar_i32   top = n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy + li * n->line_h;
         ar_i32   bottom = top + (n->text_h > 0 ? n->text_h : n->line_h);
         ar_i32   port_top = f->rect.y + inset + f->style.v[AR_P_PAD_TOP];
         ar_i32   port_bottom = f->rect.y + f->rect.h - inset - f->style.v[AR_P_PAD_BOTTOM];
@@ -6501,9 +6502,10 @@ static void ar__field_after_layout(ar_ctx *c)
         sx = 0;
     }
 
-    c->caret_rect = ar_rect_make(n->rect.x + n->style.v[AR_P_PAD_LEFT] + cx - sx,
-                                 n->rect.y + n->style.v[AR_P_PAD_TOP] + li * n->line_h, 1,
-                                 n->text_h > 0 ? n->text_h : n->line_h);
+    c->caret_rect =
+        ar_rect_make(n->rect.x + n->style.v[AR_P_PAD_LEFT] + cx - sx,
+                     n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy + li * n->line_h, 1,
+                     n->text_h > 0 ? n->text_h : n->line_h);
     c->caret_on = ar__caret_showing(c);
 
     /* What the paint pass reads for this box that no property records. Mixed
@@ -6529,7 +6531,7 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
     ar_i32   lines = ar__field_lines(c, n, starts);
     ar_i32   tl = ar__text_len(n->text);
     ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT] - c->edit_scroll_x;
-    ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+    ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy;
     ar_i32   adv = n->line_h;
     ar_i32   th = n->text_h > 0 ? n->text_h : n->line_h;
     ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
@@ -7617,7 +7619,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                alignment, which belongs to the box, not to the glyphs. */
             ar_rect  tclip = ar_rect_intersect(clip, n->rect);
             ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT];
-            ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
+            ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy;
             ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
 
             /* The same wrap layout used, so the lines drawn are the lines
