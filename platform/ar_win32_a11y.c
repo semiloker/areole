@@ -556,9 +556,16 @@ static HRESULT STDMETHODCALLTYPE ar__value(IAccessible *This, VARIANT v, BSTR *o
         return E_POINTER;
     }
     *out = NULL;
-    if (!ar__alive(a) || !ar__target(a, v, &item) || item < 0)
+    /* Two questions, not one: a dead object returns before ar__target has
+       written `item`, and reading it to choose the error read whatever was on
+       the stack. */
+    if (!ar__alive(a) || !ar__target(a, v, &item))
     {
-        return item < 0 ? S_FALSE : E_INVALIDARG;
+        return E_INVALIDARG;
+    }
+    if (item < 0)
+    {
+        return S_FALSE;
     }
     n = ar_a11y_value(g_a.ctx, g_a.doc, g_a.items[item].node, g_utf8, sizeof g_utf8);
     if (n == 0 &&

@@ -1777,11 +1777,20 @@ enum
     AR_CALC_PUSH_VAR
 };
 
+/*
+ * One step of a calc() program.
+ *
+ * `v` is thirty-two bits. It was sixteen, and a bare number is held in
+ * thousandths, so 32.767 was the largest number calc() could hold: `calc(2px
+ * * 50)` multiplied by -15.536 and came out 0, and so did every var() divided
+ * by 100. MSVC's C4244 on the var() path was the only thing that said so. The
+ * pool is 512 steps, so the price is 2 KB of AR_MEM_FIXED's headroom.
+ */
 typedef struct ar_calc_op
 {
     ar_u8  op;
     ar_u8  unit; /* PUSH only: what `v` is measured in */
-    ar_i16 v;    /* PUSH only: the number, in that unit's own scale */
+    ar_i32 v;    /* PUSH only: the number, in that unit's own scale */
 } ar_calc_op;
 
 /* Programs are short -- the longest in the ten real pages saved under
@@ -2065,7 +2074,7 @@ const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
    the name has no usable value, which makes the whole expression invalid --
    CSS says a `var()` that cannot be substituted poisons the declaration and
    not merely the term it stood in. */
-typedef int (*ar_calc_var_fn)(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+typedef int (*ar_calc_var_fn)(const void *ctx, const void *node, ar_u32 name, ar_i32 *out_v,
                               ar_u8 *out_unit);
 
 typedef struct ar_calc_env

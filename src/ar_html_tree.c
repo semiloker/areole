@@ -1005,9 +1005,9 @@ static ar_u32 ar__store_bytes(char *out, ar_span s, int rule)
         }
         else if (rule == AR__NUL_REPLACE)
         {
-            out[n++] = (char)0xEF;
-            out[n++] = (char)0xBF;
-            out[n++] = (char)0xBD;
+            out[n++] = '\xEF';
+            out[n++] = '\xBF';
+            out[n++] = '\xBD';
         }
     }
     return n;

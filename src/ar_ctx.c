@@ -372,7 +372,10 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     {
         return 0;
     }
-    ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
+    /* A sheet counts its rules in sixteen bits. More than that would take
+       45 MB of rule table before the first box, so it is a ceiling nobody
+       reaches -- but it is stated here rather than left to the conversion. */
+    ar_sheet_init(&c->sheet, rules, (ar_u16)(max_rules < 0xFFFFu ? max_rules : 0xFFFFu));
     c->media_resolution = 1000;
     c->render_scale = 1000;
     c->painted_scale = 1000;
@@ -1954,7 +1957,7 @@ static const ar_var_decl *ar__var_lookup(const ar_ctx *c, ar_i32 scope, ar_u32 n
  * context would make the CSS parser depend on the box tree, which is the one
  * direction this codebase does not let dependencies run.
  */
-static int ar__calc_var(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+static int ar__calc_var(const void *ctx, const void *node, ar_u32 name, ar_i32 *out_v,
                         ar_u8 *out_unit)
 {
     const ar_ctx      *c = (const ar_ctx *)ctx;
@@ -2592,7 +2595,7 @@ static void ar__resolve_late(ar_ctx *c)
     for (i = 0; i < c->node_count; ++i)
     {
         ar_node *n = &c->nodes[i];
-        ar_u16   was = n->state;
+        ar_u32   was = n->state;
 
         if (n->child_count == 0 && !n->text)
         {
@@ -4877,9 +4880,9 @@ static void ar__put_mask(const ar_ctx *c, char *out)
 {
     if (c->have_face)
     {
-        out[0] = (char)0xE2;
-        out[1] = (char)0x80;
-        out[2] = (char)0xA2;
+        out[0] = '\xE2';
+        out[1] = '\x80';
+        out[2] = '\xA2';
     }
     else
     {

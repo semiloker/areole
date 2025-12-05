@@ -1043,9 +1043,9 @@ ar_u32 ar_a11y_value(const ar_ctx *c, const ar_doc *d, ar_i32 node, char *buf, a
 
             while (k-- > 0 && used + 3 < cap)
             {
-                buf[used++] = (char)0xE2;
-                buf[used++] = (char)0x80;
-                buf[used++] = (char)0xA2;
+                buf[used++] = '\xE2';
+                buf[used++] = '\x80';
+                buf[used++] = '\xA2';
             }
         }
         else
