@@ -93,6 +93,10 @@ struct ar_win
        different fields and sharing an accumulator would spend the travel
        twice. */
     ar_i32 wheel_px_accum;
+
+    /* When ar_win_wake_vsync last returned, for pacing a refresh by the
+       clock where there is no compositor to wait on. */
+    ar_u32 vsync_at;
 };
 
 /*
@@ -1078,6 +1082,56 @@ void ar_win_wake_after(ar_win *win, ar_u32 us)
     ms = (UINT)((us + 999u) / 1000u);
     SetTimer(win->hwnd, 1, ms ? ms : 1, NULL);
     win->timer_armed = 1;
+}
+
+/*
+ * DwmFlush, found at run time: dwmapi.dll is Vista's, and this backend still
+ * starts on Windows 2000. Cast through void (*)(void), which every compiler
+ * accepts as "any function", rather than straight from FARPROC.
+ */
+typedef HRESULT(WINAPI *ar__dwm_flush_fn)(void);
+
+static ar__dwm_flush_fn ar__dwm_flush(void)
+{
+    static int              looked = 0;
+    static ar__dwm_flush_fn flush = 0;
+
+    if (!looked)
+    {
+        HMODULE dwm = LoadLibraryA("dwmapi.dll");
+
+        looked = 1;
+        if (dwm)
+        {
+            flush = (ar__dwm_flush_fn)(void (*)(void))GetProcAddress(dwm, "DwmFlush");
+        }
+    }
+    return flush;
+}
+
+void ar_win_wake_vsync(ar_win *win)
+{
+    ar__dwm_flush_fn flush;
+
+    if (!win || !win->hwnd)
+    {
+        return;
+    }
+    flush = ar__dwm_flush();
+    if (!flush || FAILED(flush()))
+    {
+        /* No compositor -- XP, or composition switched off -- so the rest of a
+           60 Hz period since the last one, by the clock. */
+        ar_u32 now = ar_time_us();
+        ar_u32 gone = now - win->vsync_at;
+
+        if (win->vsync_at && gone < 16667u)
+        {
+            Sleep((16667u - gone + 999u) / 1000u);
+        }
+    }
+    win->vsync_at = ar_time_us();
+    ar_win_wake(win);
 }
 
 void ar_win_set_clipboard(ar_win *win, const char *utf8, ar_u32 len)
