@@ -2483,12 +2483,22 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
     n->var_scope = n->parent >= 0 ? c->nodes[n->parent].var_scope : -1;
     if (c->sheet.has_vars)
     {
-        ar_var_decl mine[AR_RULE_VARS];
+        ar_var_decl mine[AR_BOX_VARS];
+        int         full = 0;
         ar_i32      got = ar_sheet_resolve_vars(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id,
-                                                n->state, mine, AR_RULE_VARS);
+                                                n->state, mine, AR_BOX_VARS, &full);
 
-        if (got > 0 && c->var_scopes && c->var_scope_count < c->var_scope_cap &&
-            (ar_i32)c->var_entry_count + got <= (ar_i32)c->var_entry_cap)
+        if (full)
+        {
+            c->overflowed = 1;
+        }
+        if (got > 0 && c->var_scopes &&
+            (c->var_scope_count >= c->var_scope_cap ||
+             (ar_i32)c->var_entry_count + got > (ar_i32)c->var_entry_cap))
+        {
+            c->overflowed = 1; /* the frame's scope pool is full */
+        }
+        else if (got > 0 && c->var_scopes)
         {
             ar_var_scope *sc = &c->var_scopes[c->var_scope_count];
             ar_i32        k;

@@ -13559,6 +13559,53 @@ static void test_absolute_is_out_of_the_flow(void)
 }
 
 /*
+ * Custom properties past sixteen. A rule could declare sixteen and a box hold
+ * sixteen, and both dropped the rest without a word: PetalSoft's accent was
+ * three properties in their own rule on a root that already had seventeen,
+ * and was simply not there. Thirty-two now, and past that it is reported.
+ */
+static void test_custom_properties_past_sixteen(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+
+    ar__ui_reset("#root { display:block; --v1: 5px; --v2: 10px; --v3: 15px; --v4: 20px; --v5: "
+                 "25px; --v6: 30px; --v7: 35px; --v8: 40px; --v9: 45px; --v10: 50px; --v11: 55px; "
+                 "--v12: 60px; --v13: 65px; --v14: 70px; --v15: 75px; --v16: 80px; --v17: 85px; "
+                 "--v18: 90px; --v19: 95px; --v20: 100px; }"
+                 ".b { display:block; width:var(--v20); height:5px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).w == 100, "custom properties: the twentieth in one rule is there");
+    CHECK(!ar_overflowed(g_ui), "custom properties: and twenty is no overflow");
+
+    ar__ui_reset("#root { display:block; --w1: 1px; --w2: 2px; --w3: 3px; --w4: 4px; --w5: 5px; "
+                 "--w6: 6px; --w7: 7px; --w8: 8px; --w9: 9px; --w10: 10px; --w11: 11px; --w12: "
+                 "12px; --w13: 13px; --w14: 14px; --w15: 15px; --w16: 16px; --w17: 17px; --w18: "
+                 "18px; --w19: 19px; --w20: 20px; --w21: 21px; --w22: 22px; --w23: 23px; --w24: "
+                 "24px; --w25: 25px; --w26: 26px; --w27: 27px; --w28: 28px; --w29: 29px; --w30: "
+                 "30px; --w31: 31px; --w32: 32px; --w33: 33px; }");
+    CHECK(ar_stylesheet_errors(g_ui) > 0,
+          "custom properties: a thirty-third in one rule is an error");
+
+    ar__ui_reset(
+        ".x { --a1: 1px; --a2: 1px; --a3: 1px; --a4: 1px; --a5: 1px; --a6: 1px; --a7: 1px; --a8: "
+        "1px; --a9: 1px; --a10: 1px; --a11: 1px; --a12: 1px; --a13: 1px; --a14: 1px; --a15: 1px; "
+        "--a16: 1px; --a17: 1px; --a18: 1px; --a19: 1px; --a20: 1px; } .y { --b1: 1px; --b2: 1px; "
+        "--b3: 1px; --b4: 1px; --b5: 1px; --b6: 1px; --b7: 1px; --b8: 1px; --b9: 1px; --b10: 1px; "
+        "--b11: 1px; --b12: 1px; --b13: 1px; --b14: 1px; --b15: 1px; --b16: 1px; --b17: 1px; "
+        "--b18: 1px; --b19: 1px; --b20: 1px; } #root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root.x.y");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_overflowed(g_ui), "custom properties: forty on one box is reported, not dropped");
+}
+
+/*
  * A number in calc() is the number it says, however large.
  *
  * A step of a calc() program held its operand in sixteen bits and a bare
@@ -24492,6 +24539,7 @@ int main(void)
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
     test_a_number_in_calc_above_thirty_two_is_itself();
+    test_custom_properties_past_sixteen();
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_a_buttons_own_label_sits_in_the_middle();
