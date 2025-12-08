@@ -566,6 +566,29 @@ ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
 
 static void ar__rebuild_chains(ar_ctx *c);
 
+/*
+ * The shaper for face n, from the arena, if the face has anything to shape
+ * with: GSUB, GPOS or a legacy kern table. A face with none -- the built-in
+ * test face, most symbol fonts -- costs nothing and is drawn as its cmap says.
+ * Shaping is per face and per run: see shapers[] in ar_node.h.
+ */
+static void ar__shape_face(ar_ctx *c, ar_i32 n)
+{
+    const ar_face *f = &c->face[n];
+    ar_shaper     *sh;
+
+    c->shapers[n] = 0;
+    if (!f->gsub && !f->gpos && !f->kern)
+    {
+        return;
+    }
+    sh = (ar_shaper *)ar_arena_persist(&c->arena, (ar_u32)sizeof(ar_shaper));
+    if (sh && ar_shape_init(sh, f))
+    {
+        c->shapers[n] = sh;
+    }
+}
+
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px)
 {
     ar_glyph_slot *slots;
@@ -665,8 +688,18 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     ar__rebuild_chains(c);
 
     /* Ligatures and kerning are on when the face has the tables, because a
-       font that ships them means them. */
-    c->shaping = ar_shape_init(&c->shaper, &c->face[0]);
+       font that ships them means them. A primary face loaded again starts the
+       pool again, so every other face's shaper goes with it. */
+    {
+        ar_i32 k;
+
+        for (k = 1; k < AR_MAX_FACES; ++k)
+        {
+            c->shapers[k] = 0;
+        }
+    }
+    ar__shape_face(c, 0);
+    c->shaping = c->shapers[0] != 0;
     c->have_face = 1;
     return 1;
 }
@@ -849,6 +882,7 @@ int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight,
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->style_face[slot] = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -888,6 +922,7 @@ int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->mono_face = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -914,6 +949,7 @@ int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->sans_face = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -938,6 +974,7 @@ static int ar__load_family_styled(ar_ctx *c, ar_i32 *slots, ar_i32 regular, cons
     {
         return 0;
     }
+    ar__shape_face(c, n);
     slots[slot] = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -969,6 +1006,7 @@ int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->chain.face[c->chain.count] = &c->face[n];
     c->chain.id[c->chain.count] = (ar_u8)n;
     c->chain.count++;
@@ -1051,7 +1089,13 @@ void ar_font_subpixel(ar_ctx *c, int on)
 
 void ar_font_shaping(ar_ctx *c, int on)
 {
-    int want = on ? (c->face[0].gsub || c->face[0].gpos || c->face[0].kern) : 0;
+    int    want = 0;
+    ar_i32 k;
+
+    for (k = 0; on && k < c->face_used; ++k)
+    {
+        want = want || c->shapers[k] != 0;
+    }
 
     if (c->shaping == want)
     {
@@ -5886,7 +5930,8 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         ar_i32 ppem = ar__kw(c, n->style.v[AR_P_FONT_SIZE]);
 
         adv = ar_text_draw_shaped(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y + n->ascent), buf,
-                                  ar_chain_for(c, n), c->shaping ? &c->shaper : 0, ppem, col,
+                                  ar_chain_for(c, n),
+                                  c->shaping ? (const ar_shaper *const *)c->shapers : 0, ppem, col,
                                   &c->glyphs, &c->glyph_scratch, 0);
         if (c->render_scale != 1000 && adv > 0)
         {
