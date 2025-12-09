@@ -65,20 +65,31 @@ static ar_i32 ar__text_block_height(const ar_node *n)
    are defined in terms of a parent size that is precisely what is being
    computed. Letting them contribute would be circular, so they are simply
    absent from the intrinsic size, which is the same choice every flexbox
-   implementation makes. */
+   implementation makes.
+
+   Whatever it is, it is held between the box's own minimum and maximum, the
+   same limits its placement will hold it to. Without them a column of rows
+   with `min-height: 44px` and less than that in them measured as the gaps
+   alone: the rows were 44 when placed and hung out of a container sized for
+   none of them. */
 static ar_i32 ar__intrinsic(const ar_node *n, ar_i32 axis)
 {
     ar_prop p = ar_axis_size_prop(axis);
+    ar_i32  v;
 
     switch (n->style.unit[p])
     {
     case AR_UNIT_PX:
-        return n->style.v[p] < 0 ? 0 : n->style.v[p];
+        v = n->style.v[p] < 0 ? 0 : n->style.v[p];
+        break;
     case AR_UNIT_AUTO:
-        return n->fit[axis];
+        v = n->fit[axis];
+        break;
     default:
-        return 0;
+        v = 0;
+        break;
     }
+    return ar_clamp(v, ar_used_min(n, axis), ar_used_max(n, axis));
 }
 
 /* ------------------------------------------------------------------------
@@ -725,7 +736,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      * column's automatic height is the sum of its items' main sizes, which is
      * a different question and is not this one. Named rather than guessed at.
      */
-    if (nodes && env && n->first_child >= 0 && n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX &&
+    if (nodes && env && n->first_child >= 0 && ar_is_flex(n) &&
         n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && ar_axis_main(n) == 0)
     {
         ar_i32 idx = (ar_i32)(n - nodes);
@@ -975,8 +986,9 @@ static void ar__size_run(ar__stack_ud *su, ar_i32 first, ar_i32 stop)
         {
             ar__size_run(su, ch->first_child, -1);
         }
-        else if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK && ch->first_child >= 0 &&
-                 ch->measured_w != ch->rect.w && su->env->node_count > 0)
+        else if ((ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK ||
+                  ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX) &&
+                 ch->first_child >= 0 && ch->measured_w != ch->rect.w && su->env->node_count > 0)
         {
             /* Its insides laid out now, at its size, so the line can ask where
                its last line of text is -- which is where it sits on the line.

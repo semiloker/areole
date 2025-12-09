@@ -1253,6 +1253,13 @@ int ar_box_paints(const ar_node *n);
  * So: keep them in the header, keep them one line each, and do not move them
  * back to a .c file for tidiness. The tidy version is the slow one.
  * ------------------------------------------------------------------------ */
+/* A flex container, whether a block or an inline box on the outside. */
+static AR_INLINE int ar_is_flex(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX;
+}
+
 static AR_INLINE ar_i32 ar_axis_main(const ar_node *n)
 {
     return n->style.v[AR_P_DIRECTION] == AR_DIR_COLUMN ? 1 : 0;

@@ -234,6 +234,20 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
         return 0;
     }
     /*
+     * Nor a box with a minimum height, or one that is not a block at all.
+     *
+     * CSS 2.1 8.3.1 asks for a zero computed `min-height`, and this asked only
+     * about `height` -- so an empty row with `min-height: 44px` was handed to
+     * the stack as a box with no height, and a list of them came out as tall
+     * as nothing. And a flex or grid container lays its children out itself:
+     * whether they happen to be empty says nothing about how tall it is, but
+     * a grid of empty cells was collapsed to nothing on the strength of it.
+     */
+    if (n->style.v[AR_P_MIN_HEIGHT] > 0 || !ar_is_block(n))
+    {
+        return 0;
+    }
+    /*
      * A box with an aspect ratio has a height, even though it did not state
      * one -- its width did, on its behalf. Reading `height: auto` as "no
      * height" here collapsed every ratio box to nothing, which is the whole
