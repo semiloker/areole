@@ -5,6 +5,9 @@
 Every figure here was measured by `ar_bench` on the machine described below, with the
 counters compiled in. Reproduce with:
 
+> These numbers are areole 0.9.6's. The engine is 0.10.1, and its own baseline waits
+> for a quiet machine.
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ./build/ar_bench --all --iters 150 --repeat 3 --json
@@ -20,7 +23,7 @@ scalar throughput  3.51e+09 independent ops/s
 memory write       15.81 GB/s   scalar 32 bit store loop
 memory read        22.99 GB/s
 memory copy        27.66 GB/s   platform memcpy
-areole             0.9.6
+areole             0.9.6   measured before 0.10.1
 ```
 
 A rate without its machine is not a rate. Everything below is this machine and

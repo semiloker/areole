@@ -60,6 +60,20 @@ def header_version():
     return m.group(1) if m else None
 
 
+def version_key(v):
+    """'0.10.1' as (0, 10, 1), so that 0.10 comes after 0.9 -- as strings it
+    does not. None for anything that is not three numbers."""
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", v or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def measured_before(baseline):
+    """The engine the numbers came from, when it is not this one."""
+    got = baseline.get("areole_version")
+    want = header_version()
+    return got if got and want and got != want else None
+
+
 def check_baseline_is_complete(baseline):
     """The two ways a baseline lies without being wrong.
 
@@ -75,6 +89,13 @@ def check_baseline_is_complete(baseline):
     A baseline stamped with a stale version mislabels every number in it.
     AR_VERSION_STRING sat at 0.6.1-dev through five releases and the machine
     block of the generated document repeated it each time.
+
+    An *older* baseline is allowed, and says so. A release can land before
+    there is a quiet machine to measure it on, and a baseline taken on a busy
+    one is worse than an old one -- so the document names the engine its
+    numbers came from, at the top and in the machine block, rather than the
+    release waiting. A baseline newer than the header, or one whose version
+    cannot be read, still fails: that one is a label that is simply wrong.
     """
     problems = []
 
@@ -88,7 +109,8 @@ def check_baseline_is_complete(baseline):
 
     want = header_version()
     got = baseline.get("areole_version")
-    if want and got and want != got:
+    older = version_key(got) and version_key(want) and version_key(got) < version_key(want)
+    if want and got and want != got and not older:
         problems.append(
             "bench/baseline.json was measured by areole %s, but include/areole.h says %s"
             % (got, want)
@@ -154,6 +176,11 @@ def main():
     w("Every figure here was measured by `ar_bench` on the machine described below, with the")
     w("counters compiled in. Reproduce with:")
     w("")
+    if measured_before(results):
+        w("> These numbers are areole %s's. The engine is %s, and its own baseline waits"
+          % (results["areole_version"], header_version()))
+        w("> for a quiet machine.")
+        w("")
     w("```sh")
     w("cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build")
     w("./build/ar_bench --all --iters %d --repeat %d --json"
@@ -175,7 +202,9 @@ def main():
           % profile["mem_write_gbs_scalar"])
         w("memory read        %.2f GB/s" % profile["mem_read_gbs_scalar"])
         w("memory copy        %.2f GB/s   platform memcpy" % profile["mem_copy_gbs_memcpy"])
-        w("areole             %s" % results["areole_version"])
+        w("areole             %s%s" % (results["areole_version"],
+                                        "   measured before %s" % header_version()
+                                        if measured_before(results) else ""))
         w("```")
     else:
         w("_No reference profile found. Run `ar_hwprobe --json --name ... > "
