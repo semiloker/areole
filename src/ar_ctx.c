@@ -3514,6 +3514,20 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     }
 
     /*
+     * Enter or Space for whatever has the focus, which ar_button reads as a
+     * click on itself.
+     *
+     * A document's `<button>` has always taken them. A button drawn by
+     * ar_button and made a tab stop with ar_focusable could be reached by Tab,
+     * drew its ring, and did nothing at all when pressed: the click it
+     * answers to came only from a mouse released over it. The keys are the
+     * focus's own, after the Tab above has moved it, and a field's key never
+     * matches an ar_button's, so typing a space is still typing a space.
+     */
+    c->key_clicked = (c->keys & (AR_KEY_ENTER | AR_KEY_SPACE)) ? c->focus_key : 0;
+    c->key_click_used = 0;
+
+    /*
      * Typing is recorded here and applied when the field is reached.
      *
      * It cannot be applied here. A Tab and a character arrive in the same
@@ -5795,6 +5809,11 @@ int ar_button(ar_ctx *c, const char *selector, const char *label)
     if (idx < 0)
     {
         return 0;
+    }
+    if (c->key_clicked != 0 && c->nodes[idx].key == c->key_clicked)
+    {
+        c->key_click_used = 1; /* the Space is the button's, not the page's */
+        return 1;
     }
     return c->nodes[idx].key == c->clicked && c->clicked != 0;
 }
@@ -9076,6 +9095,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* What the focused control takes from the keyboard is not the page's to
        scroll with. */
     c->keys &= ~ar__controls_after(c);
+    if (c->key_click_used)
+    {
+        c->keys &= ~(ar_u32)(AR_KEY_SPACE | AR_KEY_ENTER);
+    }
 
     /*
      * Enter in a single-line field submits its form, through its first

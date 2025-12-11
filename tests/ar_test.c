@@ -17870,6 +17870,57 @@ static void ar__focus_frame(ar_surface *s)
     ar_frame_end(g_ui, s);
 }
 
+/*
+ * A button reached by Tab is pressed by Enter or Space.
+ *
+ * ar_focusable made an ar_button a tab stop with a ring, and pressing it did
+ * nothing: an ar_button answered only to a mouse released over it. Every
+ * button in an immediate-mode interface was therefore unreachable from the
+ * keyboard in the one way that matters. And a Space it takes is its own -- it
+ * does not page the document down as well.
+ */
+static int ar__key_buttons(ar_surface *s, ar_u32 keys, int *second)
+{
+    ar_input in;
+    int      first;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = keys;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    first = ar_button(g_ui, "button#one", "One");
+    ar_focusable(g_ui, 0);
+    *second = ar_button(g_ui, "button#two", "Two");
+    ar_focusable(g_ui, 0);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+    return first;
+}
+
+static void test_a_focused_button_is_pressed_by_enter_or_space(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+    int        two = 0;
+
+    ar__ui_reset("#root { display:block; } button { display:block; height:20px; }");
+    ar__key_buttons(&s, 0, &two);
+    CHECK(!ar__key_buttons(&s, AR_KEY_ENTER, &two) && !two,
+          "button keys: Enter with nothing focused presses nothing");
+    ar__key_buttons(&s, AR_KEY_TAB, &two);
+    CHECK(ar__key_buttons(&s, AR_KEY_ENTER, &two) && !two,
+          "button keys: Enter presses the focused button, and only that one");
+    CHECK(ar__key_buttons(&s, AR_KEY_SPACE, &two) && !two, "button keys: so does Space");
+    CHECK(!(g_ui->keys & AR_KEY_SPACE),
+          "button keys: and the Space is not left over to scroll with");
+    CHECK(!ar__key_buttons(&s, 0, &two) && !two,
+          "button keys: a frame with no key presses nothing");
+    ar__key_buttons(&s, AR_KEY_TAB, &two);
+    CHECK(!ar__key_buttons(&s, AR_KEY_SPACE, &two) && two,
+          "button keys: Tab on, and Space presses the second");
+}
+
 static void test_focus_moves_by_tab_and_wraps(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -24367,6 +24418,7 @@ int main(void)
     test_css_absurd_numbers();
     test_css_colors();
     test_focus_moves_by_tab_and_wraps();
+    test_a_focused_button_is_pressed_by_enter_or_space();
     test_focus_within_matches_the_ancestors();
     test_a_click_focuses_without_a_ring();
     test_sheet_init_leaves_no_field_behind();

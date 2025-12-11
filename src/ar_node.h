@@ -664,7 +664,13 @@ struct ar_ctx
     ar_i32 hot_index; /* key of the box under the cursor         */
     ar_u32 active;    /* key of the box the press started on     */
     ar_u32 clicked;   /* key of the box released on this frame   */
-    int    hot_changed;
+
+    /* The focused box, when Enter or Space came for it, and whether an
+       ar_button took it this frame -- see ar_frame_begin. */
+    ar_u32 key_clicked;
+    int    key_click_used;
+
+    int hot_changed;
 
     /*
      * The hot box's ancestors, by key, innermost first -- and the whole reason
