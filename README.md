@@ -1253,13 +1253,13 @@ see 0.10.1. The baseline, with the four new scenes in it, still waits for a quie
 0.10.1 is *Control appearance*: controls that take `accent-color`, `appearance` and the page's
 `color-scheme` the way a browser's do. What is here is the pointer, the hover and pressed looks, and
 six fixes found against Edge -- and then an application. PetalSoft, a desktop app of lists, forms,
-dialogs and a dashboard, was rewritten on areole, and it found nine bugs in the engine that no
-corpus had. Both halves are in this release; the rest of *Control appearance* is listed below as
+dialogs and a dashboard, was rewritten on areole, and it found ten bugs in the engine that no
+corpus had, and one thing missing. Both halves are in this release; the rest of *Control appearance* is listed below as
 not done.
 
 | | |
 | --- | --- |
-| Checks | **2,095** in `ar_test`, from 2,044; every CI job green again |
+| Checks | **2,101** in `ar_test`, from 2,044; every CI job green again |
 | Issues | #20 to #25, closed |
 | Benchmarks | not measured: `docs/PERFORMANCE.md` is 0.9.6's numbers, and says so at the top |
 
@@ -1278,7 +1278,7 @@ still fails. The four scenes written for 0.10.0 land with the next baseline, as 
 - **#24** `cursor`, and the pointer it asks for: an I-beam over a field, a hand over a link.
 - **#25** A text field clicked into shows its focus ring.
 
-### Nine bugs an application found
+### What an application found
 
 - **An absolutely positioned child widened its parent.** A popup menu under a button made the
   button as wide as the menu.
@@ -1297,6 +1297,12 @@ still fails. The four scenes written for 0.10.0 land with the next baseline, as 
   its gaps.
 - **A grid's auto rows ignored its `min-height`.** They share it now, as Grid 11.8 says.
 - **`display: inline-flex` was an unknown keyword**, so an icon-and-label button took a whole line.
+- **A button reached by Tab could not be pressed.** `ar_focusable` made an `ar_button` a tab stop
+  with a ring, and Enter and Space did nothing: it answered only to the mouse. Both press it now,
+  and a Space it takes does not also page the document down.
+- **And an application could not hear Ctrl+N.** The backend kept every key it did not understand.
+  `ar_input.shortcut` is the letter or digit pressed with Ctrl, and Shift as a bit, for the
+  application to read; the core does nothing with it.
 
 ### And the CI, red since 0.10.0
 
@@ -1305,7 +1311,9 @@ Three jobs had failed on every commit since 0.10.0, and most of what they report
 past the sixteenth was never seen to change. A radian passed 2^31 in an intermediate. An edit buffer
 read past its end before checking. The accessibility bridge read a value before writing it. The
 Windows job ran no `diff` and no `clang-format`, and a generator wrote the main checkout's files from
-any other one.
+any other one. And its size gate had been measuring with GCC 16.2 against budgets set with 14.2,
+which builds the same code 7.5 KB smaller: the budgets are set against CI's compiler now, and
+`check_size.py` says which compiler it measured with.
 
 ### What this release does not do
 
