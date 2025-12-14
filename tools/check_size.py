@@ -120,7 +120,17 @@ OBJECTS = [
 # sorted arrays.
 #
 # 188 KB against 188,828 measured: 3,684 of headroom.
-TOTAL_BUDGET = 188 * 1024
+#
+# **Moved to 200 KB at 0.10.1, by the compiler and not by the code.** Every
+# figure above was measured by GCC 14.2, the compiler on the machine this was
+# written on. CI's mingw job installs whatever MSYS2 ships, which is GCC 16.2
+# now, and 16.2 builds the same sources 7.5 KB larger: 198,576 bytes where 14.2
+# makes 191,036 -- ar_html_tree.c alone 88,884 against 82,016. The gate is CI's,
+# so the budget is set against CI's compiler: 200 KB, 6,224 of headroom there
+# and more here. The line printed under the table names the compiler, because
+# a figure without one is how a toolchain update read as a regression for a
+# week. See BUDGET_COMPILER.
+TOTAL_BUDGET = 200 * 1024
 ENTITY_BUDGET = 30 * 1024
 ENTITY_OBJECT = "ar_html_entity.c"
 
@@ -184,12 +194,15 @@ ENTITY_OBJECT = "ar_html_entity.c"
 # them, and the user-agent sheet's controls reading their colours through
 # custom properties so that hover and pressed cost two rules rather than
 # twenty-six (#23, #24). It leaves 1,248.
+#
+# **Moved to 112 KB at 0.10.1, for the compiler**, as the HTML budget was:
+# GCC 16.2 makes 112,176 of what 14.2 makes 103,648. 2,512 of headroom in CI.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
     "ar_color.c",
 ]
-CSS_BUDGET = 102 * 1024
+CSS_BUDGET = 112 * 1024
 
 # The interaction subsystem, added at 0.10.0 -- and added for the reason the CSS
 # one was. ar_css.c sat outside every size gate until 0.4.2 noticed, so a CSS
@@ -212,7 +225,27 @@ INTERACTION_OBJECTS = [
 ]
 INTERACTION_BUDGET = 32 * 1024
 
+# The compiler the budgets above are set against: CI's mingw job. Another one
+# still measures and still checks, and says how far it is from this one, since
+# GCC 14.2 builds the HTML subsystem 7.5 KB smaller than 16.2 does.
+BUDGET_COMPILER = "GNU 16"
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def compiler_of(build):
+    """'GNU 16.2.0', from what CMake recorded when it configured the build."""
+    files = os.path.join(build, "CMakeFiles")
+    for d in sorted(os.listdir(files)) if os.path.isdir(files) else []:
+        path = os.path.join(files, d, "CMakeCCompiler.cmake")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            cid = re.search(r'CMAKE_C_COMPILER_ID "([^"]*)"', text)
+            ver = re.search(r'CMAKE_C_COMPILER_VERSION "([^"]*)"', text)
+            if cid and ver:
+                return "%s %s" % (cid.group(1), ver.group(1))
+    return None
 
 
 def object_path(build, name):
@@ -279,6 +312,14 @@ def main():
         "  ix     %8d of %d  (%+d)"
         % (ix_total, INTERACTION_BUDGET, INTERACTION_BUDGET - ix_total)
     )
+    cc = compiler_of(args.build)
+    print()
+    if cc and (cc + ".").startswith(BUDGET_COMPILER + "."):
+        print("  measured by %s, the compiler the budgets are set against" % cc)
+    else:
+        print("  measured by %s; the budgets are set against %s, which builds"
+              % (cc or "an unknown compiler", BUDGET_COMPILER))
+        print("  differently -- GCC 14.2 makes the HTML subsystem 7.5 KB smaller")
 
     if not args.check:
         return 0

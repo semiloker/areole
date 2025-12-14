@@ -759,6 +759,17 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
             return DefWindowProcW(hwnd, msg, wp, lp);
         default:
+            /* A letter or digit with Ctrl, and not with Alt -- Ctrl+Alt is
+               AltGr, which types -- is the application's: see
+               ar_input.shortcut. */
+            if (((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9')) &&
+                (GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000))
+            {
+                win->input.shortcut =
+                    (ar_u32)wp | ((GetKeyState(VK_SHIFT) & 0x8000) ? AR_SHORTCUT_SHIFT : 0u);
+                ar_win_wake(win);
+                return 0;
+            }
             /* Every other key is somebody else's, and swallowing it would stop
                Alt+F4 working. Fall through to DefWindowProc. */
             return DefWindowProcW(hwnd, msg, wp, lp);
@@ -1010,6 +1021,7 @@ int ar_win_pump(ar_win *win)
     win->input.wheel = 0;
     win->input.wheel_px = 0;
     win->input.keys_pressed = 0;
+    win->input.shortcut = 0;
     win->input.text = 0;
     win->input.text_len = 0;
     win->input.clicks = 0;

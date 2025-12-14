@@ -139,6 +139,9 @@ int main(void)
     memset(&in, 0, sizeof in);
     in.mouse_x = -1;
     in.mouse_y = -1;
+    /* A shortcut the core does not use, which an application reads from the
+       same struct: it is public, and Shift is a bit an application can test. */
+    in.shortcut = 'N' | AR_SHORTCUT_SHIFT;
     ar_frame_begin(c, &in);
     ar_dom_build(c, d2);
     ar_frame_end(c, &surf);

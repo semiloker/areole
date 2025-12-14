@@ -1351,6 +1351,29 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
     ar__solve_axis(nodes, sheet, i, place, index, items, row, rows, 1, inner_h,
                    n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO, row_gap);
 
+    /*
+     * An automatic height with a minimum under it, which the rows have not
+     * reached.
+     *
+     * The stretch above needs a definite height to know what is left over,
+     * and an automatic one is not -- but CSS Grid 11.8 says to use the
+     * container's min-height when there is one, and 11.7 says the same for the
+     * `fr` tracks. So a grid with `min-height: 100vh` and two `auto` rows
+     * shares the window between them, as it does in a browser; here the rows
+     * stayed at their contents and left an empty band under the last one.
+     * Solved again rather than patched, so `align-content` and `fr` get the
+     * same space the stretch does.
+     */
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && rows > 0)
+    {
+        ar_i32 floor_h = ar_used_min(n, 1) - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
+
+        if (floor_h > row[rows - 1].pos + row[rows - 1].size)
+        {
+            ar__solve_axis(nodes, sheet, i, place, index, items, row, rows, 1, floor_h, 1, row_gap);
+        }
+    }
+
     for (k = 0; k < items; ++k)
     {
         ar_node *it = &nodes[index[k]];

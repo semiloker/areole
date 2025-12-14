@@ -36,6 +36,7 @@ later. Every expression below lands on an integer.
 """
 
 import io
+import subprocess
 import os
 import sys
 
@@ -190,16 +191,39 @@ def render():
     return '\n'.join(out)
 
 
+def formatted(text):
+    """
+    The corpus as clang-format leaves it, which is how it is committed.
+
+    CI's format gate runs over tests/ and this file is in tests/, so what is
+    checked in is formatted -- and a check that compared the generator's raw
+    output against it failed every time, for a reason that had nothing to do
+    with the corpus. The element corpus learned this first; see
+    gen_element_corpus.py. Without clang-format the text is returned as it
+    is, and --check says why it may disagree.
+    """
+    for cand in ('clang-format', 'clang-format.exe'):
+        try:
+            done = subprocess.run([cand, '--style=file', '--assume-filename=' + OUT],
+                                  input=text.encode('utf-8'), capture_output=True,
+                                  cwd=ROOT, check=True)
+            return done.stdout.decode('utf-8').replace('\r\n', '\n'), True
+        except Exception:
+            pass
+    return text, False
+
+
 def main():
-    text = render()
+    text, was_formatted = formatted(render())
     if '--check' in sys.argv:
         if not os.path.exists(OUT):
             print('FAIL: %s does not exist' % os.path.relpath(OUT, ROOT))
             return 1
         with io.open(OUT, encoding='utf-8') as f:
             if f.read() != text:
-                print('FAIL: %s is stale -- run tools/gen_calc_corpus.py'
-                      % os.path.relpath(OUT, ROOT))
+                print('FAIL: %s is stale -- run tools/gen_calc_corpus.py%s'
+                      % (os.path.relpath(OUT, ROOT),
+                         '' if was_formatted else ' (clang-format not found, so unformatted)'))
                 return 1
         print('the calc corpus is %d cases' % len(CASES))
         return 0

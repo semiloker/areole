@@ -4910,6 +4910,15 @@ static void test_font_load_and_fallback(void)
     CHECK(ar_font_load(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 32),
           "font: a valid face loads");
     CHECK(ar_font_loaded(c), "font: and the context reports it");
+
+    /* Each face is shaped with its own tables, so a shaper is per face -- and
+       only for a face that has tables. The test face has none, so it costs no
+       shaper, and with no face to shape with, shaping cannot be switched on. */
+    CHECK(c->shapers[0] == 0, "font: a face with no GSUB, GPOS or kern gets no shaper");
+    CHECK(ar_font_add(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT) && c->shapers[1] == 0,
+          "font: nor does a fallback face without them");
+    ar_font_shaping(c, 1);
+    CHECK(!c->shaping, "font: shaping stays off with no face to shape with");
 }
 
 static void test_font_changes_what_is_measured(void)
@@ -13550,6 +13559,211 @@ static void test_absolute_is_out_of_the_flow(void)
 }
 
 /*
+ * A box's min-height and max-height in what its container measures.
+ *
+ * A flex column sized to its content added up each item's content height, and
+ * an item's own limits were applied only when it was placed -- so a column of
+ * rows with `min-height: 44px` and nothing taller in them came out as tall as
+ * the gaps, and the rows hung out of the bottom of it. A block did the same.
+ */
+static void test_container_measures_its_items_limits(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".col { display:flex; flex-direction:column; gap:4px; }"
+                 ".r { display:block; min-height:44px; }"
+                 ".m { display:block; height:60px; max-height:30px; }"
+                 ".blk { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.col");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.m");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.blk");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).h == 44 + 44 + 30 + 8,
+          "limits: a flex column is as tall as its items' minimums");
+    CHECK(ar__box(3).y == 48 && ar__box(4).y == 96 && ar__box(4).h == 30,
+          "limits: and its items sit where their minimums and maximums put them");
+    CHECK(ar__box(5).y == 126 && ar__box(5).h == 88, "limits: so does a block");
+}
+
+/*
+ * Auto rows share what a grid's height leaves over.
+ *
+ * Grid's align-content is `normal`, which for a grid is `stretch`: the auto
+ * tracks grow to fill a container whose height or min-height is more than
+ * they need. They stayed at their content, so a grid made to fill a window
+ * left its last row short and an empty band below it.
+ */
+static void test_grid_auto_rows_fill_the_height(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; min-height:210px; gap:10px; }"
+                 ".h { display:grid; height:200px; grid-template-rows:50px auto; }"
+                 ".gi { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.g");
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.h");
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).h == 210, "grid stretch: the container keeps its min-height");
+    CHECK(ar__box(2).h == 100 && ar__box(3).y == ar__box(1).y + 110 && ar__box(3).h == 100,
+          "grid stretch: two auto rows share a min-height between them");
+    CHECK(ar__box(5).h == 50 && ar__box(6).y == ar__box(4).y + 50 && ar__box(6).h == 150,
+          "grid stretch: an auto row takes what a fixed one leaves of a height");
+}
+
+/*
+ * `display: inline-flex`: a flex container that sits on a line.
+ *
+ * It was an unknown keyword, so the box stayed whatever it was -- a block, for
+ * a div -- and two of them stacked. Now each is as wide as its items and they
+ * sit side by side, and inside each the items are a row.
+ */
+static void test_inline_flex(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; width:300px; }"
+                 ".f { display:inline-flex; gap:2px; }"
+                 ".i { display:block; width:10px; height:12px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "span.f");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "span.f");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "inline-flex: is a keyword");
+    CHECK(ar__box(1).w == 22 && ar__box(1).h == 12,
+          "inline-flex: as wide as its items and the gap");
+    CHECK(ar__box(3).x == ar__box(2).x + 12 && ar__box(3).y == ar__box(2).y,
+          "inline-flex: and its items are a row");
+    CHECK(ar__box(4).x == ar__box(1).x + 22 && ar__box(4).y == ar__box(1).y && ar__box(4).w == 10,
+          "inline-flex: two of them share a line");
+}
+
+/*
+ * Custom properties past sixteen. A rule could declare sixteen and a box hold
+ * sixteen, and both dropped the rest without a word: PetalSoft's accent was
+ * three properties in their own rule on a root that already had seventeen,
+ * and was simply not there. Thirty-two now, and past that it is reported.
+ */
+static void test_custom_properties_past_sixteen(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+
+    ar__ui_reset("#root { display:block; --v1: 5px; --v2: 10px; --v3: 15px; --v4: 20px; --v5: "
+                 "25px; --v6: 30px; --v7: 35px; --v8: 40px; --v9: 45px; --v10: 50px; --v11: 55px; "
+                 "--v12: 60px; --v13: 65px; --v14: 70px; --v15: 75px; --v16: 80px; --v17: 85px; "
+                 "--v18: 90px; --v19: 95px; --v20: 100px; }"
+                 ".b { display:block; width:var(--v20); height:5px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).w == 100, "custom properties: the twentieth in one rule is there");
+    CHECK(!ar_overflowed(g_ui), "custom properties: and twenty is no overflow");
+
+    ar__ui_reset("#root { display:block; --w1: 1px; --w2: 2px; --w3: 3px; --w4: 4px; --w5: 5px; "
+                 "--w6: 6px; --w7: 7px; --w8: 8px; --w9: 9px; --w10: 10px; --w11: 11px; --w12: "
+                 "12px; --w13: 13px; --w14: 14px; --w15: 15px; --w16: 16px; --w17: 17px; --w18: "
+                 "18px; --w19: 19px; --w20: 20px; --w21: 21px; --w22: 22px; --w23: 23px; --w24: "
+                 "24px; --w25: 25px; --w26: 26px; --w27: 27px; --w28: 28px; --w29: 29px; --w30: "
+                 "30px; --w31: 31px; --w32: 32px; --w33: 33px; }");
+    CHECK(ar_stylesheet_errors(g_ui) > 0,
+          "custom properties: a thirty-third in one rule is an error");
+
+    ar__ui_reset(
+        ".x { --a1: 1px; --a2: 1px; --a3: 1px; --a4: 1px; --a5: 1px; --a6: 1px; --a7: 1px; --a8: "
+        "1px; --a9: 1px; --a10: 1px; --a11: 1px; --a12: 1px; --a13: 1px; --a14: 1px; --a15: 1px; "
+        "--a16: 1px; --a17: 1px; --a18: 1px; --a19: 1px; --a20: 1px; } .y { --b1: 1px; --b2: 1px; "
+        "--b3: 1px; --b4: 1px; --b5: 1px; --b6: 1px; --b7: 1px; --b8: 1px; --b9: 1px; --b10: 1px; "
+        "--b11: 1px; --b12: 1px; --b13: 1px; --b14: 1px; --b15: 1px; --b16: 1px; --b17: 1px; "
+        "--b18: 1px; --b19: 1px; --b20: 1px; } #root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root.x.y");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_overflowed(g_ui), "custom properties: forty on one box is reported, not dropped");
+}
+
+/*
+ * A number in calc() is the number it says, however large.
+ *
+ * A step of a calc() program held its operand in sixteen bits and a bare
+ * number in thousandths, so 32.767 was the largest number calc() could carry:
+ * `calc(2px * 50)` multiplied by -15.536 and laid out as nothing, and dividing
+ * by 100 did the same. MSVC's C4244 on the var() path, where the same
+ * narrowing happened again, was the only warning anything gave. Widening it
+ * uncovered the next limit: the multiply and divide formed a product of two
+ * thirty-two-bit values first, so 6000px over 60 and 100px times 50 overflowed.
+ */
+static void test_a_number_in_calc_above_thirty_two_is_itself(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; width:calc(2px * 50); height:5px; }"
+                 ".b { display:block; width:calc(50 * 2px); height:5px; }"
+                 ".c { display:block; width:calc(6000px / 60); height:5px; }"
+                 ".d { display:block; width:calc(100px * 50 / 50); height:5px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.d");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 100, "calc number: 2px times 50 is 100px");
+    CHECK(ar__box(2).w == 100, "calc number: 50 times 2px is 100px");
+    CHECK(ar__box(3).w == 100, "calc number: 6000px over 60 is 100px");
+    CHECK(ar__box(4).w == 100, "calc number: 100px times 50 over 50 is 100px, through 5000px");
+}
+
+/*
  * Out of the flow is out of the parent's size as well (CSS 2.1 10.3.5,
  * Flexbox 4.1). The width measures counted an absolutely positioned child, so
  * a sliding highlight behind two buttons -- absolutely positioned, as wide as
@@ -17654,6 +17868,57 @@ static void ar__focus_frame(ar_surface *s)
     ar_end(g_ui);
     ar_end(g_ui);
     ar_frame_end(g_ui, s);
+}
+
+/*
+ * A button reached by Tab is pressed by Enter or Space.
+ *
+ * ar_focusable made an ar_button a tab stop with a ring, and pressing it did
+ * nothing: an ar_button answered only to a mouse released over it. Every
+ * button in an immediate-mode interface was therefore unreachable from the
+ * keyboard in the one way that matters. And a Space it takes is its own -- it
+ * does not page the document down as well.
+ */
+static int ar__key_buttons(ar_surface *s, ar_u32 keys, int *second)
+{
+    ar_input in;
+    int      first;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = keys;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    first = ar_button(g_ui, "button#one", "One");
+    ar_focusable(g_ui, 0);
+    *second = ar_button(g_ui, "button#two", "Two");
+    ar_focusable(g_ui, 0);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+    return first;
+}
+
+static void test_a_focused_button_is_pressed_by_enter_or_space(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+    int        two = 0;
+
+    ar__ui_reset("#root { display:block; } button { display:block; height:20px; }");
+    ar__key_buttons(&s, 0, &two);
+    CHECK(!ar__key_buttons(&s, AR_KEY_ENTER, &two) && !two,
+          "button keys: Enter with nothing focused presses nothing");
+    ar__key_buttons(&s, AR_KEY_TAB, &two);
+    CHECK(ar__key_buttons(&s, AR_KEY_ENTER, &two) && !two,
+          "button keys: Enter presses the focused button, and only that one");
+    CHECK(ar__key_buttons(&s, AR_KEY_SPACE, &two) && !two, "button keys: so does Space");
+    CHECK(!(g_ui->keys & AR_KEY_SPACE),
+          "button keys: and the Space is not left over to scroll with");
+    CHECK(!ar__key_buttons(&s, 0, &two) && !two,
+          "button keys: a frame with no key presses nothing");
+    ar__key_buttons(&s, AR_KEY_TAB, &two);
+    CHECK(!ar__key_buttons(&s, AR_KEY_SPACE, &two) && two,
+          "button keys: Tab on, and Space presses the second");
 }
 
 static void test_focus_moves_by_tab_and_wraps(void)
@@ -24153,6 +24418,7 @@ int main(void)
     test_css_absurd_numbers();
     test_css_colors();
     test_focus_moves_by_tab_and_wraps();
+    test_a_focused_button_is_pressed_by_enter_or_space();
     test_focus_within_matches_the_ancestors();
     test_a_click_focuses_without_a_ring();
     test_sheet_init_leaves_no_field_behind();
@@ -24442,6 +24708,11 @@ int main(void)
     test_relative_moves_its_children();
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
+    test_a_number_in_calc_above_thirty_two_is_itself();
+    test_custom_properties_past_sixteen();
+    test_container_measures_its_items_limits();
+    test_grid_auto_rows_fill_the_height();
+    test_inline_flex();
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_a_buttons_own_label_sits_in_the_middle();

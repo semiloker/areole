@@ -16,8 +16,8 @@ extern "C" {
 #endif
 
 #define AR_VERSION_MAJOR 0
-#define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 6
+#define AR_VERSION_MINOR 10
+#define AR_VERSION_PATCH 1
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.6"
+#define AR_VERSION_STRING "0.10.1"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -353,7 +353,24 @@ typedef struct ar_input
      * selects a word on 2 and everything on 3.
      */
     ar_u32 clicks;
+
+    /*
+     * A letter or digit pressed with Ctrl that nothing in AR_KEY_* decides,
+     * for the application: its uppercase ASCII code, 'N' or '1', plus
+     * AR_SHORTCUT_SHIFT when Shift was held too. Zero when there was none.
+     *
+     * The core does nothing with it, and that is the point: Ctrl+N means a
+     * new something to one program and nothing to the next, and until this an
+     * application had no way to hear it at all -- the backend kept every key
+     * it did not understand. Ctrl+A, Z, Y, C, X and V never arrive here,
+     * because they are editing commands and are decided above. Ctrl with Alt
+     * is AltGr on most keyboards and types a character, so it is not a
+     * shortcut either.
+     */
+    ar_u32 shortcut;
 } ar_input;
+
+#define AR_SHORTCUT_SHIFT 0x100u
 
 /*
  * The keys that scroll.

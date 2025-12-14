@@ -882,6 +882,17 @@ enum
      */
     AR_DISPLAY_LIST_ITEM,
 
+    /*
+     * `display: inline-flex`: a flex container on the outside of which is an
+     * atomic inline box, the way inline-block is a block container inside one.
+     *
+     * A button with an icon and a label is one: centred by the flex algorithm,
+     * and sitting on a line beside its neighbours. Without the value it was an
+     * unknown keyword, and the box stayed a block and took the line to itself.
+     * Last, for the same reason as the two above.
+     */
+    AR_DISPLAY_INLINE_FLEX,
+
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };
@@ -1725,10 +1736,20 @@ typedef struct ar_var_ref
 #define AR_VAR_POOL    256
 #define AR_VARREF_POOL 256
 
-/* How many custom properties one rule may declare. The generated ones a build
-   tool emits come one or two to a rule; a hand-written `:root` block is the
-   case that goes wide, and this is past every one measured. */
-#define AR_RULE_VARS 16
+/*
+ * How many custom properties one rule may declare, and how many one box may
+ * hold from every rule that matches it.
+ *
+ * Sixteen of each, and both silently: a `:root` with seventeen lost the
+ * seventeenth, and a box whose rules declared more than sixteen between them
+ * lost whatever came last -- PetalSoft's accent, three properties in their own
+ * rule on a root that already had seventeen, simply did not exist. Thirty-two
+ * now, which costs a byte-sized count per rule and a stack array per box, and
+ * neither is silent any more: a rule past it is a stylesheet error, and a box
+ * past it sets ar_overflowed.
+ */
+#define AR_RULE_VARS 32
+#define AR_BOX_VARS  32
 
 /* How many boxes may declare custom properties, and how many declarations
    they may make between them. Sized for the busiest page measured and not for
@@ -1777,11 +1798,20 @@ enum
     AR_CALC_PUSH_VAR
 };
 
+/*
+ * One step of a calc() program.
+ *
+ * `v` is thirty-two bits. It was sixteen, and a bare number is held in
+ * thousandths, so 32.767 was the largest number calc() could hold: `calc(2px
+ * * 50)` multiplied by -15.536 and came out 0, and so did every var() divided
+ * by 100. MSVC's C4244 on the var() path was the only thing that said so. The
+ * pool is 512 steps, so the price is 2 KB of AR_MEM_FIXED's headroom.
+ */
 typedef struct ar_calc_op
 {
     ar_u8  op;
     ar_u8  unit; /* PUSH only: what `v` is measured in */
-    ar_i16 v;    /* PUSH only: the number, in that unit's own scale */
+    ar_i32 v;    /* PUSH only: the number, in that unit's own scale */
 } ar_calc_op;
 
 /* Programs are short -- the longest in the ten real pages saved under
@@ -2049,7 +2079,7 @@ void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_
  * Returns how many were written, up to `cap`.
  */
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u32 state, ar_var_decl *out, ar_i32 cap);
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap, int *full);
 
 /* The reference at `index`, or 0 if there is none. */
 const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
@@ -2065,7 +2095,7 @@ const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
    the name has no usable value, which makes the whole expression invalid --
    CSS says a `var()` that cannot be substituted poisons the declaration and
    not merely the term it stood in. */
-typedef int (*ar_calc_var_fn)(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+typedef int (*ar_calc_var_fn)(const void *ctx, const void *node, ar_u32 name, ar_i32 *out_v,
                               ar_u8 *out_unit);
 
 typedef struct ar_calc_env

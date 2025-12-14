@@ -954,6 +954,7 @@ static const ar__kw AR_KEYWORDS[] = {
     {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+    {"inline-flex", AR_P_DISPLAY, AR_DISPLAY_INLINE_FLEX},
     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
 
     {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
@@ -1526,26 +1527,84 @@ typedef struct ar__calc_val
    deliberately does not share code with it: that one answers in 26.6 for the
    layout, this one in thousandths for arithmetic, and a single function
    serving both was tried and needed a scale argument at every call. */
-static ar_i32 ar__calc_push(const ar_calc_op *op, const ar_calc_env *env, int *is_len)
+/*
+ * Multiplication and division of two values in thousandths, without the
+ * intermediate that does not fit.
+ *
+ * a * b / 1000 forms a * b first, and 100px times 50 is 100000 * 50000 before
+ * the divide: past 2^31. a * 1000 / b does the same for any dividend over
+ * 2147px. Nothing reached either while an operand was sixteen bits; now one
+ * can. So each splits a value into its whole part and its thousandths and
+ * multiplies those, which keeps every product near the size of the answer.
+ *
+ * Magnitudes and signs are taken by hand, for the reason the rounding below
+ * gives: C89 leaves the direction of a negative quotient to the
+ * implementation. Both truncate toward zero, as the expressions they replace
+ * did on every compiler this builds with, and an answer past 2^31 saturates
+ * rather than wrapping into a different number.
+ */
+#define AR__CALC_MAX 0x7FFFFFFFu
+
+static ar_u32 ar__calc_mag(ar_i32 v)
 {
-    ar_i32 hund = op->v; /* relative units are carried in hundredths */
+    return v < 0 ? (ar_u32)0 - (ar_u32)v : (ar_u32)v;
+}
+
+static ar_i32 ar__calc_signed(ar_u32 mag, int negative)
+{
+    if (mag > AR__CALC_MAX)
+    {
+        mag = AR__CALC_MAX;
+    }
+    return negative ? -(ar_i32)mag : (ar_i32)mag;
+}
+
+static ar_i32 ar__calc_mul(ar_i32 a, ar_i32 b)
+{
+    ar_u32 x = ar__calc_mag(a), y = ar__calc_mag(b);
+    ar_u32 whole = x / 1000u, part = x % 1000u;
+    ar_u32 frac = part * (y / 1000u) + part * (y % 1000u) / 1000u;
+
+    if (whole && y > (AR__CALC_MAX - frac) / whole)
+    {
+        return ar__calc_signed(AR__CALC_MAX, (a < 0) != (b < 0));
+    }
+    return ar__calc_signed(whole * y + frac, (a < 0) != (b < 0));
+}
+
+static ar_i32 ar__calc_div(ar_i32 a, ar_i32 b)
+{
+    ar_u32 x = ar__calc_mag(a), y = ar__calc_mag(b);
+    ar_u32 whole = x / y, rest = x % y;
+    ar_u32 frac = rest <= 0xFFFFFFFFu / 1000u ? rest * 1000u / y : rest / (y / 1000u);
+
+    if (whole > (AR__CALC_MAX - frac) / 1000u)
+    {
+        return ar__calc_signed(AR__CALC_MAX, (a < 0) != (b < 0));
+    }
+    return ar__calc_signed(whole * 1000u + frac, (a < 0) != (b < 0));
+}
+
+static ar_i32 ar__calc_push(ar_i32 v, ar_u8 unit, const ar_calc_env *env, int *is_len)
+{
+    ar_i32 hund = v; /* relative units are carried in hundredths */
     ar_i32 basis;
 
     *is_len = 1;
-    switch (op->unit)
+    switch (unit)
     {
     case AR_UNIT_PX:
-        return op->v * 1000;
+        return v * 1000;
     case AR_UNIT_NUMBER:
         *is_len = 0;
-        return op->v; /* already thousandths */
+        return v; /* already thousandths */
     default:
         break;
     }
 
-    if (op->unit >= AR_UNIT_VIEW_FIRST)
+    if (unit >= AR_UNIT_VIEW_FIRST)
     {
-        ar_i32 k = (ar_i32)op->unit - AR_UNIT_VIEW_FIRST;
+        ar_i32 k = (ar_i32)unit - AR_UNIT_VIEW_FIRST;
         ar_i32 axis = k % AR_UNIT_VIEW_AXES;
         ar_i32 w = env->view_w < 0 ? 0 : env->view_w;
         ar_i32 h = env->view_h < 0 ? 0 : env->view_h;
@@ -1561,9 +1620,9 @@ static ar_i32 ar__calc_push(const ar_calc_op *op, const ar_calc_env *env, int *i
          */
         return hund * basis / 10;
     }
-    if (op->unit >= AR_UNIT_EM)
+    if (unit >= AR_UNIT_EM)
     {
-        ar_i32 k = (ar_i32)op->unit - AR_UNIT_EM;
+        ar_i32 k = (ar_i32)unit - AR_UNIT_EM;
         ar_i32 metric = k % AR_UNIT_METRIC_COUNT;
         ar_i32 rooted = k / AR_UNIT_METRIC_COUNT;
         ar_i32 em = rooted ? env->root_px : env->font_px;
@@ -1635,8 +1694,9 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
 
         if (op->op == AR_CALC_PUSH || op->op == AR_CALC_PUSH_VAR)
         {
-            ar_calc_op resolved = *op;
-            int        len = 0;
+            ar_i32 push_v = op->v;
+            ar_u8  push_unit = op->unit;
+            int    len = 0;
 
             if (sp >= AR_CALC_STACK)
             {
@@ -1645,7 +1705,7 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
             if (op->op == AR_CALC_PUSH_VAR)
             {
                 const ar_var_ref *ref = ar_sheet_varref(sheet, op->v);
-                ar_i16            vv = 0;
+                ar_i32            vv = 0;
                 ar_u8             uu = AR_UNIT_PX;
 
                 if (!ref || !env->var_lookup)
@@ -1654,13 +1714,13 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
                 }
                 if (env->var_lookup(env->ctx, env->ud, ref->name, &vv, &uu))
                 {
-                    resolved.v = vv;
-                    resolved.unit = uu;
+                    push_v = vv;
+                    push_unit = uu;
                 }
                 else if (ref->has_fallback)
                 {
-                    resolved.v = ref->fallback_v;
-                    resolved.unit = ref->fallback_unit;
+                    push_v = ref->fallback_v;
+                    push_unit = ref->fallback_unit;
                 }
                 else
                 {
@@ -1668,14 +1728,14 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
                        expression invalid, not merely this term. */
                     return 0;
                 }
-                if (resolved.unit == AR_UNIT_CALC || resolved.unit == AR_UNIT_VAR)
+                if (push_unit == AR_UNIT_CALC || push_unit == AR_UNIT_VAR)
                 {
                     return 0; /* a custom property holding another expression
                                  would need a second evaluation here, and the
                                  pool index it carries is not a number */
                 }
             }
-            st[sp].v = ar__calc_push(&resolved, env, &len);
+            st[sp].v = ar__calc_push(push_v, push_unit, env, &len);
             st[sp].is_len = len;
             ++sp;
             continue;
@@ -1750,7 +1810,7 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
             {
                 return 0;
             }
-            a.v = (ar_i32)((a.v * (ar_i32)b.v) / 1000);
+            a.v = ar__calc_mul(a.v, b.v);
             a.is_len = a.is_len || b.is_len;
             break;
         case AR_CALC_DIV:
@@ -1759,7 +1819,7 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
             {
                 return 0;
             }
-            a.v = (ar_i32)((a.v * 1000) / b.v);
+            a.v = ar__calc_div(a.v, b.v);
             break;
         /*
          * round(A, B) is A snapped to a multiple of B, and mod/rem differ
@@ -2400,7 +2460,7 @@ static int ar__calc_room(const ar__scan *z, ar_i32 want)
     return z->sheet->calcs && (ar_i32)z->sheet->calc_count + want <= (ar_i32)z->sheet->calc_cap;
 }
 
-static int ar__calc_emit(ar__scan *z, ar_u8 op, ar_u8 unit, ar_i16 v)
+static int ar__calc_emit(ar__scan *z, ar_u8 op, ar_u8 unit, ar_i32 v)
 {
     ar_calc_op *e;
 
@@ -2493,7 +2553,7 @@ static int ar__calc_factor(ar__scan *z, ar_i32 depth)
 
             z->p += row->len;
             return ar__calc_emit(z, AR_CALC_PUSH, row->unit,
-                                 (ar_i16)ar__unit_value(sign * (n * 1000 + milli), row));
+                                 ar__unit_value(sign * (n * 1000 + milli), row));
         }
         if (z->p < z->end && *z->p == '%')
         {
@@ -2519,7 +2579,7 @@ static int ar__calc_factor(ar__scan *z, ar_i32 depth)
         }
         /* No unit: a bare number, which multiplication and division accept
            and a sum does not. */
-        return ar__calc_emit(z, AR_CALC_PUSH, AR_UNIT_NUMBER, (ar_i16)(sign * (n * 1000 + milli)));
+        return ar__calc_emit(z, AR_CALC_PUSH, AR_UNIT_NUMBER, sign * (n * 1000 + milli));
     }
 
     {
@@ -2548,7 +2608,7 @@ static int ar__calc_factor(ar__scan *z, ar_i32 depth)
             {
                 return 0;
             }
-            return ar__calc_emit(z, AR_CALC_PUSH_VAR, 0, (ar_i16)ref);
+            return ar__calc_emit(z, AR_CALC_PUSH_VAR, 0, (ar_i32)ref);
         }
 
         if (ar__same_fold(name, len, "calc"))
@@ -2912,7 +2972,7 @@ static ar_i32 ar__parse_calc(ar__scan *z)
 
     z->sheet->calcs[header].op = AR_CALC_LEN;
     z->sheet->calcs[header].unit = 0;
-    z->sheet->calcs[header].v = (ar_i16)((ar_i32)z->sheet->calc_count - header - 1);
+    z->sheet->calcs[header].v = (ar_i32)z->sheet->calc_count - header - 1;
     z->sheet->has_calc = 1;
     return header;
 }
@@ -3081,7 +3141,11 @@ static int ar__color_angle(ar__scan *z, ar_i32 *out)
             {
                 v = -100 * AR_CFIX;
             }
-            v = (v * 57296 + 500) / 1000;
+            /* 57.296 degrees to the radian, in two parts: v is up to 100
+               radians at AR_CFIX, and v * 57296 in one step passed 2^31 at
+               nine of them. The whole part and the fraction are each in range,
+               and their sum is the same number. */
+            v = v * 57 + (v * 296 + 500) / 1000;
         }
         else if (ar__same_fold(name, len, "turn"))
         {
@@ -7350,8 +7414,13 @@ static void ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, 
     ar_var_decl *d;
     const char  *save;
 
-    if (!sheet->vars || sheet->var_count >= sheet->var_cap || rule->var_count >= AR_RULE_VARS)
+    if (!sheet->vars)
     {
+        goto skip;
+    }
+    if (sheet->var_count >= sheet->var_cap || rule->var_count >= AR_RULE_VARS)
+    {
+        ar__fail(z); /* counted, not silent: see AR_RULE_VARS */
         goto skip;
     }
 
@@ -7459,7 +7528,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
 }
 
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u32 state, ar_var_decl *out, ar_i32 cap)
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap, int *full)
 {
     ar_i32 i, n = 0;
 
@@ -7533,6 +7602,10 @@ ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes
             if (j == n && n < cap)
             {
                 out[n++] = *d;
+            }
+            else if (j == n && full)
+            {
+                *full = 1; /* a name with nowhere to go: see AR_BOX_VARS */
             }
         }
     }
