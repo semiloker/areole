@@ -1253,13 +1253,13 @@ see 0.10.1. The baseline, with the four new scenes in it, still waits for a quie
 0.10.1 is *Control appearance*: controls that take `accent-color`, `appearance` and the page's
 `color-scheme` the way a browser's do. What is here is the pointer, the hover and pressed looks, and
 six fixes found against Edge -- and then an application. PetalSoft, a desktop app of lists, forms,
-dialogs and a dashboard, was rewritten on areole, and it found ten bugs in the engine that no
+dialogs and a dashboard, was rewritten on areole, and it found eleven bugs in the engine that no
 corpus had, and one thing missing. Both halves are in this release; the rest of *Control appearance* is listed below as
 not done.
 
 | | |
 | --- | --- |
-| Checks | **2,101** in `ar_test`, from 2,044; every CI job green again |
+| Checks | **2,105** in `ar_test`, from 2,044; every CI job green again |
 | Issues | #20 to #25, closed |
 | Benchmarks | not measured: `docs/PERFORMANCE.md` is 0.9.6's numbers, and says so at the top |
 
@@ -1296,6 +1296,9 @@ still fails. The four scenes written for 0.10.0 land with the next baseline, as 
   children without their `min-` and `max-` sizes: a flex column of 44-pixel rows was as tall as
   its gaps.
 - **A grid's auto rows ignored its `min-height`.** They share it now, as Grid 11.8 says.
+- **A flex column's `flex: 1` item shrank back to its contents** once it had children: placing it
+  ended by giving it its contents' height, whatever the column had grown it to. And a flex row's
+  items did not stretch to its `min-height`. A chart in a dashboard panel was both at once.
 - **`display: inline-flex` was an unknown keyword**, so an icon-and-label button took a whole line.
 - **A button reached by Tab could not be pressed.** `ar_focusable` made an `ar_button` a tab stop
   with a ring, and Enter and Space did nothing: it answered only to the mouse. Both press it now,
