@@ -2199,17 +2199,13 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
          * it is what they copy from.
          */
         {
-            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,
-                                                  AR_P_BORDER_COLOR,
-                                                  AR_P_SCROLLBAR_THUMB,
-                                                  AR_P_SCROLLBAR_TRACK,
-                                                  AR_P_OUTLINE_COLOR,
-                                                  AR_P_ACCENT_COLOR,
-                                                  AR_P_COLOR};
-            const ar_i32         COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
-            ar_i32               k;
-            ar_i32               cur;
-            int                  dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
+            static const ar_prop COLOR_PROPS[] = {
+                AR_P_BACKGROUND,    AR_P_BORDER_COLOR, AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
+                AR_P_OUTLINE_COLOR, AR_P_ACCENT_COLOR, AR_P_CARET_COLOR,     AR_P_COLOR};
+            const ar_i32 COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
+            ar_i32       k;
+            ar_i32       cur;
+            int          dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
 
             /*
              * A system colour resolves before currentColor reads `color`,
@@ -4033,6 +4029,21 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
                 (ar_u16)(c->next_maxlen > 0 && c->next_maxlen < AR_EDIT_CAP ? c->next_maxlen : 0);
             ar__edit_apply(c);
             c->edit_field_box = idx;
+        }
+
+        /* `:placeholder-shown`, from the text the field holds once this
+           frame's typing is in: see AR_STATE_PLACEHOLDER_SHOWN. A composition
+           counts as text, as it does for drawing the hint. */
+        if (c->next_field & AR_FIELD_PLACEHOLDER)
+        {
+            const char *held;
+            ar_u32      held_len = c->next_value_len;
+
+            ar_field_value_of(c, key, &held, &held_len);
+            if (held_len == 0 && !(key == c->edit_key && c->compose_len > 0))
+            {
+                state |= AR_STATE_PLACEHOLDER_SHOWN;
+            }
         }
     }
     c->next_value = 0;
@@ -6641,6 +6652,38 @@ static void ar__field_after_layout(ar_ctx *c)
  * and the selection drawn per line, because a selection across a wrap is two
  * rectangles and not one box from its first character to its last.
  */
+/*
+ * The `::selection` colours for a field's text box: the nearest box, from it
+ * up to the root, whose `::selection` rules set each one -- which is how an
+ * ancestor's `body::selection` reaches a field inside it in Edge, a property
+ * at a time. Bits 1 and 2 say which were found.
+ */
+static int ar__selection_colors(const ar_ctx *c, const ar_node *n, ar_color *bg, ar_color *fg)
+{
+    ar_i32 b;
+    int    have = 0;
+
+    for (b = (ar_i32)(n - c->nodes); b >= 0 && have != 3; b = c->nodes[b].parent)
+    {
+        const ar_node *box = &c->nodes[b];
+        ar_u32         rb = 0, rf = 0;
+        int got = ar_sheet_selection(&c->sheet, box->sel_tag, &box->sel_class, box->sel_id,
+                                     box->state, &rb, &rf);
+
+        if ((got & 1) && !(have & 1))
+        {
+            *bg = (ar_color)rb;
+            have |= 1;
+        }
+        if ((got & 2) && !(have & 2))
+        {
+            *fg = (ar_color)rf;
+            have |= 2;
+        }
+    }
+    return have;
+}
+
 static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect tclip)
 {
     ar_i32   starts[AR_MAX_LINES];
@@ -6653,12 +6696,28 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
     ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
     ar_i32   li;
     ar_u16   lo, hi;
+    int      selected = ar_edit_selection(&c->edit, &lo, &hi);
+    ar_i32   dlo = selected ? ar__disp_off(c, lo) : 0, dhi = selected ? ar__disp_off(c, hi) : 0;
 
-    if (ar_edit_selection(&c->edit, &lo, &hi))
+    /*
+     * The selection's colours, as Edge draws them in a text field.
+     *
+     * With no `::selection` anywhere above it, #3367D1 under white text --
+     * Edge's own pair, and not the Highlight system colour, which it draws
+     * as #0078D7 everywhere else. With one, what it says: a background it
+     * leaves out is no background at all, and a colour it leaves out is the
+     * text's own. Read off Edge's pixels with each of the three written.
+     */
+    ar_color sbg = 0, sfg = 0;
+    int      styled = selected ? ar__selection_colors(c, n, &sbg, &sfg) : 0;
+    ar_color hl = !styled ? 0xFF3367D1u : (styled & 1) ? sbg : 0u;
+    ar_color ht = !styled ? 0xFFFFFFFFu : (styled & 2) ? sfg : tc;
+    ar_color cc = n->style.unit[AR_P_CARET_COLOR] == AR_UNIT_COLOR
+                      ? (ar_color)AR_WIDE(&n->style, AR_P_CARET_COLOR)
+                      : tc;
+
+    if (selected && AR_ALPHA_OF(hl) != 0)
     {
-        ar_i32   dlo = ar__disp_off(c, lo), dhi = ar__disp_off(c, hi);
-        ar_color hl = (ar_color)ar_sys_color_default(AR_SYS_HIGHLIGHT, 0);
-
         for (li = 0; li < lines; ++li)
         {
             ar_i32 ls = starts[li];
@@ -6683,8 +6742,31 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
 
     for (li = 0; li < lines; ++li)
     {
-        ar__draw_line(c, s, tclip, tx, ty + li * adv, n, starts[li],
-                      (li + 1 < lines) ? starts[li + 1] : -1, tc);
+        ar_i32 ls = starts[li];
+        ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+        ar_i32 a = dlo > ls ? dlo : ls;
+        ar_i32 b = dhi < le ? dhi : le;
+        ar_i32 x0, x1;
+
+        if (!selected || a >= b || ht == tc)
+        {
+            ar__draw_line(c, s, tclip, tx, ty + li * adv, n, ls, li + 1 < lines ? le : -1, tc);
+            continue;
+        }
+        /* Three runs, so the selected one is drawn once in its own colour
+           rather than over the text in the other: anti-aliased glyphs drawn
+           twice leave the first colour in their edges. */
+        x0 = (ar__range_fx(c, n, ls, a) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+        x1 = (ar__range_fx(c, n, ls, b) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+        if (a > ls)
+        {
+            ar__draw_line(c, s, tclip, tx, ty + li * adv, n, ls, a, tc);
+        }
+        ar__draw_line(c, s, tclip, tx + x0, ty + li * adv, n, a, b, ht);
+        if (b < le)
+        {
+            ar__draw_line(c, s, tclip, tx + x1, ty + li * adv, n, b, li + 1 < lines ? le : -1, tc);
+        }
     }
 
     /* The composition, underlined: the convention every input method draws to
@@ -6714,9 +6796,9 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
     /* One pixel wide, and always at least one: a caret that scales with the
        font disappears at small sizes and doubles at large ones, and every
        toolkit draws it as a hairline for that reason. */
-    if (c->caret_on && c->caret_rect.w > 0)
+    if (c->caret_on && c->caret_rect.w > 0 && AR_ALPHA_OF(cc) != 0)
     {
-        ar__fill(c, s, c->caret_rect, tclip, tc);
+        ar__fill(c, s, c->caret_rect, tclip, cc);
     }
 }
 
