@@ -13752,6 +13752,36 @@ static void test_a_grown_flex_item_keeps_its_height(void)
 }
 
 /*
+ * An outline around a rounded box is rounded too.
+ *
+ * It was four rectangles whatever the box's corners were, so a focus ring
+ * around a pill-shaped button was a square drawn around a pill. Browsers have
+ * drawn the outline along the border radius since 2021: its curve is the
+ * box's, grown by the outline's width.
+ */
+static void test_an_outline_follows_the_border_radius(void)
+{
+    ar_surface s = ar__ui_surface(120, 80);
+    ar_rect    r;
+    ar_u32     edge, corner;
+
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 "div.r { display:block; margin:20px; width:60px; height:30px; border-radius:10px;"
+                 " outline:2px solid #ff0000; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    r = ar__box(1);
+    edge = g_ui_pixels[(r.y - 1) * AR_LAY_MAX + r.x + r.w / 2] & 0xFFFFFFu;
+    corner = g_ui_pixels[(r.y - 2) * AR_LAY_MAX + r.x - 2] & 0xFFFFFFu;
+    CHECK(edge == 0xFF0000u, "outline: drawn along a rounded box's straight edge");
+    CHECK(corner == 0xFFFFFFu, "outline: and round at its corner, like the box");
+}
+
+/*
  * Custom properties past sixteen. A rule could declare sixteen and a box hold
  * sixteen, and both dropped the rest without a word: PetalSoft's accent was
  * three properties in their own rule on a root that already had seventeen,
@@ -24785,6 +24815,7 @@ int main(void)
     test_absolute_is_out_of_the_flow();
     test_a_number_in_calc_above_thirty_two_is_itself();
     test_custom_properties_past_sixteen();
+    test_an_outline_follows_the_border_radius();
     test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();
     test_grid_auto_rows_fill_the_height();

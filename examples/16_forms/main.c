@@ -507,14 +507,21 @@ static ar_i32 count_px(const ar_surface *s, ar_rect r, ar_u32 rgb)
  * this counts pixels: the ring's own band must be full of AccentColor and the
  * box just inside it must have none, which is what makes it a *ring* and not a
  * filled rectangle or a border.
+ *
+ * The band is counted along its four straight sides and not at its corners. A
+ * field has a two-pixel radius and the ring follows it, as a browser's does, so
+ * its corners are curves drawn with partial coverage -- a count of exact
+ * AccentColor there would be a count of how the curve happened to rasterise.
  */
 static int ring_check(ar_ctx *c, ar_surface *s, int want_ring, const char **why)
 {
     const ar_u32 ACCENT = 0x0078D7u; /* AccentColor, light scheme */
     const ar_i32 W = 2;              /* the user-agent sheet's outline-width */
+    const ar_i32 R = 2;              /* and a field's border-radius */
+    const ar_i32 K = W + R;          /* how far a corner's curve reaches along a side */
     ar_i32       i = ar_focus_node(c);
     ar_rect      box, out;
-    ar_i32       band, inside;
+    ar_i32       band, sides, inside;
 
     if (i < 0)
     {
@@ -529,7 +536,14 @@ static int ring_check(ar_ctx *c, ar_surface *s, int want_ring, const char **why)
        arithmetic the ring has to satisfy rather than a number somebody read
        off an image once. */
     band = count_px(s, out, ACCENT) - count_px(s, box, ACCENT);
-    inside = count_px(s, box, ACCENT);
+    sides = count_px(s, ar_rect_make(out.x + K, out.y, out.w - 2 * K, W), ACCENT) +
+            count_px(s, ar_rect_make(out.x + K, box.y + box.h, out.w - 2 * K, W), ACCENT) +
+            count_px(s, ar_rect_make(out.x, out.y + K, W, out.h - 2 * K), ACCENT) +
+            count_px(s, ar_rect_make(box.x + box.w, out.y + K, W, out.h - 2 * K), ACCENT);
+    inside = count_px(s, box, ACCENT) - count_px(s, ar_rect_make(box.x, box.y, R, R), ACCENT) -
+             count_px(s, ar_rect_make(box.x + box.w - R, box.y, R, R), ACCENT) -
+             count_px(s, ar_rect_make(box.x, box.y + box.h - R, R, R), ACCENT) -
+             count_px(s, ar_rect_make(box.x + box.w - R, box.y + box.h - R, R, R), ACCENT);
 
     if (!want_ring)
     {
@@ -538,7 +552,7 @@ static int ring_check(ar_ctx *c, ar_surface *s, int want_ring, const char **why)
     }
 
     *why = "a key focus draws a full ring, and only a ring";
-    if (band != out.w * out.h - box.w * box.h)
+    if (sides != 2 * W * (out.w - 2 * K) + 2 * W * (out.h - 2 * K))
     {
         *why = "the ring is missing or incomplete";
         return 0;
