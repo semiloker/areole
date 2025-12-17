@@ -391,22 +391,22 @@ static const char *const AR__UA[] = {
     ".ar-checkbox { width:13px; height:13px; padding:0px; margin:3px 3px 3px 4px;"
     "               border:1px solid #767676; border-color:var(--ar-edge, #767676);"
     "               border-radius:2px; background:#FFFFFF; }"
-    ".ar-checkbox:checked { background:var(--ar-accent, #0075FF);"
-    "                       border-color:var(--ar-accent, #0075FF); }"
+    ".ar-checkbox:checked { background:var(--ar-accent, -ar-accent);"
+    "                       border-color:var(--ar-accent, -ar-accent); }"
     "ar-tick { display:block; width:9px; height:9px; margin:2px 0px 0px 2px;"
     "          color:transparent; }",
 
-    "ar-tick:checked { color:#FFFFFF; }"
+    "ar-tick:checked { color:-ar-on-accent; }"
     /* A radio: the same box, round, margins 3 3 0 5; checked, a blue ring and
        a seven-pixel blue dot three pixels in. */
     ".ar-radio { width:13px; height:13px; padding:0px; margin:3px 3px 0px 5px;"
     "            border:1px solid #767676; border-color:var(--ar-edge, #767676);"
     "            border-radius:7px; background:#FFFFFF; }"
-    ".ar-radio:checked { border-color:var(--ar-accent, #0075FF); }",
+    ".ar-radio:checked { border-color:var(--ar-accent, -ar-accent); background:-ar-on-accent; }",
 
     "ar-mark { display:block; width:7px; height:7px; margin:3px 0px 0px 3px;"
     "          border-radius:4px; background:transparent; }"
-    "ar-mark:checked { background:var(--ar-accent, #0075FF); }",
+    "ar-mark:checked { background:var(--ar-accent, -ar-accent); }",
 
     /*
      * The focus ring, and `:focus-visible` rather than `:focus` on purpose: a
@@ -432,16 +432,17 @@ static const char *const AR__UA[] = {
     "progress { width:160px; height:16px; vertical-align:-0.2em; }"
     "meter { width:80px; height:16px; vertical-align:-0.2em; }",
 
-    "ar-track { display:block; height:8px; margin-top:4px; background:var(--ar-face, #EFEFEF);"
-    "           border:1px solid #B2B2B2; border-color:var(--ar-rail, #B2B2B2);"
+    "ar-track { display:block; height:8px; margin-top:4px;"
+    "           background:var(--ar-trackface, -ar-track);"
+    "           border:1px solid #B2B2B2; border-color:var(--ar-rail, -ar-rail);"
     "           border-radius:4px; }"
-    "ar-fill { display:block; height:8px; background:var(--ar-accent, #0075FF);"
+    "ar-fill { display:block; height:8px; background:var(--ar-accent, -ar-accent);"
     "          border-radius:4px; }"
     "meter ar-fill { background:#107C10; }",
 
     "ar-rail { display:block; height:16px; margin-top:-12px; margin-right:16px; }"
     "ar-thumb { display:block; position:relative; width:16px; height:16px;"
-    "           border-radius:8px; background:var(--ar-accent, #0075FF); }",
+    "           border-radius:8px; background:var(--ar-accent, -ar-accent); }",
 
     /* A colour field: a #EFEFEF button 50 by 27 with the colour in it, framed
        in #777777; and when it is open, sixteen chips hanging under it. */
@@ -480,10 +481,10 @@ static const char *const AR__UA[] = {
      * radio's dot follow their control without rules of their own; and
      * `:enabled` keeps a disabled control as it is under the pointer.
      */
-    ".ar-edge:enabled:hover { --ar-edge:#4F4F4F; --ar-face:#E5E5E5; --ar-accent:#005CC8;"
-    "                         --ar-rail:#9A9A9A; }"
-    ".ar-edge:enabled:active { --ar-edge:#8D8D8D; --ar-face:#F5F5F5; --ar-accent:#3793FF;"
-    "                          --ar-rail:#C1C1C1; }",
+    ".ar-edge:enabled:hover { --ar-edge:#4F4F4F; --ar-face:#E5E5E5; --ar-accent:-ar-accent-hover;"
+    "                         --ar-rail:-ar-rail-hover; --ar-trackface:-ar-track-hover; }"
+    ".ar-edge:enabled:active { --ar-edge:#8D8D8D; --ar-face:#F5F5F5; --ar-accent:-ar-accent-active;"
+    "                          --ar-rail:-ar-rail-active; --ar-trackface:-ar-track-active; }",
 
     /* An open select's list hangs under it, over whatever follows, and is part
        of it -- so a press on a row lands inside the select. */

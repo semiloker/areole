@@ -66,6 +66,7 @@ static const char *const AR_SUPPORTS_PROPS[] = {
     "overflow-y",
     "overflow-anchor",
     "cursor",
+    "accent-color",
     "scroll-snap-type",
     "scroll-snap-align",
     "scroll-snap-stop",
