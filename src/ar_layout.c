@@ -599,6 +599,47 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
     return (mode & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH;
 }
 
+/*
+ * Whether a flex column decides this box's height by growing it.
+ *
+ * ar__stretched_by_parent's question on the other axis. A column's main axis is
+ * the block one, so an item with a grow factor there is as tall as the
+ * column's leftover makes it -- and every place below that ends a placement by
+ * giving a box its contents' height undid that the moment it ran. A chart told
+ * `flex: 1` in a stretched panel grew, was laid out, and shrank back to its
+ * bars. An empty item was never laid out, which is why the simplest case
+ * worked.
+ */
+static int ar__grown_by_parent(const ar_node *nodes, const ar_node *n)
+{
+    const ar_node *p;
+
+    if (n->parent < 0)
+    {
+        return 0;
+    }
+    p = &nodes[n->parent];
+    if (!ar_is_flex(p) || ar_axis_main(p) != 1)
+    {
+        return 0;
+    }
+    return n->style.v[AR_P_FLEX_GROW] > 0 || n->style.unit[AR_P_HEIGHT] == AR_UNIT_GROW;
+}
+
+/*
+ * The height a box with an automatic one ends a placement with: its contents',
+ * held between its limits -- unless a flex column grew it past that, which is
+ * then the height. Not below it: an item whose contents wrap taller than the
+ * share it was given overflows nothing here, the way its automatic minimum
+ * would keep it from doing in a browser.
+ */
+static ar_i32 ar__own_height(const ar_node *nodes, const ar_node *n, ar_i32 content)
+{
+    ar_i32 h = ar_clamp(content, ar_used_min(n, 1), ar_used_max(n, 1));
+
+    return ar__grown_by_parent(nodes, n) && n->rect.h > h ? n->rect.h : h;
+}
+
 /* ------------------------------------------------------------------------
  * Pass two, downwards: what each box actually gets
  * ------------------------------------------------------------------------ */
@@ -749,13 +790,26 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
          */
         if (n->measured_w == n->rect.w)
         {
-            n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
+            n->rect.h = ar__own_height(nodes, n, n->content_h);
             return;
         }
 
         ar_flex_place_auto(nodes, idx, env);
-        n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
-        n->measured_w = n->rect.w;
+        n->rect.h = ar__own_height(nodes, n, n->content_h);
+
+        /*
+         * Settled only when the height is the one the items were laid out
+         * for. A `min-height` or a column's grow factor makes the row taller
+         * than its line, and a single line is as tall as its container
+         * (Flexbox 9.4, step 15) -- so the items, which stretch to the line,
+         * have to be placed again at the new height, and the forward sweep is
+         * what does that. Memoised, they kept their contents' height inside a
+         * row their minimum had made 174 pixels tall.
+         */
+        if (n->rect.h == n->content_h)
+        {
+            n->measured_w = n->rect.w;
+        }
         return;
     }
 
@@ -841,7 +895,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     {
         if (n->measured_w == n->rect.w)
         {
-            n->rect.h = ar_clamp(n->content_h, ar_used_min(n, 1), ar_used_max(n, 1));
+            n->rect.h = ar__own_height(nodes, n, n->content_h);
             return;
         }
         ar__place_block(nodes, (ar_i32)(n - nodes), env);
@@ -1467,7 +1521,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             used += ar__text_block_height(n);
         }
         used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
-        n->rect.h = ar_clamp(used, ar_used_min(n, 1), ar_used_max(n, 1));
+        n->rect.h = ar__own_height(nodes, n, used);
 
         /* `used` and `content_h` are the same number, so the height this
            arrived at is already stored; all that is missing is the width it
