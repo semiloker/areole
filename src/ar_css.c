@@ -179,6 +179,8 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_OVERFLOW_ANCHOR] = AR_UNIT_KEYWORD;
     s->v[AR_P_CURSOR] = AR_CURSOR_AUTO;
     s->unit[AR_P_CURSOR] = AR_UNIT_KEYWORD;
+    s->v[AR_P_APPEARANCE] = AR_APPEARANCE_AUTO;
+    s->unit[AR_P_APPEARANCE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
     s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
@@ -817,6 +819,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"cursor", AR_P_CURSOR},
                                           {"accent-color", AR_P_ACCENT_COLOR},
                                           {"caret-color", AR_P_CARET_COLOR},
+                                          {"appearance", AR_P_APPEARANCE},
+                                          {"-webkit-appearance", AR_P_APPEARANCE},
+                                          {"-moz-appearance", AR_P_APPEARANCE},
                                           {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
                                           {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
                                           {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
@@ -1134,6 +1139,23 @@ static const ar__kw AR_KEYWORDS[] = {
        axes, `all-scroll` onto `move`, and a keyword with no Windows pointer of
        its own onto the nearest that has one. */
     {"auto", AR_P_CURSOR, AR_CURSOR_AUTO},
+
+    {"none", AR_P_APPEARANCE, AR_APPEARANCE_NONE},
+    {"auto", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"textfield", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"menulist-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"menulist", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"checkbox", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"radio", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"listbox", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"meter", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"progress-bar", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"push-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"searchfield", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"slider-horizontal", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"square-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"textarea", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
     {"default", AR_P_CURSOR, AR_CURSOR_DEFAULT},
     {"pointer", AR_P_CURSOR, AR_CURSOR_POINTER},
     {"text", AR_P_CURSOR, AR_CURSOR_TEXT},
@@ -4999,6 +5021,10 @@ static ar_u32 ar__state_keyword(const char *name, ar_u32 len)
     {
         return AR_STATE_PLACEHOLDER_SHOWN;
     }
+    if (ar__same(name, len, "-ar-plain"))
+    {
+        return AR_STATE_PLAIN;
+    }
     if (ar__same(name, len, "open"))
     {
         return AR_STATE_OPEN;
@@ -5318,6 +5344,10 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "placeholder-shown"))
                 {
                     *state |= AR_STATE_PLACEHOLDER_SHOWN;
+                }
+                else if (ar__same(name, len, "-ar-plain"))
+                {
+                    *state |= AR_STATE_PLAIN;
                 }
                 else if (ar__same(name, len, "open"))
                 {

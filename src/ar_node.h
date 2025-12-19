@@ -342,6 +342,11 @@ int ar_box_is_open(const ar_ctx *c);
 /* The same question about a control's checkedness, for the mark. */
 int ar_box_is_checked(const ar_ctx *c);
 
+/* And whether it is plain, `appearance: none` (AR_STATE_PLAIN): a plain
+   checkbox has no tick and a plain select no arrow, so the walk builds
+   neither. */
+int ar_box_is_plain(const ar_ctx *c);
+
 /* The computed `white-space` of the box just opened, for the walk that has to
    decide whether to collapse the text inside it. */
 ar_i32 ar_box_white_space(const ar_ctx *c);

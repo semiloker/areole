@@ -20729,6 +20729,62 @@ static void test_selection_styling(void)
           "selection: and an ancestor's reaches the field inside it");
 }
 
+/*
+ * `appearance: none`, as Edge draws each control with it.
+ *
+ * A checkbox and a radio become nothing -- a box of no size -- so a page can
+ * build its own from the empty box; a slider keeps its thumb and loses its
+ * track; a progress bar is the old green bar on grey; a select loses its
+ * arrow. The prefixed spelling is the same property, and the old keywords
+ * like `textfield` mean `auto`.
+ */
+static void test_appearance_none(void)
+{
+    ar_surface s = ar__ui_surface(600, 300);
+    ar_i32     a, b, w, t, cb, chev, track, fill, ticks[4];
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>.n { appearance:none; } .w { -webkit-appearance:none; }"
+              ".t { appearance:textfield; }"
+              ".c { appearance:none; width:16px; height:16px; border:2px solid #c2477a; }"
+              "</style></head><body style=\"margin:0px\">"
+              "<input id=a class=n type=checkbox checked><input id=w class=w type=checkbox>"
+              "<input id=t class=t type=checkbox checked><input id=c class=c type=checkbox>"
+              "<progress class=n value=50 max=100></progress>"
+              "<select id=s class=n><option>One</option></select></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "appearance: every spelling parses");
+    ar__doc_frame(&s, 0, 0);
+
+    a = ar__first_tag_id("a");
+    w = ar__first_tag_id("w");
+    t = ar__first_tag_id("t");
+    cb = ar__first_tag_id("c");
+    b = ar__first_tag_id("s");
+    CHECK(a >= 0 && ar__box(a).w == 0 && ar__box(a).h == 0 && w >= 0 && ar__box(w).w == 0,
+          "appearance: a plain checkbox is a box of no size, prefixed or not");
+    CHECK(ar__tags("ar-tick", ticks, 4) == 1,
+          "appearance: and has no tick: only the auto one does");
+    CHECK(t >= 0 && ar__box(t).w == 13 &&
+              (ar_u32)AR_WIDE(ar__box_style(t), AR_P_BACKGROUND) == 0xFF0075FFu,
+          "appearance: `textfield` means auto, and the checkbox stays a checkbox");
+    CHECK(cb >= 0 && ar__box(cb).w == 16 && ar__box(cb).h == 16 &&
+              (ar_u32)AR_WIDE(ar__box_style(cb), AR_P_BORDER_COLOR) == 0xFFC2477Au,
+          "appearance: and the page's own box is what it says");
+
+    track = ar__first_tag("ar-track");
+    fill = ar__first_tag("ar-fill");
+    CHECK(track >= 0 && (ar_u32)AR_WIDE(ar__box_style(track), AR_P_BACKGROUND) == 0xFF808080u &&
+              ar__box(track).h == 16 && fill >= 0 &&
+              (ar_u32)AR_WIDE(ar__box_style(fill), AR_P_BACKGROUND) == 0xFF008000u,
+          "appearance: a plain progress bar is green on grey, the whole height");
+
+    chev = ar__first_tag("ar-chev");
+    CHECK(b >= 0 && chev < 0 && ar__box_style(b)->v[AR_P_PAD_RIGHT] == 0,
+          "appearance: and a plain select has no arrow and no room for one");
+}
+
 static void test_a_document_carries_its_own_stylesheet(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -25067,6 +25123,7 @@ int main(void)
     test_caret_color();
     test_placeholder_styling();
     test_selection_styling();
+    test_appearance_none();
     test_an_outline_follows_the_border_radius();
     test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();

@@ -481,6 +481,20 @@ static const char *const AR__UA[] = {
      * radio's dot follow their control without rules of their own; and
      * `:enabled` keeps a disabled control as it is under the pointer.
      */
+    /*
+     * `appearance: none`, as Edge draws each control with it (AR_STATE_PLAIN):
+     * a checkbox and a radio are nothing at all, a slider keeps its thumb and
+     * loses its track, a progress bar becomes the old green bar on grey, and a
+     * select loses its arrow and the room kept for it. Buttons and text fields
+     * keep their size and in a browser draw their CSS borders, which are inset
+     * and outset -- styles this engine has not got until 0.12.2, so here they
+     * keep their look.
+     */
+    ".ar-checkbox:-ar-plain, .ar-radio:-ar-plain { width:0px; height:0px; border-width:0px;"
+    "                                              background:transparent; }",
+
+    "select:-ar-plain { padding:1px 0px; } select > option:-ar-plain { padding:0px 1px; }",
+
     ".ar-edge:enabled:hover { --ar-edge:#4F4F4F; --ar-face:#E5E5E5; --ar-accent:-ar-accent-hover;"
     "                         --ar-rail:-ar-rail-hover; --ar-trackface:-ar-track-hover; }"
     ".ar-edge:enabled:active { --ar-edge:#8D8D8D; --ar-face:#F5F5F5; --ar-accent:-ar-accent-active;"
