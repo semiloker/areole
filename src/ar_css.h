@@ -847,6 +847,18 @@ enum
     AR_ACCENT_RAIL,
     AR_ACCENT_RAIL_HOVER,
     AR_ACCENT_RAIL_ACTIVE,
+
+    /* And the colours a control has whatever its accent, which only the
+       box's `color-scheme` decides: an edge, a button's face, the inside of
+       an unticked box, a meter's bar. */
+    AR_ACCENT_EDGE,
+    AR_ACCENT_EDGE_HOVER,
+    AR_ACCENT_EDGE_ACTIVE,
+    AR_ACCENT_FACE,
+    AR_ACCENT_FACE_HOVER,
+    AR_ACCENT_FACE_ACTIVE,
+    AR_ACCENT_BOX,
+    AR_ACCENT_METER,
     AR_ACCENT_COUNT
 };
 

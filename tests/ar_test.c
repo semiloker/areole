@@ -13821,26 +13821,26 @@ static void test_accent_color_shades_match_edge(void)
 
     for (i = 0; i < (ar_i32)(sizeof E / sizeof E[0]); ++i)
     {
-        shades = shades && ar_accent_shade(E[i].accent, 0, AR_ACCENT_BASE) == E[i].accent &&
-                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_HOVER) == E[i].hover &&
-                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_ACTIVE) == E[i].active &&
-                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_ON) == E[i].on &&
-                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_TRACK) ==
+        shades = shades && ar_accent_shade(E[i].accent, 0, 0, AR_ACCENT_BASE) == E[i].accent &&
+                 ar_accent_shade(E[i].accent, 0, 0, AR_ACCENT_HOVER) == E[i].hover &&
+                 ar_accent_shade(E[i].accent, 0, 0, AR_ACCENT_ACTIVE) == E[i].active &&
+                 ar_accent_shade(E[i].accent, 0, 0, AR_ACCENT_ON) == E[i].on &&
+                 ar_accent_shade(E[i].accent, 0, 0, AR_ACCENT_TRACK) ==
                      (E[i].dark_track ? 0xFF3B3B3Bu : 0xFFEFEFEFu);
     }
     CHECK(shades,
           "accent: the accent, its hover and pressed shades, the tick and the track, as Edge");
     for (i = 0; i < (ar_i32)(sizeof T / sizeof T[0]); ++i)
     {
-        edges = edges && ar_accent_shade(T[i].accent, 0, AR_ACCENT_ON) == T[i].on &&
-                ar_accent_shade(T[i].accent, 0, AR_ACCENT_RAIL) ==
+        edges = edges && ar_accent_shade(T[i].accent, 0, 0, AR_ACCENT_ON) == T[i].on &&
+                ar_accent_shade(T[i].accent, 0, 0, AR_ACCENT_RAIL) ==
                     (T[i].dark_track ? 0xFF858585u : 0xFFB2B2B2u);
     }
     CHECK(edges, "accent: and the tick and the track change at 3:1, as Edge's do");
-    CHECK(ar_accent_shade(0, 1, AR_ACCENT_BASE) == 0xFF0075FFu &&
-              ar_accent_shade(0, 1, AR_ACCENT_HOVER) == 0xFF005CC8u &&
-              ar_accent_shade(0, 1, AR_ACCENT_ACTIVE) == 0xFF3793FFu &&
-              ar_accent_shade(0, 1, AR_ACCENT_RAIL_HOVER) == 0xFF9A9A9Au,
+    CHECK(ar_accent_shade(0, 1, 0, AR_ACCENT_BASE) == 0xFF0075FFu &&
+              ar_accent_shade(0, 1, 0, AR_ACCENT_HOVER) == 0xFF005CC8u &&
+              ar_accent_shade(0, 1, 0, AR_ACCENT_ACTIVE) == 0xFF3793FFu &&
+              ar_accent_shade(0, 1, 0, AR_ACCENT_RAIL_HOVER) == 0xFF9A9A9Au,
           "accent: auto keeps the colours the controls already had");
 }
 
@@ -20785,6 +20785,66 @@ static void test_appearance_none(void)
           "appearance: and a plain select has no arrow and no room for one");
 }
 
+/*
+ * Controls in `color-scheme: dark`, as Edge draws them.
+ *
+ * The browser's own accent goes #99C8FF (hovered #D1E6FF, pressed #61A9FF)
+ * with a dark tick, a box's inside and a track #3B3B3B, an edge #858585, a
+ * button #6B6B6B and a meter #74B374. A page's own accent is the exception:
+ * Edge draws it exactly as in the light scheme, track and tick included.
+ */
+static void test_controls_follow_color_scheme(void)
+{
+    ar_surface s = ar__ui_surface(600, 200);
+    ar_i32     a, b, r, btn, fill, ticks[4];
+
+    CHECK(ar_accent_shade(0, 1, 1, AR_ACCENT_BASE) == 0xFF99C8FFu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_HOVER) == 0xFFD1E6FFu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_ACTIVE) == 0xFF61A9FFu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_ON) == 0xFF3B3B3Bu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_TRACK) == 0xFF3B3B3Bu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_RAIL_ACTIVE) == 0xFF6E6E6Eu,
+          "dark: the browser's own accent, its tick and its track, as Edge");
+    CHECK(ar_accent_shade(0, 1, 1, AR_ACCENT_EDGE) == 0xFF858585u &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_EDGE_HOVER) == 0xFFACACACu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_FACE) == 0xFF6B6B6Bu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_FACE_HOVER) == 0xFF7B7B7Bu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_FACE_ACTIVE) == 0xFF616161u &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_BOX) == 0xFF3B3B3Bu &&
+              ar_accent_shade(0, 1, 1, AR_ACCENT_METER) == 0xFF74B374u,
+          "dark: and the edges, faces and meter");
+    CHECK(ar_accent_shade(0xFFFF0000u, 0, 1, AR_ACCENT_HOVER) == 0xFFC70000u &&
+              ar_accent_shade(0xFFFF0000u, 0, 1, AR_ACCENT_TRACK) == 0xFFEFEFEFu &&
+              ar_accent_shade(0xFF000080u, 0, 1, AR_ACCENT_ACTIVE) == 0xFF0000B8u,
+          "dark: a page's own accent is what it is in light, track and all");
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px; color-scheme:dark\">"
+              "<input id=a type=checkbox><input id=b type=checkbox checked>"
+              "<input id=r type=checkbox checked style=\"accent-color:#ff0000\">"
+              "<button id=g>Go</button><meter value=0.5></meter></body>");
+    ar__doc_frame(&s, 0, 0);
+    a = ar__first_tag_id("a");
+    b = ar__first_tag_id("b");
+    r = ar__first_tag_id("r");
+    btn = ar__first_tag_id("g");
+    fill = ar__first_tag("ar-fill");
+    CHECK(a >= 0 && (ar_u32)AR_WIDE(ar__box_style(a), AR_P_BACKGROUND) == 0xFF3B3B3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(a), AR_P_BORDER_COLOR) == 0xFF858585u,
+          "dark: an unticked box is dark with a grey edge");
+    CHECK(ar__tags("ar-tick", ticks, 4) == 3 && b >= 0 &&
+              (ar_u32)AR_WIDE(ar__box_style(b), AR_P_BACKGROUND) == 0xFF99C8FFu &&
+              (ar_u32)AR_WIDE(ar__box_style(ticks[1]), AR_P_COLOR) == 0xFF3B3B3Bu,
+          "dark: a ticked one is the light blue with a dark tick");
+    CHECK(r >= 0 && (ar_u32)AR_WIDE(ar__box_style(r), AR_P_BACKGROUND) == 0xFFFF0000u &&
+              (ar_u32)AR_WIDE(ar__box_style(ticks[2]), AR_P_COLOR) == 0xFFFFFFFFu,
+          "dark: and a red one red with a white tick, as in light");
+    CHECK(btn >= 0 && (ar_u32)AR_WIDE(ar__box_style(btn), AR_P_BACKGROUND) == 0xFF6B6B6Bu &&
+              fill >= 0 && (ar_u32)AR_WIDE(ar__box_style(fill), AR_P_BACKGROUND) == 0xFF74B374u,
+          "dark: a button's face and a meter's bar follow the scheme");
+}
+
 static void test_a_document_carries_its_own_stylesheet(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -25124,6 +25184,7 @@ int main(void)
     test_placeholder_styling();
     test_selection_styling();
     test_appearance_none();
+    test_controls_follow_color_scheme();
     test_an_outline_follows_the_border_radius();
     test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();

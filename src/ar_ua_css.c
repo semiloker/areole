@@ -322,14 +322,14 @@ static const char *const AR__UA[] = {
      * a browser's 21.
      */
     "input { width:169px; padding:3px 4px; border:1px solid #767676;"
-    "        border-color:var(--ar-edge, #767676);"
+    "        border-color:var(--ar-edge, -ar-edge);"
     "        border-radius:2px; background:Field; color:FieldText; overflow:hidden; }"
     "input:disabled { color:#6D6D6D; background:#FAFAFA; border-color:#C8C8C8; }",
 
     /* A push button: the label plus six pixels a side, on #EFEFEF. */
     "button, .ar-button { width:auto; padding:3px 8px; border:1px solid #767676;"
-    "                     border-color:var(--ar-edge, #767676);"
-    "                     border-radius:2px; background:var(--ar-face, #EFEFEF); color:#000000;"
+    "                     border-color:var(--ar-edge, -ar-edge);"
+    "                     border-radius:2px; background:var(--ar-face, -ar-face); color:#000000;"
     "                     text-align:center; }"
     "button:disabled, .ar-button:disabled { color:#6D6D6D; }",
 
@@ -341,7 +341,7 @@ static const char *const AR__UA[] = {
      * dropdown by everything it could show, and shows one.
      */
     "select { position:relative; padding:2px 15px 2px 3px; border:1px solid #767676;"
-    "         border-color:var(--ar-edge, #767676);"
+    "         border-color:var(--ar-edge, -ar-edge);"
     "         border-radius:2px; background:Field; color:FieldText; }"
     "select > option, select > optgroup > option { display:block; height:0px;"
     "  padding:0px 2px; visibility:hidden; }",
@@ -372,7 +372,7 @@ static const char *const AR__UA[] = {
      * grip drawn in the corner.
      */
     "textarea { width:162px; height:30px; padding:3px; border:1px solid #767676;"
-    "           border-color:var(--ar-edge, #767676);"
+    "           border-color:var(--ar-edge, -ar-edge);"
     "           border-radius:2px; background:Field; color:FieldText; overflow:auto;"
     "           position:relative; }"
     "textarea > ar-value { white-space:pre-wrap; }",
@@ -389,8 +389,8 @@ static const char *const AR__UA[] = {
      * Edge draw unless a page sets `accent-color`.
      */
     ".ar-checkbox { width:13px; height:13px; padding:0px; margin:3px 3px 3px 4px;"
-    "               border:1px solid #767676; border-color:var(--ar-edge, #767676);"
-    "               border-radius:2px; background:#FFFFFF; }"
+    "               border:1px solid #767676; border-color:var(--ar-edge, -ar-edge);"
+    "               border-radius:2px; background:-ar-box; }"
     ".ar-checkbox:checked { background:var(--ar-accent, -ar-accent);"
     "                       border-color:var(--ar-accent, -ar-accent); }"
     "ar-tick { display:block; width:9px; height:9px; margin:2px 0px 0px 2px;"
@@ -400,8 +400,8 @@ static const char *const AR__UA[] = {
     /* A radio: the same box, round, margins 3 3 0 5; checked, a blue ring and
        a seven-pixel blue dot three pixels in. */
     ".ar-radio { width:13px; height:13px; padding:0px; margin:3px 3px 0px 5px;"
-    "            border:1px solid #767676; border-color:var(--ar-edge, #767676);"
-    "            border-radius:7px; background:#FFFFFF; }"
+    "            border:1px solid #767676; border-color:var(--ar-edge, -ar-edge);"
+    "            border-radius:7px; background:-ar-box; }"
     ".ar-radio:checked { border-color:var(--ar-accent, -ar-accent); background:-ar-on-accent; }",
 
     "ar-mark { display:block; width:7px; height:7px; margin:3px 0px 0px 3px;"
@@ -438,7 +438,7 @@ static const char *const AR__UA[] = {
     "           border-radius:4px; }"
     "ar-fill { display:block; height:8px; background:var(--ar-accent, -ar-accent);"
     "          border-radius:4px; }"
-    "meter ar-fill { background:#107C10; }",
+    "meter ar-fill { background:-ar-meter; }",
 
     "ar-rail { display:block; height:16px; margin-top:-12px; margin-right:16px; }"
     "ar-thumb { display:block; position:relative; width:16px; height:16px;"
@@ -448,7 +448,7 @@ static const char *const AR__UA[] = {
        in #777777; and when it is open, sixteen chips hanging under it. */
     ".ar-color { width:40px; height:19px; padding:4px 5px; position:relative;"
     "            overflow:visible; border:1px solid #767676; border-radius:2px;"
-    "            border-color:var(--ar-edge, #767676); background:var(--ar-face, #EFEFEF); }"
+    "            border-color:var(--ar-edge, -ar-edge); background:var(--ar-face, -ar-face); }"
     "ar-swatch { display:block; height:19px; border:1px solid #777777; }",
 
     "ar-palette { display:block; position:absolute; left:0px; top:100%; z-index:10;"
@@ -461,8 +461,8 @@ static const char *const AR__UA[] = {
     ".ar-file { width:253px; height:auto; padding:0px; border-width:0px;"
     "           background:transparent; overflow:hidden; white-space:nowrap; }"
     "ar-pick { display:inline-block; padding:3px 8px; margin-right:4px;"
-    "          border:1px solid #767676; border-color:var(--ar-edge, #767676);"
-    "          border-radius:2px; background:var(--ar-face, #EFEFEF);"
+    "          border:1px solid #767676; border-color:var(--ar-edge, -ar-edge);"
+    "          border-radius:2px; background:var(--ar-face, -ar-face);"
     "          color:#000000; }"
     "ar-name { display:inline; }",
 
@@ -495,9 +495,11 @@ static const char *const AR__UA[] = {
 
     "select:-ar-plain { padding:1px 0px; } select > option:-ar-plain { padding:0px 1px; }",
 
-    ".ar-edge:enabled:hover { --ar-edge:#4F4F4F; --ar-face:#E5E5E5; --ar-accent:-ar-accent-hover;"
+    ".ar-edge:enabled:hover { --ar-edge:-ar-edge-hover; --ar-face:-ar-face-hover;"
+    "                         --ar-accent:-ar-accent-hover;"
     "                         --ar-rail:-ar-rail-hover; --ar-trackface:-ar-track-hover; }"
-    ".ar-edge:enabled:active { --ar-edge:#8D8D8D; --ar-face:#F5F5F5; --ar-accent:-ar-accent-active;"
+    ".ar-edge:enabled:active { --ar-edge:-ar-edge-active; --ar-face:-ar-face-active;"
+    "                          --ar-accent:-ar-accent-active;"
     "                          --ar-rail:-ar-rail-active; --ar-trackface:-ar-track-active; }",
 
     /* An open select's list hangs under it, over whatever follows, and is part

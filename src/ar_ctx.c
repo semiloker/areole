@@ -2255,7 +2255,7 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                     ar_style_put(
                         st, cp,
                         (ar_i32)ar_accent_shade((ar_u32)ar_style_get(st, AR_P_ACCENT_COLOR),
-                                                st->unit[AR_P_ACCENT_COLOR] != AR_UNIT_COLOR,
+                                                st->unit[AR_P_ACCENT_COLOR] != AR_UNIT_COLOR, dark,
                                                 ar_style_get(st, cp)));
                     st->unit[cp] = AR_UNIT_COLOR;
                 }
