@@ -74,6 +74,12 @@ def measured_before(baseline):
     return got if got and want and got != want else None
 
 
+def unmeasured_scenes(baseline):
+    """Registered scenes the baseline has no numbers for, sorted."""
+    measured = set(s["name"] for s in baseline["scenes"])
+    return sorted(registered_scenes() - measured)
+
+
 def check_baseline_is_complete(baseline):
     """The two ways a baseline lies without being wrong.
 
@@ -96,20 +102,25 @@ def check_baseline_is_complete(baseline):
     numbers came from, at the top and in the machine block, rather than the
     release waiting. A baseline newer than the header, or one whose version
     cannot be read, still fails: that one is a label that is simply wrong.
+
+    And an older baseline may lack the scenes registered since it was taken,
+    for the same reason, as long as the document says which: they are listed
+    as not measured yet (see unmeasured_scenes). A baseline of the current
+    version has no such excuse, and a scene missing from it still fails.
     """
     problems = []
 
-    measured = set(s["name"] for s in baseline["scenes"])
-    missing = sorted(registered_scenes() - measured)
-    if missing:
+    want = header_version()
+    got = baseline.get("areole_version")
+    older = version_key(got) and version_key(want) and version_key(got) < version_key(want)
+
+    missing = unmeasured_scenes(baseline)
+    if missing and not older:
         problems.append(
             "bench/baseline.json is missing %d registered scene(s): %s"
             % (len(missing), ", ".join(missing))
         )
 
-    want = header_version()
-    got = baseline.get("areole_version")
-    older = version_key(got) and version_key(want) and version_key(got) < version_key(want)
     if want and got and want != got and not older:
         problems.append(
             "bench/baseline.json was measured by areole %s, but include/areole.h says %s"
@@ -180,6 +191,10 @@ def main():
         w("> These numbers are areole %s's. The engine is %s, and its own baseline waits"
           % (results["areole_version"], header_version()))
         w("> for a quiet machine.")
+        if unmeasured_scenes(results):
+            w(">")
+            w("> Not measured yet, because they were written after it: %s."
+              % ", ".join("`%s`" % n for n in unmeasured_scenes(results)))
         w("")
     w("```sh")
     w("cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build")
