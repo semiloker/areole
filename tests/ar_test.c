@@ -20679,6 +20679,48 @@ static void test_placeholder_styling(void)
 
     ar__ui_reset("div::placeholder p { color:#ff0000; }");
     CHECK(ar_stylesheet_errors(g_ui) > 0, "placeholder: nothing may follow a pseudo-element");
+    ar__ui_reset("input::placeholder:hover { color:#ff0000; } input::placeholder.x { color:red; }");
+    CHECK(ar_stylesheet_errors(g_ui) == 2, "placeholder: not even in its own compound");
+
+    /* The hint's box is one part more than was written, so the deepest
+       selector the table holds has no room for it. */
+    ar__ui_reset("a b input::placeholder { color:#ff0000; }");
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "placeholder: as deep as the table holds, less one");
+    ar__ui_reset("a b c input::placeholder { color:#ff0000; }");
+    CHECK(ar_stylesheet_errors(g_ui) > 0, "placeholder: and one deeper is refused, not overrun");
+
+    /* A composition is text in a text field, and the hint goes; in a password
+       field the hint is drawn through it, so the state stays with it. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>input:placeholder-shown { background:#00ff00; }</style></head>"
+              "<body style=\"margin:0px\"><input id=p placeholder=hint>"
+              "<input id=w type=password placeholder=hint></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+    {
+        static const char *const IDS[2] = {"p", "w"};
+        ar_u32                   bg[2];
+        ar_input                 in;
+        int                      k;
+
+        for (k = 0; k < 2; ++k)
+        {
+            ar_a11y_focus(g_ui, &g_doc, ar__doc_id(IDS[k]));
+            ar__doc_frame(&s, 0, 0);
+            memset(&in, 0, sizeof in);
+            in.mouse_x = -1;
+            in.mouse_y = -1;
+            in.compose = "XY";
+            in.compose_len = 2;
+            ar_frame_begin(g_ui, &in);
+            ar_dom_build(g_ui, &g_doc);
+            ar_frame_end(g_ui, &s);
+            bg[k] = (ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id(IDS[k])), AR_P_BACKGROUND);
+        }
+        CHECK(bg[0] != 0xFF00FF00u && bg[1] == 0xFF00FF00u,
+              "placeholder: a composition hides it, except in a password field");
+    }
 }
 
 /*
@@ -20718,6 +20760,30 @@ static void test_selection_styling(void)
     v = g_ui->nodes[ar__first_tag_id("s")].first_child;
     r = ar__box(v);
     CHECK(ar__ui_px(r.x + 1, r.y) == 0xFFFF00u, "selection: ::selection's background");
+    {
+        /* Every glyph in its colour and none in the text's: the line is drawn
+           whole and clipped to each part, and the parts either side of a
+           selection of everything are empty. The caret is the text's colour,
+           and is left out. */
+        ar_rect caret = g_ui->caret_rect;
+        ar_i32  x, y, red = 0, dark = 0;
+
+        for (y = r.y; y < r.y + r.h; ++y)
+        {
+            for (x = r.x; x < r.x + r.w; ++x)
+            {
+                ar_u32 p = ar__ui_px(x, y);
+
+                if (x >= caret.x && x < caret.x + caret.w)
+                {
+                    continue;
+                }
+                red += (p >> 16) > 0xC0u && ((p >> 8) & 0xFFu) < 0x80u;
+                dark += (p >> 16) < 0x80u;
+            }
+        }
+        CHECK(red > 0 && dark == 0, "selection: and its text in ::selection's colour alone");
+    }
 
     ar_a11y_focus(g_ui, &g_doc, ar__doc_id("u"));
     ar__doc_frame(&s, 0, 0);
@@ -20727,6 +20793,54 @@ static void test_selection_styling(void)
     r = ar__box(v);
     CHECK(ar__ui_px(r.x + 1, r.y) == 0x00FF00u,
           "selection: and an ancestor's reaches the field inside it");
+
+    /* Resolved against the box its rule matched: a var() of that box's, a
+       system colour in that box's scheme. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>#v { --sel:#00ffff; } #v::selection { background:var(--sel); }"
+              "#d::selection { background:Canvas; }</style></head>"
+              "<body style=\"margin:0px\"><input id=v value=aaaa>"
+              "<input id=d value=aaaa style=\"color-scheme:dark\"></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("v"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    r = ar__box(g_ui->nodes[ar__first_tag_id("v")].first_child);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0x00FFFFu, "selection: a var() in it is the box's own");
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("d"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    r = ar__box(g_ui->nodes[ar__first_tag_id("d")].first_child);
+    CHECK(ar__ui_px(r.x + 1, r.y) == (ar_sys_color_default(AR_SYS_CANVAS, 1) & 0xFFFFFFu),
+          "selection: and a system colour in it is in the box's scheme");
+
+    /* A `::selection` in a list narrows its own copy of the block and no
+       other: the plain selector beside it keeps the whole of it. And the
+       presentational hints, which come between the sheets, are not lost when
+       the page's first rule is one the box passes skip. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>::selection { background:#ffff00; }"
+              "#m::selection, #m { color:#ff0000; height:23px; }</style></head>"
+              "<body style=\"margin:0px\"><div id=m>x</div>"
+              "<font id=f color=\"#0000ff\">y</font></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "selection: in a selector list, it parses");
+    ar__doc_frame(&s, 0, 0);
+    v = ar__first_tag_id("m");
+    CHECK(v >= 0 && ar__box(v).h == 23 &&
+              (ar_u32)AR_WIDE(ar__box_style(v), AR_P_COLOR) == 0xFFFF0000u,
+          "selection: and the selector beside it keeps the whole block");
+    v = ar__first_tag_id("f");
+    CHECK(v >= 0 && (ar_u32)AR_WIDE(ar__box_style(v), AR_P_COLOR) == 0xFF0000FFu,
+          "selection: and a leading ::selection rule leaves <font color> its colour");
+
+    ar__ui_reset("input::selection.x { color:#ff0000; } input::selection:hover { color:red; }");
+    CHECK(ar_stylesheet_errors(g_ui) == 2, "selection: nothing may follow it in its compound");
 }
 
 /*
@@ -20783,6 +20897,44 @@ static void test_appearance_none(void)
     chev = ar__first_tag("ar-chev");
     CHECK(b >= 0 && chev < 0 && ar__box_style(b)->v[AR_P_PAD_RIGHT] == 0,
           "appearance: and a plain select has no arrow and no room for one");
+
+    /* The bar is the element's whole height, whatever the page makes it. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px\"><progress style=\"appearance:none; height:30px\" "
+              "value=50 max=100></progress></body>");
+    ar__doc_frame(&s, 0, 0);
+    track = ar__first_tag("ar-track");
+    fill = ar__first_tag("ar-fill");
+    CHECK(track >= 0 && ar__box(track).h == 30 && fill >= 0 && ar__box(fill).h == 30,
+          "appearance: a plain progress bar is as tall as the page makes it");
+
+    /*
+     * Only a control is styled a second time as plain. Anything else with
+     * `appearance: none` is what it was, and a plain control hands back the
+     * custom-property scope of its first styling: as many are in use as
+     * without it.
+     */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>.k { --k:1px; } .n { appearance:none; }</style></head>"
+              "<body style=\"margin:0px\"><div id=d class=n>x</div>"
+              "<input type=checkbox class=k><input type=checkbox class=k></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+    a = ar__first_tag_id("d");
+    CHECK(a >= 0 && !(g_ui->nodes[a].state & AR_STATE_PLAIN),
+          "appearance: a box that is not a control is not made plain");
+    w = (ar_i32)g_ui->var_scope_count;
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>.k { --k:1px; } .n { appearance:none; }</style></head>"
+              "<body style=\"margin:0px\"><div id=d class=n>x</div>"
+              "<input type=checkbox class=\"k n\"><input type=checkbox class=\"k n\"></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+    CHECK(w > 0 && (ar_i32)g_ui->var_scope_count == w,
+          "appearance: and a plain control leaves no custom-property scope behind");
 }
 
 /*
@@ -20843,6 +20995,27 @@ static void test_controls_follow_color_scheme(void)
     CHECK(btn >= 0 && (ar_u32)AR_WIDE(ar__box_style(btn), AR_P_BACKGROUND) == 0xFF6B6B6Bu &&
               fill >= 0 && (ar_u32)AR_WIDE(ar__box_style(fill), AR_P_BACKGROUND) == 0xFF74B374u,
           "dark: a button's face and a meter's bar follow the scheme");
+
+    /* A meter takes no accent, so a page's accent around it leaves its
+       track dark; and a disabled field and button are Edge's dark greys. */
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px; color-scheme:dark; accent-color:#ff0000\">"
+              "<meter value=0.5></meter><input id=x value=a disabled>"
+              "<button id=g disabled>Go</button></body>");
+    ar__doc_frame(&s, 0, 0);
+    a = ar__first_tag("ar-track");
+    b = ar__first_tag_id("x");
+    btn = ar__first_tag_id("g");
+    CHECK(a >= 0 && (ar_u32)AR_WIDE(ar__box_style(a), AR_P_BACKGROUND) == 0xFF3B3B3Bu,
+          "dark: a meter's track is dark under a page's accent");
+    CHECK(b >= 0 && (ar_u32)AR_WIDE(ar__box_style(b), AR_P_COLOR) == 0xFFAAAAAAu &&
+              (ar_u32)AR_WIDE(ar__box_style(b), AR_P_BACKGROUND) == 0xFF3B3B3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(b), AR_P_BORDER_COLOR) == 0xFF626262u,
+          "dark: a disabled field is Edge's dark one");
+    CHECK(btn >= 0 && (ar_u32)AR_WIDE(ar__box_style(btn), AR_P_COLOR) == 0xFF727272u &&
+              (ar_u32)AR_WIDE(ar__box_style(btn), AR_P_BACKGROUND) == 0xFF363636u,
+          "dark: and so is a disabled button");
 }
 
 static void test_a_document_carries_its_own_stylesheet(void)

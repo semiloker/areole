@@ -859,6 +859,15 @@ enum
     AR_ACCENT_FACE_ACTIVE,
     AR_ACCENT_BOX,
     AR_ACCENT_METER,
+
+    /* A disabled control's text, field, edge, button face and button label:
+       the light values are the ones the sheet always had, the dark ones
+       Edge's, which it draws translucent and are read off its pixels. */
+    AR_ACCENT_DISABLED_TEXT,
+    AR_ACCENT_DISABLED_FIELD,
+    AR_ACCENT_DISABLED_EDGE,
+    AR_ACCENT_DISABLED_FACE,
+    AR_ACCENT_DISABLED_LABEL,
     AR_ACCENT_COUNT
 };
 
@@ -1692,10 +1701,10 @@ typedef struct ar_rule
      * behind a modal rather than any box in the tree.
      *
      * A flag on the rule rather than a pseudo-element in the selector engine,
-     * because there is exactly one pseudo-element and it matches no box: the
-     * backdrop is not in the tree, has no rectangle of its own until a modal
-     * gives it one, and would take a node slot and change every corpus's tree
-     * paths if it were a real box.
+     * because the backdrop matches no box -- see AR__PSEUDO_* in ar_css.c for
+     * how the other two pseudo-elements are carried. It is not in the tree,
+     * has no rectangle of its own until a modal gives it one, and would take a
+     * node slot and change every corpus's tree paths if it were a real box.
      */
     ar_u8 backdrop;
 
@@ -2269,13 +2278,15 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 void ar_sheet_note_tables(ar_sheet *sheet);
 
 /*
- * What `::selection` rules say about one element: its background into `*bg`
- * and its colour into `*fg`, each only if some rule set it, as bits 1 and 2 of
- * the result. Compound selectors only; `.form input::selection` is refused
- * here as `.dark p { --c: x }` is by the custom property pass.
+ * What `::selection` rules say about one element, as written: the value and
+ * unit of its background and of its colour, each only if some rule set it, as
+ * bits 1 and 2 of the result. Resolving them -- a var(), currentColor, a
+ * system colour in the element's own scheme -- is the caller's, which has the
+ * box. Compound selectors only; `.form input::selection` is not matched here,
+ * as `.dark p { --c: x }` is not by the custom property pass.
  */
 int ar_sheet_selection(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                       ar_u32 state, ar_u32 *bg, ar_u32 *fg);
+                       ar_u32 state, ar_i32 *bg_v, ar_u8 *bg_u, ar_i32 *fg_v, ar_u8 *fg_u);
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                ar_u32 id, ar_u32 state, ar_style *out);

@@ -4109,14 +4109,17 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
          */
         {
             static const char *const ACCENT[AR_ACCENT_COUNT] = {
-                "-ar-accent",      "-ar-accent-hover", "-ar-accent-active", "-ar-on-accent",
-                "-ar-track",       "-ar-track-hover",  "-ar-track-active",  "-ar-rail",
-                "-ar-rail-hover",  "-ar-rail-active",  "-ar-edge",          "-ar-edge-hover",
-                "-ar-edge-active", "-ar-face",         "-ar-face-hover",    "-ar-face-active",
-                "-ar-box",         "-ar-meter"};
+                "-ar-accent",        "-ar-accent-hover",  "-ar-accent-active", "-ar-on-accent",
+                "-ar-track",         "-ar-track-hover",   "-ar-track-active",  "-ar-rail",
+                "-ar-rail-hover",    "-ar-rail-active",   "-ar-edge",          "-ar-edge-hover",
+                "-ar-edge-active",   "-ar-face",          "-ar-face-hover",    "-ar-face-active",
+                "-ar-box",           "-ar-meter",         "-ar-disabled-text", "-ar-disabled-field",
+                "-ar-disabled-edge", "-ar-disabled-face", "-ar-disabled-label"};
             ar_i32 k;
 
-            for (k = 0; k < AR_ACCENT_COUNT; ++k)
+            /* Only names that start `-ar-` reach the loop: every keyword
+               any stylesheet writes passes through here first. */
+            for (k = 0; len > 4 && ar__same_fold(name, 4, "-ar-") && k < AR_ACCENT_COUNT; ++k)
             {
                 if (ar__same_fold(name, len, ACCENT[k]))
                 {
@@ -5206,8 +5209,13 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
  * `::backdrop` is a flag on the rule and a pass of its own (ar_rule.backdrop).
  * `::placeholder` is a rewrite: `X::placeholder` is `X > ar-value.ar-placeholder`,
  * the box a field draws its hint in, so it matches by the contextual pass that
- * already exists and styles anything a box can have. `::selection` moves its
- * colours into two inherited properties when the rule is stored.
+ * already exists and styles anything a box can have. `::selection` is a flag
+ * on its rule, as `::backdrop` is; no box pass applies it and the painter asks
+ * ar_sheet_selection about the one field being edited.
+ *
+ * Nothing may follow a pseudo-element in its compound: `input::selection.x`
+ * and `input::placeholder:hover` are refused, as Chrome refuses them, rather
+ * than read as being about the element.
  */
 enum
 {
@@ -5239,6 +5247,11 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
         if (z->p >= z->end)
         {
             break;
+        }
+        if (backdrop && *backdrop &&
+            (*z->p == '.' || *z->p == '#' || *z->p == ':' || *z->p == '[' || ar__is_ident(*z->p)))
+        {
+            return 0; /* nothing follows a pseudo-element: see AR__PSEUDO_* */
         }
 
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
@@ -5585,7 +5598,13 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
     rule->selection = (ar_u8)(pseudo == AR__PSEUDO_SELECTION);
     if (pseudo == AR__PSEUDO_PLACEHOLDER)
     {
-        /* The hint's own box, a child of the field: see AR__PSEUDO_*. */
+        /* The hint's own box, a child of the field: see AR__PSEUDO_*. One
+           part more than was written, so one fewer may be written: rule->ctx
+           holds AR_MAX_SEL_PARTS and the subject is the part past them. */
+        if (n > AR_MAX_SEL_PARTS)
+        {
+            return 0;
+        }
         parts[n].tag = ar_hash("ar-value", 8u);
         ar_classes_clear(&parts[n].klass);
         ar_classes_add(&parts[n].klass, ar_hash("ar-placeholder", 14u));
@@ -7119,6 +7138,7 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
         ar_rule rule[AR_MAX_SEL_LIST];
         ar_i32  sel_count = 0;
         ar_i32  k;
+        ar_pset block_set, block_important;
 
         ar__skip_ws(z);
         if (z->p >= z->end)
@@ -7301,9 +7321,14 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             continue;
         }
 
+        /* The block as written, before anything below narrows a copy of it:
+           rule[0] is also the first selector's slot, and a `::selection`
+           there narrowed what every later selector in the list copied. */
+        block_set = rule[0].set;
+        block_important = rule[0].important;
         for (k = 0; k < sel_count; ++k)
         {
-            ar_pset  set = rule[0].set, important = rule[0].important;
+            ar_pset  set = block_set, important = block_important;
             ar_style style = rule[0].style;
 
             /*
@@ -7316,11 +7341,11 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             {
                 ar_pset keep = ar_pset_none();
 
-                if (ar_pset_has(rule[0].set, AR_P_BACKGROUND))
+                if (ar_pset_has(block_set, AR_P_BACKGROUND))
                 {
                     ar_pset_add(&keep, AR_P_BACKGROUND);
                 }
-                if (ar_pset_has(rule[0].set, AR_P_COLOR))
+                if (ar_pset_has(block_set, AR_P_COLOR))
                 {
                     ar_pset_add(&keep, AR_P_COLOR);
                 }
@@ -7787,6 +7812,23 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /*
+         * The presentational-hint band, between the user agent's rules and the
+         * author's. `<font color=red>` beats what html.css says about `font`
+         * and loses to anything the page's own stylesheet says -- which is the
+         * order HTML gives these attributes, and the reason they are a band
+         * rather than a declaration list like `style="..."`.
+         *
+         * First in the loop, before any rule is passed over: the band is at
+         * an index, not on a rule, and when the first author rule was one
+         * this pass skips -- a `::selection` rule, or one under a `@media`
+         * that does not hold -- every hint in the document was lost.
+         */
+        if (hints && i == (ar_i32)sheet->ua_count)
+        {
+            ar_style_merge(out, &hints->style, hints->set);
+        }
+
         /* A rule inside a `@media` that does not hold is stored but
            does not apply. It exists so a resize can turn it on. */
         if (!ar__rule_on(sheet, r))
@@ -7802,18 +7844,6 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * combinators also had a second rule that overwrote the wrong answer,
          * which is exactly the shape of bug that survives a test suite.
          */
-        /*
-         * The presentational-hint band, between the user agent's rules and the
-         * author's. `<font color=red>` beats what html.css says about `font`
-         * and loses to anything the page's own stylesheet says -- which is the
-         * order HTML gives these attributes, and the reason they are a band
-         * rather than a declaration list like `style="..."`.
-         */
-        if (hints && i == (ar_i32)sheet->ua_count)
-        {
-            ar_style_merge(out, &hints->style, hints->set);
-        }
-
         if (r->nctx > 0)
         {
             continue;
@@ -8096,7 +8126,7 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 }
 
 int ar_sheet_selection(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                       ar_u32 state, ar_u32 *bg, ar_u32 *fg)
+                       ar_u32 state, ar_i32 *bg_v, ar_u8 *bg_u, ar_i32 *fg_v, ar_u8 *fg_u)
 {
     int    got = 0;
     ar_i32 i, f;
@@ -8116,30 +8146,19 @@ int ar_sheet_selection(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klas
         {
             continue;
         }
-        /* In sheet order, which is cascade order, so a later rule wins. A
-           system colour is resolved here, against the light theme, because
-           nothing after this point would; anything else late -- a var(), a
-           currentColor -- leaves that colour as the default. */
+        /* In sheet order, which is cascade order, so a later rule wins. As
+           written: the caller resolves it against the box, which it has. */
         for (f = 0; f < 2; ++f)
         {
             ar_i32 prop = f ? AR_P_COLOR : AR_P_BACKGROUND;
-            ar_u8  u = r->style.unit[prop];
-            ar_u32 v = (ar_u32)ar_style_get(&r->style, prop);
 
             if (!ar_pset_has(r->set, prop))
             {
                 continue;
             }
-            if (u == AR_UNIT_SYSCOLOR)
-            {
-                v = ar_sys_color_default((int)v, 0);
-                u = AR_UNIT_COLOR;
-            }
-            if (u == AR_UNIT_COLOR)
-            {
-                *(f ? fg : bg) = v;
-                got |= f ? 2 : 1;
-            }
+            *(f ? fg_v : bg_v) = ar_style_get(&r->style, prop);
+            *(f ? fg_u : bg_u) = r->style.unit[prop];
+            got |= f ? 2 : 1;
         }
     }
     return got;
