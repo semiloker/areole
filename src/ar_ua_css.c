@@ -454,7 +454,8 @@ static const char *const AR__UA[] = {
     "ar-swatch { display:block; height:19px; border:1px solid #777777; }",
 
     "ar-palette { display:block; position:absolute; left:0px; top:100%; z-index:10;"
-    "             width:88px; padding:2px; background:Field; border:1px solid #767676; }"
+    "             width:88px; padding:2px; background:Field; border:1px solid #767676;"
+    "             border-color:-ar-edge; }"
     "ar-chip { display:inline-block; width:16px; height:16px; margin:2px;"
     "          border:1px solid #767676; }"
     "ar-chip:checked { outline:2px solid #0075FF; }",
@@ -509,9 +510,11 @@ static const char *const AR__UA[] = {
     "                          --ar-rail:-ar-rail-active; --ar-trackface:-ar-track-active; }",
 
     /* An open select's list hangs under it, over whatever follows, and is part
-       of it -- so a press on a row lands inside the select. */
+       of it -- so a press on a row lands inside the select. Its edge is the
+       scheme's at rest, not the select's var(), which a hover changes. */
     "ar-listbox { display:block; position:absolute; left:0px; right:0px; top:100%;"
-    "             z-index:10; background:Field; border:1px solid #767676; }"
+    "             z-index:10; background:Field; border:1px solid #767676;"
+    "             border-color:-ar-edge; }"
     "ar-listbox > option { display:block; height:auto; padding:0px 4px; visibility:visible; }"
     "ar-listbox optgroup > option { display:block; height:auto; padding:0px 16px;"
     "  visibility:visible; }",
