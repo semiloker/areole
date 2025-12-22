@@ -180,8 +180,9 @@ static void frame_blink_frame(bench_env *e)
  * The accessibility tree
  *
  * What a screen reader's backend does when the generation moves: build the
- * tree again from the document and the boxes. A form of sixty controls, so the
- * per-node cost has enough nodes to be a rate and not a constant.
+ * tree again from the document and the boxes. A form of fifty-one controls --
+ * ten fieldsets of five, and the button -- which is 114 items, so the per-node
+ * cost has enough nodes to be a rate and not a constant.
  *
  * Only the tree is timed. The frame it reads is built once at init, which is
  * the honest shape -- a backend asks between frames, not inside one.
@@ -240,7 +241,8 @@ static const bench_scene SC_BLINK_FRAME = {"caret_blink_frame",
                                            frame_blink_frame};
 
 static const bench_scene SC_A11Y = {
-    "a11y_tree", "interact", "the accessibility tree of a sixty-control form, rebuilt", 800, 600, 1,
+    "a11y_tree", "interact", "the accessibility tree of a fifty-one-control form, rebuilt",
+    800,         600,        1,
     init_a11y,   frame_a11y};
 
 void bench_register_interact(void)
