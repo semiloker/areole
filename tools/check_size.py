@@ -197,12 +197,19 @@ ENTITY_OBJECT = "ar_html_entity.c"
 #
 # **Moved to 112 KB at 0.10.1, for the compiler**, as the HTML budget was:
 # GCC 16.2 makes 112,176 of what 14.2 makes 103,648. 2,512 of headroom in CI.
+#
+# **Raised to 120 KB at 0.10.2, which is the release's own allowance.** The
+# roadmap gives *Control appearance* 18 KB of binary, and its first half spent
+# 5,144 of it here: 117,320 measured by GCC 16.2 -- accent-color's shades and
+# the dark palette in ar_color.c, the ten control keywords, ::placeholder's
+# rewrite, ::selection, caret-color and appearance in ar_css.c. 3,560 left for
+# the validation pseudo-classes and `resize`, which is meant to be tight.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
     "ar_color.c",
 ]
-CSS_BUDGET = 112 * 1024
+CSS_BUDGET = 120 * 1024
 
 # The interaction subsystem, added at 0.10.0 -- and added for the reason the CSS
 # one was. ar_css.c sat outside every size gate until 0.4.2 noticed, so a CSS
