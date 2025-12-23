@@ -7,6 +7,8 @@ counters compiled in. Reproduce with:
 
 > These numbers are areole 0.9.6's. The engine is 0.10.1, and its own baseline waits
 > for a quiet machine.
+>
+> Not measured yet, because they were written after it: `a11y_tree`, `caret_blink`, `caret_blink_frame`, `field_keystroke`.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
