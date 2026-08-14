@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole block corpus — the browser twin</title>
+
+<!--
+  The same margin-collapsing cases as examples/03_block/main.c, in HTML, so a
+  browser can be asked the same questions:
+
+      python tools/compare_layout.py --run ./build/example_block.exe \
+             examples/03_block/block.html
+
+  This twin needs almost none of the compensating rules the flex one did, and
+  that is the point worth noticing: block layout is where areole and CSS agree
+  by construction rather than by adjustment. A div is already a block, already
+  fills its container's width, already takes its height from its contents.
+
+  Two things still have to be said:
+
+  1. Each case is 300x200 with `box-sizing: content-box` — the CSS default, and
+     what areole does. The reset below therefore does NOT set border-box, which
+     nearly every reset does and which would change every width here.
+
+  2. No border case. A border stops a margin escaping just as padding does, but
+     areole paints a border without reserving space for it and CSS reserves a
+     pixel, so the two would differ for a reason that has nothing to do with
+     margins. It is checked in ar_test.c instead.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+/*
+ * No box-sizing rule, and that is the news.
+ *
+ * This file used to set `border-box` on everything, because areole treated a
+ * stated size as the border box and CSS does not -- so `height: 80px;
+ * padding: 9px` was 80 here and 98 in a browser. areole implements the
+ * property now and defaults to `content-box` as the specification says, so
+ * there is nothing left to compensate for.
+ */
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 18px 0 4px;
+}
+
+/*
+ * `display: flow-root` says "be a block formatting context and nothing else",
+ * which is what areole's root is. Without it these boxes are ordinary divs in
+ * the middle of a page, a first child's margin escapes through the top of the
+ * case entirely, and the case measures the page around it rather than itself.
+ */
+.app {
+  display: flow-root;
+  width: 300px;
+  height: 200px;
+  outline: 1px solid #e6dcc6;   /* outline: draws without taking space */
+  background: #fcfaf6;
+}
+
+/* Every box in a case is visible enough to see, and coloured only so the
+   rendered page is readable by a human. Colour changes no geometry. */
+.app div { background: rgba(194, 112, 61, 0.25); }
+.app .outer { background: rgba(45, 93, 63, 0.10); }
+
+#out {
+  width: 100%; height: 200px; font: 12px/1.4 Consolas, monospace;
+  white-space: pre; overflow: auto; border: 1px solid #ddd; padding: 8px;
+  margin-top: 16px;
+}
+button.dump { font: 13px "Segoe UI", sans-serif; padding: 8px 14px; cursor: pointer; }
+
+/* ---------------------------------------------------------------- cases -- */
+#siblings .a               { height: 20px; margin-bottom: 20px; }
+#siblings .b               { height: 30px; margin-top: 10px; }
+
+#siblings-negative .a      { height: 20px; margin-bottom: 20px; }
+#siblings-negative .b      { height: 30px; margin-top: -8px; }
+
+#siblings-both-negative .a { height: 20px; margin-bottom: -20px; }
+#siblings-both-negative .b { height: 30px; margin-top: -8px; }
+
+#escapes-through-parent .a     { height: 10px; }
+#escapes-through-parent .inner { height: 20px; margin-top: 30px; }
+
+#padding-stops-escape .a     { height: 10px; }
+#padding-stops-escape .outer { padding-top: 1px; }
+#padding-stops-escape .inner { height: 20px; margin-top: 30px; }
+
+#overflow-stops-escape .a     { height: 10px; }
+#overflow-stops-escape .outer { overflow: hidden; }
+#overflow-stops-escape .inner { height: 20px; margin-top: 30px; }
+
+#last-child-escapes-down .inner { height: 20px; margin-bottom: 30px; }
+#last-child-escapes-down .c     { height: 10px; }
+
+#stated-height-stops-escape .outer { height: 40px; }
+#stated-height-stops-escape .inner { height: 20px; margin-bottom: 30px; }
+#stated-height-stops-escape .c     { height: 10px; }
+
+#empty-collapses-through .a { height: 10px; }
+#empty-collapses-through .b { margin-top: 20px; margin-bottom: 30px; }
+#empty-collapses-through .c { height: 10px; }
+
+#two-empties .a { height: 10px; }
+#two-empties .b { margin-top: 20px; margin-bottom: 5px; }
+#two-empties .c { height: 10px; margin-top: 40px; }
+
+#nested-escape-two-deep .a { height: 10px; }
+#nested-escape-two-deep .b { height: 20px; margin-top: 30px; }
+
+#auto-height-with-padding .outer { padding: 5px; }
+#auto-height-with-padding .a     { height: 20px; margin-bottom: 20px; }
+#auto-height-with-padding .b     { height: 30px; margin-top: 10px; }
+
+#horizontal-margins .a { height: 10px; margin-left: 20px; margin-right: 30px; }
+
+#percentage-width .a { height: 10px; width: 50%; }
+
+#root-first-child-margin .a { height: 20px; margin-top: 20px; }
+
+/* ------------------------------------------------------------------ inline --
+ * `font-size: 0` on every inline case, and this needs saying.
+ *
+ * In HTML the whitespace between two inline-block elements is a text node, and
+ * a text node on a line takes up a space's width. areole has no such thing --
+ * a box is declared by a function call and there is nothing between two calls
+ * -- so the browser would put four pixels between items that areole puts flush
+ * together, and the corpus would be measuring HTML's source formatting rather
+ * than either engine's line breaking.
+ *
+ * Zeroing the font size on the container makes that space zero wide. The items
+ * set their own size back where they need one.
+ */
+.app.inline { font-size: 0; }
+.app.inline div { font-size: 0; }
+
+#inline-share-a-line .i { display: inline-block; width: 40px; height: 10px; }
+
+#inline-wrap .outer { width: 100px; }
+#inline-wrap .i     { display: inline-block; width: 40px; height: 10px; }
+
+#inline-margins .outer { width: 100px; }
+#inline-margins .i     { display: inline-block; width: 40px; height: 10px; margin-right: 10px; }
+
+#inline-baselines .a { display: inline-block; width: 20px; height: 20px; }
+#inline-baselines .b { display: inline-block; width: 20px; height: 40px; }
+
+#inline-valign .a { display: inline-block; width: 20px; height: 40px; }
+#inline-valign .b { display: inline-block; width: 20px; height: 10px; vertical-align: top; }
+#inline-valign .c { display: inline-block; width: 20px; height: 10px; vertical-align: bottom; }
+
+#inline-align-right .outer { width: 100px; text-align: right; }
+#inline-align-right .i     { display: inline-block; width: 40px; height: 10px; }
+
+#inline-align-center .outer { width: 100px; text-align: center; }
+#inline-align-center .i     { display: inline-block; width: 40px; height: 10px; }
+
+/* ------------------------------------------------------------------- floats --
+ * The float cases carry `font-size: 0` for the same reason the inline ones do:
+ * the whitespace between two elements in the source is a text node, and beside
+ * a float it makes a line box that areole has no counterpart for.
+ */
+.app.floats { font-size: 0; }
+.app.floats div { font-size: 0; }
+
+#float-sides .l { float: left; width: 40px; height: 20px; }
+#float-sides .r { float: right; width: 30px; height: 20px; }
+
+#float-stack-then-drop .outer { width: 100px; }
+#float-stack-then-drop .l     { float: left; width: 40px; height: 20px; }
+
+#float-does-not-narrow-a-block .l { float: left; width: 40px; height: 20px; }
+#float-does-not-narrow-a-block .a { height: 10px; }
+
+#float-narrows-the-lines .l { float: left; width: 60px; height: 20px; }
+#float-narrows-the-lines .i { display: inline-block; width: 80px; height: 10px; }
+
+#float-out-of-flow .a { height: 10px; }
+#float-out-of-flow .l { float: left; width: 40px; height: 50px; }
+#float-out-of-flow .c { height: 10px; }
+
+#float-clear .l { float: left; width: 40px; height: 50px; }
+#float-clear .r { float: right; width: 40px; height: 80px; }
+#float-clear .a { height: 10px; clear: left; }
+#float-clear .c { height: 10px; clear: both; }
+
+#float-not-contained .l { float: left; width: 40px; height: 50px; }
+
+#float-contained .bfc { overflow: hidden; }
+#float-contained .l   { float: left; width: 40px; height: 50px; }
+
+#bfc-avoids-a-float .l   { float: left; width: 40px; height: 50px; }
+#bfc-avoids-a-float .bfc { overflow: hidden; height: 20px; }
+
+#float-margins .a { height: 10px; margin-bottom: 20px; }
+#float-margins .l { float: left; width: 40px; height: 20px; margin-top: 20px; }
+#float-margins .c { height: 10px; margin-top: 20px; }
+
+/* -------------------------------------------------------------- intrinsic -- */
+#min-content-stack .outer { width: min-content; }
+#min-content-stack .a     { width: 30px; height: 10px; }
+#min-content-stack .b     { width: 50px; height: 10px; }
+
+#max-content-stack .outer { width: max-content; }
+#max-content-stack .a     { width: 30px; height: 10px; }
+#max-content-stack .b     { width: 50px; height: 10px; }
+
+#fit-content-clamped-up .narrow { width: 20px; }
+#fit-content-clamped-up .outer  { width: fit-content; }
+#fit-content-clamped-up .a      { width: 50px; height: 10px; }
+
+#fit-content-in-between .narrow { width: 80px; }
+#fit-content-in-between .outer  { width: fit-content; }
+#fit-content-in-between .a      { width: 50px; height: 10px; }
+
+#min-content-padding .outer { width: min-content; padding: 0 7px; }
+#min-content-padding .a     { width: 30px; height: 10px; }
+
+/* ------------------------------------------------------------- positioning -- */
+#relative-keeps-its-space .a { height: 10px; }
+#relative-keeps-its-space .r { height: 10px; position: relative; top: 5px; left: 7px; }
+#relative-keeps-its-space .c { height: 10px; }
+
+#relative-moves-children .outer { position: relative; left: 10px; }
+#relative-moves-children .a     { height: 10px; }
+
+#absolute-padding-box .outer { position: relative; height: 80px; padding: 9px; }
+#absolute-padding-box .abs   { position: absolute; top: 0; left: 0; width: 10px; height: 10px; }
+
+#absolute-out-of-flow .a   { height: 10px; }
+#absolute-out-of-flow .abs { position: absolute; width: 50px; height: 50px; }
+#absolute-out-of-flow .c   { height: 10px; }
+
+#absolute-static-position .a   { height: 10px; }
+#absolute-static-position .abs { position: absolute; width: 50px; height: 20px; }
+
+#absolute-four-edges .outer { position: relative; height: 100px; }
+#absolute-four-edges .abs   { position: absolute; left: 10px; right: 30px;
+                              top: 5px; bottom: 15px; }
+
+#absolute-far-edges .outer { position: relative; height: 100px; }
+#absolute-far-edges .abs   { position: absolute; right: 10px; bottom: 20px;
+                             width: 30px; height: 15px; }
+
+#absolute-skips-unpositioned .outer  { position: relative; height: 100px; }
+#absolute-skips-unpositioned .narrow { padding: 12px; }
+#absolute-skips-unpositioned .abs    { position: absolute; top: 0; left: 0;
+                                       width: 10px; height: 10px; }
+
+#absolute-auto-margins .outer { position: relative; height: 100px; }
+#absolute-auto-margins .abs   { position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+                                width: 60px; height: 20px; margin: auto; }
+
+#inline-in-the-stack .a { height: 10px; }
+#inline-in-the-stack .i { display: inline-block; width: 40px; height: 20px; }
+#inline-in-the-stack .c { height: 10px; }
+</style>
+
+<button class="dump" onclick="dump()">Dump every box</button>
+<textarea id="out" spellcheck="false"></textarea>
+
+<h2>siblings</h2>
+<div class="app" id="siblings" data-page="siblings">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>siblings-negative</h2>
+<div class="app" id="siblings-negative" data-page="siblings-negative">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>siblings-both-negative</h2>
+<div class="app" id="siblings-both-negative" data-page="siblings-both-negative">
+  <div class="a"></div><div class="b"></div>
+</div>
+
+<h2>escapes-through-parent</h2>
+<div class="app" id="escapes-through-parent" data-page="escapes-through-parent">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>padding-stops-escape</h2>
+<div class="app" id="padding-stops-escape" data-page="padding-stops-escape">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>overflow-stops-escape</h2>
+<div class="app" id="overflow-stops-escape" data-page="overflow-stops-escape">
+  <div class="a"></div><div class="outer"><div class="inner"></div></div>
+</div>
+
+<h2>last-child-escapes-down</h2>
+<div class="app" id="last-child-escapes-down" data-page="last-child-escapes-down">
+  <div class="outer"><div class="inner"></div></div><div class="c"></div>
+</div>
+
+<h2>stated-height-stops-escape</h2>
+<div class="app" id="stated-height-stops-escape" data-page="stated-height-stops-escape">
+  <div class="outer"><div class="inner"></div></div><div class="c"></div>
+</div>
+
+<h2>empty-collapses-through</h2>
+<div class="app" id="empty-collapses-through" data-page="empty-collapses-through">
+  <div class="a"></div><div class="b"></div><div class="c"></div>
+</div>
+
+<h2>two-empties</h2>
+<div class="app" id="two-empties" data-page="two-empties">
+  <div class="a"></div><div class="b"></div><div class="c"></div>
+</div>
+
+<h2>nested-escape-two-deep</h2>
+<div class="app" id="nested-escape-two-deep" data-page="nested-escape-two-deep">
+  <div class="a"></div><div class="outer"><div class="inner"><div class="b"></div></div></div>
+</div>
+
+<h2>auto-height-with-padding</h2>
+<div class="app" id="auto-height-with-padding" data-page="auto-height-with-padding">
+  <div class="outer"><div class="a"></div><div class="b"></div></div>
+</div>
+
+<h2>horizontal-margins</h2>
+<div class="app" id="horizontal-margins" data-page="horizontal-margins">
+  <div class="a"></div>
+</div>
+
+<h2>percentage-width</h2>
+<div class="app" id="percentage-width" data-page="percentage-width">
+  <div class="a"></div>
+</div>
+
+<h2>root-first-child-margin</h2>
+<div class="app" id="root-first-child-margin" data-page="root-first-child-margin">
+  <div class="a"></div>
+</div>
+
+<h2>inline-share-a-line</h2>
+<div class="app inline" id="inline-share-a-line" data-page="inline-share-a-line"><div
+  class="i"></div><div class="i"></div></div>
+
+<h2>inline-wrap</h2>
+<div class="app inline" id="inline-wrap" data-page="inline-wrap"><div class="outer"><div
+  class="i"></div><div class="i"></div><div class="i"></div></div></div>
+
+<h2>inline-margins</h2>
+<div class="app inline" id="inline-margins" data-page="inline-margins"><div class="outer"><div
+  class="i"></div><div class="i"></div></div></div>
+
+<h2>inline-baselines</h2>
+<div class="app inline" id="inline-baselines" data-page="inline-baselines"><div
+  class="a"></div><div class="b"></div></div>
+
+<h2>inline-valign</h2>
+<div class="app inline" id="inline-valign" data-page="inline-valign"><div class="a"></div><div
+  class="b"></div><div class="c"></div></div>
+
+<h2>inline-align-right</h2>
+<div class="app inline" id="inline-align-right" data-page="inline-align-right"><div
+  class="outer"><div class="i"></div></div></div>
+
+<h2>inline-align-center</h2>
+<div class="app inline" id="inline-align-center" data-page="inline-align-center"><div
+  class="outer"><div class="i"></div></div></div>
+
+<h2>relative-keeps-its-space</h2>
+<div class="app" id="relative-keeps-its-space" data-page="relative-keeps-its-space"><div
+  class="a"></div><div class="r"></div><div class="c"></div></div>
+
+<h2>relative-moves-children</h2>
+<div class="app" id="relative-moves-children" data-page="relative-moves-children"><div
+  class="outer"><div class="a"></div></div></div>
+
+<h2>absolute-padding-box</h2>
+<div class="app" id="absolute-padding-box" data-page="absolute-padding-box"><div
+  class="outer"><div class="abs"></div></div></div>
+
+<h2>absolute-out-of-flow</h2>
+<div class="app" id="absolute-out-of-flow" data-page="absolute-out-of-flow"><div
+  class="a"></div><div class="abs"></div><div class="c"></div></div>
+
+<h2>absolute-static-position</h2>
+<div class="app" id="absolute-static-position" data-page="absolute-static-position"><div
+  class="a"></div><div class="abs"></div></div>
+
+<h2>absolute-four-edges</h2>
+<div class="app" id="absolute-four-edges" data-page="absolute-four-edges"><div
+  class="outer"><div class="abs"></div></div></div>
+
+<h2>absolute-far-edges</h2>
+<div class="app" id="absolute-far-edges" data-page="absolute-far-edges"><div class="outer"><div
+  class="abs"></div></div></div>
+
+<h2>absolute-skips-unpositioned</h2>
+<div class="app" id="absolute-skips-unpositioned" data-page="absolute-skips-unpositioned"><div
+  class="outer"><div class="narrow"><div class="abs"></div></div></div></div>
+
+<h2>absolute-auto-margins</h2>
+<div class="app" id="absolute-auto-margins" data-page="absolute-auto-margins"><div
+  class="outer"><div class="abs"></div></div></div>
+
+<h2>min-content-stack</h2>
+<div class="app" id="min-content-stack" data-page="min-content-stack"><div class="outer"><div
+  class="a"></div><div class="b"></div></div></div>
+
+<h2>max-content-stack</h2>
+<div class="app" id="max-content-stack" data-page="max-content-stack"><div class="outer"><div
+  class="a"></div><div class="b"></div></div></div>
+
+<h2>fit-content-clamped-up</h2>
+<div class="app" id="fit-content-clamped-up" data-page="fit-content-clamped-up"><div
+  class="narrow"><div class="outer"><div class="a"></div></div></div></div>
+
+<h2>fit-content-in-between</h2>
+<div class="app" id="fit-content-in-between" data-page="fit-content-in-between"><div
+  class="narrow"><div class="outer"><div class="a"></div></div></div></div>
+
+<h2>min-content-padding</h2>
+<div class="app" id="min-content-padding" data-page="min-content-padding"><div class="outer"><div
+  class="a"></div></div></div>
+
+<h2>inline-in-the-stack</h2>
+<div class="app inline" id="inline-in-the-stack" data-page="inline-in-the-stack"><div
+  class="a"></div><div class="i"></div><div class="i"></div><div class="c"></div></div>
+
+<h2>float-sides</h2>
+<div class="app floats" id="float-sides" data-page="float-sides"><div class="l"></div><div
+  class="r"></div></div>
+
+<h2>float-stack-then-drop</h2>
+<div class="app floats" id="float-stack-then-drop" data-page="float-stack-then-drop"><div
+  class="outer"><div class="l"></div><div class="l"></div><div class="l"></div></div></div>
+
+<h2>float-does-not-narrow-a-block</h2>
+<div class="app floats" id="float-does-not-narrow-a-block"
+  data-page="float-does-not-narrow-a-block"><div class="l"></div><div class="a"></div></div>
+
+<h2>float-narrows-the-lines</h2>
+<div class="app floats" id="float-narrows-the-lines" data-page="float-narrows-the-lines"><div
+  class="l"></div><div class="i"></div><div class="i"></div></div>
+
+<h2>float-out-of-flow</h2>
+<div class="app floats" id="float-out-of-flow" data-page="float-out-of-flow"><div
+  class="a"></div><div class="l"></div><div class="c"></div></div>
+
+<h2>float-clear</h2>
+<div class="app floats" id="float-clear" data-page="float-clear"><div class="l"></div><div
+  class="r"></div><div class="a"></div><div class="c"></div></div>
+
+<h2>float-not-contained</h2>
+<div class="app floats" id="float-not-contained" data-page="float-not-contained"><div
+  class="outer"><div class="l"></div></div></div>
+
+<h2>float-contained</h2>
+<div class="app floats" id="float-contained" data-page="float-contained"><div class="bfc"><div
+  class="l"></div></div></div>
+
+<h2>bfc-avoids-a-float</h2>
+<div class="app floats" id="bfc-avoids-a-float" data-page="bfc-avoids-a-float"><div
+  class="l"></div><div class="bfc"></div></div>
+
+<h2>float-margins</h2>
+<div class="app floats" id="float-margins" data-page="float-margins"><div class="a"></div><div
+  class="l"></div><div class="c"></div></div>
+
+<script>
+/*
+ * The same walk and the same output format as the tour's twin: document order
+ * is declaration order, coordinates are relative to the .app origin, and
+ * everything is rounded because areole's layout is integer end to end.
+ */
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    walk(app, '0', app.getBoundingClientRect(), out);
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+dump();
+</script>
