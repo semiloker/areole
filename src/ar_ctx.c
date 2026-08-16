@@ -1650,9 +1650,18 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
         {
             ar_rect track, thumb;
 
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_TRACK);
+            ar_color hc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_THUMB);
+
+            /* Zero means the stylesheet said nothing, so the defaults stand.
+               They are translucent blacks rather than opaque greys, which is
+               what lets one overlay bar sit legibly on a light card and a dark
+               one without the stylesheet choosing. A stated colour of zero is
+               fully transparent and equally invisible, so nothing is lost by
+               reading the two the same way. */
             ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
-            ar_fill_rect(s, track, clip, AR_RGBA(0x00, 0x00, 0x00, 0x14));
-            ar_fill_rect(s, thumb, clip, AR_RGBA(0x00, 0x00, 0x00, 0x50));
+            ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
+            ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
         }
 
         /*

@@ -5249,6 +5249,110 @@ static void test_overscroll_behavior_stops_the_chain(void)
     CHECK(contained == 0, "overscroll: contain keeps it, and the page behind does not move");
 }
 
+/* ------------------------------------------------------------------------
+ * scrollbar-width, scrollbar-gutter, scrollbar-color
+ *
+ * areole draws its own bar, so these are honoured everywhere and look the same
+ * everywhere -- the one thing a native scrollbar can never promise.
+ * ------------------------------------------------------------------------ */
+static const char *AR_BAR_CSS = "#root { display:block; }"
+                                ".list { display:block; height:100px; overflow:scroll;"
+                                "        width:200px; }"
+                                ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_THIN = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        width:200px; scrollbar-width: thin; }"
+                                     ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_NONE = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        width:200px; scrollbar-width: none; }"
+                                     ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_GUTTER = "#root { display:block; }"
+                                       ".list { display:block; height:100px; overflow:scroll;"
+                                       "        width:200px; scrollbar-gutter: stable; }"
+                                       ".row  { display:block; height:40px; }";
+
+static void test_scrollbar_width_changes_the_bar(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     wide_w, thin_w;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_BAR_CSS);
+    ar__scroll_scene(&s, &in);
+    wide_w = ar_scroll_bar_width(&g_ui->nodes[1]);
+
+    ar__ui_reset(AR_BAR_CSS_THIN);
+    ar__scroll_scene(&s, &in);
+    thin_w = ar_scroll_bar_width(&g_ui->nodes[1]);
+
+    CHECK(wide_w == 8 && thin_w == 4, "scrollbar-width: thin is narrower than auto");
+
+    /* `none` hides the bar. It must not stop the wheel: a list nobody can
+       reach is the failure this property invites. */
+    ar__ui_reset(AR_BAR_CSS_NONE);
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_scroll_bar_width(&g_ui->nodes[1]) == 0 && !ar_scroll_bar_visible(&g_ui->nodes[1]),
+          "scrollbar-width: none draws no bar");
+
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    in.wheel = -1;
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) > 0, "scrollbar-width: none still scrolls");
+}
+
+static void test_scrollbar_gutter_reserves_its_width(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     plain, stable;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_BAR_CSS);
+    ar__scroll_scene(&s, &in);
+    plain = ar__box(2).w;
+
+    ar__ui_reset(AR_BAR_CSS_GUTTER);
+    ar__scroll_scene(&s, &in);
+    stable = ar__box(2).w;
+
+    /* The bar is an overlay, so nothing reflows when one appears and `stable`
+       has no layout shift to prevent. What it buys is that a row stops before
+       the bar instead of running underneath it. */
+    CHECK(plain == 200 && stable == 200 - 8,
+          "scrollbar-gutter: stable takes the bar's width off the content");
+}
+
+static void test_scrollbar_color_is_read(void)
+{
+    ar__sheet(".bar { overflow:scroll; scrollbar-color: #ff0000 #00ff00; }");
+    CHECK((ar__css_value(".bar", 0, AR_P_SCROLLBAR_THUMB) & 0xFFFFFF) == 0xFF0000 &&
+              (ar__css_value(".bar", 0, AR_P_SCROLLBAR_TRACK) & 0xFFFFFF) == 0x00FF00,
+          "scrollbar-color: thumb first, then track");
+
+    /* One value is not valid CSS. Taking it as the thumb and leaving the track
+       alone is more useful than refusing a declaration that clearly meant
+       something. */
+    ar__sheet(".one { overflow:scroll; scrollbar-color: #0000ff; }");
+    CHECK((ar__css_value(".one", 0, AR_P_SCROLLBAR_THUMB) & 0xFFFFFF) == 0x0000FF &&
+              ar__css_value(".one", 0, AR_P_SCROLLBAR_TRACK) == 0,
+          "scrollbar-color: a lone colour is the thumb");
+}
+
 /*
  * Dragging the scrollbar thumb scrolls, and letting go stops it.
  *
@@ -7986,6 +8090,9 @@ int main(void)
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
     test_overscroll_behavior_stops_the_chain();
+    test_scrollbar_width_changes_the_bar();
+    test_scrollbar_gutter_reserves_its_width();
+    test_scrollbar_color_is_read();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();

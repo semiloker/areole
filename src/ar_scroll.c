@@ -148,9 +148,55 @@ ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want)
  * to go, which is the whole difference between the two keywords and the reason
  * anybody writes `auto`.
  */
+ar_i32 ar_scroll_bar_width(const ar_node *n)
+{
+    switch (n->style.v[AR_P_SCROLLBAR_WIDTH])
+    {
+    case AR_SCROLLBAR_HIDDEN:
+        return 0;
+    case AR_SCROLLBAR_THIN:
+        return AR_SCROLLBAR_W_THIN;
+    default:
+        return AR_SCROLLBAR_W;
+    }
+}
+
+/*
+ * What the gutter reserves at the inline end.
+ *
+ * areole's bar is an overlay, so the layout shift `stable` was invented to
+ * prevent cannot happen here whatever this returns. What it does buy is the
+ * overlap: an overlay bar is drawn on top of whatever is beside it, and
+ * `stable` stops the text running underneath.
+ *
+ * It reserves the width whether or not a bar is currently showing -- that is
+ * the whole point of the word, and reserving it only when visible would
+ * reintroduce exactly the shift being avoided.
+ */
+ar_i32 ar_scroll_gutter(const ar_node *n)
+{
+    if (!ar_is_scroll_container(n))
+    {
+        return 0;
+    }
+    if (n->style.v[AR_P_SCROLLBAR_GUTTER] == AR_GUTTER_AUTO)
+    {
+        return 0;
+    }
+    return ar_scroll_bar_width(n);
+}
+
 int ar_scroll_bar_visible(const ar_node *n)
 {
     if (!ar_is_scroll_container(n))
+    {
+        return 0;
+    }
+
+    /* `scrollbar-width: none` hides the bar and does not stop the wheel. A
+       list nobody can reach is the failure this property invites, so the test
+       is here rather than in ar__apply_wheel. */
+    if (ar_scroll_bar_width(n) == 0)
     {
         return 0;
     }
@@ -241,10 +287,10 @@ void ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thu
 {
     ar_i32 range = ar_scroll_range(n);
     ar_i32 inner = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
+    ar_i32 bw = ar_scroll_bar_width(n);
     ar_i32 len, pos;
 
-    *track =
-        ar_rect_make(n->rect.x + n->rect.w - AR_SCROLLBAR_W, n->rect.y, AR_SCROLLBAR_W, n->rect.h);
+    *track = ar_rect_make(n->rect.x + n->rect.w - bw, n->rect.y, bw, n->rect.h);
 
     if (range <= 0 || n->content_h <= 0 || inner <= 0)
     {
@@ -265,5 +311,5 @@ void ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thu
     }
     pos = (n->rect.h - len) * scroll / range;
 
-    *thumb = ar_rect_make(track->x, n->rect.y + pos, AR_SCROLLBAR_W, len);
+    *thumb = ar_rect_make(track->x, n->rect.y + pos, bw, len);
 }
