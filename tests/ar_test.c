@@ -5694,6 +5694,59 @@ static void test_overflow_anchor_keeps_the_reading_position(void)
           "overflow-anchor: none leaves the reader to lose their place");
 }
 
+/* ------------------------------------------------------------------------
+ * The scrollbar is an overlay, so it has to be painted over the content
+ *
+ * It was painted inside the main walk, at the container's own place in paint
+ * order -- which is before its children, because a child comes later in that
+ * order by construction. Every row of a list drew straight over the bar, and
+ * the bar showed only where the content happened not to reach.
+ *
+ * Both colours are opaque here on purpose. The defaults are translucent
+ * blacks, so a bar drawn underneath still tints the pixel and a test written
+ * against "did the colour change" would pass either way. Opaque means the
+ * pixel is the bar's colour or the row's, and nothing in between.
+ * ------------------------------------------------------------------------ */
+static void test_the_scrollbar_paints_over_the_content(void)
+{
+    static const char *CSS = "#root { display:block; }"
+                             ".list { display:block; width:100px; height:60px; overflow:scroll;"
+                             "        scrollbar-color: #ff0000 #ff0000; }"
+                             ".row  { display:block; height:40px; background:#00ff00; }";
+    ar_surface         s = ar__ui_surface(160, 120);
+    ar_input           in;
+    ar_i32             i, bar_x;
+
+    ar__ui_reset(CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 4; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The bar is drawn inside the right edge, so a pixel two in from it is
+       the track. The rows are full width and green underneath it. */
+    bar_x = ar__box(1).x + ar__box(1).w - 2;
+
+    CHECK(ar__pixel_at(bar_x, 10) == 0xFF0000u,
+          "scrollbar: the bar is painted over the rows, not under them");
+
+    /* And the row is still itself away from the bar, so the check above is
+       about paint order rather than about the row failing to draw. */
+    CHECK(ar__pixel_at(ar__box(1).x + 4, 10) == 0x00FF00u,
+          "scrollbar: the row is still painted where the bar is not");
+}
+
 /*
  * Dragging the scrollbar thumb scrolls, and letting go stops it.
  *
@@ -8444,6 +8497,7 @@ int main(void)
     test_scroll_into_view_moves_the_minimum();
     test_scroll_into_view_honours_scroll_margin();
     test_overflow_anchor_keeps_the_reading_position();
+    test_the_scrollbar_paints_over_the_content();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();

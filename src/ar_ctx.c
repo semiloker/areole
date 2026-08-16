@@ -1698,7 +1698,58 @@ static ar_rect ar__content_clip(const ar_node *n)
 
 /* `region` is what this pass is allowed to touch -- the damage, or one band of
    it -- and is narrower than the viewport the clips were built against. */
-static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
+/*
+ * The scrollbars, after everything else.
+ *
+ * They were painted inside the main loop, at the container's own place in
+ * paint order -- which is before its children, because a child comes later in
+ * the order by construction. So every row of a list drew straight over the bar
+ * and the bar was visible only where the content happened not to reach.
+ *
+ * An overlay bar is defined by being on top of what it overlays. It is drawn
+ * inside the container's right edge rather than taken out of its width, so
+ * unless it is painted after the contents, it is painted under them.
+ *
+ * A second pass over the same order rather than a special case inside the
+ * first: the bars are few, the loop is short, and the alternative -- painting
+ * a container's bar once its whole subtree has been walked -- means knowing
+ * where a subtree ends in paint order, which is not the same thing as where it
+ * ends in the tree.
+ */
+static void ar__paint_bars(ar_ctx *c, ar_surface *s, ar_rect region)
+{
+    ar_i32 ord;
+    ar_i32 painted = c->order ? c->order_count : c->node_count;
+
+    for (ord = 0; ord < painted; ++ord)
+    {
+        ar_i32   i = c->order ? c->order[ord] : ord;
+        ar_node *n = &c->nodes[i];
+        ar_rect  clip, track, thumb;
+        ar_color tc, hc;
+
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || !ar_scroll_bar_visible(n))
+        {
+            continue;
+        }
+
+        clip = ar_rect_intersect(n->clip, region);
+        tc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_TRACK);
+        hc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_THUMB);
+
+        /* Zero means the stylesheet said nothing, so the defaults stand. They
+           are translucent blacks rather than opaque greys, which is what lets
+           one overlay bar sit legibly on a light card and on a dark one
+           without the stylesheet choosing. A stated colour of zero is fully
+           transparent and equally invisible, so reading the two the same way
+           loses nothing. */
+        ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
+        ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
+        ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
+    }
+}
+
+static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
@@ -1733,24 +1784,6 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
-        }
-
-        if (ar_scroll_bar_visible(n))
-        {
-            ar_rect track, thumb;
-
-            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_TRACK);
-            ar_color hc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_THUMB);
-
-            /* Zero means the stylesheet said nothing, so the defaults stand.
-               They are translucent blacks rather than opaque greys, which is
-               what lets one overlay bar sit legibly on a light card and a dark
-               one without the stylesheet choosing. A stated colour of zero is
-               fully transparent and equally invisible, so nothing is lost by
-               reading the two the same way. */
-            ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
-            ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
-            ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
         }
 
         /*
@@ -1819,6 +1852,21 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
             }
         }
     }
+}
+
+/*
+ * Boxes, then the bars over them.
+ *
+ * A wrapper rather than two calls at each site, because the region move calls
+ * this once per rectangle and every one of them needs the bars on top. Both
+ * passes take the same region, so a pixel is still painted at most once per
+ * call -- which matters, since the default bar colours are translucent and
+ * blending one twice would darken it.
+ */
+static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
+{
+    ar__paint_boxes(c, s, region);
+    ar__paint_bars(c, s, region);
 }
 
 /* The box under the cursor, for the next frame to style. Declaration order is
