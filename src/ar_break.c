@@ -184,14 +184,28 @@ static int ar__mandatory(ar_i32 cls)
 
 ar_i32 ar_break_next(const char *text, ar_i32 from, ar_i32 *kind)
 {
-    const char *p = text + from;
+    const char *p;
     const char *prev_start;
     ar_u32      cp, next;
     ar_i32      cls, next_cls;
     ar_i32      spaces;
 
     *kind = AR_BREAK_NONE;
-    if (!text || !*p)
+
+    /* A null string separately from an exhausted one, because the branch below
+       reads text[from] and the two used to share it -- so the one case that
+       tested for null was also the one that dereferenced it. Found by cppcheck,
+       which is right: ar_break_next(0, 0, &k) walked off a null pointer. */
+    if (!text)
+    {
+        return from;
+    }
+
+    /* Assigned here rather than at the declaration: text + from is undefined
+       when text is null, whether or not anything reads it. C89 wants the
+       declaration at the top of the block, so the two are separated. */
+    p = text + from;
+    if (!*p)
     {
         while (text[from])
         {
