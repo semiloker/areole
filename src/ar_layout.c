@@ -58,6 +58,15 @@ static ar_prop ar__min_prop(ar_i32 axis)
     return axis ? AR_P_MIN_HEIGHT : AR_P_MIN_WIDTH;
 }
 
+/*
+ * Unlike the size and min pair above, these two are *wide* properties: they
+ * default to a sentinel meaning "no maximum", which does not fit in v[]. So a
+ * caller holding this result must read it with ar_style_get, never with v[].
+ *
+ * That is not a style preference. v[] is indexed here by a value rather than a
+ * constant, so -Warray-bounds cannot catch the mistake, and the result would
+ * be whichever bytes follow the array.
+ */
 static ar_prop ar__max_prop(ar_i32 axis)
 {
     return axis ? AR_P_MAX_HEIGHT : AR_P_MAX_WIDTH;
@@ -420,7 +429,8 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
 
     if (axis == 0 && ar__intrinsic_width(ch, inner, &v))
     {
-        return ar__clamp(v, ch->style.v[ar__min_prop(axis)], ch->style.v[ar__max_prop(axis)]);
+        return ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
+                         ar_style_get(&ch->style, ar__max_prop(axis)));
     }
 
     switch (ch->style.unit[p])
@@ -444,7 +454,8 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
         break;
     }
 
-    return ar__clamp(v, ch->style.v[ar__min_prop(axis)], ch->style.v[ar__max_prop(axis)]);
+    return ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
+                     ar_style_get(&ch->style, ar__max_prop(axis)));
 }
 
 /* ------------------------------------------------------------------------
@@ -492,7 +503,7 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_layout_env 
     h += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
     if (h > n->rect.h)
     {
-        n->rect.h = ar__clamp(h, n->style.v[AR_P_MIN_HEIGHT], n->style.v[AR_P_MAX_HEIGHT]);
+        n->rect.h = ar__clamp(h, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
     }
 }
 
@@ -548,7 +559,8 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
             break;
         }
     }
-    ch->rect.w = ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
+    ch->rect.w =
+        ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], AR_WIDE(&ch->style, AR_P_MAX_WIDTH));
     if (ch->rect.w < 0)
     {
         ch->rect.w = 0;
@@ -562,7 +574,8 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
     {
         ch->rect.h = ch->fit[1];
     }
-    ch->rect.h = ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
+    ch->rect.h =
+        ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
 
     ar__wrap_height(ch, 1, 0, env);
 }
@@ -739,7 +752,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             }
         }
         ch->rect.w =
-            ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], ch->style.v[AR_P_MAX_WIDTH]);
+            ar__clamp(ch->rect.w, ch->style.v[AR_P_MIN_WIDTH], AR_WIDE(&ch->style, AR_P_MAX_WIDTH));
         if (ch->rect.w < 0)
         {
             ch->rect.w = 0;
@@ -758,8 +771,8 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             ch->rect.h = ch->fit[1];
             break;
         }
-        ch->rect.h =
-            ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], ch->style.v[AR_P_MAX_HEIGHT]);
+        ch->rect.h = ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT],
+                               AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
 
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
@@ -820,7 +833,8 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             used += ar__text_block_height(n);
         }
         used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
-        n->rect.h = ar__clamp(used, n->style.v[AR_P_MIN_HEIGHT], n->style.v[AR_P_MAX_HEIGHT]);
+        n->rect.h =
+            ar__clamp(used, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
     }
 }
 
@@ -940,7 +954,8 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                     v++;
                     remainder--;
                 }
-                v = ar__clamp(v, ch->style.v[ar__min_prop(axis)], ch->style.v[ar__max_prop(axis)]);
+                v = ar__clamp(v, ar_style_get(&ch->style, ar__min_prop(axis)),
+                              ar_style_get(&ch->style, ar__max_prop(axis)));
                 *ar__size(&ch->rect, axis) = v;
 
                 /* A box growing along a horizontal main axis only learns its
