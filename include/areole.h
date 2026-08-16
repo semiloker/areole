@@ -17,15 +17,20 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 6
-#define AR_VERSION_PATCH 0
+#define AR_VERSION_PATCH 1
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
    0.1.2, 0.2.0, 0.3.0 and 0.4.0, because nothing reads it except a status line
    nobody was checking. It then said 0.5.0-dev through 0.6.0 for the same
    reason. The benchmark stamps it into every published number, so a stale one
-   mislabels the measurements as well as the status line. */
-#define AR_VERSION_STRING "0.6.0-dev"
+   mislabels the measurements as well as the status line.
+
+   It then did it a third time, saying 0.6.0-dev while 0.6.1 was landing, so the
+   discipline is no longer relied on: CMakeLists.txt parses this line rather
+   than carrying its own copy, which had drifted all the way back to 0.1.0.
+   One place to edit is the only version of this that has ever held. */
+#define AR_VERSION_STRING "0.6.1-dev"
 
 /* ------------------------------------------------------------------------
  * Fixed width types

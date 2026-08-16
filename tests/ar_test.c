@@ -712,7 +712,9 @@ static ar_style ar__resolve(const char *selector, ar_u8 state)
 static ar_i32 ar__css_value(const char *selector, ar_u8 state, ar_prop prop)
 {
     ar_style st = ar__resolve(selector, state);
-    return st.v[prop];
+    /* By index rather than by name, so it has to be the accessor: the wide
+       properties live past the end of v[] and only ar_style_get knows that. */
+    return ar_style_get(&st, prop);
 }
 
 static void test_css_basic(void)
@@ -727,7 +729,8 @@ static void test_css_basic(void)
         CHECK(st.v[AR_P_WIDTH] == 200 && st.unit[AR_P_WIDTH] == AR_UNIT_PX,
               "css: a pixel width parses");
         CHECK(st.v[AR_P_HEIGHT] == 132, "css: a pixel height parses");
-        CHECK((ar_u32)st.v[AR_P_BACKGROUND] == 0xFFF8F3E9u, "css: a six digit hex colour parses");
+        CHECK((ar_u32)AR_WIDE(&st, AR_P_BACKGROUND) == 0xFFF8F3E9u,
+              "css: a six digit hex colour parses");
     }
 
     /* A box that matches nothing keeps the defaults, rather than inheriting
@@ -735,7 +738,8 @@ static void test_css_basic(void)
     {
         ar_style st = ar__resolve(".nothing", AR_STATE_NONE);
         CHECK(st.unit[AR_P_WIDTH] == AR_UNIT_AUTO, "css: an unmatched box sizes to its content");
-        CHECK((ar_u32)st.v[AR_P_BACKGROUND] == 0u, "css: an unmatched box has no background");
+        CHECK((ar_u32)AR_WIDE(&st, AR_P_BACKGROUND) == 0u,
+              "css: an unmatched box has no background");
     }
 }
 
@@ -869,7 +873,7 @@ static void test_css_border_shorthand(void)
            reflex. Rejecting the declaration over it would be obnoxious. */
         CHECK(g_sheet.errors == 0, "css: an unstyleable border keyword is tolerated");
         CHECK(a.v[AR_P_BORDER_WIDTH] == 1, "css: the border width is taken from the shorthand");
-        CHECK((ar_u32)a.v[AR_P_BORDER_COLOR] == 0xFFE8DFCCu,
+        CHECK((ar_u32)AR_WIDE(&a, AR_P_BORDER_COLOR) == 0xFFE8DFCCu,
               "css: the border colour is taken from the shorthand");
         CHECK(a.v[AR_P_BORDER_RADIUS] == 8, "css: the radius parses");
     }
@@ -2028,7 +2032,7 @@ static int ar__styles_agree(const ar_style *a, const ar_style *b)
 
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        if (a->v[i] != b->v[i] || a->unit[i] != b->unit[i])
+        if (ar_style_get(a, i) != ar_style_get(b, i) || a->unit[i] != b->unit[i])
         {
             return 0;
         }
@@ -2141,7 +2145,7 @@ static void test_style_cache_keeps_states_apart(void)
 
     /* The state is part of the key. Dropping it would make every box look
        hovered as soon as one of them was. */
-    CHECK(rest.v[AR_P_BACKGROUND] != hover.v[AR_P_BACKGROUND],
+    CHECK(AR_WIDE(&rest, AR_P_BACKGROUND) != AR_WIDE(&hover, AR_P_BACKGROUND),
           "style cache: hover and rest are separate entries");
 }
 
@@ -2429,8 +2433,13 @@ static void test_path_winding_direction_does_not_matter(void)
 static void test_path_fill_rules_differ_on_a_hole(void)
 {
     ar_path p;
-    ar_u8   nonzero_centre, evenodd_centre;
-    ar_i32  i;
+    /* Each initialised to the value that makes its own CHECK below fail, so
+       silencing MSVC's "potentially uninitialized" costs the test nothing: if
+       the loop ever stopped assigning one, the check still catches it. An
+       initialiser of 0 for evenodd_centre would have passed vacuously, which is
+       the trap this pair of values exists to avoid. */
+    ar_u8  nonzero_centre = 0, evenodd_centre = 255;
+    ar_i32 i;
 
     /* An outer square and an inner square wound the same way. Nonzero fills
        both; even-odd punches the inner one out. This is exactly how a glyph
@@ -3578,6 +3587,22 @@ static void test_break_mandatory(void)
     CHECK(at == 3 && kind == AR_BREAK_MANDATORY, "break: CRLF is one break");
 }
 
+/*
+ * A null string is a return, not a crash.
+ *
+ * ar_break_next tested for null and then dereferenced in the same branch, so
+ * the one path that knew text could be null was the path that walked off it.
+ * The library takes text from an application, and an application with nothing
+ * to draw hands over nothing.
+ */
+static void test_break_survives_a_null_string(void)
+{
+    ar_i32 kind = AR_BREAK_MANDATORY;
+    ar_i32 at = ar_break_next(0, 0, &kind);
+
+    CHECK(at == 0 && kind == AR_BREAK_NONE, "break: a null string ends where it began");
+}
+
 static void test_break_between_ideographs(void)
 {
     /* Japanese has no spaces, so a line breaks between characters. Failing to
@@ -3590,19 +3615,20 @@ static void test_break_always_terminates(void)
 {
     /* Every input, including malformed UTF-8 and empty strings, must reach the
        end. A line breaker that loops is a hang in the middle of a paint. */
-    static const char *const NASTY[] = {"",
-                                        " ",
-                                        "\n",
-                                        "\xFF",
-                                        "\xC2",
-                                        "\x80\x80",
-                                        "a\xFF"
-                                        "b",
-                                        "\r",
-                                        "\r\r\n",
-                                        "((((",
-                                        "))))",
-                                        "\xE2\x80"};
+    static const char *const NASTY[] = {"", " ", "\n", "\xFF", "\xC2", "\x80\x80",
+                                        /* Two literals on purpose, and the
+                                           parentheses on purpose too. "a\xFFb"
+                                           would not mean this: a hex escape is
+                                           maximal munch, so \xFFb is read as
+                                           one enormous escape rather than 0xFF
+                                           then 'b'. Splitting is the only way
+                                           to write a lone 0xFF between two
+                                           letters; the parentheses tell clang
+                                           the concatenation is deliberate and
+                                           not a comma someone forgot. */
+                                        ("a\xFF"
+                                         "b"),
+                                        "\r", "\r\r\n", "((((", "))))", "\xE2\x80"};
     ar_i32                   i;
     int                      ok = 1;
 
@@ -4358,14 +4384,14 @@ static void test_inheritance_flows_down(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xE8DFCC,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_COLOR) & 0xFFFFFF) == 0xE8DFCC,
           "inherit: a child takes its parent's colour");
     /* Through a box that only inherited it, which is what makes it a cascade
        rather than one level of copying. */
-    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xE8DFCC,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_COLOR) & 0xFFFFFF) == 0xE8DFCC,
           "inherit: and a grandchild takes it through a box that only inherited");
     CHECK(g_ui->nodes[2].style.v[AR_P_FONT_SIZE] == 17, "inherit: font size inherits too");
-    CHECK((g_ui->nodes[3].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_COLOR) & 0xFFFFFF) == 0xFF0000,
           "inherit: a box that states its own colour keeps it");
     CHECK(g_ui->nodes[3].style.v[AR_P_FONT_SIZE] == 17,
           "inherit: while still inheriting what it did not state");
@@ -4389,7 +4415,7 @@ static void test_layout_properties_do_not_inherit(void)
        a padding that inherited would compound at every level. */
     CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] != 150, "inherit: width does not inherit");
     CHECK(g_ui->nodes[1].style.v[AR_P_PAD_LEFT] == 0, "inherit: nor does padding");
-    CHECK((g_ui->nodes[1].style.v[AR_P_COLOR] & 0xFFFFFF) == 0x112233,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_COLOR) & 0xFFFFFF) == 0x112233,
           "inherit: but colour still does, from the same rule");
 }
 
@@ -4420,9 +4446,9 @@ static void test_inheritance_is_not_in_the_style_cache(void)
     ar_frame_end(g_ui, &s);
 
     ar_style_cache_stats(g_ui, &hits_a, &hits_b);
-    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_COLOR) & 0xFFFFFF) == 0xFF0000,
           "inherit: a leaf under the red box is red");
-    CHECK((g_ui->nodes[4].style.v[AR_P_COLOR] & 0xFFFFFF) == 0x0000FF,
+    CHECK((AR_WIDE(&g_ui->nodes[4].style, AR_P_COLOR) & 0xFFFFFF) == 0x0000FF,
           "inherit: and the same leaf under the blue box is blue");
 }
 
@@ -4449,18 +4475,18 @@ static void test_compound_selector_matching(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x333333,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x333333,
           "compound: a box with one class takes the single-class rule");
     /* Two classes: the compound rule wins on specificity, and the box still
        picks up what each single-class rule gave it. */
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "compound: .card.selected beats .card on specificity");
     CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 100,
           "compound: and still takes the width from .card");
     CHECK(g_ui->nodes[2].style.v[AR_P_BORDER_WIDTH] == 2,
           "compound: and the border from .selected");
     /* A box with only one of the two must not match the compound rule. */
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x00FF00,
           "compound: a box with only one of the classes does not match");
     CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] != 100,
           "compound: nor picks up the other class's properties");
@@ -4537,7 +4563,7 @@ static void test_important_beats_specificity(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "important: a class marked important beats an id that is not");
     CHECK(g_ui->nodes[1].style.v[AR_P_BORDER_WIDTH] == 7,
           "important: and the id's other properties are untouched");
@@ -4581,7 +4607,7 @@ static void test_important_loses_to_important(void)
     ar_classes_add(&klass, ar_hash("b", 1));
     ar_style_defaults(&out);
     ar_sheet_resolve(&sheet, 0, &klass, ar_hash("a", 1), 0, &out);
-    CHECK((out.v[AR_P_COLOR] & 0xFFFFFF) == 0x0000FF,
+    CHECK((AR_WIDE(&out, AR_P_COLOR) & 0xFFFFFF) == 0x0000FF,
           "important: between two important rules the more specific one still wins");
 }
 
@@ -4616,13 +4642,13 @@ static void test_cascade_keywords(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x123456,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x123456,
           "cascade keyword: inherit takes a property that does not inherit by default");
-    CHECK((g_ui->nodes[2].style.v[AR_P_COLOR] & 0xFFFFFF) != 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_COLOR) & 0xFFFFFF) != 0xFF0000,
           "cascade keyword: initial drops one that does");
-    CHECK((g_ui->nodes[3].style.v[AR_P_COLOR] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_COLOR) & 0xFFFFFF) == 0xFF0000,
           "cascade keyword: unset means inherit on an inherited property");
-    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x123456,
+    CHECK((AR_WIDE(&g_ui->nodes[4].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x123456,
           "cascade keyword: and initial on one that is not");
 }
 
@@ -5136,6 +5162,91 @@ static void test_a_scroll_asks_for_the_next_frame(void)
     in.wheel = 0;
     ar__scroll_scene(&s, &in);
     CHECK(!ar_scrolled(g_ui), "redraw: the scroll reason does not latch");
+}
+
+/* ------------------------------------------------------------------------
+ * overscroll-behavior
+ *
+ * A list inside a scrollable page, which is the arrangement every modal and
+ * every sidebar is. Scroll the inner one to its end and give it one more
+ * notch: with `auto` the page underneath takes it, with `contain` nothing
+ * moves. That chaining is the single most common scrolling complaint in any
+ * interface, and it is one `continue` in ar__apply_wheel.
+ *
+ * Both halves are asserted deliberately. A test that only checked `contain`
+ * would pass just as well against a wheel handler that had stopped chaining
+ * altogether, which is the more likely way to break this.
+ * ------------------------------------------------------------------------ */
+static const char *AR_CHAIN_CSS = "#root { display:block; }"
+                                  ".page { display:block; height:100px; overflow:scroll; }"
+                                  ".list { display:block; height:60px; overflow:scroll; }"
+                                  ".row  { display:block; height:40px; }"
+                                  ".tail { display:block; height:200px; }";
+
+static const char *AR_CHAIN_CSS_CONTAIN = "#root { display:block; }"
+                                          ".page { display:block; height:100px; overflow:scroll; }"
+                                          ".list { display:block; height:60px; overflow:scroll;"
+                                          "        overscroll-behavior: contain; }"
+                                          ".row  { display:block; height:40px; }"
+                                          ".tail { display:block; height:200px; }";
+
+static void ar__chain_scene(ar_surface *s, const ar_input *in)
+{
+    ar_i32 i;
+
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.tail");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* Node 1 is .page and node 2 is .list, in declaration order. */
+static ar_i32 ar__chain_run(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 30; /* inside .list, which starts at the top of .page */
+    in.mouse_inside = 1;
+    ar__chain_scene(&s, &in);
+
+    /* Park the inner list at its end, so the next notch has nowhere to go
+       inside it and must either chain or stop. */
+    ar_node_scroll_to(g_ui, 2, ar_node_scroll_range(g_ui, 2));
+    ar__chain_scene(&s, &in);
+
+    in.wheel = -1;
+    ar__chain_scene(&s, &in);
+    in.wheel = 0;
+    ar__chain_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_overscroll_behavior_stops_the_chain(void)
+{
+    ar_i32 chained, contained;
+
+    chained = ar__chain_run(AR_CHAIN_CSS);
+    contained = ar__chain_run(AR_CHAIN_CSS_CONTAIN);
+
+    CHECK(chained > 0,
+          "overscroll: auto hands the notch outwards when the inner list is at its end");
+    CHECK(contained == 0, "overscroll: contain keeps it, and the page behind does not move");
 }
 
 /*
@@ -7199,9 +7310,9 @@ static void test_a_combinator_does_not_leak_through_the_cache(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "combinator: the card inside the page gets the rule");
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x00FF00,
           "combinator: and the identical card outside it does not, with nothing to overwrite it");
 }
 
@@ -7283,9 +7394,9 @@ static void test_not_excludes(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "not: matches the box without the class");
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x111111,
           "not: and skips the one with it");
 }
 
@@ -7307,9 +7418,9 @@ static void test_not_takes_a_list(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "not: a box matching neither argument still matches");
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x111111,
           "not: the second argument excludes as well as the first");
 }
 
@@ -7353,10 +7464,11 @@ static void test_is_matches_any(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "is: first alternative");
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00, "is: second");
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00, "is: and nothing else");
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00, "is: second");
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x00FF00,
+          "is: and nothing else");
 }
 
 /*
@@ -7432,11 +7544,11 @@ static void test_not_composes_with_a_combinator(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "not: inside a descendant selector, the plain card matches");
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x00FF00,
           "not: the muted one does not");
-    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[4].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0x00FF00,
           "not: and neither does the card outside the page");
 }
 
@@ -7588,22 +7700,22 @@ static void test_structural_pseudo_classes(void)
     CHECK(g_ui->nodes[0].style.v[AR_P_BORDER_WIDTH] == 3, "structural: :root matches the root");
     CHECK(g_ui->nodes[2].style.v[AR_P_BORDER_WIDTH] != 3, "structural: and nothing below it");
 
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFF0000,
           "structural: :first-child matches the first");
-    CHECK((g_ui->nodes[4].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[4].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0xFF0000,
           "structural: and not the second");
-    CHECK((g_ui->nodes[5].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[5].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "structural: :last-child matches the last, resolved after the parent closed");
 
     CHECK(g_ui->nodes[3].style.v[AR_P_BORDER_WIDTH] == 7, "structural: nth-child(odd)");
     CHECK(g_ui->nodes[4].style.v[AR_P_BORDER_WIDTH] == 9, "structural: nth-child(even)");
     CHECK(g_ui->nodes[5].style.v[AR_P_BORDER_WIDTH] == 7, "structural: and odd again");
 
-    CHECK((g_ui->nodes[7].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x0000FF,
+    CHECK((AR_WIDE(&g_ui->nodes[7].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x0000FF,
           "structural: :only-child matches a lone child");
-    CHECK((g_ui->nodes[6].style.v[AR_P_BACKGROUND] & 0xFFFFFF) != 0xFFFF00,
+    CHECK((AR_WIDE(&g_ui->nodes[6].style, AR_P_BACKGROUND) & 0xFFFFFF) != 0xFFFF00,
           "structural: :empty does not match a box with a child");
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFFFF00,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFFFF00,
           "structural: :empty matches one with neither children nor text");
 }
 
@@ -7626,9 +7738,9 @@ static void test_structural_state_survives_the_cache_key(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFF0000,
           "structural: two boxes differing only in a structural bit do not share a cache entry");
-    CHECK((g_ui->nodes[2].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x111111,
+    CHECK((AR_WIDE(&g_ui->nodes[2].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x111111,
           "structural: and the second gets its own style");
 }
 
@@ -7674,12 +7786,12 @@ static void test_combinators(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK((g_ui->nodes[1].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0xFF0000,
+    CHECK((AR_WIDE(&g_ui->nodes[1].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFF0000,
           "combinator: > matches a direct child");
     /* The card inside .page is a descendant of #root but not its child, so the
        child rule must not reach it. That is the difference between the two
        combinators and the reason both exist. */
-    CHECK((g_ui->nodes[3].style.v[AR_P_BACKGROUND] & 0xFFFFFF) == 0x00FF00,
+    CHECK((AR_WIDE(&g_ui->nodes[3].style, AR_P_BACKGROUND) & 0xFFFFFF) == 0x00FF00,
           "combinator: a descendant is not a child");
     CHECK(g_ui->nodes[5].style.v[AR_P_BORDER_WIDTH] == 5,
           "combinator: + matches the sibling immediately after");
@@ -7804,6 +7916,7 @@ int main(void)
     test_break_hyphens_and_dashes();
     test_break_honours_joiners();
     test_break_mandatory();
+    test_break_survives_a_null_string();
     test_break_between_ideographs();
     test_break_always_terminates();
     test_wrap_fits_the_width();
@@ -7872,6 +7985,7 @@ int main(void)
     test_scroll_survives_the_frame();
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
+    test_overscroll_behavior_stops_the_chain();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();

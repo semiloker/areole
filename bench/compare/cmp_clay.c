@@ -51,8 +51,8 @@ static void on_clay_error(Clay_ErrorData e)
     fprintf(stderr, "clay: %.*s\n", e.errorText.length, e.errorText.chars);
 }
 
-static void      *g_clay_mem;
-static ar_ctx    *g_ui;
+static void          *g_clay_mem;
+static ar_ctx        *g_ui;
 static unsigned char *g_ui_mem;
 
 /* The same tree in both libraries: one root, one row per sixteen leaves, each
@@ -97,7 +97,7 @@ static const char *const SHEET_B = "#root { display:flex; flex-direction:column;
 
 static void areole_tree(int boxes)
 {
-    ar_input in;
+    ar_input   in;
     ar_surface none;
     int        i;
 
@@ -222,18 +222,20 @@ static void clay_teardown(cmp_ctx *c)
     g_ui = 0;
 }
 
-static const char *const CAVEAT =
+/* An array, not `const char *const` -- see the note in cmp_microui.c. CASES is
+   a static initializer and the pointer form is not a constant expression in
+   C89, whatever gcc accepts. */
+static const char CAVEAT[] =
     "areole resolves a stylesheet for every box and keeps damage bookkeeping per box; Clay takes "
     "its configuration inline, already resolved, and tracks nothing. areole is therefore doing "
     "strictly more work. Note that nothing is painted here, so the damage bookkeeping is pure "
     "cost in this case and can never repay itself -- in an interface that does paint it is worth "
     "up to 28x, see the scene tables. The layout column is the fair head to head.";
 
-static const cmp_case CASES[] = {
-    {"flat_1k", "1000 boxes, one row per sixteen, no painting", CAVEAT, a_1k, c_1k,
-     "ar layout", cmp_areole_layout_us},
-    {"flat_8k", "8000 boxes: the size Clay publishes", CAVEAT, a_8k, c_8k, "ar layout",
-     cmp_areole_layout_us}};
+static const cmp_case CASES[] = {{"flat_1k", "1000 boxes, one row per sixteen, no painting", CAVEAT,
+                                  a_1k, c_1k, "ar layout", cmp_areole_layout_us},
+                                 {"flat_8k", "8000 boxes: the size Clay publishes", CAVEAT, a_8k,
+                                  c_8k, "ar layout", cmp_areole_layout_us}};
 
 static const cmp_case *clay_cases(int *count)
 {
