@@ -442,17 +442,33 @@ typedef struct ar_rule
 /* ------------------------------------------------------------------------
  * The resolved style cache
  *
- * Style resolution is 50 to 89 per cent of every tree-driven frame, measured,
- * and it grows linearly with rule count because every box is matched against
- * every rule. The scene that shows it plainest is identical_siblings: a
- * thousand boxes carrying one class, which resolve to the same answer a
- * thousand times and spend four fifths of the frame doing so.
+ * Style resolution was 50 to 89 per cent of every tree-driven frame, measured,
+ * and grew linearly with rule count because every box was matched against every
+ * rule. It no longer does: 13, 103 and 253 rules over the same 500 boxes now
+ * cost the same to within noise. What did not change is the per-box cost --
+ * about 126 ns whether the sheet has 13 rules or 253, and the same again across
+ * the thousand identically-classed boxes of identical_siblings, where every box
+ * after the first is a hit. A hit still copies the whole ar_style. Rule count
+ * stopped mattering and box count did not; that is what style sharing is for.
  *
  * The key is the tuple ar_sheet_resolve already takes. Two boxes with the same
- * tag, class, id and state cannot resolve differently, because nothing in the
- * resolver depends on anything else -- no inheritance, no positional selectors,
- * no custom properties. When 0.4.0 adds the cascade that stops being true, and
- * the key has to grow with it or the cache becomes a correctness bug.
+ * tag, class, id and state cannot resolve differently -- **and that is a
+ * property of what this cache is allowed to hold, not a happy accident.**
+ *
+ * 0.4.0 added the cascade and the key did not grow, because the two things that
+ * would have forced it are kept out of the cache instead:
+ *
+ *   - combinators resolve per box in ar_sheet_resolve_contextual, outside this
+ *     cache, because their answer depends on where a box sits;
+ *   - inheritance is applied after the lookup, in ar__resolve, because it
+ *     depends on the parent. Caching after inheritance would need the parent in
+ *     the key and would be a different and much worse cache.
+ *
+ * So the rule for anything added later is that one, not "grow the key": if a
+ * new feature makes a resolved style depend on something outside this tuple,
+ * either keep it out of the cache or put it in the key. Getting this wrong does
+ * not produce a slow frame, it produces a silently wrong one, which is why it
+ * is written here at this length.
  * ------------------------------------------------------------------------ */
 typedef struct ar_cache_entry
 {
