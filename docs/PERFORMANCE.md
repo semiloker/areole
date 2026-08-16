@@ -80,17 +80,17 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 ### layout
 
-| scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
-| --- | --: | --: | --: | --: | --: | --: | --: |
-| `flat_100` | 29.5 µs | 42.8 µs | 90.7 µs | 0.0% | - | - | 273.1 |
-| `flat_1k` | 300.7 µs | 539.7 µs | 847.2 µs | 9.0% | - | - | 282.6 |
-| `flat_8k` | 3057.4 µs | 4530.9 µs | 5533.7 µs | 6.5% | - | - | 359.6 |
-| `deep_60` | 26.3 µs | 56.2 µs | 81.3 µs | 43.4% | - | - | 424.2 |
-| `mixed_tree` | 429.7 µs | 849.5 µs | 1467.2 µs | 38.5% | - | - | 290.1 |
-| `block_1k` | 307.3 µs | 546.4 µs | 727.6 µs | 13.5% | - | - | 307.0 |
-| `inline_wrap` | 398.2 µs | 651.3 µs | 756.4 µs | 3.5% | - | - | 1652.3 |
-| `float_gallery` | 363.4 µs | 640.8 µs | 889.5 µs | 31.3% | - | - | 906.2 |
-| `scroll_container` | 908.8 µs | 1621.3 µs | 2131.3 µs | 2.0% | 35.992 | - | 1512.2 |
+| scene | p50 | p95 | p99 | spread | fill px | glyph px | ns/px | ns/glyph | ns/node |
+| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| `flat_100` | 29.5 µs | 42.8 µs | 90.7 µs | 0.0% | 0 | 0 | - | - | 273.1 |
+| `flat_1k` | 300.7 µs | 539.7 µs | 847.2 µs | 9.0% | 0 | 0 | - | - | 282.6 |
+| `flat_8k` | 3057.4 µs | 4530.9 µs | 5533.7 µs | 6.5% | 0 | 0 | - | - | 359.6 |
+| `deep_60` | 26.3 µs | 56.2 µs | 81.3 µs | 43.4% | 0 | 0 | - | - | 424.2 |
+| `mixed_tree` | 429.7 µs | 849.5 µs | 1467.2 µs | 38.5% | 0 | 0 | - | - | 290.1 |
+| `block_1k` | 307.3 µs | 546.4 µs | 727.6 µs | 13.5% | 0 | 0 | - | - | 307.0 |
+| `inline_wrap` | 398.2 µs | 651.3 µs | 756.4 µs | 3.5% | 0 | 0 | - | - | 1652.3 |
+| `float_gallery` | 363.4 µs | 640.8 µs | 889.5 µs | 31.3% | 0 | 0 | - | - | 906.2 |
+| `scroll_container` | 908.8 µs | 1621.3 µs | 2131.3 µs | 2.0% | 20242 | 0 | 35.992 | - | 1512.2 |
 
 - `flat_100` — 100 boxes, shallow: the fixed cost of a frame
 - `flat_1k` — 1000 boxes, shallow
@@ -120,11 +120,11 @@ disabled is what a real gate needs, and nothing in the tool substitutes for one.
 
 ### realistic
 
-| scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
-| --- | --: | --: | --: | --: | --: | --: | --: |
-| `dashboard` | 18.3 µs | 30.9 µs | 149.4 µs | 55.7% | - | - | 373.5 |
-| `table_1k_rows` | 3195.2 µs | 4812.6 µs | 5508.8 µs | 5.4% | - | - | 532.4 |
-| `scroll_10k` | 231.6 µs | 348.5 µs | 489.3 µs | 9.7% | 0.242 | 374.2 | 1914.0 |
+| scene | p50 | p95 | p99 | spread | fill px | glyph px | ns/px | ns/glyph | ns/node |
+| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| `dashboard` | 18.3 µs | 30.9 µs | 149.4 µs | 55.7% | 75 | 2 | - | - | 373.5 |
+| `table_1k_rows` | 3195.2 µs | 4812.6 µs | 5508.8 µs | 5.4% | 0 | 0 | - | - | 532.4 |
+| `scroll_10k` | 231.6 µs | 348.5 µs | 489.3 µs | 9.7% | 955388 | 11179 | 0.242 | 374.2 | 1914.0 |
 
 - `dashboard` — the shipped example: rail, nav, six cards, drifting cursor
 - `table_1k_rows` — 1000 rows of 5 cells: 6000 boxes, most of them off screen
@@ -158,16 +158,45 @@ so the uncached figure is the one that transfers.
 reads, blends and writes where opaque only writes, and does four multiplies per
 pixel. That ratio is the measured case for SIMD in 0.15.0.
 
-**The glyph blitter costs per bit tested, not per pixel written.** At scale 2 it
+**The bitmap glyph blitter pays partly per pixel and partly per bit.** At scale 2 it
 draws four times the pixels for 2.64 times the money — 149 against 57 ns per
-glyph. Every ink pixel goes through a function call performing two rectangle
-intersections. 0.2.0 replaces the whole path and inherits a tenfold improvement
-as its acceptance criterion.
+glyph. Four is what a blitter paying per pixel written would cost and one is what
+the original per-set-pixel path did cost, so the distance between them is the
+finding. These two scenes measure the built-in 8x8 face, which is what
+`ar_draw_text` uses when no font is loaded; 0.2.0's outline path is measured
+separately under **Outline text** below.
 
-**Style resolution is linear in rule count.** 146.8, 151.8 and 147.5 µs for 13, 103 and 253
-rules over the same 500 boxes: resolution scans every rule for every box. A
-browser user-agent stylesheet alone is around 400 rules, which is why 0.4.0
-builds a style cache and why the rule table has to stop being a fixed 256.
+**Style resolution no longer grows with rule count.** 146.8, 151.8 and 147.5 µs for 13,
+103 and 253 rules over the same 500 boxes: 0% apart across 19 times the
+rules, inside the 3% these were measured in. The resolved-style cache did
+that — matching is keyed on `(tag, class, id, state)` and a repeat is a lookup
+rather than a scan.
+
+**What it did not fix is the per-box cost.** Style is 126 ns a box on a 13 rule sheet
+and 126 ns a box on a 253 rule sheet, and 126 ns a box across the thousand
+identically-classed boxes of `identical_siblings` — the case where every box
+after the first is a cache hit. A hit still copies the whole resolved `ar_style`
+into the box, so rule count stopped mattering and box count did not. That is
+what style sharing in 0.15.0 is for.
+
+A browser user-agent stylesheet alone is around 400 rules, and `AR_MAX_RULES` is
+still a fixed 256, so a sheet that size cannot be loaded at all yet.
+
+**Presented and painted are different numbers, and scrolling is where they
+part.** `scroll_container` reports a dirty ratio of 1.000 — it presents essentially its
+whole surface every frame — while painting only 20242 pixels and rasterising 0
+glyphs to do it. Both are true: a scroll really does change every pixel of the
+container on screen, because they *moved*, so every one of them has to be
+presented. The region move is what moves them without painting them, and
+`fill_px` is the column that shows it. An acceptance criterion written in terms
+of pixels "touched" is asking about `fill_px`; `dirty_ratio` cannot go below
+the container for a scroll and never will.
+
+It bought the painting and not the frame. Style is 263 µs and layout 446 µs against
+a raster of 189, so the frame is owned by the two passes that still run over every
+box in the tree whatever the surface does — 601 of them here, 98% of which are
+clipped out before a pixel is drawn. The next scroll win is incremental layout,
+not painting.
 
 **Allocations after init: 0**, across all 33 scenes. Checked by watching the
 persistent half of the arena rather than by assertion. This is the property that
