@@ -109,6 +109,13 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
     s->unit[AR_P_OVERSCROLL_X] = AR_UNIT_KEYWORD;
 
+    s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
+    s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
+    s->unit[AR_P_SCROLL_SNAP_ALIGN] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLL_SNAP_STOP] = AR_SNAP_STOP_NORMAL;
+    s->unit[AR_P_SCROLL_SNAP_STOP] = AR_UNIT_KEYWORD;
+
     s->v[AR_P_SCROLLBAR_WIDTH] = AR_SCROLLBAR_AUTO;
     s->unit[AR_P_SCROLLBAR_WIDTH] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLLBAR_GUTTER] = AR_GUTTER_AUTO;
@@ -517,7 +524,9 @@ enum
     AR_SH_BORDER,
     AR_SH_OVERFLOW,
     AR_SH_OVERSCROLL,
-    AR_SH_SCROLLBAR_COLOR
+    AR_SH_SCROLLBAR_COLOR,
+    AR_SH_SCROLL_PADDING,
+    AR_SH_SCROLL_MARGIN
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
@@ -552,6 +561,19 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
+                                          {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
+                                          {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
+                                          {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
+                                          {"scroll-padding", AR_SH_SCROLL_PADDING},
+                                          {"scroll-padding-top", AR_P_SCROLL_PAD_TOP},
+                                          {"scroll-padding-right", AR_P_SCROLL_PAD_RIGHT},
+                                          {"scroll-padding-bottom", AR_P_SCROLL_PAD_BOTTOM},
+                                          {"scroll-padding-left", AR_P_SCROLL_PAD_LEFT},
+                                          {"scroll-margin", AR_SH_SCROLL_MARGIN},
+                                          {"scroll-margin-top", AR_P_SCROLL_MARGIN_TOP},
+                                          {"scroll-margin-right", AR_P_SCROLL_MARGIN_RIGHT},
+                                          {"scroll-margin-bottom", AR_P_SCROLL_MARGIN_BOTTOM},
+                                          {"scroll-margin-left", AR_P_SCROLL_MARGIN_LEFT},
                                           {"scrollbar-width", AR_P_SCROLLBAR_WIDTH},
                                           {"scrollbar-gutter", AR_P_SCROLLBAR_GUTTER},
                                           {"scrollbar-color", AR_SH_SCROLLBAR_COLOR},
@@ -677,6 +699,21 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
                                      {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
                                      {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
                                      {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+
+                                     {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
+                                     {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},
+                                     {"y", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_Y},
+                                     {"both", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_BOTH},
+                                     {"mandatory", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_MANDATORY},
+                                     {"proximity", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_PROXIMITY},
+
+                                     {"none", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_NONE},
+                                     {"start", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_START},
+                                     {"center", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_CENTER},
+                                     {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
+
+                                     {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
+                                     {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
 
                                      {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
                                      {"thin", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_THIN},
@@ -1033,9 +1070,13 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
     {
         ar__fail(z);
     }
-    else if (prop == AR_SH_PADDING || prop == AR_SH_MARGIN)
+    else if (prop == AR_SH_PADDING || prop == AR_SH_MARGIN || prop == AR_SH_SCROLL_PADDING ||
+             prop == AR_SH_SCROLL_MARGIN)
     {
-        ar_u8 base = (ar_u8)(prop == AR_SH_PADDING ? AR_P_PAD_TOP : AR_P_MARGIN_TOP);
+        ar_u8 base = (ar_u8)(prop == AR_SH_PADDING          ? AR_P_PAD_TOP
+                             : prop == AR_SH_MARGIN         ? AR_P_MARGIN_TOP
+                             : prop == AR_SH_SCROLL_PADDING ? AR_P_SCROLL_PAD_TOP
+                                                            : AR_P_SCROLL_MARGIN_TOP);
         /* One value is all sides, two is vertical then horizontal, three adds
            a separate bottom, four is clockwise from the top. */
         ar__value top = vals[0];
@@ -1092,6 +1133,22 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
                 ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, AR_UNIT_COLOR);
             }
         }
+    }
+    else if (prop == AR_P_SCROLL_SNAP_TYPE)
+    {
+        /* Two words, and they are independent fields rather than one value:
+           an axis and a strictness. `y mandatory` has to mean both, so the
+           parsed keywords are OR-ed instead of the first one winning.
+
+           An axis alone is proximity, which is what CSS says and is why
+           AR_SNAP_PROXIMITY is the zero bit. */
+        ar_i32 i, bits = 0;
+
+        for (i = 0; i < n; ++i)
+        {
+            bits |= vals[i].v;
+        }
+        ar__set(rule, (ar_u8)prop, bits, AR_UNIT_KEYWORD);
     }
     else
     {

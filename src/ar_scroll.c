@@ -207,6 +207,176 @@ int ar_scroll_bar_visible(const ar_node *n)
     return ar_scroll_range(n) > 0;
 }
 
+/* ------------------------------------------------------------------------
+ * Snapping
+ *
+ * Where a scroll settles, given where it was going.
+ *
+ * The container declares that it snaps and on which axis; each descendant
+ * declares where it wants to sit when it is the one snapped to. That split is
+ * what makes a carousel expressible -- the track says "snap", the slides say
+ * "at my start".
+ *
+ * Everything here is in screen coordinates, because by the time this runs the
+ * layout pass has already shifted every descendant by the container's current
+ * offset. So a candidate is not an absolute position but a distance from where
+ * we are: to put a child's top edge at the top of the scrollport, the scroll
+ * has to change by exactly the gap between them.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__snap_axis(const ar_node *n)
+{
+    return n->style.v[AR_P_SCROLL_SNAP_TYPE] & AR_SNAP_AXIS_MASK;
+}
+
+int ar_scroll_snaps_y(const ar_node *n)
+{
+    ar_i32 axis = ar__snap_axis(n);
+
+    return axis == AR_SNAP_AXIS_Y || axis == AR_SNAP_AXIS_BOTH;
+}
+
+static ar_i32 ar__abs(ar_i32 v)
+{
+    return v < 0 ? -v : v;
+}
+
+/*
+ * Is `at` inside the subtree rooted at `root`?
+ *
+ * Walks up rather than down, which is the same shape ar_scroll_shift uses and
+ * for the same reason: the tree is a flat array of parent indices and there is
+ * no child list to walk.
+ */
+static int ar__within(const ar_node *nodes, ar_i32 at, ar_i32 root)
+{
+    while (at >= 0)
+    {
+        at = nodes[at].parent;
+        if (at == root)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+ar_i32 ar_scroll_snap(const ar_node *nodes, ar_i32 count, ar_i32 container, ar_i32 cur, ar_i32 want)
+{
+    const ar_node *c = &nodes[container];
+    ar_i32         port_top, port_bottom, port_h;
+    ar_i32         best = want, best_d = 0, found = 0;
+    ar_i32         stop_at = 0, stop_d = 0, stopped = 0;
+    ar_i32         moved = want - cur;
+    ar_i32         j;
+
+    if (!ar_scroll_snaps_y(c))
+    {
+        return want;
+    }
+
+    /* scroll-padding shrinks the scrollport. It is what stops a sticky header
+       covering the thing that was just snapped to. */
+    port_top = c->rect.y + c->style.v[AR_P_SCROLL_PAD_TOP];
+    port_bottom = c->rect.y + c->rect.h - c->style.v[AR_P_SCROLL_PAD_BOTTOM];
+    port_h = port_bottom - port_top;
+    if (port_h <= 0)
+    {
+        return want;
+    }
+
+    for (j = container + 1; j < count; ++j)
+    {
+        const ar_node *ch = &nodes[j];
+        ar_i32         align = ch->style.v[AR_P_SCROLL_SNAP_ALIGN];
+        ar_i32         top, bottom, delta, cand, d;
+
+        if (align == AR_SNAP_ALIGN_NONE || ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (!ar__within(nodes, j, container))
+        {
+            continue;
+        }
+
+        /* scroll-margin grows the target: bring this much of my surroundings
+           along with me. */
+        top = ch->rect.y - ch->style.v[AR_P_SCROLL_MARGIN_TOP];
+        bottom = ch->rect.y + ch->rect.h + ch->style.v[AR_P_SCROLL_MARGIN_BOTTOM];
+
+        if (align == AR_SNAP_ALIGN_START)
+        {
+            delta = top - port_top;
+        }
+        else if (align == AR_SNAP_ALIGN_END)
+        {
+            delta = bottom - port_bottom;
+        }
+        else
+        {
+            delta = (top + bottom) / 2 - (port_top + port_bottom) / 2;
+        }
+
+        cand = ar_scroll_clamp(c, cur + delta);
+        d = ar__abs(cand - want);
+
+        if (!found || d < best_d)
+        {
+            best = cand;
+            best_d = d;
+            found = 1;
+        }
+
+        /*
+         * scroll-snap-stop: always.
+         *
+         * A gesture may not travel past this box without stopping on it, so of
+         * everything lying between where we are and where we were going, the
+         * nearest one wins outright. Without this a hard flick skips three
+         * slides, which is the whole difference between a good carousel and an
+         * infuriating one.
+         */
+        if (ch->style.v[AR_P_SCROLL_SNAP_STOP] == AR_SNAP_STOP_ALWAYS && moved != 0)
+        {
+            ar_i32 travel = cand - cur;
+
+            if (travel != 0 && ((moved > 0 && travel > 0 && travel <= moved) ||
+                                (moved < 0 && travel < 0 && travel >= moved)))
+            {
+                ar_i32 td = ar__abs(travel);
+
+                if (!stopped || td < stop_d)
+                {
+                    stop_at = cand;
+                    stop_d = td;
+                    stopped = 1;
+                }
+            }
+        }
+    }
+
+    if (stopped)
+    {
+        return stop_at;
+    }
+    if (!found)
+    {
+        return want;
+    }
+
+    /*
+     * `proximity` takes the snap point only when one is close enough to be
+     * plausibly what was meant, which is what lets a long list still be
+     * scrolled to an arbitrary position. `mandatory` always takes it.
+     */
+    if ((c->style.v[AR_P_SCROLL_SNAP_TYPE] & AR_SNAP_MANDATORY) == 0 &&
+        best_d > port_h * AR_SNAP_PROXIMITY_NUM / AR_SNAP_PROXIMITY_DEN)
+    {
+        return want;
+    }
+    return best;
+}
+
 /*
  * Shifts every scroll container's contents by its offset.
  *

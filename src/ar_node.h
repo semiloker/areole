@@ -441,6 +441,15 @@ ar_i32 ar_scroll_bar_width(const ar_node *n);
 
 /* What the gutter takes out of the inline end, 0 unless `stable`. */
 ar_i32 ar_scroll_gutter(const ar_node *n);
+
+/* Does this container snap on the block axis? */
+int ar_scroll_snaps_y(const ar_node *n);
+
+/* Where a scroll heading for `want` from `cur` actually settles. Returns
+   `want` unchanged when the container does not snap or nothing is near
+   enough under `proximity`. */
+ar_i32 ar_scroll_snap(const ar_node *nodes, ar_i32 count, ar_i32 container, ar_i32 cur,
+                      ar_i32 want);
 void   ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thumb);
 
 /* Shifts every scroll container's contents by its offset. */

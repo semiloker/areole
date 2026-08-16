@@ -1886,6 +1886,15 @@ static void ar__apply_wheel(ar_ctx *c)
             continue;
         }
         want = ar_scroll_clamp(n, slot->scroll - travel);
+
+        /* Where the notch was heading, then where snapping says it settles.
+           Clamped first so a snap candidate is never computed against a
+           position the container could not have reached anyway. */
+        if (ar_scroll_snaps_y(n))
+        {
+            want = ar_scroll_snap(c->nodes, c->node_count, at, slot->scroll, want);
+        }
+
         if (want == slot->scroll)
         {
             /*
