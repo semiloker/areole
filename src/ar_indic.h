@@ -38,9 +38,9 @@ enum
     AR_IND_MATRA_POST,
     AR_IND_MATRA_ABOVE,
     AR_IND_MATRA_BELOW,
-    AR_IND_VOWEL,  /* independent                                     */
+    AR_IND_VOWEL, /* independent                                     */
     AR_IND_NUKTA,
-    AR_IND_BINDU,  /* anusvara, chandrabindu, visarga                 */
+    AR_IND_BINDU, /* anusvara, chandrabindu, visarga                 */
     AR_IND_COUNT
 };
 
@@ -56,7 +56,7 @@ int ar_indic_is_indic(ar_u32 cp);
  * Returns non-zero if anything moved, which the caller needs because the
  * cluster map is what a caret and a selection are built on.
  */
-int ar_indic_reorder(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
-                     ar_i32 *cluster, ar_i32 count);
+int ar_indic_reorder(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
+                     ar_i32 count);
 
 #endif /* AR_INDIC_H */

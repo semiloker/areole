@@ -158,7 +158,6 @@ static const bench_scene SC_ARENA = {"arena_churn",
                                      init_churn,
                                      frame_arena_churn};
 
-
 /* ------------------------------------------------------------------------
  * Opposite corners, through the tree
  *

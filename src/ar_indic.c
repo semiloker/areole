@@ -37,8 +37,8 @@ ar_i32 ar_indic_category(ar_u32 cp)
         {
             return AR_IND_MATRA_PRE; /* the vowel sign i, drawn before */
         }
-        if (cp == 0x0940u || (cp >= 0x093Eu && cp <= 0x093Eu) || cp == 0x0949u ||
-            cp == 0x094Au || cp == 0x094Bu || cp == 0x094Cu)
+        if (cp == 0x0940u || (cp >= 0x093Eu && cp <= 0x093Eu) || cp == 0x0949u || cp == 0x094Au ||
+            cp == 0x094Bu || cp == 0x094Cu)
         {
             return AR_IND_MATRA_POST;
         }
@@ -251,8 +251,8 @@ static ar_i32 ar__syllable_end(const ar_u32 *cps, ar_i32 at, ar_i32 count)
     return i > at ? i : at + 1;
 }
 
-int ar_indic_reorder(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv,
-                     ar_i32 *cluster, ar_i32 count)
+int ar_indic_reorder(const ar_shaper *sh, ar_u32 *cps, ar_i32 *glyphs, ar_i32 *adv, ar_i32 *cluster,
+                     ar_i32 count)
 {
     ar_i32 at = 0;
     int    moved = 0;

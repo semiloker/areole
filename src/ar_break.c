@@ -27,24 +27,36 @@ ar_i32 ar_break_class(ar_u32 cp)
 {
     /* ASCII, one row per character, because this is where text mostly lives
        and where a wrong answer is most obvious. */
-    static const ar_u8 ASCII[128] = {
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, /* 00 */
-        AR_LB_AL, AR_LB_BA, AR_LB_LF, AR_LB_BK, AR_LB_BK, AR_LB_CR, AR_LB_AL, AR_LB_AL, /* 08 tab, lf, vt, ff, cr */
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, /* 10 */
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, /* 18 */
-        AR_LB_SP, AR_LB_EX, AR_LB_QU, AR_LB_AL, AR_LB_PR, AR_LB_PO, AR_LB_AL, AR_LB_QU, /*   !"#$%&' */
-        AR_LB_OP, AR_LB_CP, AR_LB_AL, AR_LB_PR, AR_LB_IS, AR_LB_HY, AR_LB_IS, AR_LB_SY, /* ()*+,-./ */
-        AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, /* 01234567 */
-        AR_LB_NU, AR_LB_NU, AR_LB_IS, AR_LB_IS, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_EX, /* 89:;<=>? */
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, /* @ABCDEFG */
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_OP, AR_LB_PR, AR_LB_CL, AR_LB_AL, AR_LB_AL, /* XYZ[\]^_ */
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
-        AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_OP, AR_LB_BA, AR_LB_CL, AR_LB_AL, AR_LB_AL  /* xyz{|}~ */
-    };
+    static const ar_u8 ASCII[128] =
+        {
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, /* 00 */
+            AR_LB_AL, AR_LB_BA, AR_LB_LF, AR_LB_BK, AR_LB_BK, AR_LB_CR, AR_LB_AL,
+            AR_LB_AL, /* 08 tab, lf, vt, ff, cr */
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, /* 10 */
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, /* 18 */
+            AR_LB_SP, AR_LB_EX, AR_LB_QU, AR_LB_AL, AR_LB_PR, AR_LB_PO, AR_LB_AL,
+            AR_LB_QU, /*   !"#$%&' */
+            AR_LB_OP, AR_LB_CP, AR_LB_AL, AR_LB_PR, AR_LB_IS, AR_LB_HY, AR_LB_IS,
+            AR_LB_SY, /* ()*+,-./ */
+            AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU, AR_LB_NU,
+            AR_LB_NU, /* 01234567 */
+            AR_LB_NU, AR_LB_NU, AR_LB_IS, AR_LB_IS, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_EX, /* 89:;<=>? */
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, /* @ABCDEFG */
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_OP, AR_LB_PR,
+            AR_LB_CL, AR_LB_AL, AR_LB_AL, /* XYZ[\]^_ */
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL,
+            AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_AL, AR_LB_OP,
+            AR_LB_BA, AR_LB_CL, AR_LB_AL, AR_LB_AL /* xyz{|}~ */
+        };
 
     struct range
     {
@@ -101,8 +113,7 @@ ar_i32 ar_break_class(ar_u32 cp)
         {0xFF0E, 0xFF0E, AR_LB_CL},
         {0xFF1F, 0xFF1F, AR_LB_EX},
         {0xFF00, 0xFFEF, AR_LB_ID}, /* the rest of the fullwidth forms    */
-        {0x20000, 0x3FFFF, AR_LB_ID}
-    };
+        {0x20000, 0x3FFFF, AR_LB_ID}};
 
     ar_i32 i;
     ar_i32 n = (ar_i32)(sizeof RANGES / sizeof RANGES[0]);
@@ -135,34 +146,33 @@ ar_i32 ar_break_class(ar_u32 cp)
 
 static const ar_u8 PAIR[AR_LB_COUNT][AR_LB_COUNT] = {
     /*         XX AL SP BK CR LF NL ZW WJ GL BA HY BB B2 OP CL CP QU NS EX IS SY NU PR PO ID CM */
-    /* XX */ { X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X },
-    /* AL */ { X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X },
-    /* SP */ { O, O, X, X, X, X, X, X, X, O, O, O, O, O, O, X, X, O, X, X, X, X, O, O, O, O, O },
-    /* BK */ { O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O },
-    /* CR */ { O, O, O, O, O, X, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O },
-    /* LF */ { O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O },
-    /* NL */ { O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O },
-    /* ZW */ { O, O, O, X, X, X, X, X, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O },
-    /* WJ */ { X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X },
-    /* GL */ { X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X },
-    /* BA */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X },
-    /* HY */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X },
-    /* BB */ { X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X },
-    /* B2 */ { O, O, X, X, X, X, X, X, X, X, X, X, O, X, O, X, X, X, X, X, X, X, O, O, O, O, X },
-    /* OP */ { X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X },
-    /* CL */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, X, X, O, X },
-    /* CP */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, X, X, O, X },
-    /* QU */ { X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X },
-    /* NS */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X },
-    /* EX */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X },
-    /* IS */ { O, X, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X },
-    /* SY */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X },
-    /* NU */ { O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X },
-    /* PR */ { O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, O, O, X, X },
-    /* PO */ { O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, O, O, O, X },
-    /* ID */ { O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, X, O, X },
-    /* CM */ { X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X }
-};
+    /* XX */ {X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X},
+    /* AL */ {X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X},
+    /* SP */ {O, O, X, X, X, X, X, X, X, O, O, O, O, O, O, X, X, O, X, X, X, X, O, O, O, O, O},
+    /* BK */ {O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O},
+    /* CR */ {O, O, O, O, O, X, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O},
+    /* LF */ {O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O},
+    /* NL */ {O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O},
+    /* ZW */ {O, O, O, X, X, X, X, X, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O},
+    /* WJ */ {X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X},
+    /* GL */ {X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X},
+    /* BA */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X},
+    /* HY */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X},
+    /* BB */ {X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X},
+    /* B2 */ {O, O, X, X, X, X, X, X, X, X, X, X, O, X, O, X, X, X, X, X, X, X, O, O, O, O, X},
+    /* OP */ {X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X},
+    /* CL */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, X, X, O, X},
+    /* CP */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, X, X, O, X},
+    /* QU */ {X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X},
+    /* NS */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X},
+    /* EX */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, O, O, X},
+    /* IS */ {O, X, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X},
+    /* SY */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, X, O, O, O, X},
+    /* NU */ {O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X},
+    /* PR */ {O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, O, O, X, X},
+    /* PO */ {O, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, O, O, O, X},
+    /* ID */ {O, O, X, X, X, X, X, X, X, X, X, X, O, O, O, X, X, X, X, X, X, X, O, O, X, O, X},
+    /* CM */ {X, X, X, X, X, X, X, X, X, X, X, X, O, O, X, X, X, X, X, X, X, X, X, X, X, O, X}};
 
 #undef X
 #undef O
