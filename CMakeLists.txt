@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 
+# One source of truth for the version, which is include/areole.h. The copy that
+# used to live here said 0.1.0 while the header said 0.6.0, because two places
+# to edit means one of them is always wrong.
+file(STRINGS include/areole.h AR_VERSION_LINE
+     REGEX "^#define AR_VERSION_STRING")
+string(REGEX MATCH "[0-9]+\.[0-9]+\.[0-9]+" AR_VERSION "${AR_VERSION_LINE}")
+if(NOT AR_VERSION)
+    message(FATAL_ERROR "could not read AR_VERSION_STRING from include/areole.h")
+endif()
+
 project(areole
-        VERSION 0.1.0
+        VERSION ${AR_VERSION}
         DESCRIPTION "A GUI library in strict C89 with no graphics API"
         LANGUAGES C)
 
