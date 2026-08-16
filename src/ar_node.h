@@ -225,6 +225,7 @@ struct ar_ctx
 
     ar_i32 wheel;    /* notches this frame */
     ar_i32 wheel_px; /* the same travel in pixels, when the device knows it */
+    ar_u32 keys;     /* AR_KEY_* pressed this frame */
     int    scrolled; /* something moved, so the next frame differs */
 
     ar_i32 stack[AR_MAX_DEPTH];

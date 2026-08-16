@@ -5504,6 +5504,116 @@ static void test_snap_type_parses_both_words(void)
           "snap-type: both axes, proximity stated");
 }
 
+/* ------------------------------------------------------------------------
+ * Keyboard scrolling
+ *
+ * The first keys areole has ever read. Scoped to the ones that scroll: there
+ * is no focus, no caret and no text here, and adding any of them is how 0.6.1
+ * would quietly become 0.10.0.
+ *
+ * With no focus concept, a key goes to the same container the wheel would --
+ * the innermost scrollable box under the cursor. That is a deviation from a
+ * browser, where the keyboard follows focus, and it is asserted here so it
+ * stays a decision rather than becoming an accident.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__after_key(const char *css, ar_u32 key)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.keys_pressed = key;
+    ar__scroll_scene(&s, &in);
+    in.keys_pressed = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_keys_scroll_the_container(void)
+{
+    /* Five 40 px rows in a 100 px box: 200 of content, 100 of range. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_DOWN) == 40, "keys: down moves by a line");
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_UP) == 0, "keys: up at the top stays there");
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_END) == 100, "keys: End goes to the bottom");
+
+    /* A page is the viewport less an overlap, so the last line of the old page
+       is the first of the new one and nothing is skipped over the fold. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_PAGE_DOWN) == 76,
+          "keys: a page is the viewport less its overlap");
+
+    /* Space pages. Shift-space is mapped to Page Up by the backend, because
+       the core tracks no modifiers. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_SPACE) ==
+              ar__after_key(AR_SCROLL_CSS, AR_KEY_PAGE_DOWN),
+          "keys: space pages down");
+}
+
+static void test_keys_home_and_end_do_not_snap(void)
+{
+    /*
+     * End must reach the actual bottom. Snapping it would leave the last row
+     * partly off screen and no key would reach it, which is a bug rather than
+     * a nicety -- so Home and End are absolute and skip the snap entirely.
+     */
+    CHECK(ar__after_key(AR_SNAP_CSS, AR_KEY_END) == 100, "keys: End ignores snapping");
+    CHECK(ar__after_key(AR_SNAP_CSS, AR_KEY_DOWN) == 40, "keys: an ordinary key still snaps");
+}
+
+/* ------------------------------------------------------------------------
+ * scroll-into-view
+ * ------------------------------------------------------------------------ */
+static void test_scroll_into_view_moves_the_minimum(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    /* Node 2 is the first row and is already fully visible: moving would be a
+       page jumping under someone who was reading it. */
+    CHECK(!ar_node_scroll_into_view(g_ui, 2), "into-view: a visible box does not move");
+    CHECK(ar_node_scroll(g_ui, 1) == 0, "into-view: and the container stays put");
+
+    /* Node 6 is the fifth row, at 160..200 in a 100 tall port. Bringing its
+       bottom to the bottom needs 100 -- not the 160 a jump-to-top would use. */
+    CHECK(ar_node_scroll_into_view(g_ui, 6), "into-view: a box below the fold moves");
+    CHECK(ar_node_scroll(g_ui, 1) == 100,
+          "into-view: to its bottom edge, not to the top of the list");
+}
+
+static void test_scroll_into_view_honours_scroll_margin(void)
+{
+    static const char *CSS = "#root { display:block; }"
+                             ".list { display:block; height:100px; overflow:scroll; }"
+                             ".row  { display:block; height:40px; scroll-margin-bottom: 12px; }";
+    ar_surface         s = ar__ui_surface(200, 300);
+    ar_input           in;
+
+    ar__ui_reset(CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    /* scroll-margin-bottom brings twelve more pixels along, which would ask
+       for 112 -- past the range, so it clamps to 100 and this alone would not
+       prove anything. Row four is the one that shows it: 120..160, so without
+       the margin it needs 60 and with it 72. */
+    ar_node_scroll_into_view(g_ui, 5);
+    CHECK(ar_node_scroll(g_ui, 1) == 72, "into-view: scroll-margin comes along with the box");
+}
+
 /*
  * Dragging the scrollbar thumb scrolls, and letting go stops it.
  *
@@ -8249,6 +8359,10 @@ int main(void)
     test_snap_honours_scroll_padding();
     test_snap_type_parses_both_words();
     test_snap_stop_always_refuses_to_be_passed();
+    test_keys_scroll_the_container();
+    test_keys_home_and_end_do_not_snap();
+    test_scroll_into_view_moves_the_minimum();
+    test_scroll_into_view_honours_scroll_margin();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();

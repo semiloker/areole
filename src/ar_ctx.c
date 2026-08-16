@@ -1078,6 +1078,94 @@ ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
     return slot->scroll;
 }
 
+/*
+ * Scroll an ancestor until this box is inside the scrollport.
+ *
+ * The rects have already been shifted by the current offset when this is
+ * called from inside a frame, so the arithmetic is in screen coordinates and
+ * the answer is a delta rather than an absolute position -- the same reasoning
+ * ar_scroll_snap depends on.
+ */
+int ar_node_scroll_into_view(ar_ctx *c, ar_i32 i)
+{
+    ar_i32   at;
+    ar_node *n;
+    ar_i32   top, bottom, port_top, port_bottom, delta, want;
+    ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    n = &c->nodes[i];
+
+    /* The nearest scrollable ancestor, not the nearest ancestor: a box inside
+       three nested divs in one scroll container is still that container's
+       business. */
+    for (at = n->parent; at >= 0; at = c->nodes[at].parent)
+    {
+        if (ar_is_scroll_container(&c->nodes[at]) && ar_scrolls_y(&c->nodes[at]))
+        {
+            break;
+        }
+    }
+    if (at < 0)
+    {
+        return 0;
+    }
+
+    slot = ar_ctx_slot(c, c->nodes[at].key);
+    if (!slot)
+    {
+        return 0;
+    }
+
+    /* scroll-margin grows the target, scroll-padding shrinks the port. */
+    top = n->rect.y - n->style.v[AR_P_SCROLL_MARGIN_TOP];
+    bottom = n->rect.y + n->rect.h + n->style.v[AR_P_SCROLL_MARGIN_BOTTOM];
+    port_top = c->nodes[at].rect.y + c->nodes[at].style.v[AR_P_SCROLL_PAD_TOP];
+    port_bottom =
+        c->nodes[at].rect.y + c->nodes[at].rect.h - c->nodes[at].style.v[AR_P_SCROLL_PAD_BOTTOM];
+
+    /*
+     * The minimum move that works, which is three cases and not two.
+     *
+     * Above the port: bring its top to the top. Below: bring its bottom to the
+     * bottom. Already inside: do nothing, because scrolling a visible thing is
+     * how a page jumps under someone who was reading it.
+     *
+     * A box taller than the port counts as above rather than below, so its top
+     * is what you end up looking at. Reading starts at the top.
+     */
+    if (top < port_top)
+    {
+        delta = top - port_top;
+    }
+    else if (bottom > port_bottom)
+    {
+        delta = bottom - port_bottom;
+        if (top - delta < port_top)
+        {
+            delta = top - port_top;
+        }
+    }
+    else
+    {
+        return 0;
+    }
+
+    want = ar_scroll_clamp(&c->nodes[at], slot->scroll + delta);
+    if (want == slot->scroll)
+    {
+        return 0;
+    }
+    ar__scroll_moved(c, c->nodes[at].key, want - slot->scroll);
+    slot->scroll = (ar_scroll_pos)want;
+    ar_damage_add(&c->damage, c->nodes[at].rect);
+    c->scrolled = 1;
+    return 1;
+}
+
 int ar_scrolled(const ar_ctx *c)
 {
     return c ? c->scrolled : 0;
@@ -1173,6 +1261,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->mouse_inside = in ? in->mouse_inside : 0;
     c->wheel = in ? in->wheel : 0;
     c->wheel_px = in ? in->wheel_px : 0;
+    c->keys = in ? in->keys_pressed : 0;
     c->scrolled = 0;
 
     /* A press latches whichever box the cursor was over, and a release only
@@ -1926,6 +2015,128 @@ static void ar__apply_wheel(ar_ctx *c)
     }
 }
 
+/*
+ * Keys that scroll.
+ *
+ * Runs beside ar__apply_wheel and settles into the same place, so a key and a
+ * notch cannot disagree about where a container ended up.
+ *
+ * Which container? There is no focus in areole, so the honest answer is the
+ * same one the wheel would move: the innermost scrollable box under the
+ * cursor. That is a deviation from a browser, where the keyboard follows focus
+ * and the wheel follows the pointer, and it is named here rather than left to
+ * be discovered. Focus arrives with the rest of keyboard handling in 0.10.0
+ * and this becomes a one-line change when it does.
+ *
+ * A page is the viewport less an overlap, which is what every reader expects:
+ * the last line of the old page is the first line of the new one, so nothing
+ * is skipped over the fold.
+ */
+#define AR_KEY_LINE     40
+#define AR_PAGE_OVERLAP 24
+
+static ar_i32 ar__key_travel(const ar_ctx *c, const ar_node *n)
+{
+    ar_i32 page = n->rect.h - AR_PAGE_OVERLAP;
+
+    if (page < 1)
+    {
+        page = n->rect.h > 0 ? n->rect.h : 1;
+    }
+
+    if (c->keys & AR_KEY_UP)
+    {
+        return -AR_KEY_LINE;
+    }
+    if (c->keys & AR_KEY_DOWN)
+    {
+        return AR_KEY_LINE;
+    }
+    if (c->keys & AR_KEY_PAGE_UP)
+    {
+        return -page;
+    }
+    if ((c->keys & AR_KEY_PAGE_DOWN) || (c->keys & AR_KEY_SPACE))
+    {
+        return page;
+    }
+    return 0;
+}
+
+static void ar__apply_keys(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (c->keys == 0 || !c->mouse_inside || c->drag_key)
+    {
+        return;
+    }
+
+    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    {
+        ar_i32   at = c->order ? c->order[i] : i;
+        ar_node *n = &c->nodes[at];
+        ar_slot *slot;
+        ar_i32   want, travel;
+
+        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        {
+            continue;
+        }
+        slot = ar_ctx_slot(c, n->key);
+        if (!slot)
+        {
+            continue;
+        }
+
+        /* Home and End are absolute and do not snap: asking to go to the top
+           and landing on the second row would be a bug, not a nicety. */
+        if (c->keys & AR_KEY_HOME)
+        {
+            want = 0;
+        }
+        else if (c->keys & AR_KEY_END)
+        {
+            want = ar_scroll_range(n);
+        }
+        else
+        {
+            travel = ar__key_travel(c, n);
+            if (travel == 0)
+            {
+                return;
+            }
+            want = ar_scroll_clamp(n, slot->scroll + travel);
+            if (ar_scroll_snaps_y(n))
+            {
+                want = ar_scroll_snap(c->nodes, c->node_count, at, slot->scroll, want);
+            }
+        }
+
+        want = ar_scroll_clamp(n, want);
+        if (want == slot->scroll)
+        {
+            /* Same chaining rule the wheel follows, and the same property
+               decides it. A key that cannot move this container is offered
+               outward unless overscroll-behavior says otherwise. */
+            if (n->style.v[AR_P_OVERSCROLL] != AR_OVERSCROLL_AUTO)
+            {
+                return;
+            }
+            continue;
+        }
+        ar__scroll_moved(c, n->key, want - slot->scroll);
+        slot->scroll = (ar_scroll_pos)want;
+        ar_damage_add(&c->damage, n->rect);
+        c->scrolled = 1;
+        return;
+    }
+}
+
 static void ar__update_hot(ar_ctx *c)
 {
     ar_u32 was = c->hot;
@@ -2393,6 +2604,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     ar__update_hot(c);
     ar__apply_drag(c);
     ar__apply_wheel(c);
+    ar__apply_keys(c);
 
     /* Hover resolves from the previous frame, so the frame that notices a new
        box under the cursor cannot also style it. Damaging both boxes now means
