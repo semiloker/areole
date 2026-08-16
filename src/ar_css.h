@@ -98,6 +98,11 @@ typedef enum ar_prop
     AR_P_SCROLL_SNAP_ALIGN,
     AR_P_SCROLL_SNAP_STOP,
 
+    /* Whether this container keeps its reading position when something above
+       the fold changes size. On by default, as CSS says, because the whole
+       point is that nobody should have to ask for it. */
+    AR_P_OVERFLOW_ANCHOR,
+
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -442,6 +447,12 @@ enum
     AR_SNAP_ALIGN_START,
     AR_SNAP_ALIGN_CENTER,
     AR_SNAP_ALIGN_END
+};
+
+enum
+{
+    AR_ANCHOR_AUTO = 0,
+    AR_ANCHOR_NONE
 };
 
 enum

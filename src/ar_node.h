@@ -282,6 +282,30 @@ struct ar_ctx
     int    move_many;
 
     /*
+     * The box overflow-anchor is holding still, and how far it sat below the
+     * top of its scrollport when we last looked.
+     *
+     * On the context rather than in the slot table, for the reason the region
+     * move records its shift there: a slot is carried by every box in the
+     * interface, so eight bytes in it is eight bytes a box, and ar_slot is
+     * close enough to the budget AR_MEM promises that a compact build would
+     * land on it exactly.
+     *
+     * One container at a time, therefore. Two lists both growing above the
+     * fold in the same frame is the case this cannot serve, and the second one
+     * behaves as it does today rather than wrongly. Naming that is cheaper
+     * than a per-box field nobody could afford.
+     */
+    ar_u32 anchor_container; /* key of the scroll container, 0 for none */
+    ar_u32 anchor_node;      /* key of the box being held still */
+    ar_i32 anchor_y;         /* its offset from the top of the scrollport */
+
+    /* What the container's offset was when the anchor was taken. If it differs
+       now, the reader moved it, the anchor's apparent movement was asked for,
+       and compensating would cancel the scroll. */
+    ar_i32 anchor_scroll;
+
+    /*
      * The scrollbar thumb being dragged, and where inside it the press landed.
      *
      * The grab offset is what separates a scrollbar from a slider: without it
