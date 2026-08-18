@@ -5612,6 +5612,111 @@ static void test_the_top_layer_takes_the_pointer_first(void)
     CHECK(g_ui->hot == g_ui->nodes[2].key, "top layer: with it the lifted box takes the hit");
 }
 
+/* ------------------------------------------------------------------------
+ * inert
+ *
+ * A modal makes everything outside it unreachable. The half that matters is
+ * the other one: the modal itself, its own subtree, and an ordinary page with
+ * no modal on it must all stay reachable, or "inert" just means "nothing
+ * works".
+ * ------------------------------------------------------------------------ */
+static void ar__inert_scene(ar_surface *s, const char *css, ar_i32 mx, ar_i32 my)
+{
+    ar_input in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = mx;
+    in.mouse_y = my;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page"); /* 1 */
+    ar_begin(g_ui, "div.btn");  /* 2, under the dialog */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dlg"); /* 3 */
+    ar_begin(g_ui, "div.ok");  /* 4, inside the dialog */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* The dialog covers the right half, the page's button the left, so the two can
+   be pointed at separately. */
+static const char *AR_INERT_CSS = "#root { display:block; }"
+                                  ".page { display:block; position:absolute; top:0px; left:0px;"
+                                  "        width:200px; height:200px; }"
+                                  ".btn  { display:block; position:absolute; top:20px; left:10px;"
+                                  "        width:60px; height:40px; }"
+                                  ".dlg  { display:block; position:absolute; top:0px; left:100px;"
+                                  "        width:100px; height:200px; }"
+                                  /* Inside .dlg, which is positioned, so these insets are
+                                     measured from the dialog rather than the viewport: the
+                                     dialog starts at 100, so this lands at 110. */
+                                  ".ok   { display:block; position:absolute; top:20px;"
+                                  "        left:10px; width:60px; height:40px; }";
+
+static void test_a_modal_makes_everything_outside_it_unreachable(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       modal[900];
+    char       plain[900];
+
+    strcpy(plain, AR_INERT_CSS);
+    strcpy(modal, AR_INERT_CSS);
+    strcat(modal, ".dlg { overlay: modal; }");
+
+    /* The control first. With no modal the page's button takes the cursor,
+       which is what makes the next assertion mean something. */
+    ar__inert_scene(&s, plain, 40, 40);
+    CHECK(g_ui->hot == g_ui->nodes[2].key, "inert: with no modal the button under it is reachable");
+
+    ar__inert_scene(&s, modal, 40, 40);
+    CHECK(g_ui->hot != g_ui->nodes[2].key,
+          "inert: a modal puts the button outside it out of reach");
+
+    /* And the modal's own subtree is not inert, which is the half that turns
+       this from a feature into a bug if it is got wrong. */
+    ar__inert_scene(&s, modal, 140, 40);
+    CHECK(g_ui->hot == g_ui->nodes[4].key, "inert: the modal's own contents stay reachable");
+}
+
+static void test_inert_marks_a_subtree_without_any_modal(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       css[900];
+
+    strcpy(css, AR_INERT_CSS);
+    strcat(css, ".page { inert: auto; }");
+
+    /* No modal anywhere: a box can simply say it is inert, and it carries its
+       subtree with it. */
+    ar__inert_scene(&s, css, 40, 40);
+    CHECK(g_ui->hot != g_ui->nodes[2].key && g_ui->hot != g_ui->nodes[1].key,
+          "inert: a subtree marked inert takes no pointer, nor does its child");
+
+    ar__inert_scene(&s, css, 140, 40);
+    CHECK(g_ui->hot == g_ui->nodes[4].key, "inert: and a sibling outside it is untouched");
+}
+
+static void test_a_non_modal_top_layer_box_makes_nothing_inert(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       css[900];
+
+    strcpy(css, AR_INERT_CSS);
+    strcat(css, ".dlg { overlay: auto; }");
+
+    /* A popover is in the top layer and is not a modal. The page behind it
+       keeps working, which is the entire difference between the two. */
+    ar__inert_scene(&s, css, 40, 40);
+    CHECK(g_ui->hot == g_ui->nodes[2].key,
+          "inert: a non-modal box in the top layer leaves the page reachable");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9418,6 +9523,9 @@ int main(void)
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
+    test_a_modal_makes_everything_outside_it_unreachable();
+    test_inert_marks_a_subtree_without_any_modal();
+    test_a_non_modal_top_layer_box_makes_nothing_inert();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();
