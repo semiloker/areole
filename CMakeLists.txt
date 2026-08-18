@@ -90,6 +90,12 @@ if(WIN32)
     target_link_libraries(example_snap PRIVATE areole_win32)
     areole_set_warnings(example_snap)
 
+    # The sticky corpus. Same shape again: window by default, --dump for the
+    # browser comparison and for CI.
+    add_executable(example_sticky examples/06_sticky/main.c)
+    target_link_libraries(example_sticky PRIVATE areole_win32)
+    areole_set_warnings(example_sticky)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)

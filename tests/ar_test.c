@@ -5220,6 +5220,61 @@ static const char *AR_SCROLL_CSS = "#root { display:block; }"
                                    ".row { display:block; height:40px; }";
 
 /* The range is what does not fit, and nothing more. */
+/*
+ * A sticky box bigger than the block it must stay inside cannot move.
+ *
+ * The clamp gives the shift a range: at least far enough that the leading edge
+ * stays in, at most far enough that the trailing edge does. Applying those two
+ * one after the other looks the same and is not -- when the box is bigger than
+ * the containing block the range is empty, and the second correction used to
+ * overwrite the first and produce a large shift the wrong way. A 420 wide row
+ * in a 200 wide horizontal scrollport was pinned at -220 whatever the scroll
+ * position.
+ *
+ * A browser leaves such a box alone, because there is nowhere it can go that
+ * satisfies the constraint. Found by examples/06_sticky against Edge.
+ */
+static void test_a_sticky_box_too_big_to_move_does_not(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".port { display:block; width:200px; height:120px; overflow-x:scroll; }"
+                 ".wide { display:block; width:420px; height:30px;"
+                 "        position:sticky; left:10px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.port");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    ar_frame_presented(g_ui);
+
+    CHECK(ar_node_scroll_range_x(g_ui, 1) == 220, "sticky: the row overflows its port sideways");
+
+    ar_node_scroll_to_x(g_ui, 1, 45);
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.port");
+    ar_begin(g_ui, "div.wide");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Scrolled like any other content, and not pinned anywhere. */
+    CHECK(ar__box(2).x == -45, "sticky: a box wider than its containing block just scrolls");
+}
+
 static void test_scroll_range_is_the_overflow(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -8933,6 +8988,7 @@ int main(void)
     test_sticky_leaves_with_its_section();
     test_sticky_against_the_viewport();
     test_sticky_with_no_offsets_never_moves();
+    test_a_sticky_box_too_big_to_move_does_not();
     test_scroll_range_is_the_overflow();
     test_scrolling_moves_the_contents();
     test_scroll_is_clamped();
