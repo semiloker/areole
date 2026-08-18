@@ -550,6 +550,86 @@ void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
     }
 }
 
+/*
+ * Sticky boxes that cannot ever stick.
+ *
+ * A sticky box is pinned inside its nearest scroll container. CSS counts
+ * `overflow: hidden` as one -- it clips, and it can be scrolled
+ * programmatically even though nothing offers the user a way to -- so a sticky
+ * box inside one is pinned to a scrollport that never moves, and never sticks.
+ *
+ * That is correct, and it is the single most reported non-bug in every engine,
+ * because the author sees a header that will not stick and a stylesheet with
+ * nothing wrong in it. Saying so is cheaper than being asked.
+ *
+ * The walk stops at the first clipping ancestor, which is the one that decides:
+ * a scrolling ancestor further out is not this box's scrollport and cannot
+ * rescue it.
+ */
+static void ar__diagnose(ar_ctx *c)
+{
+    ar_i32 i;
+
+    c->diag_count = 0;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_i32 at;
+
+        if (!ar_is_sticky(&c->nodes[i]) || c->nodes[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+
+        for (at = c->nodes[i].parent; at >= 0; at = c->nodes[at].parent)
+        {
+            if (!ar_clips(&c->nodes[at]))
+            {
+                continue;
+            }
+            if (!ar_is_scroll_container(&c->nodes[at]) && c->diag_count < AR_DIAG_MAX)
+            {
+                c->diag[c->diag_count].code = AR_DIAG_STICKY_NEVER_STICKS;
+                c->diag[c->diag_count].node = i;
+                ++c->diag_count;
+            }
+            break;
+        }
+    }
+}
+
+ar_i32 ar_diag_count(const ar_ctx *c)
+{
+    return c ? c->diag_count : 0;
+}
+
+ar_i32 ar_diag_at(const ar_ctx *c, ar_i32 i, ar_i32 *out_node)
+{
+    if (!c || i < 0 || i >= c->diag_count)
+    {
+        if (out_node)
+        {
+            *out_node = -1;
+        }
+        return 0;
+    }
+    if (out_node)
+    {
+        *out_node = c->diag[i].node;
+    }
+    return c->diag[i].code;
+}
+
+const char *ar_diag_text(ar_i32 code)
+{
+    if (code == AR_DIAG_STICKY_NEVER_STICKS)
+    {
+        return "position:sticky inside an overflow:hidden ancestor never sticks: "
+               "that ancestor is its scrollport and it does not scroll";
+    }
+    return "";
+}
+
 ar_perf *ar_perf_of(ar_ctx *c)
 {
     return &c->perf;
@@ -2792,6 +2872,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Content widths, then clips: both once the rectangles are final and
        before anything asks for either. */
     ar__content_widths(c);
+    ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 

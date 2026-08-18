@@ -52,6 +52,7 @@
 #define SHAPE_SIMPLE      0
 #define SHAPE_CONSTRAINED 1
 #define SHAPE_NESTED      2
+#define SHAPE_HIDDEN      3
 
 #define AXIS_Y 0
 #define AXIS_X 1
@@ -83,7 +84,8 @@ static const char *SHEET_BASE_B = ".group  { display:block; height:120px; backgr
                                   "          height:150px; background:#eef2f4; }"
                                   ".inner  { display:block; overflow:scroll; height:110px;"
                                   "          background:#f8f4ec; }"
-                                  ".pad    { display:block; height:70px; background:#e2e8ea; }";
+                                  ".pad    { display:block; height:70px; background:#e2e8ea; }"
+                                  ".hid    { display:block; overflow:hidden; height:110px; }";
 
 typedef struct
 {
@@ -136,6 +138,17 @@ static const sticky_variant VARIANTS[] = {
 
     {"nested-outer", SHAPE_NESTED, AXIS_Y, 1, ".stick { position:sticky; top:6px; }"},
 
+    /*
+     * The most reported non-bug in every engine: a sticky box inside an
+     * `overflow: hidden` ancestor never sticks, because that ancestor is a
+     * scroll container and therefore its scrollport, and it does not scroll.
+     * The outer scroller moves the whole thing past instead.
+     *
+     * Here to establish what a browser actually does rather than to confirm
+     * what the specification is thought to say.
+     */
+    {"blocked-by-hidden", SHAPE_HIDDEN, AXIS_Y, 1, ".stick { position:sticky; top:6px; }"},
+
     {"static-control", SHAPE_SIMPLE, AXIS_Y, 1, ".stick { position:static; }"}};
 
 #define VARIANT_COUNT ((ar_i32)(sizeof VARIANTS / sizeof VARIANTS[0]))
@@ -172,6 +185,19 @@ static void build(ar_ctx *ui, int shape)
         ar_end(ui);
         ar_end(ui);
         ar_begin(ui, "div.after");
+        ar_end(ui);
+        ar_end(ui);
+    }
+    else if (shape == SHAPE_HIDDEN)
+    {
+        ar_begin(ui, "div.outer");
+        ar_begin(ui, "div.hid");
+        ar_begin(ui, "div.before");
+        ar_end(ui);
+        ar_begin(ui, "div.stick");
+        ar_end(ui);
+        ar_begin(ui, "div.after");
+        ar_end(ui);
         ar_end(ui);
         ar_end(ui);
     }

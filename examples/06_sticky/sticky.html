@@ -70,6 +70,7 @@ h2 {
 .outer  { display: block; overflow: scroll; width: 200px; height: 150px; background: #eef2f4; }
 .inner  { display: block; overflow: scroll; height: 110px; background: #f8f4ec; }
 .pad    { display: block; height: 70px;  background: #e2e8ea; }
+.hid    { display: block; overflow: hidden; height: 110px; }
 
 /* The eleven variants, mirroring VARIANTS[] in main.c. */
 .v-top            .stick { position: sticky; top: 10px; }
@@ -91,6 +92,7 @@ h2 {
 .v-nested-inner .stick { position: sticky; top: 6px; }
 .v-nested-outer .stick { position: sticky; top: 6px; }
 
+.v-blocked-by-hidden .stick { position: sticky; top: 6px; }
 .v-static-control .stick { position: static; }
 
 #cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
@@ -120,6 +122,7 @@ const VARIANTS = [
   { name: 'constrained-inset',shape: 'constrained', axis: 'y', scroll: 'port'  },
   { name: 'nested-inner',     shape: 'nested',      axis: 'y', scroll: 'inner' },
   { name: 'nested-outer',     shape: 'nested',      axis: 'y', scroll: 'outer' },
+  { name: 'blocked-by-hidden',shape: 'hidden',      axis: 'y', scroll: 'outer' },
   { name: 'static-control',   shape: 'simple',      axis: 'y', scroll: 'port'  }
 ];
 const TARGETS = [0, 20, 45, 80, 9999];
@@ -147,6 +150,15 @@ function buildShape(shape) {
     port.appendChild(group);
     port.appendChild(div('after'));
     return port;
+  }
+  if (shape === 'hidden') {
+    const outer = div('outer');
+    const hid = div('hid');
+    hid.appendChild(div('before'));
+    hid.appendChild(div('stick'));
+    hid.appendChild(div('after'));
+    outer.appendChild(hid);
+    return outer;
   }
   const outer = div('outer');
   outer.appendChild(div('pad'));

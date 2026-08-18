@@ -735,6 +735,39 @@ void ar_set_titlebar_area(ar_ctx *c, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h);
  */
 void ar_set_viewport_fit_cover(ar_ctx *c, int cover);
 
+/* ------------------------------------------------------------------------
+ * Diagnostics
+ *
+ * Things a frame noticed that are probably not what the author meant, and are
+ * not errors: the stylesheet is valid, the layout is correct, and the result
+ * is still unlikely to be what anyone wanted.
+ *
+ * The first of them is the reason this exists. A sticky box inside an
+ * `overflow: hidden` ancestor never sticks -- that ancestor is its scrollport
+ * and it does not scroll -- which is correct behaviour and the most reported
+ * non-bug in every engine. Rather than leave people to find that out, areole
+ * says so.
+ *
+ * Refreshed every frame. Reading them is optional and costs nothing when
+ * nobody does.
+ * ------------------------------------------------------------------------ */
+enum
+{
+    AR_DIAG_STICKY_NEVER_STICKS = 1
+};
+
+#define AR_DIAG_MAX 16
+
+/* How many this frame produced. */
+ar_i32 ar_diag_count(const ar_ctx *c);
+
+/* The code of one, and through `out_node` the box it is about. Returns 0 for
+   an index nobody reported. */
+ar_i32 ar_diag_at(const ar_ctx *c, ar_i32 i, ar_i32 *out_node);
+
+/* A fixed English sentence for a code. Never null. */
+const char *ar_diag_text(ar_i32 code);
+
 ar_perf *ar_perf_of(ar_ctx *c);
 
 /* Where the arena stands. Every figure is bytes.
