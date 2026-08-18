@@ -207,14 +207,25 @@ ar_u32 ar_paint_digest(const ar_node *n)
        when only that property changes.
 
        Read through ar_style_get rather than v[] directly: this list is walked
-       by index, so three of its entries are the wide properties that live past
+       by index, so five of its entries are the wide properties that live past
        the end of v[]. Indexing v[] here compiled without a murmur -- the
        subscript is not a constant, so -Warray-bounds cannot see it -- and
        produced a digest built from whatever followed the array. The
-       pixel-identity test is what caught it. */
-    static const int PAINTED[] = {AR_P_DISPLAY,    AR_P_OVERFLOW,     AR_P_OVERFLOW_X,
-                                  AR_P_BACKGROUND, AR_P_BORDER_WIDTH, AR_P_BORDER_COLOR,
-                                  AR_P_PAD_LEFT,   AR_P_PAD_TOP,      AR_P_COLOR};
+       pixel-identity test is what caught it.
+
+       The four scrollbar entries are here because the warning above was not
+       heeded once already: the overlay bar added ar__paint_bars to the paint
+       pass, which reads scrollbar-color through AR_P_SCROLLBAR_THUMB and
+       AR_P_SCROLLBAR_TRACK and reaches AR_P_SCROLLBAR_WIDTH and
+       AR_P_SCROLLBAR_GUTTER through ar_scroll_bar_visible, and this list was
+       left alone. A frame where hover changed nothing but the bar's colour
+       produced no damage and the bar kept the colour it had -- right geometry,
+       wrong pixels, which every geometry test in the suite is blind to. */
+    static const int PAINTED[] = {AR_P_DISPLAY,         AR_P_OVERFLOW,         AR_P_OVERFLOW_X,
+                                  AR_P_BACKGROUND,      AR_P_BORDER_WIDTH,     AR_P_BORDER_COLOR,
+                                  AR_P_PAD_LEFT,        AR_P_PAD_TOP,          AR_P_COLOR,
+                                  AR_P_SCROLLBAR_WIDTH, AR_P_SCROLLBAR_GUTTER, AR_P_SCROLLBAR_THUMB,
+                                  AR_P_SCROLLBAR_TRACK};
     ar_u32           h = 2166136261u;
     ar_u32           i;
     ar_u32           count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
@@ -224,6 +235,26 @@ ar_u32 ar_paint_digest(const ar_node *n)
         h = ar__mix(h, (ar_u32)ar_style_get(&n->style, PAINTED[i]));
     }
     h = ar__mix(h, (ar_u32)n->scale);
+
+    /*
+     * Not style, but the paint pass reads it all the same.
+     *
+     * Whether a bar is drawn at all, and how long its thumb is, come from
+     * ar_scroll_range -- and that is content_h against the box, neither of
+     * which is a property. A list that grows past its container gains a
+     * scrollbar with no style change and no change to the container's own
+     * rectangle, so every test above it says the box is untouched and the bar
+     * is never painted. The rows that grew are damaged, but they are not the
+     * column the bar lives in.
+     *
+     * The scroll position is deliberately not mixed in. It moves the thumb,
+     * but every path that scrolls already damages the container, and hashing
+     * it here would mark a scrolled container dirty a second time for no gain.
+     */
+    if (ar_is_scroll_container(n))
+    {
+        h = ar__mix(h, (ar_u32)n->content_h);
+    }
 
     if (n->text)
     {

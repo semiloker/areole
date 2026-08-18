@@ -1951,6 +1951,203 @@ static void ar__scroll_dmg_declare(ar_ctx *c)
     ar_end(c);
 }
 
+/*
+ * Only the scrollbar's colour changes, and the bar has to notice.
+ *
+ * ar__paint_bars reads scrollbar-color and scrollbar-width; ar_paint_digest is
+ * the list of exactly what the paint pass reads, and when the overlay bar
+ * landed none of them were added to it. A frame in which one of them is the
+ * only thing that changed then produces no damage at all, so the bar keeps the
+ * colour it had. Geometry stays right, which is why every other scroll test
+ * here is blind to it.
+ *
+ * Hover is the driver because a stylesheet is fixed for the life of a context:
+ * a state change is the only way one of these properties differs between two
+ * frames of the same interface.
+ */
+static const char *const SCROLL_BAR_DMG_CSS =
+    "#root { display:block; overflow:scroll; height:128px; background:#101010;"
+    "        scrollbar-color: #808080 #202020; }"
+    "#root:hover { scrollbar-color: #ff0000 #202020; }"
+    ".row { display:block; height:1px; margin:1px 0px; background:#3a4a5a; }";
+
+static void test_the_bar_repaints_when_only_its_colour_changed(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+
+    /* Off the container, onto it, held there, off again. The hover edges are
+       the frames that matter; the held frame catches a digest that only ever
+       reports a change once. */
+    static const int INSIDE[4] = {0, 1, 1, 0};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(SCROLL_BAR_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "scrollbar: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, SCROLL_BAR_DMG_CSS);
+
+    for (frame = 0; frame < 4 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = INSIDE[frame] ? AR_DMG_W / 2 : -1;
+        in.mouse_y = INSIDE[frame] ? AR_DMG_H / 2 : -1;
+        in.mouse_inside = INSIDE[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__scroll_dmg_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__scroll_dmg_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(ar_node_scroll_range(g_ui, 0) > 0, "scrollbar: the list is long enough to show a bar");
+    CHECK(bad_frame < 0, "scrollbar: a colour change on its own still repaints the bar");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
+/*
+ * The bar appears because the content grew, not because anything was styled.
+ *
+ * `overflow: auto` shows a bar only once there is somewhere to go, so a list
+ * that grows past its box gains one with no style change and no change to the
+ * container's own rectangle. ar_paint_digest cannot see that -- it hashes
+ * style, and ar_scroll_bar_visible's answer turns on content_h -- so the box
+ * that has to paint the bar is not the box the frame knows is dirty.
+ */
+static const char *const SCROLL_GROW_DMG_CSS =
+    "#root { display:block; overflow:auto; height:128px; background:#101010; }"
+    ".row { display:block; height:1px; margin:1px 0px; background:#3a4a5a; }";
+
+static int g_grow_rows = 8;
+
+static void ar__scroll_grow_declare(ar_ctx *c)
+{
+    int i;
+
+    ar_begin(c, "div#root");
+    for (i = 0; i < g_grow_rows; ++i)
+    {
+        ar_begin(c, "div.row");
+        ar_end(c);
+    }
+    ar_end(c);
+}
+
+static void test_a_bar_that_appears_because_content_grew(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+    ar_i32     range_before = -1, range_after = -1;
+
+    /* One row either side of the threshold, so the bar appears without the new
+       content covering the column the bar is drawn in. Growing by a screenful
+       instead would repaint that column as a side effect and prove nothing. */
+    static const int ROWS[4] = {63, 63, 64, 64};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(SCROLL_GROW_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "scrollbar: the growing reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, SCROLL_GROW_DMG_CSS);
+
+    for (frame = 0; frame < 4 && bad_frame < 0; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        g_grow_rows = ROWS[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__scroll_grow_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__scroll_grow_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        if (frame == 1)
+        {
+            range_before = ar_node_scroll_range(ref, 0);
+        }
+        if (frame == 2)
+        {
+            range_after = ar_node_scroll_range(ref, 0);
+        }
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+                break;
+            }
+        }
+    }
+
+    CHECK(range_before == 0 && range_after > 0,
+          "scrollbar: the probe really does cross the threshold that shows a bar");
+    CHECK(bad_frame < 0, "scrollbar: a bar that appears because content grew is painted whole");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
 static void test_a_region_move_is_identical_to_a_full_repaint(void)
 {
     ar_surface moved = ar__dmg_surface(g_dmg_a);
@@ -5237,6 +5434,75 @@ static ar_i32 ar__chain_run(const char *css)
     return ar_node_scroll(g_ui, 1);
 }
 
+static const char *AR_CHAIN_CSS_NONE = "#root { display:block; }"
+                                       ".page { display:block; height:100px; overflow:scroll; }"
+                                       ".list { display:block; height:60px; overflow:scroll;"
+                                       "        overscroll-behavior: none; }"
+                                       ".row  { display:block; height:40px; }"
+                                       ".tail { display:block; height:200px; }";
+
+/*
+ * The same question the criterion asks: a sequence, not a notch.
+ *
+ * One notch proves the first one was kept. A modal that leaks on the eighth
+ * turn of the wheel is the bug people actually report, so this drives the
+ * inner list to its end and then keeps going, watching the ancestor after
+ * every single notch rather than only at the end. `peak` is the furthest the
+ * page behind ever moved, so a container that chains once and comes back
+ * cannot hide inside a final reading of zero.
+ */
+static ar_i32 ar__chain_sequence(const char *css, ar_i32 notches, ar_i32 *peak)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     i;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 30;
+    in.mouse_inside = 1;
+    ar__chain_scene(&s, &in);
+
+    ar_node_scroll_to(g_ui, 2, ar_node_scroll_range(g_ui, 2));
+    ar__chain_scene(&s, &in);
+
+    *peak = 0;
+    for (i = 0; i < notches; ++i)
+    {
+        ar_i32 at;
+
+        in.wheel = -1;
+        ar__chain_scene(&s, &in);
+        in.wheel = 0;
+        ar__chain_scene(&s, &in);
+
+        at = ar_node_scroll(g_ui, 1);
+        if (at > *peak)
+        {
+            *peak = at;
+        }
+    }
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_overscroll_contain_holds_over_a_whole_sequence(void)
+{
+    ar_i32 auto_peak = 0, contain_peak = 0, none_peak = 0;
+    ar_i32 chained = ar__chain_sequence(AR_CHAIN_CSS, 10, &auto_peak);
+    ar_i32 contained = ar__chain_sequence(AR_CHAIN_CSS_CONTAIN, 10, &contain_peak);
+    ar_i32 refused = ar__chain_sequence(AR_CHAIN_CSS_NONE, 10, &none_peak);
+
+    /* The control. Without this the two below pass against an engine that
+       never chains at all, which is the shape of the bug they exist to catch
+       and exactly how overflow:auto stayed broken for a release. */
+    CHECK(chained > 0 && auto_peak == chained,
+          "overscroll: auto chains outwards, and keeps going, over ten notches");
+    CHECK(contained == 0 && contain_peak == 0,
+          "overscroll: contain never lets one through, on any notch of ten");
+    CHECK(refused == 0 && none_peak == 0, "overscroll: none holds the same way");
+}
+
 static void test_overscroll_behavior_stops_the_chain(void)
 {
     ar_i32 chained, contained;
@@ -5247,6 +5513,610 @@ static void test_overscroll_behavior_stops_the_chain(void)
     CHECK(chained > 0,
           "overscroll: auto hands the notch outwards when the inner list is at its end");
     CHECK(contained == 0, "overscroll: contain keeps it, and the page behind does not move");
+}
+
+/* ------------------------------------------------------------------------
+ * scrollbar-width, scrollbar-gutter, scrollbar-color
+ *
+ * areole draws its own bar, so these are honoured everywhere and look the same
+ * everywhere -- the one thing a native scrollbar can never promise.
+ * ------------------------------------------------------------------------ */
+static const char *AR_BAR_CSS = "#root { display:block; }"
+                                ".list { display:block; height:100px; overflow:scroll;"
+                                "        width:200px; }"
+                                ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_THIN = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        width:200px; scrollbar-width: thin; }"
+                                     ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_NONE = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        width:200px; scrollbar-width: none; }"
+                                     ".row  { display:block; height:40px; }";
+
+static const char *AR_BAR_CSS_GUTTER = "#root { display:block; }"
+                                       ".list { display:block; height:100px; overflow:scroll;"
+                                       "        width:200px; scrollbar-gutter: stable; }"
+                                       ".row  { display:block; height:40px; }";
+
+static void test_scrollbar_width_changes_the_bar(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     wide_w, thin_w;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_BAR_CSS);
+    ar__scroll_scene(&s, &in);
+    wide_w = ar_scroll_bar_width(&g_ui->nodes[1]);
+
+    ar__ui_reset(AR_BAR_CSS_THIN);
+    ar__scroll_scene(&s, &in);
+    thin_w = ar_scroll_bar_width(&g_ui->nodes[1]);
+
+    CHECK(wide_w == 8 && thin_w == 4, "scrollbar-width: thin is narrower than auto");
+
+    /* `none` hides the bar. It must not stop the wheel: a list nobody can
+       reach is the failure this property invites. */
+    ar__ui_reset(AR_BAR_CSS_NONE);
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_scroll_bar_width(&g_ui->nodes[1]) == 0 && !ar_scroll_bar_visible(&g_ui->nodes[1]),
+          "scrollbar-width: none draws no bar");
+
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    in.wheel = -1;
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll(g_ui, 1) > 0, "scrollbar-width: none still scrolls");
+}
+
+static void test_scrollbar_gutter_reserves_its_width(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     plain, stable;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_BAR_CSS);
+    ar__scroll_scene(&s, &in);
+    plain = ar__box(2).w;
+
+    ar__ui_reset(AR_BAR_CSS_GUTTER);
+    ar__scroll_scene(&s, &in);
+    stable = ar__box(2).w;
+
+    /* The bar is an overlay, so nothing reflows when one appears and `stable`
+       has no layout shift to prevent. What it buys is that a row stops before
+       the bar instead of running underneath it. */
+    CHECK(plain == 200 && stable == 200 - 8,
+          "scrollbar-gutter: stable takes the bar's width off the content");
+}
+
+/*
+ * Criterion 5: `scrollbar-gutter: stable` causes zero layout shift when the
+ * content grows past the container.
+ *
+ * test_scrollbar_gutter_reserves_its_width already checks that the width is
+ * reserved. That is not the same claim: an implementation that reserved the
+ * gutter only while a bar was showing would pass it and still shift the text
+ * sideways at the moment the list got long enough, which is the whole thing
+ * the property exists to prevent.
+ *
+ * So this measures a row before and after the content crosses that threshold.
+ */
+static void ar__gutter_scene(ar_surface *s, const ar_input *in, const char *css, int rows)
+{
+    int i;
+
+    ar__ui_reset(css);
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < rows; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_scrollbar_gutter_stable_shifts_nothing_when_content_grows(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     fits, overflows, plain_fits, plain_overflows;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    /* One row fits a hundred pixel box; five do not. */
+    ar__gutter_scene(&s, &in, AR_BAR_CSS_GUTTER, 1);
+    fits = ar__box(2).w;
+    ar__gutter_scene(&s, &in, AR_BAR_CSS_GUTTER, 5);
+    overflows = ar__box(2).w;
+
+    CHECK(fits == overflows && fits == 200 - 8,
+          "scrollbar-gutter: stable reserves the same width before and after the list grows");
+
+    /* And the contrast, so the check above is not passing on the fact that
+       nothing in areole ever reflows for a bar. An overlay bar takes no width
+       at all, which is a different answer, not the same one. */
+    ar__gutter_scene(&s, &in, AR_BAR_CSS, 1);
+    plain_fits = ar__box(2).w;
+    ar__gutter_scene(&s, &in, AR_BAR_CSS, 5);
+    plain_overflows = ar__box(2).w;
+
+    CHECK(plain_fits == plain_overflows && plain_fits == 200,
+          "scrollbar-gutter: auto reserves nothing, and still does not shift");
+}
+
+static void test_scrollbar_color_is_read(void)
+{
+    ar__sheet(".bar { overflow:scroll; scrollbar-color: #ff0000 #00ff00; }");
+    CHECK((ar__css_value(".bar", 0, AR_P_SCROLLBAR_THUMB) & 0xFFFFFF) == 0xFF0000 &&
+              (ar__css_value(".bar", 0, AR_P_SCROLLBAR_TRACK) & 0xFFFFFF) == 0x00FF00,
+          "scrollbar-color: thumb first, then track");
+
+    /* One value is not valid CSS. Taking it as the thumb and leaving the track
+       alone is more useful than refusing a declaration that clearly meant
+       something. */
+    ar__sheet(".one { overflow:scroll; scrollbar-color: #0000ff; }");
+    CHECK((ar__css_value(".one", 0, AR_P_SCROLLBAR_THUMB) & 0xFFFFFF) == 0x0000FF &&
+              ar__css_value(".one", 0, AR_P_SCROLLBAR_TRACK) == 0,
+          "scrollbar-color: a lone colour is the thumb");
+}
+
+/* ------------------------------------------------------------------------
+ * Scroll snapping
+ *
+ * A container 100 tall holding five rows of 40. The rows declare
+ * scroll-snap-align: start, so the settled positions are multiples of 40.
+ * A notch is AR_SCROLL_STEP, 30 px, which lands between two of them on
+ * purpose -- a step that happened to equal the pitch would pass whether or
+ * not any snapping code ran.
+ * ------------------------------------------------------------------------ */
+static const char *AR_SNAP_CSS = "#root { display:block; }"
+                                 ".list { display:block; height:100px; overflow:scroll;"
+                                 "        scroll-snap-type: y mandatory; }"
+                                 ".row  { display:block; height:40px;"
+                                 "        scroll-snap-align: start; }";
+
+static const char *AR_SNAP_CSS_PROX = "#root { display:block; }"
+                                      ".list { display:block; height:100px; overflow:scroll;"
+                                      "        scroll-snap-type: y proximity; }"
+                                      ".row  { display:block; height:40px;"
+                                      "        scroll-snap-align: start; }";
+
+static const char *AR_SNAP_CSS_PAD = "#root { display:block; }"
+                                     ".list { display:block; height:100px; overflow:scroll;"
+                                     "        scroll-snap-type: y mandatory;"
+                                     "        scroll-padding-top: 5px; }"
+                                     ".row  { display:block; height:40px;"
+                                     "        scroll-snap-align: start; }";
+
+static ar_i32 ar__snap_after_one_notch(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -1; /* AR_SCROLL_STEP, 30 px, which is not a multiple of 40 */
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+/*
+ * A programmatic scroll snaps, the same way a notch does.
+ *
+ * CSS applies snapping after any scrolling operation, not only the ones a hand
+ * drove -- a mandatory container rests on a snap point however it got there,
+ * which is why a browser re-snaps when a script assigns scrollTop. areole used
+ * to snap the wheel and the keys and not this call, so where a container came
+ * to rest depended on which of the three moved it.
+ *
+ * The rows are 40 tall in a 100 tall box, so the snap points are multiples of
+ * 40 up to the range of 100. Asking for 50 is deliberately between two of
+ * them, and nearer to 40.
+ */
+static void test_a_programmatic_scroll_snaps(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     snapped, loose;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__ui_reset(AR_SNAP_CSS);
+    ar__scroll_scene(&s, &in);
+    snapped = ar_node_scroll_to(g_ui, 1, 50);
+
+    /* The control: the same request on the same geometry with no snap
+       declaration, which must land exactly where it was asked to. Without it
+       this passes against a call that quietly clamps to something else. */
+    ar__ui_reset(AR_SCROLL_CSS);
+    ar__scroll_scene(&s, &in);
+    loose = ar_node_scroll_to(g_ui, 1, 50);
+
+    CHECK(loose == 50, "scroll: without snapping a programmatic scroll goes where it is sent");
+    CHECK(snapped == 40, "scroll: with mandatory snapping it settles on the nearest snap point");
+
+    /* And the end of the range is still reachable, which is the case a naive
+       snap breaks: the last snap point is 40 short of the end, and a container
+       that cannot be scrolled to its bottom is the bug people notice. */
+    ar__ui_reset(AR_SNAP_CSS);
+    ar__scroll_scene(&s, &in);
+    CHECK(ar_node_scroll_to(g_ui, 1, 9999) == 100, "scroll: and the end of the range is reachable");
+}
+
+static void test_snap_lands_on_a_snap_point(void)
+{
+    ar_i32 snapped = ar__snap_after_one_notch(AR_SNAP_CSS);
+    ar_i32 loose = ar__snap_after_one_notch(AR_SCROLL_CSS);
+
+    /* Without snapping a notch travels its full 30 px. With it, the nearest
+       row start is 40, and mandatory takes it. */
+    CHECK(loose == 30, "snap: an unsnapped notch travels its own distance");
+    CHECK(snapped == 40, "snap: mandatory lands on the nearest row start");
+}
+
+static void test_snap_proximity_leaves_a_distant_point_alone(void)
+{
+    /* The nearest point to 30 is 40, ten pixels away, and the scrollport is
+       100 -- well inside the proximity window, so proximity agrees with
+       mandatory here. The case that separates them needs a point further away
+       than half the viewport, which five forty pixel rows cannot produce; what
+       this pins is that `proximity` parses and still snaps rather than being
+       silently read as `none`. */
+    CHECK(ar__snap_after_one_notch(AR_SNAP_CSS_PROX) == 40,
+          "snap: proximity still snaps when a point is near");
+}
+
+static void test_snap_honours_scroll_padding(void)
+{
+    /*
+     * scroll-padding-top moves the top of the scrollport down by 5, so
+     * aligning the second row's start to it needs 5 px less scroll: 35 rather
+     * than 40.
+     *
+     * Five and not ten, and that is the whole point of this test. With ten the
+     * answer is 30, which is also what an unsnapped notch gives -- so the test
+     * would have passed against a build where scroll-padding did nothing at
+     * all, or where snapping did. 35 is reachable no other way.
+     */
+    CHECK(ar__snap_after_one_notch(AR_SNAP_CSS_PAD) == 35,
+          "snap: scroll-padding moves the port the points are measured against");
+}
+
+/*
+ * scroll-snap-stop: always
+ *
+ * A hard flick -- five notches, 150 px, clamped to the 100 px range -- against
+ * rows that each forbid being passed. Mandatory alone would settle at 100, the
+ * point nearest where the gesture was heading. `always` must stop it at the
+ * first row it would have crossed instead, which is 40.
+ *
+ * That is the difference between a good carousel and an infuriating one, and
+ * the two expected values are far apart so the test cannot pass by accident.
+ */
+static const char *AR_SNAP_CSS_STOP = "#root { display:block; }"
+                                      ".list { display:block; height:100px; overflow:scroll;"
+                                      "        scroll-snap-type: y mandatory; }"
+                                      ".row  { display:block; height:40px;"
+                                      "        scroll-snap-align: start;"
+                                      "        scroll-snap-stop: always; }";
+
+static ar_i32 ar__snap_after_a_flick(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.wheel = -5; /* 150 px, past every row in the list */
+    ar__scroll_scene(&s, &in);
+    in.wheel = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_snap_stop_always_refuses_to_be_passed(void)
+{
+    CHECK(ar__snap_after_a_flick(AR_SNAP_CSS) == 100,
+          "snap-stop: normal lets a flick run to the end");
+    CHECK(ar__snap_after_a_flick(AR_SNAP_CSS_STOP) == 40,
+          "snap-stop: always catches the flick at the first row it would pass");
+}
+
+static void test_snap_type_parses_both_words(void)
+{
+    ar__sheet(".a { overflow:scroll; scroll-snap-type: y mandatory; }"
+              ".b { overflow:scroll; scroll-snap-type: y; }"
+              ".c { overflow:scroll; scroll-snap-type: both proximity; }");
+
+    CHECK(ar__css_value(".a", 0, AR_P_SCROLL_SNAP_TYPE) == (AR_SNAP_AXIS_Y | AR_SNAP_MANDATORY),
+          "snap-type: an axis and a strictness are both kept");
+
+    /* CSS says an omitted strictness is `proximity`, not `mandatory`. Getting
+       this backwards makes every container with one snap declaration
+       impossible to scroll off a slide. */
+    CHECK(ar__css_value(".b", 0, AR_P_SCROLL_SNAP_TYPE) == AR_SNAP_AXIS_Y,
+          "snap-type: an axis alone is proximity");
+    CHECK(ar__css_value(".c", 0, AR_P_SCROLL_SNAP_TYPE) == AR_SNAP_AXIS_BOTH,
+          "snap-type: both axes, proximity stated");
+}
+
+/* ------------------------------------------------------------------------
+ * Keyboard scrolling
+ *
+ * The first keys areole has ever read. Scoped to the ones that scroll: there
+ * is no focus, no caret and no text here, and adding any of them is how 0.6.1
+ * would quietly become 0.10.0.
+ *
+ * With no focus concept, a key goes to the same container the wheel would --
+ * the innermost scrollable box under the cursor. That is a deviation from a
+ * browser, where the keyboard follows focus, and it is asserted here so it
+ * stays a decision rather than becoming an accident.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__after_key(const char *css, ar_u32 key)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+    ar__scroll_scene(&s, &in);
+
+    in.keys_pressed = key;
+    ar__scroll_scene(&s, &in);
+    in.keys_pressed = 0;
+    ar__scroll_scene(&s, &in);
+
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_keys_scroll_the_container(void)
+{
+    /* Five 40 px rows in a 100 px box: 200 of content, 100 of range. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_DOWN) == 40, "keys: down moves by a line");
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_UP) == 0, "keys: up at the top stays there");
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_END) == 100, "keys: End goes to the bottom");
+
+    /* A page is the viewport less an overlap, so the last line of the old page
+       is the first of the new one and nothing is skipped over the fold. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_PAGE_DOWN) == 76,
+          "keys: a page is the viewport less its overlap");
+
+    /* Space pages. Shift-space is mapped to Page Up by the backend, because
+       the core tracks no modifiers. */
+    CHECK(ar__after_key(AR_SCROLL_CSS, AR_KEY_SPACE) ==
+              ar__after_key(AR_SCROLL_CSS, AR_KEY_PAGE_DOWN),
+          "keys: space pages down");
+}
+
+static void test_keys_home_and_end_do_not_snap(void)
+{
+    /*
+     * End must reach the actual bottom. Snapping it would leave the last row
+     * partly off screen and no key would reach it, which is a bug rather than
+     * a nicety -- so Home and End are absolute and skip the snap entirely.
+     */
+    CHECK(ar__after_key(AR_SNAP_CSS, AR_KEY_END) == 100, "keys: End ignores snapping");
+    CHECK(ar__after_key(AR_SNAP_CSS, AR_KEY_DOWN) == 40, "keys: an ordinary key still snaps");
+}
+
+/* ------------------------------------------------------------------------
+ * scroll-into-view
+ * ------------------------------------------------------------------------ */
+static void test_scroll_into_view_moves_the_minimum(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(AR_SCROLL_CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    /* Node 2 is the first row and is already fully visible: moving would be a
+       page jumping under someone who was reading it. */
+    CHECK(!ar_node_scroll_into_view(g_ui, 2), "into-view: a visible box does not move");
+    CHECK(ar_node_scroll(g_ui, 1) == 0, "into-view: and the container stays put");
+
+    /* Node 6 is the fifth row, at 160..200 in a 100 tall port. Bringing its
+       bottom to the bottom needs 100 -- not the 160 a jump-to-top would use. */
+    CHECK(ar_node_scroll_into_view(g_ui, 6), "into-view: a box below the fold moves");
+    CHECK(ar_node_scroll(g_ui, 1) == 100,
+          "into-view: to its bottom edge, not to the top of the list");
+}
+
+static void test_scroll_into_view_honours_scroll_margin(void)
+{
+    static const char *CSS = "#root { display:block; }"
+                             ".list { display:block; height:100px; overflow:scroll; }"
+                             ".row  { display:block; height:40px; scroll-margin-bottom: 12px; }";
+    ar_surface         s = ar__ui_surface(200, 300);
+    ar_input           in;
+
+    ar__ui_reset(CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar__scroll_scene(&s, &in);
+
+    /* scroll-margin-bottom brings twelve more pixels along, which would ask
+       for 112 -- past the range, so it clamps to 100 and this alone would not
+       prove anything. Row four is the one that shows it: 120..160, so without
+       the margin it needs 60 and with it 72. */
+    ar_node_scroll_into_view(g_ui, 5);
+    CHECK(ar_node_scroll(g_ui, 1) == 72, "into-view: scroll-margin comes along with the box");
+}
+
+/* ------------------------------------------------------------------------
+ * overflow-anchor
+ *
+ * A list scrolled down, and then a row above the fold grows. Without
+ * anchoring, everything below slides by that much and the reader loses their
+ * place. With it, the scroll takes up the difference and nothing appears to
+ * move.
+ *
+ * The scene declares the first row taller on demand, which is what "content
+ * loaded above the viewport" looks like from the layout's point of view.
+ * ------------------------------------------------------------------------ */
+static const char *AR_ANCHOR_CSS = "#root { display:block; }"
+                                   ".list { display:block; height:100px; overflow:scroll; }"
+                                   ".row  { display:block; height:40px; }"
+                                   ".tall { display:block; height:70px; }";
+
+static const char *AR_ANCHOR_CSS_OFF = "#root { display:block; }"
+                                       ".list { display:block; height:100px; overflow:scroll;"
+                                       "        overflow-anchor: none; }"
+                                       ".row  { display:block; height:40px; }"
+                                       ".tall { display:block; height:70px; }";
+
+/* The first row is `.tall` once `grown` is set: 40 becomes 70, so everything
+   below it moves down by 30. */
+static void ar__anchor_scene(ar_surface *s, const ar_input *in, int grown)
+{
+    ar_i32 i;
+
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, (i == 0 && grown) ? "div.tall" : "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static ar_i32 ar__anchor_run(const char *css)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar__anchor_scene(&s, &in, 0);
+    ar_node_scroll_to(g_ui, 1, 80);
+    ar__anchor_scene(&s, &in, 0);
+
+    /* Settle, so the anchor is recorded at a position nothing is about to
+       change for its own reasons. */
+    ar__anchor_scene(&s, &in, 0);
+
+    /* Now the row above the fold grows by 30. */
+    ar__anchor_scene(&s, &in, 1);
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_overflow_anchor_keeps_the_reading_position(void)
+{
+    /*
+     * Anchored: the scroll absorbs the 30 px the first row gained, so what was
+     * under the eye stays there. Range grows with the content, so 110 is
+     * reachable.
+     *
+     * Unanchored: the offset does not move and everything below slides down,
+     * which is the behaviour this property exists to stop.
+     */
+    CHECK(ar__anchor_run(AR_ANCHOR_CSS) == 110,
+          "overflow-anchor: growth above the fold is taken up by the scroll");
+    CHECK(ar__anchor_run(AR_ANCHOR_CSS_OFF) == 80,
+          "overflow-anchor: none leaves the reader to lose their place");
+}
+
+/* ------------------------------------------------------------------------
+ * The scrollbar is an overlay, so it has to be painted over the content
+ *
+ * It was painted inside the main walk, at the container's own place in paint
+ * order -- which is before its children, because a child comes later in that
+ * order by construction. Every row of a list drew straight over the bar, and
+ * the bar showed only where the content happened not to reach.
+ *
+ * Both colours are opaque here on purpose. The defaults are translucent
+ * blacks, so a bar drawn underneath still tints the pixel and a test written
+ * against "did the colour change" would pass either way. Opaque means the
+ * pixel is the bar's colour or the row's, and nothing in between.
+ * ------------------------------------------------------------------------ */
+static void test_the_scrollbar_paints_over_the_content(void)
+{
+    static const char *CSS = "#root { display:block; }"
+                             ".list { display:block; width:100px; height:60px; overflow:scroll;"
+                             "        scrollbar-color: #ff0000 #ff0000; }"
+                             ".row  { display:block; height:40px; background:#00ff00; }";
+    ar_surface         s = ar__ui_surface(160, 120);
+    ar_input           in;
+    ar_i32             i, bar_x;
+
+    ar__ui_reset(CSS);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < 4; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The bar is drawn inside the right edge, so a pixel two in from it is
+       the track. The rows are full width and green underneath it. */
+    bar_x = ar__box(1).x + ar__box(1).w - 2;
+
+    CHECK(ar__pixel_at(bar_x, 10) == 0xFF0000u,
+          "scrollbar: the bar is painted over the rows, not under them");
+
+    /* And the row is still itself away from the bar, so the check above is
+       about paint order rather than about the row failing to draw. */
+    CHECK(ar__pixel_at(ar__box(1).x + 4, 10) == 0x00FF00u,
+          "scrollbar: the row is still painted where the bar is not");
 }
 
 /*
@@ -5519,6 +6389,85 @@ static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 
 /* A box whose content fits has nowhere to go, and `auto` shows no bar for it
    while `scroll` shows one anyway -- which is the whole difference. */
+/*
+ * `auto` has to survive the value parser.
+ *
+ * It is a length for width, height, the margins and the insets, and a keyword
+ * of its own for overflow. The length reading is tested first, so for a long
+ * time it won every time and `overflow: auto` quietly meant `visible` -- no
+ * clip, no scrolling, no bar. Nothing caught it: the suite had a test that
+ * compared `auto` against `scroll`, but its content fitted the box, and a
+ * container that fits is indistinguishable from one that does not scroll.
+ *
+ * So this checks the parsed value directly, on the shorthand and on both
+ * longhands, against `scroll` as a control.
+ */
+static void test_overflow_auto_parses_as_a_keyword(void)
+{
+    ar__sheet("#a { display:block; overflow:auto; }");
+    CHECK(ar__css_value("#a", 0, AR_P_OVERFLOW) == AR_OVERFLOW_AUTO &&
+              ar__css_value("#a", 0, AR_P_OVERFLOW_X) == AR_OVERFLOW_AUTO,
+          "css: overflow:auto sets both axes to auto, not to visible");
+
+    ar__sheet("#b { display:block; overflow-y:auto; }");
+    CHECK(ar__css_value("#b", 0, AR_P_OVERFLOW) == AR_OVERFLOW_AUTO, "css: overflow-y:auto parses");
+
+    ar__sheet("#c { display:block; overflow-x:auto; }");
+    CHECK(ar__css_value("#c", 0, AR_P_OVERFLOW_X) == AR_OVERFLOW_AUTO,
+          "css: overflow-x:auto parses");
+
+    /* The control: a keyword that was never ambiguous. If this one ever fails
+       the fault is somewhere else entirely. */
+    ar__sheet("#d { display:block; overflow:scroll; }");
+    CHECK(ar__css_value("#d", 0, AR_P_OVERFLOW) == AR_OVERFLOW_SCROLL,
+          "css: overflow:scroll still parses");
+
+    /* And `auto` is still a length where a length is what it means. Reading
+       the keyword table first must not take it away from width. */
+    ar__sheet("#e { display:block; width:auto; height:auto; }");
+    CHECK(ar__css_value("#e", 0, AR_P_WIDTH) == 0 && ar__css_value("#e", 0, AR_P_HEIGHT) == 0,
+          "css: width:auto and height:auto are still lengths");
+}
+
+/*
+ * And that the parsed value reaches the machinery.
+ *
+ * Content past the end of an `overflow: auto` box makes it a scroll container
+ * with a range and a bar, exactly as `scroll` would. The previous test pins
+ * the parse; this one pins that nothing downstream drops it again.
+ */
+static void test_overflow_auto_scrolls_when_it_overflows(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    int        i;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:100px; overflow:auto; }"
+                 ".row { display:block; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_is_scroll_container(&g_ui->nodes[1]), "scroll: overflow:auto is a scroll container");
+    CHECK(ar_clips(&g_ui->nodes[1]), "scroll: and it clips what hangs out of it");
+    CHECK(ar_node_scroll_range(g_ui, 1) == 100,
+          "scroll: five forty pixel rows in a hundred leaves a hundred to scroll");
+    CHECK(ar_scroll_bar_visible(&g_ui->nodes[1]), "scroll: auto shows a bar once there is one");
+}
+
 static void test_auto_and_scroll_differ_only_when_it_fits(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -5545,6 +6494,11 @@ static void test_auto_and_scroll_differ_only_when_it_fits(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
+    /* Both halves of this test are satisfied by an `auto` that does not parse
+       at all -- content that fits has no range and shows no bar whether or not
+       the keyword survived. test_overflow_auto_parses_as_a_keyword is what
+       actually pins it; this one is about the difference between the two
+       keywords, and only that. */
     CHECK(ar_node_scroll_range(g_ui, 1) == 0, "scroll: content that fits has no range");
     CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "scroll: auto hides the bar when it fits");
     CHECK(ar_scroll_bar_visible(&g_ui->nodes[3]), "scroll: scroll shows one regardless");
@@ -7986,6 +8940,23 @@ int main(void)
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
     test_overscroll_behavior_stops_the_chain();
+    test_overscroll_contain_holds_over_a_whole_sequence();
+    test_scrollbar_width_changes_the_bar();
+    test_scrollbar_gutter_reserves_its_width();
+    test_scrollbar_gutter_stable_shifts_nothing_when_content_grows();
+    test_scrollbar_color_is_read();
+    test_snap_lands_on_a_snap_point();
+    test_a_programmatic_scroll_snaps();
+    test_snap_proximity_leaves_a_distant_point_alone();
+    test_snap_honours_scroll_padding();
+    test_snap_type_parses_both_words();
+    test_snap_stop_always_refuses_to_be_passed();
+    test_keys_scroll_the_container();
+    test_keys_home_and_end_do_not_snap();
+    test_scroll_into_view_moves_the_minimum();
+    test_scroll_into_view_honours_scroll_margin();
+    test_overflow_anchor_keeps_the_reading_position();
+    test_the_scrollbar_paints_over_the_content();
     test_overflow_x_clips_by_itself();
     test_a_lone_visible_becomes_auto();
     test_a_scroll_position_survives_the_round_trip();
@@ -7994,6 +8965,8 @@ int main(void)
     test_dragging_the_scrollbar_scrolls();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();
+    test_overflow_auto_parses_as_a_keyword();
+    test_overflow_auto_scrolls_when_it_overflows();
     test_a_scroll_container_clips();
     test_declaration_order_still_decides_when_nothing_is_positioned();
     test_a_positioned_box_paints_above_the_flow();
@@ -8118,6 +9091,8 @@ int main(void)
     test_damage_collapses_when_tracking_stops_paying();
     test_damage_output_is_identical_to_a_full_repaint();
     test_a_region_move_is_identical_to_a_full_repaint();
+    test_the_bar_repaints_when_only_its_colour_changed();
+    test_a_bar_that_appears_because_content_grew();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
