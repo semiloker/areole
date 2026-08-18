@@ -667,8 +667,9 @@ ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i);
 /* The same three on the inline axis. A container scrolls sideways when
    overflow-x resolves to scroll or auto -- which includes the case where only
    overflow-y was stated, since a lone visible on the other axis becomes auto.
-   There is no horizontal scrollbar and no wheel binding yet: drive it from the
-   application, the way a keyboard or a swipe would. */
+   AR_KEY_LEFT and AR_KEY_RIGHT drive it, and so does this call. There is still
+   no horizontal scrollbar to drag and no wheel binding, because nothing here
+   generates an inline wheel event. */
 ar_i32 ar_node_scroll_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_range_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);

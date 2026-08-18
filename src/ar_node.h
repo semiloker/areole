@@ -436,14 +436,14 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
  * Scroll containers -- ar_scroll.c
  * ------------------------------------------------------------------------ */
 
-/* Drawn inside the container's right edge rather than taken out of its width:
-   a scrollbar that appears and reflows the text beside it makes the interface
-   jump, and on a machine where relayout costs milliseconds it does so
-   visibly. */
 /* How far one wheel notch goes. Three lines of an eight pixel face, which is
    what every toolkit settled on and what the hand expects. */
 #define AR_SCROLL_STEP 30
 
+/* Drawn inside the container's right edge rather than taken out of its width:
+   a scrollbar that appears and reflows the text beside it makes the interface
+   jump, and on a machine where relayout costs milliseconds it does so
+   visibly. */
 #define AR_SCROLLBAR_W      8
 #define AR_SCROLLBAR_W_THIN 4
 #define AR_SCROLLBAR_MIN    16
