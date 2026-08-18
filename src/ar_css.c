@@ -595,6 +595,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"z-index", AR_P_Z_INDEX},
                                           {"overlay", AR_P_OVERLAY},
                                           {"inert", AR_P_INERT},
+                                          {"anchor-name", AR_P_ANCHOR_NAME},
+                                          {"position-anchor", AR_P_POSITION_ANCHOR},
+                                          {"position-try", AR_P_POSITION_TRY},
                                           {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
@@ -711,6 +714,11 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
 
                                      {"none", AR_P_INERT, AR_INERT_NONE},
                                      {"auto", AR_P_INERT, AR_INERT_AUTO},
+
+                                     {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
+                                     {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
+                                     {"flip-inline", AR_P_POSITION_TRY, AR_TRY_FLIP_INLINE},
+                                     {"flip-both", AR_P_POSITION_TRY, AR_TRY_FLIP_BOTH},
 
                                      {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
                                      {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
@@ -985,6 +993,85 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
          * and there is no way to say that here yet. It is in
          * docs/CSS_REFERENCE.md rather than only in this comment.
          */
+        /*
+         * anchor(side) and anchor-size(dimension).
+         *
+         * Parsed here beside env() because they are the same shape: a name
+         * inside parentheses whose value is not known until later. The side
+         * goes in the value slot, so one unit serves all seven forms.
+         */
+        if ((ar__same(name, len, "anchor") || ar__same(name, len, "anchor-size")) &&
+            z->p < z->end && *z->p == '(')
+        {
+            int         size = ar__same(name, len, "anchor-size");
+            const char *sname;
+            ar_u32      slen;
+            ar_i32      side = -1;
+
+            z->p++;
+            ar__skip_ws(z);
+            slen = ar__ident(z, &sname);
+
+            if (size)
+            {
+                if (ar__same(sname, slen, "width"))
+                {
+                    side = AR_ANCHOR_SIZE_WIDTH;
+                }
+                else if (ar__same(sname, slen, "height"))
+                {
+                    side = AR_ANCHOR_SIZE_HEIGHT;
+                }
+            }
+            else if (ar__same(sname, slen, "top"))
+            {
+                side = AR_ANCHOR_SIDE_TOP;
+            }
+            else if (ar__same(sname, slen, "right"))
+            {
+                side = AR_ANCHOR_SIDE_RIGHT;
+            }
+            else if (ar__same(sname, slen, "bottom"))
+            {
+                side = AR_ANCHOR_SIDE_BOTTOM;
+            }
+            else if (ar__same(sname, slen, "left"))
+            {
+                side = AR_ANCHOR_SIDE_LEFT;
+            }
+            else if (ar__same(sname, slen, "center"))
+            {
+                side = AR_ANCHOR_SIDE_CENTER;
+            }
+
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            if (side < 0)
+            {
+                return out; /* a side nothing can resolve */
+            }
+            out.v = side;
+            out.unit = AR_UNIT_ANCHOR;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
+         * A bare custom ident, for the two properties whose value *is* a name.
+         * Hashed on the spot: nothing ever needs the text back, and keeping it
+         * would mean holding a pointer into a stylesheet the caller may free.
+         */
+        if (prop == AR_P_ANCHOR_NAME || prop == AR_P_POSITION_ANCHOR)
+        {
+            out.v = (ar_i32)ar_hash(name, len);
+            out.unit = AR_UNIT_PX;
+            out.ok = 1;
+            return out;
+        }
+
         if (ar__same(name, len, "env") && z->p < z->end && *z->p == '(')
         {
             const char *ename;
