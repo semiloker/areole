@@ -128,7 +128,9 @@ typedef struct ar__walk
  */
 int ar_in_top_layer(const ar_node *n)
 {
-    return n->parent >= 0 && n->style.v[AR_P_OVERLAY] == AR_OVERLAY_AUTO;
+    /* Both values are in it. `modal` differs from `auto` only in making
+       everything outside it inert; where it paints is the same question. */
+    return n->parent >= 0 && n->style.v[AR_P_OVERLAY] != AR_OVERLAY_NONE;
 }
 
 static void ar__push(ar__walk *w, ar_i32 i)

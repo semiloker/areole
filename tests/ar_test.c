@@ -5928,6 +5928,253 @@ static void test_an_anchor_nobody_declared_changes_nothing(void)
     CHECK(ar__box(1).x == 15, "anchor: an unresolved anchor leaves the other insets working");
 }
 
+/* ------------------------------------------------------------------------
+ * Criterion 2: the top layer against twenty-five adversarial arrangements
+ *
+ * Paint order is not geometry, so the browser comparison cannot see it: two
+ * boxes that overlap have the same rectangles whichever is on top. This corpus
+ * therefore states the expected order itself, and every case is built so that
+ * the ordinary rules would give the opposite answer -- a z-index the top layer
+ * has to beat, a stacking context it has to escape, a clip it has to leave.
+ *
+ * `hi` is the box that must end up in front. `lo` is the one that would win
+ * without the top layer. Each case declares the same three-box shape so the
+ * indices are fixed: 0 root, 1 the wrapper, 2 lo, 3 hi.
+ * ------------------------------------------------------------------------ */
+typedef struct
+{
+    const char *name;
+    const char *css;
+} ar__layer_case;
+
+/*
+ * Twenty-five. The first block varies what `hi` has to climb out of, the
+ * second varies what `lo` is doing to stay in front, and the last few are the
+ * cases where the answer is *not* the top layer -- because a corpus that only
+ * ever expects one answer cannot tell a correct engine from one that always
+ * says yes.
+ */
+static const ar__layer_case AR_LAYER_CASES[] = {
+    /* 1-8: hi is in the top layer and lo is trying everything. */
+    {"plain", ".lo { z-index:5; } .hi { overlay:auto; }"},
+    {"lo-huge-z", ".lo { z-index:30000; } .hi { overlay:auto; }"},
+    {"lo-context", ".lo { position:relative; z-index:9; } .hi { overlay:auto; }"},
+    {"hi-negative-z", ".lo { z-index:1; } .hi { overlay:auto; z-index:-5; }"},
+    {"hi-in-wrapper", ".wrap { position:relative; z-index:2; } .lo { z-index:99; }"
+                      ".hi { overlay:auto; }"},
+    {"hi-in-clipper", ".wrap { overflow:hidden; } .lo { z-index:99; } .hi { overlay:auto; }"},
+    {"hi-static", ".lo { position:relative; z-index:4; } .hi { position:static; overlay:auto; }"},
+    {"hi-modal", ".lo { z-index:1000; } .hi { overlay:modal; }"},
+
+    /* 9-16: both in the top layer, so tree order decides -- a stack of
+       dialogs, where the one opened last is the one in front. */
+    {"both-tree-order", ".lo { overlay:auto; } .hi { overlay:auto; }"},
+    {"both-lo-has-z", ".lo { overlay:auto; z-index:500; } .hi { overlay:auto; }"},
+    {"both-hi-negative", ".lo { overlay:auto; } .hi { overlay:auto; z-index:-9; }"},
+    {"both-modal-over-auto", ".lo { overlay:auto; } .hi { overlay:modal; }"},
+    {"both-auto-over-modal", ".lo { overlay:modal; } .hi { overlay:auto; }"},
+    {"both-in-wrapper", ".wrap { position:relative; z-index:3; }"
+                        ".lo { overlay:auto; } .hi { overlay:auto; }"},
+    {"both-clipped-wrapper", ".wrap { overflow:hidden; } .lo { overlay:auto; }"
+                             ".hi { overlay:auto; }"},
+    {"both-lo-relative", ".lo { overlay:auto; position:relative; z-index:7; }"
+                         ".hi { overlay:auto; }"},
+
+    /* 17-21: no top layer at all, so the ordinary rules decide and the corpus
+       has to agree with them. `hi` is declared last, so it wins on tree order
+       unless lo outranks it. */
+    {"none-tree-order", ".lo { display:block; } .hi { display:block; }"},
+    {"none-lo-positioned", ".lo { position:relative; } .hi { display:block; }"},
+    {"none-hi-positioned", ".lo { display:block; } .hi { position:relative; }"},
+    {"none-hi-higher-z", ".lo { position:relative; z-index:1; }"
+                         ".hi { position:relative; z-index:2; }"},
+    {"none-hi-equal-z", ".lo { position:relative; z-index:2; }"
+                        ".hi { position:relative; z-index:2; }"},
+
+    /* 22-25: the top layer is on `lo`, so the expected answer inverts. Without
+       these the corpus would pass against an engine that painted the
+       last-declared box in front and called it a top layer. */
+    {"inverted-plain", ".lo { overlay:auto; } .hi { z-index:5; }"},
+    {"inverted-huge-z", ".lo { overlay:auto; } .hi { z-index:30000; }"},
+    {"inverted-context", ".lo { overlay:auto; } .hi { position:relative; z-index:8; }"},
+    {"inverted-modal", ".lo { overlay:modal; } .hi { position:relative; z-index:8; }"}};
+
+#define AR_LAYER_CASE_COUNT ((ar_i32)(sizeof AR_LAYER_CASES / sizeof AR_LAYER_CASES[0]))
+
+/* Which of the last four cases expect `lo` in front instead. */
+static int ar__layer_inverted(ar_i32 k)
+{
+    return k >= AR_LAYER_CASE_COUNT - 4;
+}
+
+static void test_the_top_layer_over_an_adversarial_corpus(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_i32     k;
+    ar_i32     wrong = -1;
+
+    for (k = 0; k < AR_LAYER_CASE_COUNT && wrong < 0; ++k)
+    {
+        char     css[1000];
+        ar_input in;
+        ar_i32   lo_at, hi_at;
+
+        strcpy(css, "#root { display:block; }"
+                    ".wrap { display:block; }"
+                    ".lo { display:block; position:absolute; top:0px; left:0px;"
+                    "      width:80px; height:80px; }"
+                    ".hi { display:block; position:absolute; top:0px; left:0px;"
+                    "      width:80px; height:80px; }");
+        strcat(css, AR_LAYER_CASES[k].css);
+
+        ar__ui_reset(css);
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.wrap");
+        ar_begin(g_ui, "div.lo");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.hi");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+
+        lo_at = ar__paint_index(2);
+        hi_at = ar__paint_index(3);
+
+        if (lo_at < 0 || hi_at < 0)
+        {
+            wrong = k;
+        }
+        else if (ar__layer_inverted(k) ? !(lo_at > hi_at) : !(hi_at > lo_at))
+        {
+            wrong = k;
+        }
+    }
+
+    CHECK(wrong < 0, "top layer: twenty-five adversarial arrangements paint in the right order");
+    if (wrong >= 0)
+    {
+        printf("      case %ld (%s): lo at %ld, hi at %ld\n", (long)wrong,
+               AR_LAYER_CASES[wrong].name, (long)ar__paint_index(2), (long)ar__paint_index(3));
+    }
+    CHECK(AR_LAYER_CASE_COUNT == 25,
+          "top layer: the corpus is the twenty-five the criterion asks for");
+}
+
+/* ------------------------------------------------------------------------
+ * Criterion 4: position-try, against arithmetic rather than against a browser
+ *
+ * The flip fires when the box would leave the viewport, and areole's viewport
+ * is the surface while a browser's is the window its page sits in -- so the
+ * same case overflows on one side and not the other. Comparing them would
+ * report a difference of framing as a difference of flipping, which is the
+ * judgement the snap corpus already made about `proximity`.
+ *
+ * The anchor is 60 wide and 20 tall at (40, 50) throughout, so every expected
+ * number below is arithmetic on those four values.
+ * ------------------------------------------------------------------------ */
+static void test_position_try_over_a_corpus_of_flips(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+    ar_i32     k;
+    ar_i32     wrong = -1;
+
+    /* name, extra css, expected x, expected y. */
+    static const struct
+    {
+        const char *css;
+        ar_i32      x, y;
+    } CASES[20] = {
+        /* Vertical: hung below, too tall, flips to sit above the anchor. */
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:400px;"
+         " position-try:flip-block; }",
+         40, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:260px;"
+         " position-try:flip-block; }",
+         40, 50 - 260},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:231px;"
+         " position-try:flip-block; }",
+         40, 50 - 231},
+        /* Fits exactly, so it must not flip: 70 + 230 == 300. */
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:230px;"
+         " position-try:flip-block; }",
+         40, 70},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:10px;"
+         " position-try:flip-block; }",
+         40, 70},
+        /* Hung above and off the top, flips to sit below. */
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:80px;"
+         " position-try:flip-block; }",
+         40, 70},
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:51px;"
+         " position-try:flip-block; }",
+         40, 70},
+        /* Fits above exactly: 50 - 50 == 0. */
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:50px;"
+         " position-try:flip-block; }",
+         40, 0},
+        /* Horizontal. */
+        {".pop { left:anchor(right); top:anchor(top); width:400px; height:10px;"
+         " position-try:flip-inline; }",
+         40 - 400, 50},
+        {".pop { left:anchor(right); top:anchor(top); width:201px; height:10px;"
+         " position-try:flip-inline; }",
+         40 - 201, 50},
+        {".pop { left:anchor(right); top:anchor(top); width:200px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:60px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:41px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:40px; height:10px;"
+         " position-try:flip-inline; }",
+         0, 50},
+        /* Both axes at once. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-both; }",
+         40 - 400, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:20px; height:400px;"
+         " position-try:flip-both; }",
+         100, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:10px;"
+         " position-try:flip-both; }",
+         40 - 400, 70},
+        /* flip-block must not touch the inline axis, and the reverse. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-block; }",
+         100, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-inline; }",
+         40 - 400, 70},
+        /* And with no property at all nothing moves, however far it overflows. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px; }", 100, 70}};
+
+    for (k = 0; k < 20 && wrong < 0; ++k)
+    {
+        ar__posanchor_scene(&s, CASES[k].css);
+        if (ar__box(2).x != CASES[k].x || ar__box(2).y != CASES[k].y)
+        {
+            wrong = k;
+        }
+    }
+
+    CHECK(wrong < 0, "anchor: position-try lands where the arithmetic says on twenty cases");
+    if (wrong >= 0)
+    {
+        ar__posanchor_scene(&s, CASES[wrong].css);
+        printf("      case %ld: want %ld,%ld got %ld,%ld\n", (long)wrong, (long)CASES[wrong].x,
+               (long)CASES[wrong].y, (long)ar__box(2).x, (long)ar__box(2).y);
+    }
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9743,6 +9990,8 @@ int main(void)
     test_anchor_size_takes_the_anchors_measurements();
     test_position_try_flips_a_box_that_left_the_viewport();
     test_an_anchor_nobody_declared_changes_nothing();
+    test_the_top_layer_over_an_adversarial_corpus();
+    test_position_try_over_a_corpus_of_flips();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();
