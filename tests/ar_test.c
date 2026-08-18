@@ -6017,6 +6017,85 @@ static void test_the_wheel_ignores_a_box_it_is_not_over(void)
 
 /* A box whose content fits has nowhere to go, and `auto` shows no bar for it
    while `scroll` shows one anyway -- which is the whole difference. */
+/*
+ * `auto` has to survive the value parser.
+ *
+ * It is a length for width, height, the margins and the insets, and a keyword
+ * of its own for overflow. The length reading is tested first, so for a long
+ * time it won every time and `overflow: auto` quietly meant `visible` -- no
+ * clip, no scrolling, no bar. Nothing caught it: the suite had a test that
+ * compared `auto` against `scroll`, but its content fitted the box, and a
+ * container that fits is indistinguishable from one that does not scroll.
+ *
+ * So this checks the parsed value directly, on the shorthand and on both
+ * longhands, against `scroll` as a control.
+ */
+static void test_overflow_auto_parses_as_a_keyword(void)
+{
+    ar__sheet("#a { display:block; overflow:auto; }");
+    CHECK(ar__css_value("#a", 0, AR_P_OVERFLOW) == AR_OVERFLOW_AUTO &&
+              ar__css_value("#a", 0, AR_P_OVERFLOW_X) == AR_OVERFLOW_AUTO,
+          "css: overflow:auto sets both axes to auto, not to visible");
+
+    ar__sheet("#b { display:block; overflow-y:auto; }");
+    CHECK(ar__css_value("#b", 0, AR_P_OVERFLOW) == AR_OVERFLOW_AUTO, "css: overflow-y:auto parses");
+
+    ar__sheet("#c { display:block; overflow-x:auto; }");
+    CHECK(ar__css_value("#c", 0, AR_P_OVERFLOW_X) == AR_OVERFLOW_AUTO,
+          "css: overflow-x:auto parses");
+
+    /* The control: a keyword that was never ambiguous. If this one ever fails
+       the fault is somewhere else entirely. */
+    ar__sheet("#d { display:block; overflow:scroll; }");
+    CHECK(ar__css_value("#d", 0, AR_P_OVERFLOW) == AR_OVERFLOW_SCROLL,
+          "css: overflow:scroll still parses");
+
+    /* And `auto` is still a length where a length is what it means. Reading
+       the keyword table first must not take it away from width. */
+    ar__sheet("#e { display:block; width:auto; height:auto; }");
+    CHECK(ar__css_value("#e", 0, AR_P_WIDTH) == 0 && ar__css_value("#e", 0, AR_P_HEIGHT) == 0,
+          "css: width:auto and height:auto are still lengths");
+}
+
+/*
+ * And that the parsed value reaches the machinery.
+ *
+ * Content past the end of an `overflow: auto` box makes it a scroll container
+ * with a range and a bar, exactly as `scroll` would. The previous test pins
+ * the parse; this one pins that nothing downstream drops it again.
+ */
+static void test_overflow_auto_scrolls_when_it_overflows(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    int        i;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; height:100px; overflow:auto; }"
+                 ".row { display:block; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    for (i = 0; i < 5; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_is_scroll_container(&g_ui->nodes[1]), "scroll: overflow:auto is a scroll container");
+    CHECK(ar_clips(&g_ui->nodes[1]), "scroll: and it clips what hangs out of it");
+    CHECK(ar_node_scroll_range(g_ui, 1) == 100,
+          "scroll: five forty pixel rows in a hundred leaves a hundred to scroll");
+    CHECK(ar_scroll_bar_visible(&g_ui->nodes[1]), "scroll: auto shows a bar once there is one");
+}
+
 static void test_auto_and_scroll_differ_only_when_it_fits(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -6043,6 +6122,11 @@ static void test_auto_and_scroll_differ_only_when_it_fits(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
+    /* Both halves of this test are satisfied by an `auto` that does not parse
+       at all -- content that fits has no range and shows no bar whether or not
+       the keyword survived. test_overflow_auto_parses_as_a_keyword is what
+       actually pins it; this one is about the difference between the two
+       keywords, and only that. */
     CHECK(ar_node_scroll_range(g_ui, 1) == 0, "scroll: content that fits has no range");
     CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "scroll: auto hides the bar when it fits");
     CHECK(ar_scroll_bar_visible(&g_ui->nodes[3]), "scroll: scroll shows one regardless");
@@ -8506,6 +8590,8 @@ int main(void)
     test_dragging_the_scrollbar_scrolls();
     test_the_wheel_ignores_a_box_it_is_not_over();
     test_auto_and_scroll_differ_only_when_it_fits();
+    test_overflow_auto_parses_as_a_keyword();
+    test_overflow_auto_scrolls_when_it_overflows();
     test_a_scroll_container_clips();
     test_declaration_order_still_decides_when_nothing_is_positioned();
     test_a_positioned_box_paints_above_the_flow();
