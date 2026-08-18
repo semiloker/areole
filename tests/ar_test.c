@@ -5434,6 +5434,75 @@ static ar_i32 ar__chain_run(const char *css)
     return ar_node_scroll(g_ui, 1);
 }
 
+static const char *AR_CHAIN_CSS_NONE = "#root { display:block; }"
+                                       ".page { display:block; height:100px; overflow:scroll; }"
+                                       ".list { display:block; height:60px; overflow:scroll;"
+                                       "        overscroll-behavior: none; }"
+                                       ".row  { display:block; height:40px; }"
+                                       ".tail { display:block; height:200px; }";
+
+/*
+ * The same question the criterion asks: a sequence, not a notch.
+ *
+ * One notch proves the first one was kept. A modal that leaks on the eighth
+ * turn of the wheel is the bug people actually report, so this drives the
+ * inner list to its end and then keeps going, watching the ancestor after
+ * every single notch rather than only at the end. `peak` is the furthest the
+ * page behind ever moved, so a container that chains once and comes back
+ * cannot hide inside a final reading of zero.
+ */
+static ar_i32 ar__chain_sequence(const char *css, ar_i32 notches, ar_i32 *peak)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     i;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 30;
+    in.mouse_inside = 1;
+    ar__chain_scene(&s, &in);
+
+    ar_node_scroll_to(g_ui, 2, ar_node_scroll_range(g_ui, 2));
+    ar__chain_scene(&s, &in);
+
+    *peak = 0;
+    for (i = 0; i < notches; ++i)
+    {
+        ar_i32 at;
+
+        in.wheel = -1;
+        ar__chain_scene(&s, &in);
+        in.wheel = 0;
+        ar__chain_scene(&s, &in);
+
+        at = ar_node_scroll(g_ui, 1);
+        if (at > *peak)
+        {
+            *peak = at;
+        }
+    }
+    return ar_node_scroll(g_ui, 1);
+}
+
+static void test_overscroll_contain_holds_over_a_whole_sequence(void)
+{
+    ar_i32 auto_peak = 0, contain_peak = 0, none_peak = 0;
+    ar_i32 chained = ar__chain_sequence(AR_CHAIN_CSS, 10, &auto_peak);
+    ar_i32 contained = ar__chain_sequence(AR_CHAIN_CSS_CONTAIN, 10, &contain_peak);
+    ar_i32 refused = ar__chain_sequence(AR_CHAIN_CSS_NONE, 10, &none_peak);
+
+    /* The control. Without this the two below pass against an engine that
+       never chains at all, which is the shape of the bug they exist to catch
+       and exactly how overflow:auto stayed broken for a release. */
+    CHECK(chained > 0 && auto_peak == chained,
+          "overscroll: auto chains outwards, and keeps going, over ten notches");
+    CHECK(contained == 0 && contain_peak == 0,
+          "overscroll: contain never lets one through, on any notch of ten");
+    CHECK(refused == 0 && none_peak == 0, "overscroll: none holds the same way");
+}
+
 static void test_overscroll_behavior_stops_the_chain(void)
 {
     ar_i32 chained, contained;
@@ -5532,6 +5601,67 @@ static void test_scrollbar_gutter_reserves_its_width(void)
        the bar instead of running underneath it. */
     CHECK(plain == 200 && stable == 200 - 8,
           "scrollbar-gutter: stable takes the bar's width off the content");
+}
+
+/*
+ * Criterion 5: `scrollbar-gutter: stable` causes zero layout shift when the
+ * content grows past the container.
+ *
+ * test_scrollbar_gutter_reserves_its_width already checks that the width is
+ * reserved. That is not the same claim: an implementation that reserved the
+ * gutter only while a bar was showing would pass it and still shift the text
+ * sideways at the moment the list got long enough, which is the whole thing
+ * the property exists to prevent.
+ *
+ * So this measures a row before and after the content crosses that threshold.
+ */
+static void ar__gutter_scene(ar_surface *s, const ar_input *in, const char *css, int rows)
+{
+    int i;
+
+    ar__ui_reset(css);
+    ar_frame_begin(g_ui, in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (i = 0; i < rows; ++i)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_scrollbar_gutter_stable_shifts_nothing_when_content_grows(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    ar_i32     fits, overflows, plain_fits, plain_overflows;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    /* One row fits a hundred pixel box; five do not. */
+    ar__gutter_scene(&s, &in, AR_BAR_CSS_GUTTER, 1);
+    fits = ar__box(2).w;
+    ar__gutter_scene(&s, &in, AR_BAR_CSS_GUTTER, 5);
+    overflows = ar__box(2).w;
+
+    CHECK(fits == overflows && fits == 200 - 8,
+          "scrollbar-gutter: stable reserves the same width before and after the list grows");
+
+    /* And the contrast, so the check above is not passing on the fact that
+       nothing in areole ever reflows for a bar. An overlay bar takes no width
+       at all, which is a different answer, not the same one. */
+    ar__gutter_scene(&s, &in, AR_BAR_CSS, 1);
+    plain_fits = ar__box(2).w;
+    ar__gutter_scene(&s, &in, AR_BAR_CSS, 5);
+    plain_overflows = ar__box(2).w;
+
+    CHECK(plain_fits == plain_overflows && plain_fits == 200,
+          "scrollbar-gutter: auto reserves nothing, and still does not shift");
 }
 
 static void test_scrollbar_color_is_read(void)
@@ -8765,8 +8895,10 @@ int main(void)
     test_the_wheel_scrolls_the_box_under_it();
     test_a_scroll_asks_for_the_next_frame();
     test_overscroll_behavior_stops_the_chain();
+    test_overscroll_contain_holds_over_a_whole_sequence();
     test_scrollbar_width_changes_the_bar();
     test_scrollbar_gutter_reserves_its_width();
+    test_scrollbar_gutter_stable_shifts_nothing_when_content_grows();
     test_scrollbar_color_is_read();
     test_snap_lands_on_a_snap_point();
     test_snap_proximity_leaves_a_distant_point_alone();
