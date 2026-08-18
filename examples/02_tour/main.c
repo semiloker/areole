@@ -277,6 +277,44 @@ static const char *SHEET_ENV =
     ".envfb  { display:block; height:15px; font-size:11px; color:#4a453e;"
     "          background:#efe8d8; padding-left: env(safe-area-inset-left, 40px); }";
 
+/*
+ * The 0.6.3 page.
+ *
+ * `.trap` clips and `.deep` asks for a z-index far beyond anything else on the
+ * page, so `.esc` is inside a box that would cut it off and behind a box that
+ * would cover it. It is in the top layer and neither happens, which is the
+ * whole claim: a z-index cannot lift a box out of the context it is in, and
+ * `overlay` is not a z-index.
+ */
+static const char *SHEET_LAYER =
+    ".trap { display:block; height:40px; overflow:hidden; background:#f0ece2;"
+    "        position:relative; }"
+    ".deep { display:block; position:absolute; top:6px; left:150px; width:120px;"
+    "        height:54px; z-index:9999; background:#c2703d; }"
+    ".esc  { display:block; position:absolute; top:22px; left:10px; width:130px;"
+    "        height:26px; padding:5px 8px; font-size:11px; color:#fdfaf3;"
+    "        background:#2f5d3f; overlay:auto; }";
+
+/*
+ * The anchored pair, and a box that says it takes no input.
+ *
+ * `.tip` names no coordinates of its own: it is placed entirely by the box it
+ * is anchored to, which is what keeps the two together when either moves.
+ */
+static const char *SHEET_ANCH =
+    ".anchorbar { display:block; height:26px; background:#e8dfcb; position:relative; }"
+    ".target { display:block; position:absolute; top:4px; left:60px; width:90px;"
+    "          height:18px; background:#7a4a2a; anchor-name: --t; }"
+    ".tip  { display:block; position:absolute; position-anchor: --t;"
+    "        top: anchor(bottom); left: anchor(center); width:110px; height:20px; }";
+
+/* Split for the 509-character limit again, which is now the fourth time this
+   file has hit it. */
+static const char *SHEET_ANCH2 =
+    ".tip  { padding:3px 6px; font-size:11px; color:#fdfaf3; background:#4a453e; }"
+    ".dead { display:block; padding:4px 8px; font-size:11px; background:#efe8d8;"
+    "        color:#8d8578; inert: auto; }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -324,11 +362,12 @@ enum
     PAGE_POSITION,
     PAGE_SCROLL,
     PAGE_SAFE,
+    PAGE_LAYER,
     PAGE_COUNT
 };
 
-static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
-                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2"};
+static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0", "0.4.0",
+                                           "0.5.0", "0.6.0", "0.6.1", "0.6.2", "0.6.3"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The counters",
@@ -339,7 +378,8 @@ static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "Block and inline",
                                             "Position and scroll",
                                             "Scrolling",
-                                            "Sticky and safe areas"};
+                                            "Sticky and safe areas",
+                                            "The top layer"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -351,7 +391,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Margin collapsing, floats, line boxes and fragmented inlines.",
     "Absolute, fixed, sticky, z-index, and a list you can scroll.",
     "Both axes, snapping, a styled bar, and the arrow keys.",
-    "Pinned from either edge, and the display the backend described."};
+    "Pinned from either edge, and the display the backend described.",
+    "Above every stacking context, out of every clip, attached to an anchor."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -873,6 +914,57 @@ static void page_safe(ar_ctx *ui)
     ar_text(ui, "div.envfb", "safe-area-inset-left, unreported: indented 40");
 }
 
+/*
+ * 0.6.3: above everything, out of every clip, and attached to an anchor.
+ *
+ * There is no modal on this page and that is deliberate rather than an
+ * omission: a ::backdrop is a full-viewport fill, so putting one here would
+ * cover the tour's own navigation and make it inert -- correct behaviour, and
+ * a page nobody could leave. The backdrop and the inertness a modal brings are
+ * checked on the pixels in ar_test.c, where a covered viewport costs nothing.
+ *
+ * What is here is the part that can be looked at: a box that escapes both a
+ * clip and a z-index, a tooltip that names no coordinates of its own, and a
+ * strip that refuses the pointer.
+ */
+static void page_layer(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "Out of the clip, over the z-index");
+    ar_text(ui, "div.dim",
+            "The green box lives inside the grey strip, which clips, and "
+            "behind the orange one, which asks for z-index 9999. It is in the "
+            "top layer, so neither applies. A z-index cannot lift a box out of "
+            "the stacking context it is in -- that is what the top layer is "
+            "for, and why it is not simply a larger number.");
+    ar_begin(ui, "div.trap");
+    ar_begin(ui, "div.esc");
+    ar_text(ui, "div.dim", "in the top layer");
+    ar_end(ui);
+    ar_end(ui);
+    ar_begin(ui, "div.deep");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Attached to an anchor");
+    ar_text(ui, "div.dim",
+            "The dark tooltip states no coordinates. It is placed by the box "
+            "it names: its top edge at the anchor's bottom, its left edge at "
+            "the anchor's centre. Move the anchor and the tooltip goes with "
+            "it, which is the point of naming one.");
+    ar_begin(ui, "div.anchorbar");
+    ar_begin(ui, "div.target");
+    ar_end(ui);
+    ar_begin(ui, "div.tip");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A strip that takes no pointer");
+    ar_text(ui, "div.dim",
+            "The row below says inert. It is painted normally and it never "
+            "becomes hot, however far into it the cursor goes -- which is what "
+            "a modal does to everything behind it, without needing a modal.");
+    ar_text(ui, "div.dead", "inert: auto - hovering this does nothing");
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -901,6 +993,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_SAFE:
         page_safe(ui);
+        break;
+    case PAGE_LAYER:
+        page_layer(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1459,6 +1554,9 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_SNAP);
     ar_stylesheet(ui, SHEET_SAFE);
     ar_stylesheet(ui, SHEET_ENV);
+    ar_stylesheet(ui, SHEET_LAYER);
+    ar_stylesheet(ui, SHEET_ANCH);
+    ar_stylesheet(ui, SHEET_ANCH2);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */

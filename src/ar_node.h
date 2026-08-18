@@ -271,9 +271,16 @@ struct ar_ctx
     ar_rect   last_damage;   /* what ar_frame_end returned, for the backend */
     ar_i32    seen_last;     /* boxes in the tree last frame, to spot removals */
 
-    ar_u32 hot;     /* key of the box under the cursor         */
-    ar_u32 active;  /* key of the box the press started on     */
-    ar_u32 clicked; /* key of the box released on this frame   */
+    ar_u32 hot;
+
+    /* The same box as `hot`, by index rather than key. Anything asking
+       "is the cursor inside this subtree" -- light dismiss, and
+       inertness -- needs to walk parents, and a key would have to be
+       looked up first. Rebuilt every frame beside `hot`, so it is only
+       ever read in the frame that set it. */
+    ar_i32 hot_index; /* key of the box under the cursor         */
+    ar_u32 active;    /* key of the box the press started on     */
+    ar_u32 clicked;   /* key of the box released on this frame   */
     int    hot_changed;
 
     /*
@@ -512,6 +519,10 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
 
+/* Whether this box is in the top layer, which paints above every stacking
+   context rather than merely above its siblings. */
+int ar_in_top_layer(const ar_node *n);
+
 /* Fills `order` with every visible box, back to front. Returns the count. */
 ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap);
 
@@ -524,6 +535,15 @@ int ar_is_out_of_flow(const ar_node *n);
 /* The box an out-of-flow child is measured against: the padding box of the
    nearest positioned ancestor, or the viewport. */
 ar_rect ar_containing_block(const ar_node *nodes, ar_i32 i, ar_rect viewport);
+
+/* Rewrites every anchor() and anchor-size() into a plain length, against the
+   box each one names. Before placement, so nothing downstream knows about
+   anchors. */
+void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
+/* Flips an anchored box to the anchor's other side when it left the viewport.
+   After placement, because it is a reaction to where the box ended up. */
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport);
 
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
 void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
