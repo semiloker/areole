@@ -382,6 +382,82 @@ static const bench_scene SC_SCROLL_CONTAINER = {
     init_scroller,
     frame_scroll_container};
 
+/* ------------------------------------------------------------------------
+ * Twenty sticky headers in one scroll container, moved every frame.
+ *
+ * 0.6.2 budgets sticky at under 0.1 ms on the tier for twenty elements, on the
+ * grounds that it costs one comparison and at most one offset each per scroll
+ * event. This is the scene that number has to come from, and it is built to be
+ * the awkward case rather than the flattering one: every section is short
+ * enough that its header is pinned, unpinned or handing over on most frames,
+ * so the containing-block clamp is exercised rather than skipped.
+ *
+ * The comparison against no sticky at all is the useful reading, which is why
+ * the same tree without the property is the scene beside it.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_STICKY =
+    "#root  { display:block; overflow:scroll; height:600px; background:#ffffff; }"
+    ".sect  { display:block; height:120px; background:#f7f7f7; }"
+    ".head  { display:block; height:24px; position:sticky; top:0px;"
+    "         background:#e8eef4; }"
+    ".row   { display:block; height:28px; margin:2px 0px; background:#fafafa; }";
+
+static const char *const SHEET_STICKY_OFF =
+    "#root  { display:block; overflow:scroll; height:600px; background:#ffffff; }"
+    ".sect  { display:block; height:120px; background:#f7f7f7; }"
+    ".head  { display:block; height:24px; background:#e8eef4; }"
+    ".row   { display:block; height:28px; margin:2px 0px; background:#fafafa; }";
+
+static void init_sticky(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_STICKY);
+}
+
+static void init_sticky_off(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_STICKY_OFF);
+}
+
+static void frame_sticky(bench_env *e)
+{
+    int i, j;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 20; ++i)
+    {
+        ar_begin(e->ui, "div.sect");
+        ar_begin(e->ui, "div.head");
+        ar_end(e->ui);
+        for (j = 0; j < 3; ++j)
+        {
+            ar_begin(e->ui, "div.row");
+            ar_end(e->ui);
+        }
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+
+    ar_node_scroll_to(e->ui, 0, (ar_i32)((e->frame * 7u) % 1800u));
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_STICKY_20 = {
+    "sticky_20", "layout",    "20 sticky headers in a scroll container, moved 7 px a frame",
+    800,         600,         1,
+    init_sticky, frame_sticky};
+
+static const bench_scene SC_STICKY_20_OFF = {
+    "sticky_20_off",
+    "layout",
+    "the same twenty sections with no position:sticky, to subtract",
+    800,
+    600,
+    1,
+    init_sticky_off,
+    frame_sticky};
+
 void bench_register_layout(void)
 {
     bench_register(&SC_FLAT_100);
@@ -393,4 +469,6 @@ void bench_register_layout(void)
     bench_register(&SC_INLINE_WRAP);
     bench_register(&SC_FLOAT_GALLERY);
     bench_register(&SC_SCROLL_CONTAINER);
+    bench_register(&SC_STICKY_20);
+    bench_register(&SC_STICKY_20_OFF);
 }

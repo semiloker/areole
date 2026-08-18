@@ -198,6 +198,38 @@ not here.
 
 **Comments.** `/* ... */`, anywhere whitespace is allowed.
 
+**`env(name)` and `env(name, fallback)`.** Eight names, in two families:
+
+| Name | Meaning |
+| --- | --- |
+| `safe-area-inset-top` `-right` `-bottom` `-left` | how much of each edge is covered by something the window does not control |
+| `titlebar-area-x` `-y` `-width` `-height` | where the window controls sit, when the backend draws its own |
+
+The values come from the backend through `ar_set_safe_area` and
+`ar_set_titlebar_area`. A backend that says nothing leaves them unknown and
+every `env()` naming one takes its fallback — which is **not** the same as a
+backend reporting zero. A windowed desktop has real insets of zero, so
+`env(safe-area-inset-top, 20px)` resolves to `0` there and to `20` on a backend
+that has never heard of safe areas.
+
+An unknown name takes its fallback too. Without a fallback it has no value and
+the declaration is dropped.
+
+**`viewport-fit`**, set through `ar_set_viewport_fit_cover`, decides two things
+at once. With `auto` — the initial value — the layout viewport is the surface
+with the insets already taken off, and `env(safe-area-inset-*)` reports zero,
+because there is nothing left for the stylesheet to avoid. With `cover` the
+viewport is the whole surface and the real insets are reported. The pair always
+moves together: a viewport inset by the safe area *and* an `env()` reporting
+that inset would take it off twice.
+
+`titlebar-area-*` is not gated on `viewport-fit`. Where the window controls are
+does not change because the viewport was inset.
+
+One deviation: a known name whose backend stayed silent and which carries no
+fallback resolves to `0`, where CSS makes it invalid at computed-value time.
+There is no way to say "invalid at computed-value time" here yet.
+
 ## The font-size scale
 
 The embedded face is 8 pixels tall and is drawn at integer scales, so
@@ -225,6 +257,7 @@ Named so that their absence is a decision rather than an oversight:
 - writing modes and logical properties, so no `-inline` or `-block` longhands
 - `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
 - grid, tables
+- `env()` names beyond safe-area and titlebar — nothing can supply them
 - shorthand `font`, `background` with anything but a colour
 - `font-family` is parsed and ignored: one face at a time, chosen by
   `ar_font_load`
