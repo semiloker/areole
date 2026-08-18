@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole snap corpus — the browser twin</title>
+
+<!--
+  The same snap cases as examples/05_snap/main.c, in HTML, so a browser can be
+  asked the same questions:
+
+      python tools/compare_layout.py --run ./build/example_snap.exe \
+             examples/05_snap/snap.html
+
+  The cases are built by script rather than written out, because there are a
+  hundred and twenty of them: eight variants, five targets, three container
+  heights. The tables below mirror the ones in main.c and have to be kept in
+  step with them by hand; the comparison reports a structural mismatch loudly
+  if they drift, which is the safety net rather than the plan.
+
+  ----------------------------------------------------------------------------
+  Two compensating rules, and no others
+
+  1. The scrollbar is hidden. areole's is an overlay and takes no width; a
+     classic one in Chrome takes about fifteen pixels out of the content box,
+     which would change every row's width and report a scrollbar difference as
+     a snapping difference. `scrollbar-width: none` and the WebKit
+     pseudo-element make the browser agree with areole about the geometry.
+     areole's own scrollbar-gutter behaviour is checked in ar_test.c, not here.
+
+  2. `display: flow-root` on the case, which is what areole's root is: a block
+     formatting context and nothing else. Without it these are ordinary divs in
+     the middle of a page and each case measures the page around it.
+
+  There is deliberately no `box-sizing: border-box` reset. areole implements
+  the property and defaults to `content-box` as CSS says, so a reset that
+  changed it would be introducing a difference rather than removing one.
+
+  ----------------------------------------------------------------------------
+  Why the dump waits
+
+  Setting `scrollTop` starts a snap; the snapped position is not necessarily
+  readable on the same turn of the event loop. The dump runs after two
+  animation frames so the browser has settled, which is also why the harness
+  gives the page a virtual time budget.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 14px 0 4px;
+}
+
+.app {
+  display: flow-root;
+  width: 200px;
+  height: 200px;
+  background: #fff;
+}
+
+.list {
+  display: block;
+  overflow: scroll;
+  width: 200px;
+  background: #f4f2ee;
+
+  /* See the note above: areole's bar is an overlay and takes no width. */
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar { display: none; }
+
+.row {
+  display: block;
+  height: 40px;
+  background: #cfd8e3;
+}
+
+/* The eight variants, mirroring VARIANTS[] in main.c. */
+.v-start          .list { scroll-snap-type: y mandatory; }
+.v-start          .row  { scroll-snap-align: start; }
+
+.v-center         .list { scroll-snap-type: y mandatory; }
+.v-center         .row  { scroll-snap-align: center; }
+
+.v-end            .list { scroll-snap-type: y mandatory; }
+.v-end            .row  { scroll-snap-align: end; }
+
+.v-pad-start      .list { scroll-snap-type: y mandatory; scroll-padding-top: 10px; }
+.v-pad-start      .row  { scroll-snap-align: start; }
+
+.v-pad-end        .list { scroll-snap-type: y mandatory; scroll-padding-bottom: 12px; }
+.v-pad-end        .row  { scroll-snap-align: end; }
+
+.v-margin-start   .list { scroll-snap-type: y mandatory; }
+.v-margin-start   .row  { scroll-snap-align: start; scroll-margin-top: 8px; }
+
+.v-margin-end     .list { scroll-snap-type: y mandatory; }
+.v-margin-end     .row  { scroll-snap-align: end; scroll-margin-bottom: 6px; }
+
+.v-pad-and-margin .list { scroll-snap-type: y mandatory; scroll-padding-top: 10px; }
+.v-pad-and-margin .row  { scroll-snap-align: start; scroll-margin-top: 8px; }
+
+#cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+textarea#out { display: block; width: 100%; height: 200px; margin-top: 20px;
+               font: 12px/1.35 Consolas, monospace; }
+</style>
+
+<h1 style="font-size:15px;margin-bottom:8px">areole snap corpus — the browser twin</h1>
+
+<div id="cases"></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+/* Mirrors VARIANTS[], TARGETS[] and HEIGHTS[] in examples/05_snap/main.c. */
+const VARIANTS = [
+  'start', 'center', 'end', 'pad-start',
+  'pad-end', 'margin-start', 'margin-end', 'pad-and-margin'
+];
+const TARGETS = [10, 50, 90, 130, 9999];
+const HEIGHTS = [100, 130, 140];
+const ROW_COUNT = 6;
+
+function buildCases() {
+  const host = document.getElementById('cases');
+
+  for (const v of VARIANTS) {
+    for (const t of TARGETS) {
+      for (const h of HEIGHTS) {
+        const name = v + '-t' + t + '-h' + h;
+
+        const title = document.createElement('h2');
+        title.textContent = name;
+
+        const app = document.createElement('div');
+        app.className = 'app v-' + v;
+        app.dataset.page = name;
+
+        const list = document.createElement('div');
+        list.className = 'list';
+        list.style.height = h + 'px';
+
+        for (let i = 0; i < ROW_COUNT; i++) {
+          list.appendChild(document.createElement('div')).className = 'row';
+        }
+        app.appendChild(list);
+
+        const cell = document.createElement('div');
+        cell.appendChild(title);
+        cell.appendChild(app);
+        host.appendChild(cell);
+
+        /* Recorded on the element so the scroll pass below does not have to
+           parse the name back apart. */
+        list.dataset.target = t;
+      }
+    }
+  }
+}
+
+function applyScrolls() {
+  for (const list of document.querySelectorAll('.list')) {
+    list.scrollTop = Number(list.dataset.target);
+  }
+}
+
+/*
+ * The same walk and the same output format as the other twins: document order
+ * is declaration order, coordinates are relative to the .app origin, and
+ * everything is rounded because areole's layout is integer end to end.
+ */
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    walk(app, '0', app.getBoundingClientRect(), out);
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+buildCases();
+applyScrolls();
+
+/* Two frames, so a snap started by the assignment above has settled before
+   anything is measured. */
+requestAnimationFrame(() => requestAnimationFrame(dump));
+</script>

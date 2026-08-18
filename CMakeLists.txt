@@ -84,6 +84,12 @@ if(WIN32)
     target_link_libraries(example_block PRIVATE areole_win32)
     areole_set_warnings(example_block)
 
+    # The snap corpus. Same shape as the block corpus: a window by default,
+    # --dump for the browser comparison and for CI.
+    add_executable(example_snap examples/05_snap/main.c)
+    target_link_libraries(example_snap PRIVATE areole_win32)
+    areole_set_warnings(example_snap)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
