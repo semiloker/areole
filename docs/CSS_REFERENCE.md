@@ -158,11 +158,18 @@ Scrolling is driven by the wheel, by dragging the thumb, by the keys that
 scroll — arrows, Page Up and Down, Home, End, space — and by
 `ar_node_scroll_to` and `ar_node_scroll_into_view`.
 
+Where it settles is the same wherever it came from: a container with
+`scroll-snap-type` snaps after a wheel notch, after a key, and after
+`ar_node_scroll_to`, which is what CSS requires of any scrolling operation.
+Home and End deliberately do not snap, so the two ends of a list stay
+reachable.
+
 Four limits worth knowing, rather than discovering:
 
 - Snapping resolves on the block axis. The inline axis parses and is stored.
-- Snapping settles on a wheel notch or a key. `ar_node_scroll_to` clamps
-  without snapping, where CSS snaps after a programmatic scroll too.
+- `ar_node_scroll_into_view` does not snap. Its contract is the minimum
+  distance that brings a box into view; the wheel, the keys and
+  `ar_node_scroll_to` all snap.
 - `scroll-padding` and `scroll-margin` have their four physical longhands, not
   their logical forms. There are no logical properties anywhere yet.
 - `overflow-anchor` holds one container at a time.
