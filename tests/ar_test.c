@@ -5470,6 +5470,67 @@ static void test_a_sticky_box_that_can_never_stick_is_reported(void)
           "diag: a code has a sentence, and an unknown code has an empty one");
 }
 
+/*
+ * A box clipped away by its container must not take the hover.
+ *
+ * The hit test walks paint order and asks `ar_rect_contains(n->rect, ...)`. It
+ * never consults `n->clip`, so a row scrolled up out of its scrollport still
+ * answers for a point that is inside its rectangle and outside the box that
+ * clips it -- and the row is later in paint order than whatever is really
+ * showing there, so it wins.
+ *
+ * The scene puts a spacer above a scrollport and scrolls the port by 20, which
+ * lifts its first row twenty pixels above the port's top edge. The cursor goes
+ * into that overlap: inside the row's rectangle, outside the port. What is
+ * actually painted there is the spacer.
+ */
+static void test_a_clipped_box_does_not_take_the_hover(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    int        i;
+
+    ar__ui_reset("#root   { display:block; }"
+                 ".spacer { display:block; height:100px; }"
+                 ".port   { display:block; height:100px; overflow:scroll; }"
+                 ".prow   { display:block; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 90; /* inside row 0 once scrolled, outside the port */
+    in.mouse_inside = 1;
+
+    for (i = 0; i < 3; ++i)
+    {
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.spacer");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.port");
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+        ar_node_scroll_to(g_ui, 2, 20);
+        ar_frame_presented(g_ui);
+    }
+
+    /* The premise: the port sits at 100 and its first row has been lifted to
+       80, so the cursor at 90 really is in the overlap. */
+    CHECK(ar__box(2).y == 100 && ar__box(3).y == 80,
+          "hover: the probe really does put the cursor in the clipped overlap");
+
+    CHECK(!(g_ui->nodes[3].state & AR_STATE_HOVER),
+          "hover: a row scrolled out of its scrollport does not take the cursor");
+    CHECK((g_ui->nodes[1].state & AR_STATE_HOVER) != 0,
+          "hover: the box actually painted there takes it instead");
+}
+
 static void test_a_sticky_box_too_big_to_move_does_not(void)
 {
     ar_surface s = ar__ui_surface(300, 300);
@@ -9225,6 +9286,7 @@ int main(void)
     test_sticky_against_the_viewport();
     test_sticky_with_no_offsets_never_moves();
     test_a_sticky_box_too_big_to_move_does_not();
+    test_a_clipped_box_does_not_take_the_hover();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();

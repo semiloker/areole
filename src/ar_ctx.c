@@ -2075,6 +2075,34 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
  * The thumb's top is (rect.h - thumb.h) * scroll / range, so a drag is that
  * read backwards. The grab offset keeps the thumb where it was picked up.
  */
+/*
+ * Can the pointer reach this box at all?
+ *
+ * Four separate walks ask a version of this -- hover, the scrollbar drag, the
+ * wheel and the keys -- and they used to ask it three different ways. One
+ * predicate so a rule added here cannot be honoured in three places out of
+ * four, which is what would have happened to inertness.
+ *
+ * The clip test is the part that was missing. The hit test asked only whether
+ * the point was inside the box's rectangle, and a box scrolled up out of its
+ * scrollport still has a rectangle -- one that overlaps whatever is above the
+ * port. Being later in paint order, it won. So a row scrolled out of a list
+ * took the cursor from the thing actually drawn there. A box painted nowhere
+ * can be reached nowhere, and `clip` is where that is already recorded.
+ */
+static int ar__reachable(const ar_node *n, ar_i32 x, ar_i32 y)
+{
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+    {
+        return 0;
+    }
+    if (!ar_rect_contains(n->rect, x, y))
+    {
+        return 0;
+    }
+    return ar_rect_contains(n->clip, x, y);
+}
+
 static void ar__apply_drag(ar_ctx *c)
 {
     ar_i32 i;
@@ -2141,7 +2169,7 @@ static void ar__apply_drag(ar_ctx *c)
         {
             continue;
         }
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || ar_scroll_range(n) <= 0)
+        if (!ar__reachable(n, c->mouse_x, c->mouse_y) || ar_scroll_range(n) <= 0)
         {
             continue;
         }
@@ -2184,11 +2212,7 @@ static void ar__apply_wheel(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want;
 
-        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -2302,11 +2326,7 @@ static void ar__apply_keys(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want, travel;
 
-        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -2366,6 +2386,7 @@ static void ar__update_hot(ar_ctx *c)
     ar_i32 i;
 
     c->hot = 0;
+    c->hot_index = -1;
     if (!c->mouse_inside)
     {
         return;
@@ -2384,13 +2405,10 @@ static void ar__update_hot(ar_ctx *c)
         ar_i32   at = c->order ? c->order[i] : i;
         ar_node *n = &c->nodes[at];
 
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             c->hot = n->key;
+            c->hot_index = at;
             break;
         }
     }
