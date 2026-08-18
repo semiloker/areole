@@ -117,6 +117,22 @@ typedef enum ar_prop
     AR_P_BOX_SIZING,
 
     /*
+     * `overlay`: whether this box is in the top layer.
+     *
+     * A property rather than a magic tag, for two reasons. ar_stack.c decides
+     * paint order by reading n->style.v[...] and nothing else, so a property
+     * costs it one test; and 0.14.2 schedules `overlay` as a *transitionable*
+     * property, so the roadmap is already written against it being one.
+     *
+     * A deviation, named rather than discovered: CSS makes `overlay`
+     * UA-controlled -- a page cannot put itself in the top layer, only
+     * <dialog> and popover can. areole has no UA stylesheet and no elements
+     * yet, so a stylesheet sets it. When 0.9.1's UA sheet lands it sets this
+     * on dialog[open] and nothing here changes.
+     */
+    AR_P_OVERLAY,
+
+    /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
      * the length of ar_style.v.
@@ -526,6 +542,11 @@ enum
 
 enum
 {
+    /* `overlay`. `none` is the initial value and is zero, so a box says
+       nothing about the top layer unless it says something. */
+    AR_OVERLAY_NONE = 0,
+    AR_OVERLAY_AUTO = 1,
+
     AR_ANCHOR_AUTO = 0,
     AR_ANCHOR_NONE
 };

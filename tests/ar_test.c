@@ -5484,6 +5484,134 @@ static void test_a_sticky_box_that_can_never_stick_is_reported(void)
  * into that overlap: inside the row's rectangle, outside the port. What is
  * actually painted there is the spacer.
  */
+/* ------------------------------------------------------------------------
+ * The top layer
+ *
+ * Not a large z-index, and the difference is the whole point: a z-index orders
+ * a box among its siblings inside one stacking context and cannot lift it out
+ * of that context. A modal declared inside anything positioned could therefore
+ * always be covered by that thing's siblings, whatever number it asked for.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__paint_index(ar_i32 node)
+{
+    ar_i32 i;
+
+    for (i = 0; i < g_ui->order_count; ++i)
+    {
+        if (g_ui->order[i] == node)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void ar__top_scene(ar_surface *s, const char *css)
+{
+    ar_input in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.ctx"); /* 1: its own stacking context */
+    ar_begin(g_ui, "div.pop"); /* 2: the candidate for the top layer */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.over"); /* 3: a later sibling that covers it */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* `.ctx` forms a context, so `.pop` cannot escape it with any z-index at all;
+   `.over` is a later positioned sibling laid over the same corner, in a
+   context of its own with a higher z, so it covers `.pop` in every reading
+   of the rules except the top layer. */
+static const char *AR_TOP_CSS = "#root { display:block; }"
+                                ".ctx  { display:block; position:relative; z-index:1;"
+                                "        width:100px; height:100px; }"
+                                ".pop  { display:block; position:absolute; z-index:9999;"
+                                "        width:80px; height:80px; }"
+                                ".over { display:block; position:absolute; z-index:2;"
+                                "        top:0px; left:0px; width:100px; height:100px; }";
+
+static const char *AR_TOP_CSS_ON = "#root { display:block; }"
+                                   ".ctx  { display:block; position:relative; z-index:1;"
+                                   "        width:100px; height:100px; }"
+                                   ".pop  { display:block; position:absolute; overlay:auto;"
+                                   "        width:80px; height:80px; }"
+                                   ".over { display:block; position:absolute; z-index:2;"
+                                   "        top:0px; left:0px; width:100px; height:100px; }";
+
+static void test_the_top_layer_beats_a_z_index_it_cannot_reach(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_i32     pop_off, over_off, pop_on, over_on;
+
+    /* The control, and the reason the top layer exists: `.pop` asks for 9999
+       and still loses, because it is trapped in `.ctx`'s context. */
+    ar__top_scene(&s, AR_TOP_CSS);
+    pop_off = ar__paint_index(2);
+    over_off = ar__paint_index(3);
+    CHECK(pop_off >= 0 && over_off > pop_off,
+          "top layer: z-index 9999 still loses to a sibling of its own context");
+
+    ar__top_scene(&s, AR_TOP_CSS_ON);
+    pop_on = ar__paint_index(2);
+    over_on = ar__paint_index(3);
+    CHECK(pop_on > over_on, "top layer: overlay:auto paints above it with no z-index at all");
+
+    /* Once each, never twice: the array holds one slot per box. */
+    CHECK(g_ui->order_count == g_ui->node_count,
+          "top layer: a box in it is emitted once, not in both passes");
+}
+
+static void test_the_top_layer_escapes_a_clipping_ancestor(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".clip { display:block; width:60px; height:60px; overflow:hidden; }"
+                 ".pop  { display:block; width:150px; height:150px; overlay:auto; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.clip");
+    ar_begin(g_ui, "div.pop");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Painting above everything while clipped to a box it has left behind is
+       the failure this pairing exists to prevent. */
+    CHECK(g_ui->nodes[2].clip.w == 200 && g_ui->nodes[2].clip.h == 300,
+          "top layer: a box in it clips to the viewport, not to its ancestors");
+    CHECK(g_ui->nodes[1].clip.w == 200, "top layer: and the clipping ancestor is unaffected");
+}
+
+static void test_the_top_layer_takes_the_pointer_first(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+
+    /* Paint and hit testing read the same order, one forwards and one back, so
+       a box lifted above everything is also hit before everything. */
+    ar__top_scene(&s, AR_TOP_CSS);
+    CHECK(g_ui->hot == g_ui->nodes[3].key, "top layer: without it the later sibling takes the hit");
+
+    ar__top_scene(&s, AR_TOP_CSS_ON);
+    CHECK(g_ui->hot == g_ui->nodes[2].key, "top layer: with it the lifted box takes the hit");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9287,6 +9415,9 @@ int main(void)
     test_sticky_with_no_offsets_never_moves();
     test_a_sticky_box_too_big_to_move_does_not();
     test_a_clipped_box_does_not_take_the_hover();
+    test_the_top_layer_beats_a_z_index_it_cannot_reach();
+    test_the_top_layer_escapes_a_clipping_ancestor();
+    test_the_top_layer_takes_the_pointer_first();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();
