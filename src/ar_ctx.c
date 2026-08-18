@@ -1060,7 +1060,7 @@ static void ar__scroll_moved(ar_ctx *c, ar_u32 key, ar_i32 dy)
 ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
 {
     ar_slot *slot;
-    ar_i32   was;
+    ar_i32   was, want;
 
     if (!c || i < 0 || i >= c->node_count || !ar_is_scroll_container(&c->nodes[i]))
     {
@@ -1072,7 +1072,31 @@ ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
         return 0;
     }
     was = slot->scroll;
-    slot->scroll = (ar_scroll_pos)ar_scroll_clamp(&c->nodes[i], y);
+    want = ar_scroll_clamp(&c->nodes[i], y);
+
+    /*
+     * And then snapping settles it, exactly as it settles a notch.
+     *
+     * CSS applies scroll snapping after any scrolling operation, not only the
+     * ones a hand drove: a mandatory container is required to be resting on a
+     * snap point, however it got there. A browser re-snaps when a script
+     * assigns scrollTop, and this call is the same thing.
+     *
+     * It did not, which made the container's resting position depend on which
+     * call moved it -- a notch landed on a slide and ar_node_scroll_to landed
+     * between two. The wheel and the keys have always agreed with each other
+     * because they settle through this same pair of lines; this is the third
+     * caller joining them.
+     *
+     * Clamped before snapping, so a candidate is never measured against a
+     * position the container could not have reached.
+     */
+    if (ar_scroll_snaps_y(&c->nodes[i]))
+    {
+        want = ar_scroll_snap(c->nodes, c->node_count, i, was, want);
+    }
+
+    slot->scroll = (ar_scroll_pos)want;
     ar__scroll_moved(c, c->nodes[i].key, slot->scroll - was);
     ar_damage_add(&c->damage, c->nodes[i].rect);
     return slot->scroll;
