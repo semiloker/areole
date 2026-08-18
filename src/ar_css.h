@@ -223,8 +223,83 @@ typedef enum ar_unit
      */
     AR_UNIT_MIN_CONTENT,
     AR_UNIT_MAX_CONTENT,
-    AR_UNIT_FIT_CONTENT
+    AR_UNIT_FIT_CONTENT,
+
+    /*
+     * env(), one unit per name.
+     *
+     * A unit rather than a value for the same reason `inherit` is one: it says
+     * where the number comes from, and the number is not known when the sheet
+     * is parsed. The value slot carries the fallback, so `env(x, 12px)` parses
+     * to this unit with a 12 in it and needs no second field.
+     *
+     * One unit per name rather than one unit and a packed name-and-fallback
+     * pair, because unit[] is a byte per property with room to spare and v[]
+     * is only sixteen bits. Packing both into v[] would have cost the fallback
+     * most of its range to save a byte that was already there.
+     *
+     * They must stay in AR_ENV_* order: the slot is the offset from
+     * AR_UNIT_ENV_FIRST, which is what lets resolution be a table lookup.
+     */
+    AR_UNIT_ENV_FIRST,
+    AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
+    AR_UNIT_ENV_SAFE_RIGHT,
+    AR_UNIT_ENV_SAFE_BOTTOM,
+    AR_UNIT_ENV_SAFE_LEFT,
+    AR_UNIT_ENV_TITLEBAR_X,
+    AR_UNIT_ENV_TITLEBAR_Y,
+    AR_UNIT_ENV_TITLEBAR_W,
+    AR_UNIT_ENV_TITLEBAR_H,
+    AR_UNIT_ENV_LAST = AR_UNIT_ENV_TITLEBAR_H
 } ar_unit;
+
+/*
+ * The environment a stylesheet can ask about.
+ *
+ * Eight numbers the core cannot work out for itself: four safe-area insets and
+ * a titlebar rectangle. A backend that knows them says so through
+ * ar_set_safe_area and ar_set_titlebar_area; one that does not leaves them
+ * unknown, and every env() referring to them takes its fallback.
+ *
+ * Unknown is not the same as zero, and the difference is the whole reason the
+ * `known` flags exist. A windowed desktop has real insets of zero -- there is
+ * no notch and nothing is covered -- so `env(safe-area-inset-top, 20px)` must
+ * resolve to 0, not to 20. A backend that has never heard of safe areas leaves
+ * them unknown, and the same declaration must resolve to 20.
+ */
+enum
+{
+    AR_ENV_SAFE_TOP = 0,
+    AR_ENV_SAFE_RIGHT,
+    AR_ENV_SAFE_BOTTOM,
+    AR_ENV_SAFE_LEFT,
+    AR_ENV_TITLEBAR_X,
+    AR_ENV_TITLEBAR_Y,
+    AR_ENV_TITLEBAR_W,
+    AR_ENV_TITLEBAR_H,
+    AR_ENV_COUNT
+};
+
+typedef struct ar_env
+{
+    ar_i32 v[AR_ENV_COUNT];
+    ar_u8  known[AR_ENV_COUNT];
+
+    /*
+     * `viewport-fit`. Auto is the initial value and means the layout viewport
+     * is already the safe rectangle, so the insets a stylesheet sees are zero
+     * however large the real ones are -- there is nothing left for it to avoid.
+     * Cover hands the stylesheet the whole display and the real insets with it.
+     *
+     * The two move together or not at all: a viewport inset by the safe area
+     * *and* env() reporting that inset would take it off twice.
+     */
+    ar_u8 fit_cover;
+} ar_env;
+
+/* The value an env() name resolves to, given what the backend has said.
+   `fallback` is what the declaration wrote after the comma. */
+ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback);
 
 /* Keyword values, all in one space so the parser can hand back one integer. */
 enum

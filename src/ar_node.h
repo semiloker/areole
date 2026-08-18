@@ -200,6 +200,11 @@ struct ar_ctx
     ar_arena arena;
     ar_sheet sheet;
 
+    /* What the backend has said about the display it is drawing on: the
+       safe-area insets, the titlebar rectangle, and whether the stylesheet
+       asked for the whole display. Read by env(). */
+    ar_env env;
+
     ar_node *nodes;
     ar_i32   node_cap;
     ar_i32   box_budget; /* what AR_MEM was sized for */
