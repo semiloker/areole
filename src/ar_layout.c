@@ -897,7 +897,18 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     /* The root keeps the viewport, whatever it says about itself and whatever
        its contents come to -- the window is not negotiable, which is already
        true of its width. */
-    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0)
+    /*
+     * A table cell is the exception, and it has to be.
+     *
+     * Its height is the row's, and the row's is the tallest cell in it -- so a
+     * cell with less in it than its neighbour is deliberately taller than its
+     * contents, and writing its contents' height back over it undoes the only
+     * thing a row height means. Every cell in the suite either stated a height
+     * or held nothing, which is why this survived: with no children the block
+     * pass is never reached, and with a stated height this branch is not taken.
+     * A caption is settled by the table for the same reason.
+     */
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0 && !ar_is_table_block(n))
     {
         ar_i32 used = cursor;
 
@@ -946,6 +957,12 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
         if (ar_is_table_block(n))
         {
             ar__place_block(nodes, i, env);
+            if (ar_is_table_cell(n))
+            {
+                /* After, not before: where the contents go depends on how tall
+                   they turned out, and that is what the block pass works out. */
+                ar_table_align_cell(nodes, i);
+            }
             continue;
         }
         if (ar_is_block(n))
