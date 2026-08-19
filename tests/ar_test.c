@@ -6918,6 +6918,165 @@ static void test_an_empty_table_leaves_nothing_at_the_origin(void)
     CHECK(ar__box(2).h == 0, "table: and has no height");
 }
 
+/* ------------------------------------------------------------------------
+ * Structure: the three row groups, the caption, and the column boxes
+ * ------------------------------------------------------------------------ */
+static void test_a_footer_is_drawn_last_wherever_it_is_written(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A footer is written where it reads best -- often straight after the
+     * header, so the two live together in the markup -- and is drawn beneath
+     * every body row. Document order is not row order, and an iterator that
+     * only walked siblings could not know that.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; }"
+                 ".h { display:table-header-group; }"
+                 ".f { display:table-footer-group; }"
+                 ".b { display:table-row-group; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.f"); /* the footer, written first */
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.h"); /* the header, written second */
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.b"); /* the body, written last */
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 2=footer group, 3=its row, 5=header group, 6=its row, 8=body group,
+       9=its row. Drawn: header, body, footer. */
+    CHECK(ar__box(6).y < ar__box(9).y, "table: a header is drawn above the body it heads");
+    CHECK(ar__box(9).y < ar__box(3).y, "table: and a footer beneath it, wherever it was written");
+    CHECK(ar__box(5).y < ar__box(8).y && ar__box(8).y < ar__box(2).y,
+          "table: the groups follow their rows");
+}
+
+static void test_a_caption_sits_above_the_grid(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A caption is a table-level box that is in no column and no row: the grid
+     * starts beneath it and is no narrower for it, but the table is at least as
+     * wide as the caption needs and as tall as both together.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; }"
+                 ".cap { display:table-caption; height:25px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.cap");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1=table, 2=caption, 3=row, 4/5=cells. */
+    CHECK(ar__box(2).y == ar__box(1).y, "table: a caption starts at the top of the table");
+    CHECK(ar__box(2).h == 25, "table: and is as tall as it asked to be");
+    CHECK(ar__box(2).w == 300, "table: and as wide as the table, not as one column");
+    CHECK(ar__box(3).y >= ar__box(2).y + 25, "table: the grid starts beneath the caption");
+    CHECK(ar__box(4).w + ar__box(5).w == 300,
+          "table: and the columns are no narrower for the caption being there");
+    CHECK(ar__box(1).h >= 35, "table: the table is as tall as its caption and its rows");
+}
+
+static void test_a_column_box_takes_up_no_space(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `col` and `colgroup` are real nodes carrying real style and no geometry
+     * of their own. Left alone they would keep the zero rect a fresh node is
+     * born with, at the surface origin rather than the table's, and hit
+     * testing would report a box at the top left of the window.
+     */
+    ar__ui_reset("#root { display:block; padding:40px; }"
+                 ".t { display:table; width:200px; }"
+                 ".cg { display:table-column-group; }"
+                 ".col { display:table-column; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.cg");
+        ar_begin(g_ui, "div.col");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /*
+     * 1=table, 2=colgroup, 3=col, 4=row, 5=cell -- and node 3 was an anonymous
+     * *table* until this test was written, because the generator only knew a
+     * column belonged in a table and not in a column group, which is how every
+     * table that has columns at all is written.
+     */
+    CHECK(g_ui->nodes[3].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_COLUMN,
+          "table: a column inside a column group is left where it was put");
+    CHECK(ar__box(2).w == 0 && ar__box(2).h == 0, "table: a column group has no size");
+    CHECK(ar__box(3).w == 0 && ar__box(3).h == 0, "table: nor a column");
+    CHECK(ar__box(2).x == ar__box(1).x && ar__box(2).y == ar__box(1).y,
+          "table: and it reports the table's corner, not the window's");
+    CHECK(ar__box(4).y == ar__box(1).y, "table: a column box does not push the first row down");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -10742,6 +10901,9 @@ int main(void)
     test_a_table_honours_a_stated_height();
     test_a_spanning_cell_honours_a_stated_width();
     test_an_empty_table_leaves_nothing_at_the_origin();
+    test_a_footer_is_drawn_last_wherever_it_is_written();
+    test_a_caption_sits_above_the_grid();
+    test_a_column_box_takes_up_no_space();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

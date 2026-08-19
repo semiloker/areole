@@ -538,6 +538,7 @@ int ar_is_table(const ar_node *n);
 int ar_is_table_internal(const ar_node *n);
 
 /* A cell, which is a block for whatever is inside it. */
+int ar_is_table_block(const ar_node *n);
 int ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
