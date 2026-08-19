@@ -832,10 +832,16 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
         cy = n->rect.y + n->style.v[AR_P_PAD_TOP] +
              (place[k].row < rows ? row[place[k].row].pos : 0);
 
-        if (am == AR_ALIGN_STRETCH && it->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO)
-        {
-            it->rect.h = rh;
-        }
+        /*
+         * The height, the same way the width was settled above.
+         *
+         * Only the stretch case was here at first, so an item that stated a
+         * height of its own never got one at all -- every cell in a grid of
+         * `height: 24px` boxes came out zero tall, which the tour page found
+         * the moment it drew one. Stretch is a size like any other and belongs
+         * in the same call rather than beside it.
+         */
+        it->rect.h = ar_resolve_size(it, 1, rh, am == AR_ALIGN_STRETCH);
 
         it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
         it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
