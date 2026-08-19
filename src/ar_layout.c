@@ -797,6 +797,29 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
                 ch->rect.w = ar_used_size(ch, 0, inner_w * ch->style.v[AR_P_WIDTH] / 100);
                 break;
             default:
+                if (ar_is_table(ch))
+                {
+                    /*
+                     * A table with no stated width is as wide as its contents.
+                     *
+                     * Every other block child fills what it is offered; a table
+                     * shrinks to fit, which is CSS 2.1 chapter 17 and is what
+                     * makes a two-column table of dates sit at the left of the
+                     * page rather than stretching across it. The corpus found
+                     * it on the generated tables -- a `tr` written with no
+                     * table around it gets one, and areole gave that one the
+                     * full width of the page where a browser sized it to the
+                     * row.
+                     */
+                    ar_i32 room = inner_w - ml - mr;
+
+                    ch->rect.w = ch->fit[0] < room ? ch->fit[0] : room;
+                    if (ch->rect.w < ch->min_w)
+                    {
+                        ch->rect.w = ch->min_w;
+                    }
+                    break;
+                }
                 ch->rect.w = inner_w - ml - mr;
                 break;
             }
