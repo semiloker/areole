@@ -121,6 +121,16 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     {
         return 0;
     }
+    /*
+     * A box with an aspect ratio has a height, even though it did not state
+     * one -- its width did, on its behalf. Reading `height: auto` as "no
+     * height" here collapsed every ratio box to nothing, which is the whole
+     * point of the property undone by a test written before it existed.
+     */
+    if (n->style.v[AR_P_ASPECT_RATIO] > 0)
+    {
+        return 0;
+    }
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
         if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&

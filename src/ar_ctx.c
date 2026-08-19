@@ -700,6 +700,97 @@ static void ar__mark_collapsed(ar_ctx *c)
     }
 }
 
+/*
+ * `display: contents`: the box generates none, and its children become its
+ * parent's.
+ *
+ * Done by splicing, before layout, rather than by teaching every child walk to
+ * see through it -- and the splice is safe in a way that is worth stating,
+ * because it looks like the kind of thing that would break everything.
+ *
+ * Pre-order survives. A contents box's children already sit at higher indices
+ * than the box, which sits higher than its parent, so re-parenting them moves
+ * nobody in the array and the invariant five passes rely on still holds. Keys
+ * survive too: they were assigned when the tree was built and nothing here
+ * assigns one.
+ *
+ * The specification's exceptions are not here, and cannot be.
+ *
+ * CSS excepts replaced elements, form controls and table parts -- and every
+ * one of those is an *element*, not a display value. A box that says
+ * `display: contents` has no other display for this pass to look at: by the
+ * time it runs, the box's display is `contents` and nothing records that it
+ * would otherwise have been a row. The exception needs a tag name, and there
+ * are no tag names until the parser lands at 0.9.0.
+ *
+ * That is a real gap and not a small one -- `display: contents` on a `<tr>` is
+ * specified to do nothing and here it removes the row. It is written down
+ * rather than half-implemented, because a check against a display value would
+ * look like the exception without being it.
+ */
+static void ar__splice_contents(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = c->node_count - 1; i >= 1; --i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   parent = n->parent;
+        ar_i32   first = n->first_child;
+        ar_i32   last = n->last_child;
+        ar_i32   ch;
+
+        if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_CONTENTS || parent < 0)
+        {
+            continue;
+        }
+
+        if (first < 0)
+        {
+            /* Nothing to promote, so the box simply draws nothing. Left in the
+               tree with an empty rect rather than unlinked, because unlinking
+               it would renumber its siblings' child indices and those are what
+               `:nth-child` and the corpora both read. */
+            n->rect = ar_rect_make(0, 0, 0, 0);
+            continue;
+        }
+
+        for (ch = first; ch >= 0; ch = c->nodes[ch].next_sibling)
+        {
+            c->nodes[ch].parent = parent;
+        }
+
+        /* Stitch the run in where the box was. */
+        c->nodes[first].prev_sibling = n->prev_sibling;
+        c->nodes[last].next_sibling = n->next_sibling;
+        if (n->prev_sibling >= 0)
+        {
+            c->nodes[n->prev_sibling].next_sibling = first;
+        }
+        else
+        {
+            c->nodes[parent].first_child = first;
+        }
+        if (n->next_sibling >= 0)
+        {
+            c->nodes[n->next_sibling].prev_sibling = last;
+        }
+        else
+        {
+            c->nodes[parent].last_child = last;
+        }
+        c->nodes[parent].child_count = (ar_i32)(c->nodes[parent].child_count - 1 + n->child_count);
+
+        n->first_child = -1;
+        n->last_child = -1;
+        n->child_count = 0;
+        n->next_sibling = -1;
+        n->prev_sibling = -1;
+        n->parent = -1;
+        n->rect = ar_rect_make(0, 0, 0, 0);
+    }
+}
+
 static void ar__diagnose(ar_ctx *c)
 {
     ar_i32 i;
@@ -3365,6 +3456,9 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* :last-child, :only-child and :empty could not be answered while the tree
        was being built. This is the first moment they can be. */
     ar__resolve_late(c);
+    /* Before the collapse marking and before layout: everything after this
+       point walks the tree, and this is the last moment the tree changes. */
+    ar__splice_contents(c);
     ar__mark_collapsed(c);
 
     /* Style resolution happened during tree building, between frame_begin and

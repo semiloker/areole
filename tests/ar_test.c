@@ -8339,6 +8339,275 @@ static void test_minmax_holds_a_track_between_two_ends(void)
     CHECK(ar__box(3).w == 250, "grid: and the fixed one beside it is untouched");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.8.1: sizing
+ * ------------------------------------------------------------------------ */
+static void test_display_contents_promotes_its_children(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * The wrapper generates no box and its two children become the grid's,
+     * so they land in the second and third columns rather than both being
+     * crammed into the first with the wrapper.
+     *
+     * This is the only way to put a semantic wrapper around grid items without
+     * breaking the grid, and it is what the property is for.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; width:300px; grid-template-columns: 100px 100px 100px; }"
+                 ".w { display:contents; }"
+                 ".c { height:20px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.g");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.w");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1=g, 2=first cell, 3=wrapper, 4/5=its children. */
+    CHECK(ar__box(2).x == 0, "contents: the first item is where it was");
+    CHECK(ar__box(4).x == 100, "contents: the wrapper's first child is a grid item");
+    CHECK(ar__box(5).x == 200, "contents: and so is its second");
+    CHECK(ar__box(3).w == 0 && ar__box(3).h == 0, "contents: the wrapper itself has no box");
+}
+
+static void test_intrinsic_keywords_work_on_the_height(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * `height: max-content` used to be a silent `auto`, because the resolver
+     * answered the intrinsic keywords for width only. A box whose contents
+     * come to sixty is sixty tall, not the two hundred its container offered.
+     */
+    /*
+     * A flex row, because that is where `auto` and `max-content` differ.
+     *
+     * In block flow an automatic height is already the content height, so
+     * `height: max-content` is the same number by a different route and a
+     * check there passes whether the keyword is honoured or not. A flex row
+     * stretches an automatic height to the line; `max-content` must not
+     * stretch, and the two answers are 200 and 60.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:flex; flex-direction:row; width:200px; height:200px;"
+                 "       align-items:stretch; }"
+                 ".mc { display:block; width:100px; height:max-content; }"
+                 ".st { display:block; width:40px; }"
+                 ".in { display:block; height:30px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.box");
+        ar_begin(g_ui, "div.mc");
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.st");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).h == 60, "sizing: height: max-content is the height of the contents");
+    CHECK(ar__box(5).h == 200, "sizing: where an automatic height would have stretched to 200");
+    CHECK(ar__box(2).w == 100, "sizing: and the width it was given is untouched");
+}
+
+static void test_fit_content_takes_a_cap(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     mn, mx;
+
+    /*
+     * `fit-content(80px)` is the bare keyword with a ceiling: fit the contents
+     * into the smaller of what the container has left and eighty.
+     *
+     * Text, because it is the only thing in this engine whose min-content and
+     * max-content differ -- a box of fixed-width children is the same width
+     * either way, and a cap between two equal numbers cannot be seen. The
+     * first check states that precondition rather than assuming it, so a
+     * change of font fails loudly here instead of quietly passing the second.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".box { display:block; width:300px; }"
+                 ".f { display:block; width:fit-content(80px); }"
+                 ".g2 { display:block; width:fit-content; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.box");
+        ar_text(g_ui, "div.f", "alpha beta gamma");
+        ar_text(g_ui, "div.g2", "alpha beta gamma");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    mn = g_ui->nodes[2].min_w;
+    mx = g_ui->nodes[2].fit[0];
+
+    CHECK(mn < 80 && 80 < mx, "sizing: the cap sits between the two intrinsic widths");
+    CHECK(ar__box(2).w == 80, "sizing: fit-content(80px) stops at its cap");
+    CHECK(ar__box(3).w == mx, "sizing: and the bare keyword fits the contents instead");
+}
+
+static void test_aspect_ratio_gives_the_axis_nobody_stated(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * A width and a ratio make a height; a height and a ratio make a width;
+     * and a box that stated both keeps both, because a stated size always wins
+     * over a derived one. That last part is what makes the property safe to
+     * put in a base stylesheet.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w16 { display:block; width:160px; aspect-ratio: 16 / 9; }"
+                 ".h4 { display:block; height:60px; aspect-ratio: 4 / 3; }"
+                 ".both { display:block; width:100px; height:100px; aspect-ratio: 16 / 9; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.w16");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.h4");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.both");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    printf("      DBGR ratio=%ld,%ld,%ld  a=%ldx%ld b=%ldx%ld c=%ldx%ld\n",
+           (long)g_ui->nodes[1].style.v[AR_P_ASPECT_RATIO],
+           (long)g_ui->nodes[2].style.v[AR_P_ASPECT_RATIO],
+           (long)g_ui->nodes[3].style.v[AR_P_ASPECT_RATIO], (long)ar__box(1).w, (long)ar__box(1).h,
+           (long)ar__box(2).w, (long)ar__box(2).h, (long)ar__box(3).w, (long)ar__box(3).h);
+    CHECK(ar__box(1).h == 90, "aspect-ratio: a width and a ratio make a height");
+    CHECK(ar__box(2).w == 80, "aspect-ratio: a height and a ratio make a width");
+    CHECK(ar__box(3).w == 100 && ar__box(3).h == 100,
+          "aspect-ratio: and a box that stated both keeps both");
+}
+
+static void test_safe_centring_never_starts_before_the_edge(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * Centring a box larger than the space it is given puts half the overflow
+     * before the start edge, where it cannot be scrolled to and cannot be
+     * read. `safe` says to fall back to start alignment exactly then -- and
+     * only then, so a box that fits is still centred.
+     *
+     * A grid, not a flex row: a flex line grows to its tallest item, so an
+     * item can never overflow the line it is aligned in and `align-items` has
+     * nothing to overflow. A track with a stated height is the case that
+     * actually arises.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; width:300px; grid-template-rows: 60px;"
+                 "     grid-template-columns: 100px 100px 100px; align-items:center; }"
+                 ".gs { align-items: safe center; }"
+                 ".big { height:200px; }"
+                 ".small { height:20px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.g");
+        ar_begin(g_ui, "div.big");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.g.gs");
+        ar_begin(g_ui, "div.big");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.g.gs");
+        ar_begin(g_ui, "div.small");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).y < ar__box(1).y, "safe: plain centring puts the overflow before the edge");
+    CHECK(ar__box(4).y == ar__box(3).y, "safe: and safe centring does not");
+    CHECK(ar__box(6).y == ar__box(5).y + 20, "safe: a box that fits is still centred");
+}
+
+static void test_a_grid_item_keeps_its_min_content(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    /*
+     * The same automatic minimum a flex item has: a track narrower than an
+     * item's unbreakable content does not crush it, the item overflows the
+     * track. And the same escape hatch -- `min-width: 0`.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; width:60px; grid-template-columns: 20px 20px; }"
+                 ".c { height:20px; }"
+                 ".free { min-width:0px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.g");
+        ar_text(g_ui, "div.c", "unbreakable");
+        ar_text(g_ui, "div.c.free", "unbreakable");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).w >= g_ui->nodes[2].min_w,
+          "grid: an item is not crushed below its min-content width");
+    CHECK(ar__box(3).w < ar__box(2).w, "grid: and min-width: 0 is how you say it may be");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -12204,6 +12473,12 @@ int main(void)
     test_the_two_gaps_are_separate();
     test_an_item_stretches_to_its_cell_and_can_refuse();
     test_minmax_holds_a_track_between_two_ends();
+    test_display_contents_promotes_its_children();
+    test_intrinsic_keywords_work_on_the_height();
+    test_fit_content_takes_a_cap();
+    test_aspect_ratio_gives_the_axis_nobody_stated();
+    test_safe_centring_never_starts_before_the_edge();
+    test_a_grid_item_keeps_its_min_content();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
