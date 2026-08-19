@@ -7403,6 +7403,460 @@ static void test_vertical_align_puts_a_cells_contents_where_it_says(void)
           "table: none of which changes how tall they are");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.7.1: rows and columns that close, captions underneath, cells that hide,
+ * columns that speak for themselves, and headers that stay
+ * ------------------------------------------------------------------------ */
+static void ar__collapse_rows(ar_surface *s, const char *extra)
+{
+    char     css[820];
+    ar_input in;
+    ar_i32   r, c;
+
+    strcpy(css, "#root { display:block; }"
+                ".t { display:table; width:300px; }"
+                ".r { display:table-row; }"
+                ".c { display:table-cell; height:10px; }"
+                ".k0 { width:200px; }"
+                ".k1 { width:100px; }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    for (r = 0; r < 3; ++r)
+    {
+        char sel[24];
+
+        sprintf(sel, "div.r.q%ld", (long)r);
+        ar_begin(g_ui, sel);
+        for (c = 0; c < 2; ++c)
+        {
+            ar_begin(g_ui, c == 0 ? "div.c.k0" : "div.c.k1");
+            ar_end(g_ui);
+        }
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_a_collapsed_row_closes_without_moving_the_columns(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     w0, w1;
+
+    /*
+     * The whole reason `collapse` exists rather than `display: none`.
+     *
+     * A filter that hides half a table's rows must not make every remaining
+     * column jump to a new width -- the reader would have to find them again.
+     * The cells of a closed row stay in the column constraints; only the row's
+     * height goes, and the rows below it close up.
+     */
+    ar__collapse_rows(&s, "");
+    w0 = ar__box(3).w;
+    w1 = ar__box(4).w;
+    CHECK(w0 == 200 && w1 == 100, "collapse: the control's columns are where the widths say");
+
+    /* 1=table, 2=row0, 3/4 its cells... nodes are 1=t, 2=q0, 3=c,4=c, 5=q1,
+       6=c,7=c, 8=q2, 9=c,10=c. */
+    ar__collapse_rows(&s, ".q1 { visibility:collapse; }");
+
+    CHECK(ar__box(5).h == 0, "collapse: a closed row has no height");
+    CHECK(ar__box(6).h == 0 && ar__box(7).h == 0, "collapse: nor do the cells in it");
+    CHECK(ar__box(8).y == ar__box(2).y + 10, "collapse: and the row below it closes up");
+    CHECK(ar__box(3).w == 200 && ar__box(4).w == 100,
+          "collapse: the columns do not move, which is the whole point");
+    CHECK(ar__box(6).w == 200 && ar__box(6).x == ar__box(3).x,
+          "collapse: a closed row's cells keep their columns");
+    CHECK(ar__box(1).h == 20, "collapse: the table is as tall as the rows that are left");
+}
+
+static void test_a_collapsed_column_takes_the_tables_width_with_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A closed column is not a thin column. Its width leaves the table rather
+     * than being handed to its neighbours, so every other column stays exactly
+     * where it was and the table gets narrower.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; }"
+                 ".lg { display:table-column-group; }"
+                 ".co { display:table-column; }"
+                 ".gone { visibility:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; width:100px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.lg");
+        ar_begin(g_ui, "div.co");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.co.gone");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.co");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1=t, 2=lg, 3/4/5=col, 6=r, 7/8/9=cells. */
+    CHECK(ar__box(8).w == 0, "collapse: the closed column's cell has no width");
+    CHECK(ar__box(7).w == 100 && ar__box(9).w == 100,
+          "collapse: and its neighbours keep the widths they had");
+    CHECK(ar__box(9).x == ar__box(7).x + 100, "collapse: the columns after it close up");
+    CHECK(ar__box(1).w == 200, "collapse: and the table is narrower by exactly that column");
+    CHECK(ar__box(4).h == 0, "collapse: a closed column's own box has no height either");
+}
+
+static void test_a_hidden_box_takes_its_space_and_paints_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `visibility: hidden` is not `display: none`: the box is still there and
+     * still takes its space. It inherits, so the children go too -- and a child
+     * that says `visible` comes back, which is the one thing that cannot be
+     * done with `display: none`.
+     */
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 ".a { display:block; width:40px; height:20px; background:#ff0000; }"
+                 ".b { display:block; width:40px; height:20px; background:#00ff00;"
+                 "     visibility:hidden; }"
+                 ".in { display:block; width:10px; height:10px; background:#0000ff; }"
+                 ".back { visibility:visible; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.a");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.b");
+        ar_begin(g_ui, "div.in");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.b");
+        ar_begin(g_ui, "div.in.back");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).y == 20 && ar__box(2).h == 20,
+          "visibility: a hidden box keeps its place in the flow");
+    CHECK(ar__pixel_at(5, 5) == 0xFF0000u, "visibility: the visible box above it is painted");
+    CHECK(ar__pixel_at(5, 25) == 0xFFFFFFu, "visibility: the hidden one is not");
+    CHECK(ar__pixel_at(5, 27) == 0xFFFFFFu,
+          "visibility: and neither is the child that inherited it");
+    CHECK(ar__pixel_at(5, 47) == 0x0000FFu, "visibility: but a child that says visible comes back");
+}
+
+static void test_a_caption_can_sit_underneath(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; }"
+                 ".cap { display:table-caption; height:16px; caption-side:bottom; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.cap");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1=t, 2=cap, 3=r, 4=c. The caption is declared first and drawn last. */
+    CHECK(ar__box(3).y == ar__box(1).y, "caption-side: the grid starts at the top of the table");
+    CHECK(ar__box(2).y == ar__box(1).y + 10, "caption-side: and the caption is beneath it");
+    CHECK(ar__box(1).h == 26, "caption-side: the table holds both either way");
+}
+
+static void test_empty_cells_hide_shows_a_grid_with_holes(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A cell with nothing in it shows neither background nor border, so a
+     * sparse table reads as a grid with holes rather than a grid of empty
+     * boxes. Geometry cannot see this -- the cell is exactly where it was.
+     */
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 ".t { display:table; width:200px; empty-cells:hide; }"
+                 ".r { display:table-row; }"
+                 /* A width, because a column whose cell wants nothing is given
+                    nothing -- which is right, and would leave this test with no
+                    empty cell to look at. */
+                 ".c { display:table-cell; width:100px; height:20px; background:#ff0000; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_text(g_ui, "div.c", "x");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(4).w == 100 && ar__box(4).x == 100,
+          "empty-cells: the empty cell is exactly where it was");
+    CHECK(ar__pixel_at(50, 10) == 0xFF0000u, "empty-cells: the cell with something in it paints");
+    CHECK(ar__pixel_at(150, 10) == 0xFFFFFFu, "empty-cells: the one with nothing in it does not");
+}
+
+static void test_a_col_speaks_for_the_cells_that_said_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A `col` is the one place a column can be spoken about without naming a
+     * cell -- and it is a bid, not a settlement: a cell that asked for more
+     * still gets it.
+     *
+     * Three columns, and the first two say nothing through their cells. Two
+     * different widths on purpose: with one stated width, or two equal ones,
+     * the surplus rule hands the columns the same numbers by a different route
+     * and the test would pass with the whole feature removed. 200 and 100 is a
+     * split nothing else in the solver produces.
+     *
+     * The table is exactly the sum, so there is no surplus and nothing between
+     * the widths under test and the widths the columns get.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:390px; }"
+                 ".lg { display:table-column-group; }"
+                 ".co { display:table-column; }"
+                 ".c1 { width:200px; }"
+                 ".c2 { width:100px; }"
+                 ".c3 { width:50px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }"
+                 ".big { width:90px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.lg");
+        ar_begin(g_ui, "div.co.c1");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.co.c2");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.co.c3");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c.big");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 1=t, 2=lg, 3/4/5=col, 6=r, 7/8/9=cells. */
+    CHECK(ar__box(7).w == 200 && ar__box(8).w == 100,
+          "col: a column takes the width its col stated");
+    CHECK(ar__box(9).w == 90, "col: and a cell that asked for more than its col still gets it");
+    CHECK(ar__box(3).w == ar__box(7).w && ar__box(3).x == ar__box(7).x,
+          "col: the col box is the shape of the column it describes");
+}
+
+static void test_a_sticky_header_stays_while_the_rows_go_under_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     top_before, top_after;
+
+    /*
+     * The 0.6.2 mechanism applied to a table box. A header group keeps its
+     * place in the flow and is nudged just far enough to obey `top: 0` without
+     * leaving the table it belongs to, and it is positioned, so it paints above
+     * the rows going under it without needing a z-index.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".port { display:block; width:200px; height:60px; overflow:auto; }"
+                 ".t { display:table; width:200px; }"
+                 ".h { display:table-header-group; position:sticky; top:0px; }"
+                 ".g { display:table-row-group; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:20px; }");
+    {
+        ar_input in;
+        ar_i32   r;
+        ar_i32   pass;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+
+        top_before = 0;
+        top_after = 0;
+        for (pass = 0; pass < 3; ++pass)
+        {
+            ar_frame_begin(g_ui, &in);
+            ar_begin(g_ui, "#root");
+            ar_begin(g_ui, "div.port");
+            ar_begin(g_ui, "div.t");
+            ar_begin(g_ui, "div.h");
+            ar_begin(g_ui, "div.r");
+            ar_begin(g_ui, "div.c");
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_begin(g_ui, "div.g");
+            for (r = 0; r < 6; ++r)
+            {
+                ar_begin(g_ui, "div.r");
+                ar_begin(g_ui, "div.c");
+                ar_end(g_ui);
+                ar_end(g_ui);
+            }
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_frame_end(g_ui, &s);
+            ar_frame_presented(g_ui);
+
+            if (pass == 0)
+            {
+                top_before = ar__box(3).y;
+                ar_node_scroll_to(g_ui, 1, 40);
+            }
+            if (pass == 1)
+            {
+                top_after = ar__box(3).y;
+            }
+        }
+    }
+
+    /* 1=port, 2=t, 3=h, 4=its row, 5=its cell, 6=g, 7=first body row. */
+    CHECK(top_before == ar__box(1).y, "sticky: the header starts at the top of the scrollport");
+    CHECK(ar_node_scroll(g_ui, 1) == 40, "sticky: the container scrolled");
+    CHECK(top_after == ar__box(1).y, "sticky: and the header is still at the top of it");
+    CHECK(ar__box(2).y < ar__box(1).y, "sticky: while the table itself went up with the scroll");
+    CHECK(ar__box(5).y == top_after, "sticky: the header's cells came with it");
+}
+
+static void test_a_frozen_column_stays_while_the_columns_go_past(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     left_after;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".port { display:block; width:100px; height:80px; overflow:auto; }"
+                 ".t { display:table; width:300px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:20px; width:100px; }"
+                 ".froze { position:sticky; left:0px; }");
+    {
+        ar_input in;
+        ar_i32   r, pass;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        left_after = 0;
+
+        for (pass = 0; pass < 2; ++pass)
+        {
+            ar_frame_begin(g_ui, &in);
+            ar_begin(g_ui, "#root");
+            ar_begin(g_ui, "div.port");
+            ar_begin(g_ui, "div.t");
+            for (r = 0; r < 2; ++r)
+            {
+                ar_begin(g_ui, "div.r");
+                ar_begin(g_ui, "div.c.froze");
+                ar_end(g_ui);
+                ar_begin(g_ui, "div.c");
+                ar_end(g_ui);
+                ar_begin(g_ui, "div.c");
+                ar_end(g_ui);
+                ar_end(g_ui);
+            }
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_end(g_ui);
+            ar_frame_end(g_ui, &s);
+            ar_frame_presented(g_ui);
+
+            if (pass == 0)
+            {
+                ar_node_scroll_to_x(g_ui, 1, 80);
+            }
+        }
+        left_after = ar__box(4).x;
+    }
+
+    /* 1=port, 2=t, 3=row0, 4/5/6=its cells. */
+    CHECK(ar_node_scroll_x(g_ui, 1) == 80, "sticky: the container scrolled sideways");
+    CHECK(left_after == ar__box(1).x, "sticky: the frozen cell is still at the left of it");
+    CHECK(ar__box(5).x == ar__box(1).x + 100 - 80,
+          "sticky: while the column beside it moved with the scroll");
+    CHECK(ar__box(4).w == 100, "sticky: and the frozen cell is no wider for staying");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -11239,6 +11693,14 @@ int main(void)
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
+    test_a_collapsed_row_closes_without_moving_the_columns();
+    test_a_collapsed_column_takes_the_tables_width_with_it();
+    test_a_hidden_box_takes_its_space_and_paints_nothing();
+    test_a_caption_can_sit_underneath();
+    test_empty_cells_hide_shows_a_grid_with_holes();
+    test_a_col_speaks_for_the_cells_that_said_nothing();
+    test_a_sticky_header_stays_while_the_rows_go_under_it();
+    test_a_frozen_column_stays_while_the_columns_go_past();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();

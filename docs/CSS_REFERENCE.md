@@ -131,6 +131,9 @@ box.
 | `border-collapse` | `separate`, `collapse` |
 | `border-spacing` | length — separate model only |
 | `colspan` `rowspan` | integer, at least 1 |
+| `visibility` | `visible`, `hidden`, `collapse` — inherited |
+| `caption-side` | `top`, `bottom` |
+| `empty-cells` | `show`, `hide` |
 
 `colspan` and `rowspan` are **properties here, not attributes**. They are
 attributes in HTML and there is no parser until 0.9.0, so a stylesheet is the
@@ -173,6 +176,41 @@ border box is wider than its stated width and its content starts inside it.
 areole reserves no space for any border anywhere, so the table's box stays at
 its stated width and the grid starts at its corner. Every cell size agrees;
 every offset is short by that half.
+
+**`visibility: collapse` removes a row or a column without recomputing the
+column widths.** That is the entire difference from `display: none` and the
+reason the value exists: a filter that hides half a table's rows should not
+make every remaining column jump to a new width. The cells of a closed row are
+still in the column constraints; the row simply takes no height and the rows
+below it close up. A closed column takes no width and nothing else moves to
+take it, so the table gets narrower by exactly that column.
+
+Anywhere other than a row, a column or their groups, `collapse` means `hidden`.
+`visibility` inherits, which is what makes it worth writing on a row at all —
+the row goes and its cells go with it, and a cell that says `visibility:
+visible` comes back. That last part is the difference from `display: none`,
+where nothing comes back.
+
+**A `col` is the one place a column can be spoken about without naming a
+cell.** A stated `width` on a `col` or a `colgroup` settles its column whatever
+the cells in it want, and a `background` paints behind the whole column. The
+column boxes are counted across the table's children in order: a `col` takes
+the next column, a `colgroup` covers the `col`s inside it, or the next column
+if it has none. There is no `span` attribute — there are no attributes.
+
+**`empty-cells: hide`** stops a cell with nothing in it from showing its
+background or its border, so a sparse table reads as a grid with holes rather
+than a grid of empty boxes. Separate model only: a collapsed grid line belongs
+to the boundary and not to either cell, so there is no such thing as one cell
+withholding it.
+
+**`position: sticky` works on table boxes** — a header group that stays while
+the rows scroll under it, a first column that stays while the columns scroll
+past. It is the same mechanism as everywhere else: the box keeps its place in
+the flow and is nudged just far enough to obey its offsets without leaving the
+box it belongs to, which for a row is its row group and for a cell is its row.
+A sticky box is positioned, so it paints above the unpositioned boxes it
+overlaps without needing a `z-index`.
 
 ### Overflow and scrolling
 
@@ -358,8 +396,6 @@ Named so that their absence is a decision rather than an oversight:
 - grid
 - `border-style`, and per-side border widths — so a collapsed border resolves by
   width and origin and not by style
-- `caption-side`, `empty-cells`, `visibility: collapse`, and `col`/`colgroup`
-  contributing width — 0.7.1
 - table fragmentation across pages or columns
 - `env()` names beyond safe-area and titlebar — nothing can supply them
 - `<dialog>`, `popover`, `popovertarget` — HTML, and there is no parser yet

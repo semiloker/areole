@@ -225,7 +225,7 @@ ar_u32 ar_paint_digest(const ar_node *n)
                                   AR_P_BACKGROUND,      AR_P_BORDER_WIDTH,     AR_P_BORDER_COLOR,
                                   AR_P_PAD_LEFT,        AR_P_PAD_TOP,          AR_P_COLOR,
                                   AR_P_SCROLLBAR_WIDTH, AR_P_SCROLLBAR_GUTTER, AR_P_SCROLLBAR_THUMB,
-                                  AR_P_SCROLLBAR_TRACK};
+                                  AR_P_SCROLLBAR_TRACK, AR_P_VISIBILITY,       AR_P_EMPTY_CELLS};
     ar_u32           h = 2166136261u;
     ar_u32           i;
     ar_u32           count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
