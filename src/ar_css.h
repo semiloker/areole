@@ -758,6 +758,18 @@ enum
      */
     AR_STATE_ANON = 1 << 11,
 
+    /*
+     * This box belongs to a table whose borders are collapsed.
+     *
+     * Not a selector state either. It is what tells the paint pass to draw the
+     * four widths in `edge` rather than the one in `border-width`: a collapsed
+     * table, its rows and its row groups draw no border of their own at all --
+     * theirs was folded into the grid lines the cells now carry -- and a cell
+     * draws a different width on each of its four sides. There was a spare bit
+     * and a per-box byte would have cost every box in the interface one.
+     */
+    AR_STATE_COLLAPSED = 1 << 12,
+
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
@@ -944,6 +956,11 @@ typedef struct ar_sheet
        which is the overwhelming majority of interfaces -- the same bargain
        has_combinator makes below. */
     int has_table;
+    /* And whether any of them collapses its borders. The marking pass walks up
+       from every table box to find its table, which is a real cost on a table
+       of ten thousand rows and is pure waste for the separate model -- which is
+       the default, and what every table that does not say otherwise uses. */
+    int has_collapse;
 
     /* Whether any rule in this sheet carries a combinator. A sheet without
        one skips the contextual pass entirely, which is most sheets. */

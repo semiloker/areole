@@ -104,6 +104,22 @@ typedef struct ar_node
     ar_i32 min_w;
 
     /*
+     * The collapsed border this box owns, per side: top, right, bottom, left.
+     *
+     * A collapsed grid line belongs to no single box -- its width is the widest
+     * of everything that meets there, which is a *neighbour's* style, and no
+     * property on this box records it. It is resolved once by the table solve
+     * and left here for the paint pass, which is also why ar_paint_digest mixes
+     * it in: a cell whose own style did not change still has to repaint when
+     * the cell beside it gets a thicker border.
+     *
+     * Only meaningful with AR_STATE_COLLAPSED, and zero on everything else --
+     * including a collapsed table's own box and its rows, which is how they
+     * come to draw nothing.
+     */
+    ar_u8 edge[4];
+
+    /*
      * Where this box's fragments live, when it has more than one rectangle.
      *
      * Zero count means the box is its own single fragment and `rect` is all
