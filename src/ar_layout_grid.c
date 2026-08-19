@@ -68,11 +68,41 @@ typedef struct ar__gplace
 {
     ar_i32 col, col_span;
     ar_i32 row, row_span;
+
+    /*
+     * The subgrid this item belongs to, or -1 for an item of the grid itself.
+     *
+     * A subgrid's children are items of the *parent* on the subgridded axis --
+     * that is the whole of what subgrid means, and it is why they are in this
+     * array at all rather than being solved separately. On an axis the subgrid
+     * did not subgrid, the owner's own box is what bounds them, and that is
+     * what this field is read for.
+     */
+    ar_i32 owner;
 } ar__gplace;
 
 int ar_is_grid(const ar_node *n)
 {
     return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+}
+
+/*
+ * Whether this box takes the parent's tracks on this axis.
+ *
+ * Subgrid inverts the direction of track sizing: an ordinary grid sizes its
+ * tracks from its own contents, and a subgrid's contents size its *parent's*.
+ * areole gets that without a second pass by putting the subgrid's children
+ * into the parent's item list -- so the contribution flows up because the
+ * items are simply there, rather than because a pass went looking for them.
+ *
+ * It is the feature that makes a row of cards line their sections up, and
+ * every other way of doing that -- fixed heights, measuring in script, flexbox
+ * with hardcoded numbers -- is a workaround for not having it.
+ */
+static int ar__is_subgrid(const ar_node *n, ar_i32 axis)
+{
+    return ar_is_grid(n) &&
+           n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS] == AR_TRACKS_SUBGRID;
 }
 
 static int ar__grid_item(const ar_node *n)
@@ -158,7 +188,15 @@ static ar_i32 ar__axis_tracks(const ar_sheet *sheet, const ar_node *n, ar_i32 ax
 {
     ar_i32 count = 0;
 
-    *out = ar_sheet_tracks(sheet, n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS], &count);
+    ar_i32 slot = n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS];
+
+    if (slot == AR_TRACKS_SUBGRID)
+    {
+        /* Not a list, and not an error: the tracks are the parent's. */
+        *out = 0;
+        return 0;
+    }
+    *out = ar_sheet_tracks(sheet, slot, &count);
     return count;
 }
 
@@ -228,6 +266,7 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
         place[items].row = -1;
         place[items].col_span = 1;
         place[items].row_span = 1;
+        place[items].owner = -1;
 
         ar__item_lines(&nodes[c], 0, &cs, &ce);
         ar__item_lines(&nodes[c], 1, &rs, &re);
@@ -426,6 +465,126 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
         }
     }
 
+    /*
+     * Pass three: a subgrid's children become items of this grid.
+     *
+     * Their line numbers are the subgrid's own, offset by where the subgrid
+     * starts -- so a card at rows 1..4 holding a title at row 1 puts that
+     * title in the parent's row 1, and every card's title lands in the same
+     * row whatever is in the others. That is the whole feature.
+     *
+     * On an axis the subgrid did not subgrid, the child keeps a span of one
+     * inside the subgrid's own extent, and the placement below reads `owner`
+     * to bound it by the subgrid's box rather than by a parent track.
+     *
+     * Not recursive. A subgrid inside a subgrid would need this to run again
+     * on the boxes it has just added, and the cost of that is unbounded in
+     * nesting depth -- which the budget for this release says outright it will
+     * not pay. One level, and the second degrades to an ordinary grid.
+     */
+    {
+        ar_i32 sg, base = items;
+
+        for (sg = 0; sg < base; ++sg)
+        {
+            ar_i32 owner = item_index[sg];
+            int    sub_col = ar__is_subgrid(&nodes[owner], 0);
+            int    sub_row = ar__is_subgrid(&nodes[owner], 1);
+            ar_i32 ch;
+            ar_i32 next_col = 0, next_row = 0;
+
+            if (!sub_col && !sub_row)
+            {
+                continue;
+            }
+            for (ch = nodes[owner].first_child; ch >= 0 && items < AR_GRID_ITEMS;
+                 ch = nodes[ch].next_sibling)
+            {
+                ar_i32 cs, ce, rs, re;
+
+                if (!ar__grid_item(&nodes[ch]))
+                {
+                    continue;
+                }
+                ar__item_lines(&nodes[ch], 0, &cs, &ce);
+                ar__item_lines(&nodes[ch], 1, &rs, &re);
+
+                item_index[items] = ch;
+                place[items].owner = sg;
+                place[items].col_span = 1;
+                place[items].row_span = 1;
+
+                if (sub_col)
+                {
+                    place[items].col = place[sg].col + (cs > 0 ? cs - 1 : next_col);
+                    if (cs < 0)
+                    {
+                        place[items].col_span = -cs;
+                    }
+                    else if (ce > cs && cs > 0)
+                    {
+                        place[items].col_span = ce - cs;
+                    }
+                    else if (ce < 0)
+                    {
+                        place[items].col_span = -ce;
+                    }
+                    next_col += place[items].col_span;
+                    if (next_col >= place[sg].col_span)
+                    {
+                        next_col = 0;
+                    }
+                }
+                else
+                {
+                    place[items].col = place[sg].col;
+                    place[items].col_span = place[sg].col_span;
+                }
+
+                if (sub_row)
+                {
+                    place[items].row = place[sg].row + (rs > 0 ? rs - 1 : next_row);
+                    if (rs < 0)
+                    {
+                        place[items].row_span = -rs;
+                    }
+                    else if (re > rs && rs > 0)
+                    {
+                        place[items].row_span = re - rs;
+                    }
+                    else if (re < 0)
+                    {
+                        place[items].row_span = -re;
+                    }
+                    next_row += place[items].row_span;
+                    if (next_row >= place[sg].row_span)
+                    {
+                        next_row = 0;
+                    }
+                }
+                else
+                {
+                    place[items].row = place[sg].row;
+                    place[items].row_span = place[sg].row_span;
+                }
+
+                if (place[items].col + place[items].col_span > cols)
+                {
+                    cols = place[items].col + place[items].col_span;
+                    if (cols > AR_GRID_MAX)
+                    {
+                        cols = AR_GRID_MAX;
+                    }
+                }
+                if (place[items].row + place[items].row_span > rows)
+                {
+                    rows = place[items].row + place[items].row_span;
+                }
+                ++items;
+            }
+        }
+    }
+
     *out_items = items;
     *out_cols = cols;
     *out_rows = rows > 0 ? rows : 1;
@@ -441,8 +600,28 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
  */
 static ar_i32 ar__item_contribution(const ar_node *n, ar_i32 axis, int minimum)
 {
-    ar_i32 v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
-    ar_i32 prop = ar_axis_size_prop(axis);
+    /*
+     * A subgrid *does* contribute on the axis it subgridded, and it took a
+     * stub to work out that it should.
+     *
+     * The first version suppressed it, reasoning that its children are already
+     * in the item list and would otherwise count the same content twice. They
+     * do not: a subgrid spanning three tracks contributes what its three
+     * children contributed to those same three tracks, so the demand is
+     * already met and nothing grows. Suppressing it changed exactly one thing
+     * -- the subgrid's own padding and border stopped reaching the parent's
+     * tracks -- and CSS says those *are* added to the outermost tracks it
+     * spans.
+     *
+     * Unnecessary in every case where it did nothing, and wrong in the one
+     * where it did something. This comment is here because the reasoning that
+     * put it in was plausible, and no check could tell the difference.
+     */
+    ar_i32 v;
+    ar_i32 prop;
+
+    v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
+    prop = ar_axis_size_prop(axis);
 
     if (n->style.unit[prop] == AR_UNIT_PX)
     {
@@ -749,6 +928,25 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
     const ar_track *list;
     ar_i32          k;
 
+    /*
+     * A subgrid inside a grid has already been laid out by its parent.
+     *
+     * The place sweep reaches every grid box in turn, and this one's children
+     * are items of the grid above it -- solving them again here, against a
+     * template it does not have, would undo the alignment that is the whole
+     * point. It steps aside; its own box was placed by the parent like any
+     * other item.
+     *
+     * A subgrid whose parent is *not* a grid has nobody to take its tracks
+     * from, and CSS says it falls back to an ordinary grid. It does here too,
+     * because with no template on either axis every track is implicit.
+     */
+    if ((ar__is_subgrid(n, 0) || ar__is_subgrid(n, 1)) && n->parent >= 0 &&
+        ar_is_grid(&nodes[n->parent]))
+    {
+        return;
+    }
+
     inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
     inner_h = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
     if (inner_w < 0)
@@ -801,6 +999,22 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
             w += col[at + j].size;
         }
         w += col_gap * (span - 1 > 0 ? span - 1 : 0);
+
+        /*
+         * A flattened child on an axis its subgrid did not subgrid is bounded
+         * by the subgrid's content box, not by the parent's track.
+         *
+         * Applied here as well as at placement because this is where the width
+         * is *decided* -- the placement loop only reads it to work out an
+         * alignment offset, so adjusting it there moved the box and left it
+         * the wrong size.
+         */
+        if (place[k].owner >= 0 && !ar__is_subgrid(&nodes[index[place[k].owner]], 0))
+        {
+            const ar_node *own = &nodes[index[place[k].owner]];
+
+            w = own->rect.w - own->style.v[AR_P_PAD_LEFT] - own->style.v[AR_P_PAD_RIGHT];
+        }
         it->rect.w = ar_resolve_size(it, 0, w, ar__self_mode(it, n, 0) == AR_ALIGN_STRETCH);
         /*
          * The automatic minimum applies to a grid item too.
@@ -845,6 +1059,31 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
              (place[k].col < cols ? col[place[k].col].pos : 0);
         cy = n->rect.y + n->style.v[AR_P_PAD_TOP] +
              (place[k].row < rows ? row[place[k].row].pos : 0);
+
+        /*
+         * A flattened child on an axis its subgrid did not subgrid takes the
+         * subgrid's own box, padding included.
+         *
+         * `grid-template-rows: subgrid` with no column template is the card
+         * case: the rows are the parent's and the columns are the card's, and
+         * the card usually has one. Bounding by the owner's content box is
+         * what a one-column solve would have produced, without running one.
+         */
+        if (place[k].owner >= 0)
+        {
+            const ar_node *own = &nodes[index[place[k].owner]];
+
+            if (!ar__is_subgrid(own, 0))
+            {
+                cx = own->rect.x + own->style.v[AR_P_PAD_LEFT];
+                cw = own->rect.w - own->style.v[AR_P_PAD_LEFT] - own->style.v[AR_P_PAD_RIGHT];
+            }
+            if (!ar__is_subgrid(own, 1))
+            {
+                cy = own->rect.y + own->style.v[AR_P_PAD_TOP];
+                rh = own->rect.h - own->style.v[AR_P_PAD_TOP] - own->style.v[AR_P_PAD_BOTTOM];
+            }
+        }
 
         /*
          * The height, the same way the width was settled above.

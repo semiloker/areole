@@ -8608,6 +8608,192 @@ static void test_a_grid_item_keeps_its_min_content(void)
     CHECK(ar__box(3).w < ar__box(2).w, "grid: and min-width: 0 is how you say it may be");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.8.2: subgrid
+ *
+ * Subgrid inverts the direction of track sizing. An ordinary grid sizes its
+ * tracks from its own contents; a subgrid's contents size its *parent's*, and
+ * the parent's resolved tracks then bound the child.
+ * ------------------------------------------------------------------------ */
+static void ar__cards(ar_surface *s, const char *extra, const char *mid1, const char *mid2,
+                      const char *mid3)
+{
+    char     css[900];
+    ar_input in;
+
+    strcpy(css, "#root { display:block; }"
+                ".deck { display:grid; width:300px;"
+                "        grid-template-columns: 100px 100px 100px; }"
+                ".card { display:grid; grid-template-rows: subgrid; grid-row: span 3; }"
+                ".sec { display:block; }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.deck");
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid1);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid2);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid3);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_subgrid_lines_the_cards_up(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Three cards whose middles are different lengths, and whose footers still
+     * share a line.
+     *
+     * This is the whole reason subgrid exists. Every other way of doing it --
+     * fixed heights, measuring in script, flexbox with hardcoded numbers -- is
+     * a workaround for not having it, and every one of them breaks when the
+     * content changes.
+     *
+     * Nodes: 1=deck, 2=card, 3/4/5=its sections, 6=card, 7/8/9, 10=card,
+     * 11/12/13.
+     */
+    ar__cards(&s, "", "one line", "one line that is long enough to wrap twice over", "short");
+
+    CHECK(ar__box(3).y == ar__box(7).y && ar__box(7).y == ar__box(11).y,
+          "subgrid: the three titles share a row");
+    CHECK(ar__box(4).y == ar__box(8).y && ar__box(8).y == ar__box(12).y,
+          "subgrid: and the three bodies start on one");
+    CHECK(ar__box(5).y == ar__box(9).y && ar__box(9).y == ar__box(13).y,
+          "subgrid: and the three footers share one, whatever is above them");
+    CHECK(ar__box(5).y > ar__box(4).y,
+          "subgrid: with the footers below the bodies rather than on top of them");
+
+    /*
+     * And the rows are as tall as the *sections*, not as the cards.
+     *
+     * Every check above compares the three cards to each other, so a card that
+     * contributed its own whole height to the first row -- on top of its
+     * children, who are already in the item list -- would make all three
+     * equally wrong and every one of them would still pass. This is the
+     * absolute one: the deck is exactly its three rows, and its three rows are
+     * exactly the three sections of the tallest card.
+     */
+    CHECK(ar__box(2).h == ar__box(3).h + ar__box(4).h + ar__box(5).h,
+          "subgrid: a card is its three rows and nothing more");
+
+    /*
+     * And against a number that does not move with the bug.
+     *
+     * Every box above grows together if the card contributes its own height on
+     * top of its children's: the row gets taller, so the section in it gets
+     * taller, so the card gets taller, and each check compares two things that
+     * both moved. The title's *intrinsic* height is settled before any track
+     * is sized and is the one number a double contribution cannot touch.
+     */
+    CHECK(ar__box(3).h == g_ui->nodes[3].fit[1],
+          "subgrid: the first row is as tall as a title, not as tall as a card");
+}
+
+static void test_a_subgrid_takes_the_parents_tracks(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The rows are the deck's, so a section is as tall as its row -- and the
+     * row is as tall as the tallest section across all three cards, not as the
+     * tallest in its own card. That is the contribution flowing upward.
+     */
+    ar__cards(&s,
+              ".deck { grid-template-rows: 20px 40px 30px; }"
+              ".card { grid-column: auto; }",
+              "a", "b", "c");
+
+    CHECK(ar__box(3).h == 20, "subgrid: a section is as tall as the parent's track");
+    CHECK(ar__box(4).h == 40, "subgrid: each of them");
+    CHECK(ar__box(5).h == 30, "subgrid: all three");
+    CHECK(ar__box(4).y == ar__box(3).y + 20, "subgrid: and they follow the parent's rows");
+}
+
+static void test_a_subgrid_keeps_its_own_columns(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `grid-template-rows: subgrid` and nothing about columns: the rows come
+     * from the deck and the columns are the card's own. A section is as wide
+     * as its card, not as wide as the deck.
+     */
+    /*
+     * The card is given padding on purpose.
+     *
+     * Without it a card's content box is exactly its column, so a solver that
+     * ignored the owner entirely and used the parent's track would land on the
+     * same numbers -- and the check would pass with the whole rule removed.
+     * Ten pixels either side is what tells the two apart.
+     */
+    ar__cards(&s, ".deck { grid-template-rows: 20px 20px 20px; } .card { padding: 0px 10px; }", "a",
+              "b", "c");
+
+    CHECK(ar__box(2).w == 100, "subgrid: the card is one column of the deck");
+    CHECK(ar__box(3).w == 80, "subgrid: and its sections fit inside the card's padding");
+    CHECK(ar__box(3).x == 10, "subgrid: starting where the card's content does");
+    CHECK(ar__box(6).x == 100, "subgrid: the second card is in the second column");
+    CHECK(ar__box(8).x == 110, "subgrid: and its sections are in the card, not the deck");
+}
+
+static void test_a_subgrid_with_no_grid_above_it_is_an_ordinary_grid(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `subgrid` with nobody to take tracks from falls back to an ordinary
+     * grid, which CSS says outright -- and here that happens for free: with no
+     * template on either axis, every track is implicit.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; width:200px; grid-template-rows: subgrid; }"
+                 ".c { height:20px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.g");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).h == 20 && ar__box(3).h == 20,
+          "subgrid: with no grid above it, the items are laid out normally");
+    CHECK(ar__box(3).y == ar__box(2).y + 20, "subgrid: one row each, stacked");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -12479,6 +12665,10 @@ int main(void)
     test_aspect_ratio_gives_the_axis_nobody_stated();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
+    test_subgrid_lines_the_cards_up();
+    test_a_subgrid_takes_the_parents_tracks();
+    test_a_subgrid_keeps_its_own_columns();
+    test_a_subgrid_with_no_grid_above_it_is_an_ordinary_grid();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
