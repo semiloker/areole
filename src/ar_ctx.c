@@ -252,6 +252,10 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void))
 void ar_stylesheet(ar_ctx *c, const char *css)
 {
     ar_sheet_parse(&c->sheet, css);
+
+    /* Asked once here rather than once per box. Everything tables cost an
+       interface that has none is this flag being zero. */
+    ar_sheet_note_tables(&c->sheet);
 }
 
 ar_u32 ar_stylesheet_errors(const ar_ctx *c)
@@ -800,6 +804,25 @@ static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, a
     {
         to = c->nodes[from].prev_sibling;
     }
+
+    /*
+     * Anonymous boxes are invisible to a combinator.
+     *
+     * `tr > td` has to keep matching when the row between them is one areole
+     * generated, or fixing up malformed markup would silently break the very
+     * stylesheet written against that markup -- the author would see a table
+     * appear and its styling vanish, with nothing to point at. So the step is
+     * taken again for as long as it lands on a box nobody declared.
+     *
+     * The same loop serves both directions: a generated row is skipped over
+     * going up, and a generated cell is skipped over going sideways.
+     */
+    while (to >= 0 && (c->nodes[to].state & AR_STATE_ANON))
+    {
+        to = (comb == AR_COMB_CHILD || comb == AR_COMB_DESCENDANT) ? c->nodes[to].parent
+                                                                   : c->nodes[to].prev_sibling;
+    }
+
     if (to < 0)
     {
         return 0;
@@ -1702,9 +1725,196 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     return idx;
 }
 
+/* ------------------------------------------------------------------------
+ * Anonymous table boxes
+ *
+ * CSS requires the missing pieces of a malformed table to be generated: a cell
+ * with no row gets a row, a row with no table gets a table, and content sitting
+ * directly inside a table gets a cell to live in. Real markup is rarely
+ * well-formed and the algorithm has to see a rectangular grid.
+ *
+ * **Generated as the tree is declared, not afterwards**, and that is the design
+ * rather than a detail. Two invariants make the alternative impossible: a
+ * parent must sit at a lower index than its children -- ar_layout.c says so in
+ * its header and five passes rely on it -- and a box's identity is its position
+ * among its siblings, so inserting one mid-array would renumber every following
+ * sibling's key and lose its hover, its scroll offset and its repaint digest.
+ * Building the tree correctly in the first place costs neither.
+ *
+ * An anonymous box stays open after the box that caused it closes, because the
+ * next sibling usually belongs in it too: two bare cells share one row. It is
+ * closed by whichever comes first -- something arriving that cannot live in it,
+ * or the box that contains it closing.
+ * ------------------------------------------------------------------------ */
+static int ar__is_table_container(ar_i32 d)
+{
+    return d == AR_DISPLAY_TABLE || d == AR_DISPLAY_TABLE_ROW_GROUP ||
+           d == AR_DISPLAY_TABLE_HEADER_GROUP || d == AR_DISPLAY_TABLE_FOOTER_GROUP ||
+           d == AR_DISPLAY_TABLE_ROW;
+}
+
+/* Whether `disp` may sit directly inside `pd`. */
+static int ar__parent_ok(ar_i32 disp, ar_i32 pd)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return pd == AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return pd == AR_DISPLAY_TABLE_ROW_GROUP || pd == AR_DISPLAY_TABLE_HEADER_GROUP ||
+               pd == AR_DISPLAY_TABLE_FOOTER_GROUP || pd == AR_DISPLAY_TABLE;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return pd == AR_DISPLAY_TABLE;
+    default:
+        /* Ordinary content is welcome anywhere except directly inside a table
+           box or a row, where it is a cell's worth of content with no cell. */
+        return !ar__is_table_container(pd);
+    }
+}
+
+/* The box `disp` needs immediately above it. */
+static ar_i32 ar__anon_parent_of(ar_i32 disp)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return AR_DISPLAY_TABLE_ROW_GROUP;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return AR_DISPLAY_TABLE;
+    default:
+        return AR_DISPLAY_TABLE_CELL;
+    }
+}
+
+static ar_i32 ar__open_display(const ar_ctx *c)
+{
+    if (c->depth <= 0 || c->stack[c->depth - 1] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 1]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * The display a selector would resolve to, asked before the box exists.
+ *
+ * State is taken as zero, because a box's state comes from its key and its key
+ * comes from the parent this call is trying to choose. So a rule that switches
+ * `display` to or from a table value on :hover will not regenerate the
+ * anonymous boxes around it. Named here rather than discovered later.
+ */
+static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
+{
+    ar_u32     tag = 0, id = 0;
+    ar_classes klass;
+    ar_style   st;
+
+    ar_classes_clear(&klass);
+    ar_selector_split(selector, &tag, &klass, &id);
+    ar_sheet_resolve(&c->sheet, tag, &klass, id, AR_STATE_NONE, &st);
+    return st.v[AR_P_DISPLAY];
+}
+
+static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
+{
+    ar_i32 idx = ar__push_node(c, "", 0);
+
+    if (idx < 0 || c->depth >= AR_MAX_DEPTH)
+    {
+        return -1;
+    }
+    c->nodes[idx].style.v[AR_P_DISPLAY] = (ar_i16)display;
+    c->nodes[idx].state = (ar_u16)(c->nodes[idx].state | AR_STATE_ANON);
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 1;
+    c->depth++;
+    return idx;
+}
+
+/* Closes anonymous boxes that cannot hold what is about to be declared. */
+static void ar__close_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    while (c->depth > 0 && c->is_anon[c->depth - 1] && !ar__parent_ok(disp, ar__open_display(c)))
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
+}
+
+/*
+ * Opens whatever `disp` needs above it, outermost first.
+ *
+ * The chain is collected innermost-first and pushed in reverse, because the
+ * outer box has to exist before the one inside it can be its child. Getting
+ * that backwards puts the row inside the cell.
+ */
+static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    ar_i32 chain[4];
+    ar_i32 n = 0, i, d = disp;
+
+    /*
+     * Never at the document root.
+     *
+     * An anonymous table pushed with nothing open would become node 0 and take
+     * AR_STATE_ROOT with it, moving `:root` off the caller's box and rooting
+     * the paint walk at a box nobody declared. A `<tr>` on its own is not a
+     * document, and refusing is better than rehoming the root.
+     */
+    if (c->depth <= 0)
+    {
+        return;
+    }
+
+    while (n < 4)
+    {
+        ar_i32 pd = ar__open_display(c);
+
+        if (pd < 0 || ar__parent_ok(d, pd))
+        {
+            break;
+        }
+        chain[n++] = ar__anon_parent_of(d);
+        d = chain[n - 1];
+    }
+
+    for (i = n - 1; i >= 0; --i)
+    {
+        if (ar__push_anon(c, chain[i]) < 0)
+        {
+            return;
+        }
+    }
+}
+
 void ar_begin(ar_ctx *c, const char *selector)
 {
-    ar_i32 idx = ar__push_node(c, selector, 0);
+    ar_i32 idx;
+
+    /* A sheet that never mentions a table cannot need an anonymous one, and
+       almost no sheet does -- so this is the entire cost of tables to an
+       interface without any. */
+    if (c->sheet.has_table)
+    {
+        ar_i32 disp = ar__peek_display(c, selector);
+
+        ar__close_anon_for(c, disp);
+        ar__open_anon_for(c, disp);
+    }
+
+    idx = ar__push_node(c, selector, 0);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -1718,14 +1928,25 @@ void ar_begin(ar_ctx *c, const char *selector)
            the matching ar_end still balances and the subtree collapses into
            its parent instead of corrupting the stack. */
         c->stack[c->depth] = c->depth > 0 ? c->stack[c->depth - 1] : -1;
+        c->is_anon[c->depth] = 0;
         c->depth++;
         return;
     }
-    c->stack[c->depth++] = idx;
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 0;
+    c->depth++;
 }
 
 void ar_end(ar_ctx *c)
 {
+    /* Anonymous boxes sitting on top close with the box that contains them.
+       They are not closed by whichever box caused them, because the next
+       sibling usually belongs in the same one. */
+    while (c->depth > 0 && c->is_anon[c->depth - 1])
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
     if (c->depth <= 0)
     {
         c->unbalanced = 1;

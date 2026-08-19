@@ -6175,6 +6175,275 @@ static void test_position_try_over_a_corpus_of_flips(void)
     }
 }
 
+/* ------------------------------------------------------------------------
+ * Anonymous table boxes
+ *
+ * Real markup is rarely well-formed, and the algorithm has to see a
+ * rectangular grid. A cell with no row gets a row; a row with no table gets a
+ * table; content sitting directly in a table gets a cell to live in.
+ *
+ * Generated as the tree is declared rather than afterwards, so the checks here
+ * are about tree *shape* -- parent links and counts -- and can run before any
+ * table layout exists.
+ * ------------------------------------------------------------------------ */
+static const char *AR_TBL_CSS = "#root { display:block; }"
+                                ".t  { display:table; }"
+                                ".rg { display:table-row-group; }"
+                                ".r  { display:table-row; }"
+                                ".c  { display:table-cell; }"
+                                ".b  { display:block; }";
+
+/* The display of node i, and the display of its parent chain, as a string of
+   one character per level: t=table g=group r=row c=cell b=block ?=other. */
+static char ar__disp_char(ar_i32 d)
+{
+    switch (d)
+    {
+    case AR_DISPLAY_TABLE:
+        return 't';
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+        return 'g';
+    case AR_DISPLAY_TABLE_ROW:
+        return 'r';
+    case AR_DISPLAY_TABLE_CELL:
+        return 'c';
+    case AR_DISPLAY_TABLE_CAPTION:
+        return 'p';
+    case AR_DISPLAY_BLOCK:
+        return 'b';
+    default:
+        return '?';
+    }
+}
+
+/* Writes the chain from the root down to node i, root first. */
+static void ar__chain_of(ar_i32 i, char *out)
+{
+    ar_i32 stack[32];
+    ar_i32 n = 0, at;
+
+    for (at = i; at >= 0 && n < 32; at = g_ui->nodes[at].parent)
+    {
+        stack[n++] = at;
+    }
+    while (n > 0)
+    {
+        --n;
+        *out++ = ar__disp_char(g_ui->nodes[stack[n]].style.v[AR_P_DISPLAY]);
+    }
+    *out = 0;
+}
+
+static void ar__tbl_frame_begin(void)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+}
+
+static void test_a_cell_on_its_own_grows_a_row_a_group_and_a_table(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    char       chain[40];
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.c"); /* a cell with nothing above it */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* root, then the three boxes it needed, then the cell itself. */
+    ar__chain_of(ar_node_count(g_ui) - 1, chain);
+    CHECK(strcmp(chain, "btgrc") == 0, "table: a bare cell grows a row, a group and a table");
+    CHECK(ar_node_count(g_ui) == 5, "table: and exactly three boxes were generated");
+}
+
+static void test_two_bare_cells_share_one_row(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /*
+     * The rule that decides whether the generator is stream-correct. An
+     * anonymous box that closed with the box that caused it would give each
+     * cell a row of its own, and a two-cell table would lay out as two rows of
+     * one -- which looks like a layout bug and is a lifetime bug.
+     */
+    CHECK(ar_node_count(g_ui) == 6, "table: two bare cells generate one row, not two");
+    CHECK(ar_node_parent(g_ui, 4) == ar_node_parent(g_ui, 5),
+          "table: and both cells hang off the same one");
+}
+
+static void test_content_inside_a_table_gets_a_cell(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    char       chain[40];
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.b"); /* a block sitting straight inside a table */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* A row and a cell, in that order -- the chain is built outermost first,
+       and getting it backwards puts the row inside the cell. */
+    ar__chain_of(ar_node_count(g_ui) - 1, chain);
+    CHECK(strcmp(chain, "btrcb") == 0,
+          "table: content in a table gets a row and a cell, nested right");
+}
+
+static void test_a_row_inside_a_table_gets_a_group(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    char       chain[40];
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* CSS lets a row sit straight inside a table, so nothing is generated. */
+    ar__chain_of(ar_node_count(g_ui) - 1, chain);
+    CHECK(strcmp(chain, "btrc") == 0, "table: a row may sit directly in a table, ungenerated");
+    CHECK(ar_node_count(g_ui) == 4, "table: and nothing was invented for it");
+}
+
+static void test_a_well_formed_table_generates_nothing(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.rg");
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The control, and the one that would catch a generator that fires on
+       everything: root, table, group, row, two cells. Six, and not one more. */
+    CHECK(ar_node_count(g_ui) == 6, "table: a well-formed table generates nothing at all");
+}
+
+static void test_a_sheet_without_tables_is_untouched(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_u32     with_keys[8], without_keys[8];
+    ar_i32     i, n1, n2;
+
+    /* The same tree under a sheet that mentions tables and one that does not.
+       Every key must be identical: the whole generation path is behind a flag
+       that a sheet without a table display never sets, and this is what says
+       so rather than assuming it. */
+    ar__ui_reset(".b { display:block; }");
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    n1 = ar_node_count(g_ui);
+    for (i = 0; i < n1 && i < 8; ++i)
+    {
+        without_keys[i] = g_ui->nodes[i].key;
+    }
+
+    ar__ui_reset(AR_TBL_CSS);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    n2 = ar_node_count(g_ui);
+    for (i = 0; i < n2 && i < 8; ++i)
+    {
+        with_keys[i] = g_ui->nodes[i].key;
+    }
+
+    CHECK(n1 == n2 && n1 == 3, "table: a tree with no table boxes is the same size either way");
+    CHECK(without_keys[0] == with_keys[0] && without_keys[1] == with_keys[1] &&
+              without_keys[2] == with_keys[2],
+          "table: and every key is byte identical, so nothing else can have moved");
+}
+
+static void test_a_combinator_climbs_past_a_generated_row(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    char       css[700];
+
+    /* `.t > .c` is written against the markup the author wrote -- a cell
+       straight inside a table. areole puts a row and a group in between, and
+       the rule has to keep matching or fixing the markup would break the
+       stylesheet written for it. */
+    strcpy(css, AR_TBL_CSS);
+    strcat(css, ".t .c { height: 33px; }");
+
+    ar__ui_reset(css);
+    ar__tbl_frame_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[ar_node_count(g_ui) - 1].style.v[AR_P_HEIGHT] == 33,
+          "table: a descendant combinator sees through the generated boxes");
+}
+
+static void test_a_cell_spans_one_by_default(void)
+{
+    /* Zero would be the natural consequence of the defaults loop, and every
+       cell would land in column zero. */
+    ar__sheet(".c { display:table-cell; }");
+    CHECK(ar__css_value(".c", 0, AR_P_COLSPAN) == 1 && ar__css_value(".c", 0, AR_P_ROWSPAN) == 1,
+          "table: a cell spans one column and one row unless it says otherwise");
+    ar__sheet(".c { display:table-cell; colspan:3; rowspan:2; }");
+    CHECK(ar__css_value(".c", 0, AR_P_COLSPAN) == 3 && ar__css_value(".c", 0, AR_P_ROWSPAN) == 2,
+          "table: and says otherwise when asked");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -9978,6 +10247,14 @@ int main(void)
     test_sticky_with_no_offsets_never_moves();
     test_a_sticky_box_too_big_to_move_does_not();
     test_a_clipped_box_does_not_take_the_hover();
+    test_a_cell_on_its_own_grows_a_row_a_group_and_a_table();
+    test_two_bare_cells_share_one_row();
+    test_content_inside_a_table_gets_a_cell();
+    test_a_row_inside_a_table_gets_a_group();
+    test_a_well_formed_table_generates_nothing();
+    test_a_sheet_without_tables_is_untouched();
+    test_a_combinator_climbs_past_a_generated_row();
+    test_a_cell_spans_one_by_default();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
