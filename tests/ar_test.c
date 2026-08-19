@@ -6444,6 +6444,232 @@ static void test_a_cell_spans_one_by_default(void)
           "table: and says otherwise when asked");
 }
 
+/* ------------------------------------------------------------------------
+ * Table layout
+ *
+ * A 300 wide table with no spacing and no padding, so every expected number
+ * below is arithmetic on the widths the cells ask for.
+ * ------------------------------------------------------------------------ */
+static const char *AR_TL_CSS = "#root { display:block; }"
+                               ".t  { display:table; width:300px; }"
+                               ".r  { display:table-row; }"
+                               ".c  { display:table-cell; height:20px; }";
+
+/* Builds rows x cols of plain cells and returns the node index of the table. */
+static void ar__table_scene(ar_surface *s, const char *extra, ar_i32 rows, ar_i32 cols)
+{
+    char     css[900];
+    ar_input in;
+    ar_i32   r, c;
+
+    strcpy(css, AR_TL_CSS);
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    for (r = 0; r < rows; ++r)
+    {
+        ar_begin(g_ui, "div.r");
+        for (c = 0; c < cols; ++c)
+        {
+            /* A class per column, so a test can widen one column without
+               reaching for a positional selector. */
+            ar_begin(g_ui, c == 0 ? "div.c.k0" : (c == 1 ? "div.c.k1" : "div.c.k2"));
+            ar_end(g_ui);
+        }
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_columns_share_the_table_width(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* Three cells with nothing to say about width: the 300 is shared, and the
+       remainder goes to the last one so the row is exactly 300 rather than
+       299. */
+    ar__table_scene(&s, "", 1, 3);
+    CHECK(ar__box(1).w == 300, "table: the table takes the width it was given");
+    CHECK(ar__box(3).x == 0 && ar__box(4).x == 100 && ar__box(5).x == 200,
+          "table: three empty columns start at 0, 100 and 200");
+    CHECK(ar__box(3).w + ar__box(4).w + ar__box(5).w == 300,
+          "table: and their widths sum to the table exactly");
+}
+
+static void test_a_wide_cell_widens_its_whole_column(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* The second cell of the second row states 200. Its column has to carry
+       that, and the other two share what is left -- which is the whole point
+       of a column being a constraint rather than a size. */
+    ar__table_scene(&s, ".k1 { width:200px; }", 2, 3);
+    CHECK(ar__box(4).w == ar__box(8).w, "table: a column is one width, whichever row a cell is in");
+    CHECK(ar__box(4).w >= 200, "table: and it is at least what the widest cell asked for");
+    CHECK(ar__box(3).w + ar__box(4).w + ar__box(5).w == 300,
+          "table: the other columns give up the difference rather than overflowing");
+}
+
+static void test_rows_stack_and_the_table_is_as_tall_as_them(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    ar__table_scene(&s, "", 3, 2);
+    CHECK(ar__box(2).y == 0 && ar__box(5).y == 20 && ar__box(8).y == 40,
+          "table: three twenty-tall rows stack at 0, 20 and 40");
+    CHECK(ar__box(1).h == 60, "table: and the table comes to their sum");
+}
+
+static void test_a_colspan_covers_its_columns(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     wide;
+
+    /* Row one is a single cell spanning three columns; row two is three
+       ordinary cells. The spanning cell has to come to the whole width. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t  { display:table; width:300px; }"
+                 ".r  { display:table-row; }"
+                 ".c  { display:table-cell; height:20px; }"
+                 ".w  { display:table-cell; height:20px; colspan:3; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.w");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    wide = ar__box(3).w;
+    CHECK(wide == 300, "table: a cell spanning three columns is as wide as all three");
+    CHECK(ar__box(5).w + ar__box(6).w + ar__box(7).w == 300,
+          "table: and the three below it still sum to the same");
+}
+
+static void test_a_rowspan_holds_its_column_open(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* The first cell spans two rows, so the second row has one declared cell
+       and it belongs in the *second* column, not the first. Getting the
+       countdown wrong slides it underneath and the table goes crooked. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t  { display:table; width:200px; }"
+                 ".r  { display:table-row; }"
+                 ".c  { display:table-cell; height:20px; }"
+                 ".tall { display:table-cell; height:20px; rowspan:2; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.tall");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* node 4 is the spanning cell, 5 its neighbour, 7 the second row's cell. */
+    CHECK(ar__box(4).x == ar__box(6).x,
+          "table: the row below a rowspan starts in the column it left free");
+    CHECK(ar__box(6).x > ar__box(3).x, "table: which is not the one the spanning cell holds");
+}
+
+static void test_fixed_layout_ignores_what_cells_want(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* `fixed` is the affordable option on a slow machine precisely because it
+       does not look at the cells: equal columns, one pass, whatever they say
+       they need. */
+    ar__table_scene(&s,
+                    ".t { table-layout: fixed; }"
+                    ".k0 { width:250px; }",
+                    2, 3);
+    CHECK(ar__box(3).w == 100 && ar__box(4).w == 100 && ar__box(5).w == 100,
+          "table: fixed layout gives equal columns whatever a cell asks for");
+
+    /* And the control: the same sheet on automatic honours the request. */
+    ar__table_scene(&s, ".k0 { width:250px; }", 2, 3);
+    CHECK(ar__box(3).w >= 250, "table: automatic layout does not ignore it");
+}
+
+static void test_a_table_stacks_like_any_other_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_input   in;
+
+    /* The trap this guards: a table's y is fixed by its parent while stacking,
+       before the forward sweep reaches the table. If its height were corrected
+       any later the box after it would sit at the wrong place. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t  { display:table; width:200px; }"
+                 ".r  { display:table-row; }"
+                 ".c  { display:table-cell; height:25px; }"
+                 ".after { display:block; height:10px; }");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.after");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 50, "table: two twenty-five tall rows make a fifty tall table");
+    CHECK(ar__box(6).y == 50, "table: and the block after it starts where the table ends");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -10255,6 +10481,13 @@ int main(void)
     test_a_sheet_without_tables_is_untouched();
     test_a_combinator_climbs_past_a_generated_row();
     test_a_cell_spans_one_by_default();
+    test_columns_share_the_table_width();
+    test_a_wide_cell_widens_its_whole_column();
+    test_rows_stack_and_the_table_is_as_tall_as_them();
+    test_a_colspan_covers_its_columns();
+    test_a_rowspan_holds_its_column_open();
+    test_fixed_layout_ignores_what_cells_want();
+    test_a_table_stacks_like_any_other_box();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
