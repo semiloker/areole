@@ -88,6 +88,72 @@ specificity. `#id .btn` and `.btn#id` are not the trap; `.panel .btn` beating
 `align-items` defaults to `stretch`, as in CSS. It only affects boxes that
 state no size of their own.
 
+### Flex
+
+| Property | Values |
+| --- | --- |
+| `flex-direction` | `row`, `column` |
+| `flex-wrap` | `nowrap`, `wrap`, `wrap-reverse` |
+| `flex-basis` | length, per cent, `auto`, `content` |
+| `flex-grow` `flex-shrink` | number, fractions kept |
+| `flex` | `<grow> [<shrink>] [<basis>]` |
+| `justify-content` | `flex-start`, `center`, `flex-end`, `space-between`, `space-around`, `space-evenly` |
+| `align-items` | `flex-start`, `center`, `flex-end`, `stretch`, `baseline` |
+| `align-self` | `auto` and the `align-items` values |
+| `align-content` | the `align-items` values plus the three `space-*` |
+| `order` | integer, may be negative |
+| `place-items` `place-content` `place-self` | `<align> [<justify>]` |
+
+**`flex: 1` and `flex-grow: 1` are different declarations.** The shorthand
+writes a *zero* basis, so three boxes come out equal whatever is in them; the
+longhand leaves the basis `auto`, so each keeps its content's width and only
+the surplus is shared. This is the most common flexbox mistake there is and
+CSS put the difference in the shorthand on purpose.
+
+**`flex-grow: 0.5` keeps its fraction.** Every other fractional number here is
+floored — sub-pixel sizes are not a thing in an integer engine — and a flex
+factor is a ratio rather than a size, so the two factor properties are the only
+place the parser keeps three decimal places.
+
+**`min-width: auto` on a flex item is not zero.** It is the item's min-content
+size, and it applies whether or not anybody wrote it — the rule behind almost
+every "why will my flex item not shrink" question. Two ways out, both
+specified: say `min-width: 0` explicitly, or make the item clip with
+`overflow: hidden`, which removes the automatic minimum outright.
+
+The `grow` keyword areole invented stays, as an alias for `flex: 1` along the
+main axis, because stylesheets use it. It is areole-specific and not CSS.
+
+### Grid
+
+| Property | Values |
+| --- | --- |
+| `grid-template-columns` `grid-template-rows` | a track list |
+| `grid-auto-columns` `grid-auto-rows` | one track |
+| `grid-auto-flow` | `row`, `column`, and `dense` beside either |
+| `grid-column` `grid-row` | `<start> [/ <end>]` |
+| `grid-column-start` `grid-column-end` `grid-row-start` `grid-row-end` | integer line, or `span <n>` |
+| `justify-items` `justify-self` | `start`, `center`, `end`, `stretch`; `auto` on self |
+| `row-gap` `column-gap` `gap` | length; the shorthand is row then column |
+
+A **track** is a length, a percentage, `auto`, `min-content`, `max-content`,
+`<n>fr`, `minmax(<min>, <max>)` or `fit-content(<length>)`, and a list may wrap
+any run of them in `repeat(<n>, ...)`.
+
+**`1fr` is not "a share of the container".** It is "at least the contents, then
+a share of what is left" — `1fr` has a minimum of `auto`, so a track holding a
+long word is wider than its share and every other `fr` track gets less. The
+distribution iterates for that reason, taking out each track that will not
+shrink to its share and dividing the rest again.
+
+Columns are solved before rows, because an item's height depends on the width
+it ends up with.
+
+Two bounds, and they are real: a grid has at most **64 tracks** on an axis and
+**1024 items**. The arrays are on the stack, which is the same bargain the
+table's columns and the float list make; beyond the bounds the extra tracks and
+items are dropped rather than placed wrongly.
+
 ### Size
 
 | Property | Values |
@@ -108,7 +174,7 @@ state no size of their own.
 
 | Property | Values |
 | --- | --- |
-| `display` | `flex`, `block`, `inline-block`, `inline`, `none`, and the nine table values below |
+| `display` | `flex`, `grid`, `block`, `inline-block`, `inline`, `none`, and the nine table values below |
 | `position` | `static`, `relative`, `absolute`, `fixed`, `sticky` |
 | `top` `right` `bottom` `left` | length |
 | `z-index` | integer |
@@ -385,15 +451,18 @@ Smooth text at arbitrary sizes is the optional TrueType module, later.
 
 Named so that their absence is a decision rather than an oversight:
 
-- `flex-wrap` — the next real gap in the solver. Use explicit rows meanwhile.
-- `align-self`, `flex-basis`, `flex-shrink`, `order`
+- named grid lines and `grid-template-areas` — a name table on top of the track
+  model rather than a change to it
+- `repeat(auto-fill)` and `repeat(auto-fit)` — the count cannot be known until
+  the container has a width, and a track list is parsed when the stylesheet is
+  handed over. Refused at parse time rather than guessed
+- subgrid — 0.8.2
 - `box-shadow`, gradients, `opacity` on a whole subtree
 - media queries, container queries, `@` rules of any kind
 - custom properties, `var()`, `calc()`
 - attribute selectors, pseudo-elements, `:nth-child(an+b)`
 - writing modes and logical properties, so no `-inline` or `-block` longhands
 - `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
-- grid
 - `border-style`, and per-side border widths — so a collapsed border resolves by
   width and origin and not by style
 - table fragmentation across pages or columns
