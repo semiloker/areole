@@ -6670,6 +6670,254 @@ static void test_a_table_stacks_like_any_other_box(void)
     CHECK(ar__box(6).y == 50, "table: and the block after it starts where the table ends");
 }
 
+/* ------------------------------------------------------------------------
+ * The bugs a review found in the first table implementation
+ *
+ * Every one of these passed the earlier tests, which is the point of writing
+ * them down: each needed a shape the first set of checks did not build.
+ * ------------------------------------------------------------------------ */
+static void test_cell_padding_is_not_counted_twice(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * min_w and fit[0] are built as `widest + pad_left + pad_right`, so a cell
+     * that adds its padding again makes its column that much too wide. The
+     * earlier tests all used cells with no padding and could not see it.
+     *
+     * One column, one cell, 100 wide with 10 either side: the column wants 120
+     * and not 140, so a 400 wide table leaves 280 for the empty second column.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:400px; }"
+                 ".r { display:table-row; }"
+                 ".p { display:table-cell; width:100px; padding:0px 10px; height:10px; }"
+                 ".e { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.p");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.e");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /*
+     * Both columns share the surplus equally, so what says the padding was
+     * counted once is the *difference* between them: the padded column is
+     * ahead by its content plus its padding, 120, and would be ahead by 140 if
+     * the padding had been added on top of numbers that already carried it.
+     */
+    CHECK(ar__box(3).w - ar__box(4).w == 120,
+          "table: a padded cell's column leads by its content plus its padding once");
+    CHECK(ar__box(3).w + ar__box(4).w == 400, "table: and the columns still fill the table");
+}
+
+static void test_a_rowspan_cell_is_as_tall_as_the_rows_it_spans(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The spanning cell was excluded from its row's height and then handed
+     * that row's height anyway, so a table whose first row was one rowspan:2
+     * cell came out as tall as the second row and the spanning cell had no
+     * height at all.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; }"
+                 ".r { display:table-row; }"
+                 ".tall { display:table-cell; rowspan:2; height:40px; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.tall");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(3).h >= 40, "table: a rowspan cell is at least as tall as it asked to be");
+    CHECK(ar__box(1).h >= 40, "table: and the table is tall enough to hold it");
+}
+
+static void test_a_colspan_does_not_release_a_rowspan(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A cell spanning two columns wrote its own single row over a three-row
+     * claim on one of them, releasing that column a row early. Storing the
+     * longer claim rather than the latest is the fix, and this is the shape
+     * that shows it: the third row's cell must still be pushed past the column
+     * the tall cell is holding.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }"
+                 ".tall { display:table-cell; rowspan:3; height:10px; }"
+                 ".wide { display:table-cell; colspan:2; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r"); /* c , tall(rowspan 3) */
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.tall");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r"); /* wide(colspan 2) -- must not free the tall column */
+        ar_begin(g_ui, "div.wide");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.r"); /* c -- must still start at column 0 */
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    /* 3=c, 4=tall, 6=wide, 8=the last row's cell. */
+    CHECK(ar__box(8).x == ar__box(3).x,
+          "table: a colspan does not release a column a rowspan is still holding");
+}
+
+static void test_a_table_honours_a_stated_height(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* The solved height was assigned raw, skipping the clamp every other box
+       in that function gets -- so a table computed a height and threw a stated
+       one away. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; height:150px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(1).h == 150, "table: a stated height on a table is a floor, not a suggestion");
+}
+
+static void test_a_spanning_cell_honours_a_stated_width(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /* Only the single-column pass read a stated width, so `colspan:2;
+       width:300px` on an empty cell widened nothing at all. */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:400px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; }"
+                 ".wide { display:table-cell; colspan:2; width:300px; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.wide");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(3).w >= 300,
+          "table: a spanning cell's stated width widens the columns it covers");
+}
+
+static void test_an_empty_table_leaves_nothing_at_the_origin(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A table whose rows hold no cells has no columns, and the solve used to
+     * return before it touched anything. A fresh node's rect is zeroed, so the
+     * rows were not stale -- they were at the top left of the surface, which
+     * hit testing and ar_node_rect both report as where the row is.
+     */
+    ar__ui_reset("#root { display:block; padding:50px; }"
+                 ".t { display:table; width:200px; padding:10px; }"
+                 ".r { display:table-row; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).x == ar__box(1).x + 10 && ar__box(2).y == ar__box(1).y + 10,
+          "table: an empty table's row sits where its content would have started");
+    CHECK(ar__box(2).h == 0, "table: and has no height");
+}
+
 static void test_a_clipped_box_does_not_take_the_hover(void)
 {
     ar_surface s = ar__ui_surface(200, 300);
@@ -10488,6 +10736,12 @@ int main(void)
     test_a_rowspan_holds_its_column_open();
     test_fixed_layout_ignores_what_cells_want();
     test_a_table_stacks_like_any_other_box();
+    test_cell_padding_is_not_counted_twice();
+    test_a_rowspan_cell_is_as_tall_as_the_rows_it_spans();
+    test_a_colspan_does_not_release_a_rowspan();
+    test_a_table_honours_a_stated_height();
+    test_a_spanning_cell_honours_a_stated_width();
+    test_an_empty_table_leaves_nothing_at_the_origin();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
