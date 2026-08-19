@@ -303,7 +303,16 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col)
             }
         }
 
-        for (i = 0; i < AR_MAX_COLUMNS; ++i)
+        /*
+         * Only the columns this table actually uses.
+         *
+         * This swept all sixty-four every row, which is linear in rows and
+         * therefore not a complexity bug -- but it is sixty-four times the
+         * work a four-column table needs, on every row, in four separate
+         * passes. The ten-thousand-row scene is what made it worth saying: a
+         * constant that large stops reading as a constant.
+         */
+        for (i = 0; i < ncol; ++i)
         {
             if (col[i].span_left > 0)
             {
@@ -769,7 +778,49 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
 
     t->min_w = sum_min + chrome;
     t->fit[0] = sum_max + chrome;
-    t->fit[1] = ar__table_solve(nodes, table, 0, 0);
+
+    /*
+     * The intrinsic height, without running the whole solve to get it.
+     *
+     * It used to call ar__table_solve here, which meant a second grid pass and
+     * a second walk of every cell purely to produce a number that
+     * ar__wrap_height overwrites the moment the width is settled. The rows are
+     * walked once instead and each takes its tallest cell's max-content
+     * height, which is the same answer the solve would have given at an
+     * unconstrained width -- and is what fit[1] means everywhere else.
+     */
+    {
+        ar_i32 row = -1;
+        ar_i32 h = t->style.v[AR_P_PAD_TOP] + t->style.v[AR_P_PAD_BOTTOM] + spacing;
+
+        while ((row = ar__next_row(nodes, table, row)) >= 0)
+        {
+            ar_i32 c = nodes[row].first_child;
+            ar_i32 rh = 0;
+
+            for (; c >= 0; c = nodes[c].next_sibling)
+            {
+                ar_i32 ch;
+
+                if (!ar__is_cell(&nodes[c]))
+                {
+                    continue;
+                }
+                ch = nodes[c].fit[1];
+                if (nodes[c].style.unit[AR_P_HEIGHT] == AR_UNIT_PX &&
+                    nodes[c].style.v[AR_P_HEIGHT] + ar__cell_chrome_y(&nodes[c]) > ch)
+                {
+                    ch = nodes[c].style.v[AR_P_HEIGHT] + ar__cell_chrome_y(&nodes[c]);
+                }
+                if (ch > rh)
+                {
+                    rh = ch;
+                }
+            }
+            h += rh + spacing;
+        }
+        t->fit[1] = h;
+    }
 }
 
 /* How tall this table comes to now that its width is settled. Called from the
