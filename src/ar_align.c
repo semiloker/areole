@@ -130,6 +130,8 @@ void ar_align_distribute(ar_i32 mode, ar_i32 free, ar_i32 count, ar_i32 *out_lea
         free = 0;
     }
 
+    mode &= AR_ALIGN_MODE_MASK;
+
     switch (mode)
     {
     case AR_ALIGN_CENTER:
@@ -213,9 +215,35 @@ ar_i32 ar_align_from_justify(ar_i32 justify)
  */
 ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free)
 {
+    /*
+     * `safe` turns into `start` the moment the box would overflow.
+     *
+     * Centring a box larger than its container puts half the overflow *before*
+     * the start edge, where it cannot be scrolled to and cannot be read. That
+     * is what `safe` exists to prevent, and it is why the check is on the free
+     * space being negative rather than on anything about the box: negative
+     * free space is exactly the condition under which centring loses content.
+     */
+    int safe = (mode & AR_ALIGN_SAFE) != 0;
+
+    mode &= AR_ALIGN_MODE_MASK;
     if (free < 0)
     {
-        free = 0;
+        if (safe)
+        {
+            return 0;
+        }
+        /* Overflow goes both ways, which is what makes centring lose content
+           and what `safe` was added to CSS to opt out of. */
+        switch (mode)
+        {
+        case AR_ALIGN_CENTER:
+            return free / 2;
+        case AR_ALIGN_END:
+            return free;
+        default:
+            return 0;
+        }
     }
     switch (mode)
     {

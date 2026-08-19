@@ -387,6 +387,7 @@ toolkit breaks that circle.
 - **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
 - **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`, `caption-side`, `empty-cells`, `col` widths
 - **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid
+- **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
@@ -396,7 +397,7 @@ Minor releases add architecture, patch releases add CSS and HTML coverage.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 1053 checks
+./build/ar_test               # 1072 checks
 ./build/example_hello         # the dashboard on the front page
 ./build/example_tour          # one page per release, 0.1.0 to 0.6.1
 ./build/example_showcase      # one long page using the whole CSS subset at once
