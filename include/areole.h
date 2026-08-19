@@ -431,12 +431,25 @@ typedef ar_i32 ar_scroll_pos;
    costs. Anything written against real CSS uses these, so the alternative was
    not a smaller struct, it was laying those stylesheets out wrongly.
 
+   488 -> 528 for grid at 0.8.0. Measured: ar_node went 432 -> 472 and the
+   assertion below fired at 524. Thirteen properties -- two templates, two
+   automatic track lists, the flow, four line numbers, two justifications and
+   the two halves of `gap`.
+
+   A track *list* is not among them, and that is the part worth stating: a
+   template is a list of unknown length full of functions, and a style slot is
+   sixteen bits. What the slot holds is an index into a pool on the stylesheet,
+   which is where a track list belongs anyway -- it comes from a rule and never
+   from a computation, so it is parsed once and read every frame, and nothing
+   about it is per-box. Carrying it per-box would have cost every box in the
+   interface a pointer for the sake of the handful that are grids.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 480u
+#define AR_BYTES_PER_BOX 520u
 #else
-#define AR_BYTES_PER_BOX 488u
+#define AR_BYTES_PER_BOX 528u
 #endif
 
 /*
@@ -461,8 +474,17 @@ typedef ar_i32 ar_scroll_pos;
  * 520 -> 544, and 256 of them is 139,264. Measured: 15,120 of context, 139,264
  * of rules, 17,664 of style cache and the 1,024 of slack the assertion carries,
  * which is 173,072 of 180,224.
+ *
+ * 176 KB -> 192 KB for grid at 0.8.0, and for the first time not only the rule
+ * table: ar_style went 260 -> 300 bytes for thirteen properties, a rule went
+ * 544 -> 584, and 256 of them is 149,504. The track pool is the new part --
+ * 512 tracks at 8 bytes is 4 KB, and it is now inside the assertion rather
+ * than beside it, because a block that is checked and a block that is used
+ * being two different numbers is how a fixed budget stops being fixed.
+ * Measured: 15,136 of context, 149,504 of rules, 20,224 of style cache, 4,096
+ * of tracks and 1,024 of slack, which is 189,984 of 196,608.
  */
-#define AR_MEM_FIXED  180224u
+#define AR_MEM_FIXED  196608u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */

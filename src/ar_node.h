@@ -410,6 +410,12 @@ typedef struct ar_layout_env
     ar_text_range_fn measure;
     void            *ud;
 
+    /* The stylesheet, because a grid template is a list and a style slot is
+       sixteen bits -- the slot holds an index into a pool that lives here.
+       May be null, in which case a grid has no templates and every track is
+       implicit, which is a grid nobody wrote but a solver that still works. */
+    const ar_sheet *sheet;
+
     /* Where a scroll container currently is. Null means nothing scrolls,
        which is what every caller before scrolling got. */
     ar_i32 (*scroll_of)(void *ud, ar_i32 index);
@@ -554,6 +560,7 @@ int ar_is_table(const ar_node *n);
 int ar_is_table_internal(const ar_node *n);
 
 /* A cell, which is a block for whatever is inside it. */
+int ar_is_grid(const ar_node *n);
 int ar_is_table_block(const ar_node *n);
 
 /* Whether this box paints itself -- its background, its border and its text.
@@ -589,6 +596,15 @@ ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free);
  * ------------------------------------------------------------------------ */
 void   ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
+/* ------------------------------------------------------------------------
+ * The grid formatting context, in ar_layout_grid.c
+ *
+ * It takes the sheet because a track list lives in a pool there rather than in
+ * the style -- see the comment beside AR_P_GRID_COLS.
+ * ------------------------------------------------------------------------ */
+void   ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
+ar_i32 ar_grid_content_height(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
 
 /* Both defined in ar_layout.c, which owns the sizing rules; the flex solver
    is the second caller and the reason they stopped being static. */

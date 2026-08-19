@@ -184,7 +184,9 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
         return;
     }
 
-    side_by_side = !ar_is_block(n) && ar_axis_main(n) == 0;
+    /* A grid is not a flex row: its children do not sit side by side along one
+       axis, so summing them is the wrong intrinsic width. */
+    side_by_side = !ar_is_block(n) && !ar_is_grid(n) && ar_axis_main(n) == 0;
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
@@ -289,6 +291,16 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
                constraints are answerable -- and nothing else here is, because
                the table has no width yet. */
             ar_table_measure(nodes, i);
+            continue;
+        }
+        if (ar_is_grid(n))
+        {
+            /* A grid stacks in both directions at once, so neither the block
+               sum nor the flex sum is its intrinsic size. Measuring it as a
+               block is the conservative answer -- the widest child rather
+               than the sum -- and the track solve settles the real one at
+               placement, where the container's width is known. */
+            ar__measure_block(nodes, i);
             continue;
         }
         if (ar_is_table_internal(n) || ar_is_table_block(n))
@@ -881,6 +893,11 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                    they turned out, and that is what the block pass works out. */
                 ar_table_align_cell(nodes, i);
             }
+            continue;
+        }
+        if (ar_is_grid(n))
+        {
+            ar_grid_place(nodes, i, env->sheet, env);
             continue;
         }
         if (ar_is_block(n))
