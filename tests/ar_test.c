@@ -6686,10 +6686,12 @@ static void test_cell_padding_is_not_counted_twice(void)
      * earlier tests all used cells with no padding and could not see it.
      *
      * One column, one cell, 100 wide with 10 either side: the column wants 120
-     * and not 140, so a 400 wide table leaves 280 for the empty second column.
+     * and not 140. The table is made exactly that wide so there is no surplus
+     * to distribute and nothing stands between the number under test and the
+     * number the column gets.
      */
     ar__ui_reset("#root { display:block; }"
-                 ".t { display:table; width:400px; }"
+                 ".t { display:table; width:120px; }"
                  ".r { display:table-row; }"
                  ".p { display:table-cell; width:100px; padding:0px 10px; height:10px; }"
                  ".e { display:table-cell; height:10px; }");
@@ -6713,15 +6715,10 @@ static void test_cell_padding_is_not_counted_twice(void)
         ar_frame_end(g_ui, &s);
     }
 
-    /*
-     * Both columns share the surplus equally, so what says the padding was
-     * counted once is the *difference* between them: the padded column is
-     * ahead by its content plus its padding, 120, and would be ahead by 140 if
-     * the padding had been added on top of numbers that already carried it.
-     */
-    CHECK(ar__box(3).w - ar__box(4).w == 120,
-          "table: a padded cell's column leads by its content plus its padding once");
-    CHECK(ar__box(3).w + ar__box(4).w == 400, "table: and the columns still fill the table");
+    CHECK(ar__box(3).w == 120,
+          "table: a padded cell's column is its content plus its padding once");
+    CHECK(ar__box(4).w == 0,
+          "table: and a column whose cell wants nothing is given nothing to want it with");
 }
 
 static void test_a_rowspan_cell_is_as_tall_as_the_rows_it_spans(void)
@@ -7289,6 +7286,51 @@ static void test_a_collapsed_line_is_drawn_once(void)
     CHECK(ar__pixel_at(149, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
     CHECK(ar__pixel_at(150, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
     CHECK(ar__pixel_at(151, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+}
+
+static void test_a_roomy_table_gives_the_surplus_to_the_wide_column(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Two columns wanting 100 and 20 in a table with 360 to give.
+     *
+     * The surplus is 240, and it goes in proportion to what each column
+     * wanted: 200 to the first and 40 to the second, so they end at 300 and
+     * 60. Sharing it equally would end them at 220 and 140 -- a wide column
+     * and a narrow one coming out nearly the same width, which is what the
+     * first version did and no browser does. This table is compared against
+     * one, so the difference matters.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:360px; }"
+                 ".r { display:table-row; }"
+                 ".wide { display:table-cell; width:100px; height:10px; }"
+                 ".narrow { display:table-cell; width:20px; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.t");
+        ar_begin(g_ui, "div.r");
+        ar_begin(g_ui, "div.wide");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.narrow");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(3).w == 300,
+          "table: the surplus goes to the columns in proportion to what they wanted");
+    CHECK(ar__box(4).w == 60, "table: so the narrow column stays narrow");
+    CHECK(ar__box(3).w + ar__box(4).w == 360, "table: and the two of them still fill the table");
 }
 
 static void test_a_clipped_box_does_not_take_the_hover(void)
@@ -11125,6 +11167,7 @@ int main(void)
     test_a_separate_table_is_untouched_by_any_of_this();
     test_a_collapsed_edge_is_in_the_paint_digest();
     test_a_collapsed_line_is_drawn_once();
+    test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
