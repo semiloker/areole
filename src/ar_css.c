@@ -119,6 +119,12 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_TABLE_LAYOUT] = AR_UNIT_KEYWORD;
     s->v[AR_P_BORDER_COLLAPSE] = AR_BORDER_SEPARATE;
     s->unit[AR_P_BORDER_COLLAPSE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_VISIBILITY] = AR_VIS_VISIBLE;
+    s->unit[AR_P_VISIBILITY] = AR_UNIT_KEYWORD;
+    s->v[AR_P_CAPTION_SIDE] = AR_CAPTION_TOP;
+    s->unit[AR_P_CAPTION_SIDE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_EMPTY_CELLS] = AR_EMPTY_SHOW;
+    s->unit[AR_P_EMPTY_CELLS] = AR_UNIT_KEYWORD;
 
     s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
     s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
@@ -341,6 +347,17 @@ int ar_prop_inherits(ar_i32 prop)
     {
     case AR_P_COLOR:
     case AR_P_FONT_SIZE:
+    /* `visibility` inherits, and that is what makes `collapse` on a row worth
+       writing: the row goes and every cell in it goes too, without any of them
+       being named. A cell can say `visibility: visible` to come back, which is
+       the one thing that separates it from `display: none`. */
+    case AR_P_VISIBILITY:
+    /* Both of these are written on the table and read on a box inside it --
+       `empty-cells` on the cells, `caption-side` on the caption -- and CSS
+       makes them inherited for exactly that reason. Nobody writes
+       `empty-cells` on every cell. */
+    case AR_P_EMPTY_CELLS:
+    case AR_P_CAPTION_SIDE:
         return 1;
     default:
         return 0;
@@ -616,6 +633,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"position-try", AR_P_POSITION_TRY},
                                           {"table-layout", AR_P_TABLE_LAYOUT},
                                           {"border-collapse", AR_P_BORDER_COLLAPSE},
+                                          {"visibility", AR_P_VISIBILITY},
+                                          {"caption-side", AR_P_CAPTION_SIDE},
+                                          {"empty-cells", AR_P_EMPTY_CELLS},
                                           {"border-spacing", AR_P_BORDER_SPACING},
                                           {"colspan", AR_P_COLSPAN},
                                           {"rowspan", AR_P_ROWSPAN},
@@ -752,6 +772,13 @@ static const ar__kw AR_KEYWORDS[] = {
 
     {"separate", AR_P_BORDER_COLLAPSE, AR_BORDER_SEPARATE},
     {"collapse", AR_P_BORDER_COLLAPSE, AR_BORDER_COLLAPSE},
+    {"visible", AR_P_VISIBILITY, AR_VIS_VISIBLE},
+    {"hidden", AR_P_VISIBILITY, AR_VIS_HIDDEN},
+    {"collapse", AR_P_VISIBILITY, AR_VIS_COLLAPSE},
+    {"top", AR_P_CAPTION_SIDE, AR_CAPTION_TOP},
+    {"bottom", AR_P_CAPTION_SIDE, AR_CAPTION_BOTTOM},
+    {"show", AR_P_EMPTY_CELLS, AR_EMPTY_SHOW},
+    {"hide", AR_P_EMPTY_CELLS, AR_EMPTY_HIDE},
 
     {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
     {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
