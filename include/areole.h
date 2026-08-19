@@ -423,12 +423,20 @@ typedef ar_i32 ar_scroll_pos;
    call into the context the way a span could have been. The other two ride
    along in the same eight bytes: the alignment had already been paid.
 
+   464 -> 488, for the seven properties real flexbox needs at 0.8.0:
+   flex-wrap, flex-basis, flex-grow, flex-shrink, align-self, align-content
+   and order. Measured: ar_node went 408 -> 432 and the assertion below fired
+   at 484. areole shipped a flexbox *subset* -- direction, gap, justify, align
+   and a `grow` keyword that is not CSS -- and this is what the rest of it
+   costs. Anything written against real CSS uses these, so the alternative was
+   not a smaller struct, it was laying those stylesheets out wrongly.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 456u
+#define AR_BYTES_PER_BOX 480u
 #else
-#define AR_BYTES_PER_BOX 464u
+#define AR_BYTES_PER_BOX 488u
 #endif
 
 /*
@@ -447,8 +455,14 @@ typedef ar_i32 ar_scroll_pos;
  * two words to three is what tipped it over, because a rule carries two of
  * them -- the properties it sets and the ones it marked important. Measured at
  * 164,040 of 172,032.
+ *
+ * 168 KB -> 176 KB for the rest of flexbox at 0.8.0, and again mostly the rule
+ * table: ar_style went 236 -> 260 bytes for seven properties, a rule went
+ * 520 -> 544, and 256 of them is 139,264. Measured: 15,120 of context, 139,264
+ * of rules, 17,664 of style cache and the 1,024 of slack the assertion carries,
+ * which is 173,072 of 180,224.
  */
-#define AR_MEM_FIXED  172032u
+#define AR_MEM_FIXED  180224u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* Returns NULL if the block is too small to be useful. */

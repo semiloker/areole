@@ -700,6 +700,73 @@ static const bench_scene SC_TABLE_AUTO_10K = {"table_auto_10k",
                                               init_table_auto,
                                               frame_table_10k};
 
+/*
+ * Five hundred flex items, the size the Pentium II budget names.
+ *
+ * Every item carries a grow factor, a shrink factor and a basis, so the
+ * resolution loop has something to resolve rather than freezing everything on
+ * its first pass -- a scene of items that cannot move measures the walk and
+ * not the algorithm. Two of the five hundred carry a maximum, which is what
+ * makes the loop run a second time at all.
+ */
+static const char *SHEET_FLEX_500 = "#root { display:block; background:#ffffff; }"
+                                    ".frow { display:flex; flex-direction:row; width:900px;"
+                                    "        height:40px; gap:2px; }"
+                                    ".fwrap { flex-wrap:wrap; height:400px; }"
+                                    ".fi { flex-grow:1; flex-shrink:1; flex-basis:40px;"
+                                    "      height:18px; }"
+                                    ".cap { max-width:24px; }";
+
+static void init_flex_500(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_FLEX_500);
+}
+
+static ar_i32 g_flex_wrap = 0;
+
+static void frame_flex_500(bench_env *e)
+{
+    ar_i32 k;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    ar_begin(e->ui, g_flex_wrap ? "div.frow.fwrap" : "div.frow");
+    for (k = 0; k < 500; ++k)
+    {
+        ar_begin(e->ui, (k % 250) == 0 ? "div.fi.cap" : "div.fi");
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static void frame_flex_line(bench_env *e)
+{
+    g_flex_wrap = 0;
+    frame_flex_500(e);
+}
+
+static void frame_flex_wrapped(bench_env *e)
+{
+    g_flex_wrap = 1;
+    frame_flex_500(e);
+}
+
+static const bench_scene SC_FLEX_500 = {"flex_500",
+                                        "layout",
+                                        "500 flex items on one line, with factors and a maximum",
+                                        1000,
+                                        600,
+                                        1,
+                                        init_flex_500,
+                                        frame_flex_line};
+
+static const bench_scene SC_FLEX_500_WRAP = {
+    "flex_500_wrap", "layout",          "the same 500 wrapped over many lines", 1000, 600, 1,
+    init_flex_500,   frame_flex_wrapped};
+
 static const bench_scene SC_TABLE_FIXED_1K = {"table_fixed_1k",
                                               "layout",
                                               "1000 rows x 4 cells, table-layout:fixed, to compare",
@@ -730,4 +797,6 @@ void bench_register_layout(void)
     bench_register(&SC_TABLE_AUTO_1K);
     bench_register(&SC_TABLE_AUTO_10K);
     bench_register(&SC_TABLE_FIXED_1K);
+    bench_register(&SC_FLEX_500);
+    bench_register(&SC_FLEX_500_WRAP);
 }
