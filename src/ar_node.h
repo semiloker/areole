@@ -104,6 +104,22 @@ typedef struct ar_node
     ar_i32 min_w;
 
     /*
+     * The collapsed border this box owns, per side: top, right, bottom, left.
+     *
+     * A collapsed grid line belongs to no single box -- its width is the widest
+     * of everything that meets there, which is a *neighbour's* style, and no
+     * property on this box records it. It is resolved once by the table solve
+     * and left here for the paint pass, which is also why ar_paint_digest mixes
+     * it in: a cell whose own style did not change still has to repaint when
+     * the cell beside it gets a thicker border.
+     *
+     * Only meaningful with AR_STATE_COLLAPSED, and zero on everything else --
+     * including a collapsed table's own box and its rows, which is how they
+     * come to draw nothing.
+     */
+    ar_u8 edge[4];
+
+    /*
      * Where this box's fragments live, when it has more than one rectangle.
      *
      * Zero count means the box is its own single fragment and `rect` is all
@@ -244,6 +260,14 @@ struct ar_ctx
     int    scrolled; /* something moved, so the next frame differs */
 
     ar_i32 stack[AR_MAX_DEPTH];
+
+    /* Which entries of `stack` are anonymous table boxes this frame generated
+       rather than boxes the caller declared. They close when the box holding
+       them closes, or when something arrives that cannot live inside them --
+       not when the box that caused them closes, or two bare cells would get a
+       row each instead of sharing one. Declaration state, dead once the frame
+       is built, so it lives here rather than costing every box a byte. */
+    ar_u8  is_anon[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
 
@@ -518,6 +542,32 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Tables -- ar_layout_table.c
+ * ------------------------------------------------------------------------ */
+
+int ar_is_table(const ar_node *n);
+
+/* Rows and row groups: the table placed their children, so the ordinary
+   sweep must not lay them out again. */
+int ar_is_table_internal(const ar_node *n);
+
+/* A cell, which is a block for whatever is inside it. */
+int  ar_is_table_block(const ar_node *n);
+void ar_table_align_cell(ar_node *nodes, ar_i32 i);
+int  ar_is_table_cell(const ar_node *n);
+
+/* The backward sweep's share: column constraints, and the two intrinsic widths
+   they give the table box. No width exists yet, so nothing is placed. */
+void ar_table_measure(ar_node *nodes, ar_i32 table);
+
+/* How tall the table comes to at the width it now has. Called from the same
+   place a paragraph's height is corrected. */
+ar_i32 ar_table_height(ar_node *nodes, ar_i32 table, ar_layout_env *env);
+
+/* The forward sweep's share: rectangles, from a grid already decided. */
+void ar_table_place(ar_node *nodes, ar_i32 table, ar_layout_env *env);
 
 /* Whether this box is in the top layer, which paints above every stacking
    context rather than merely above its siblings. */

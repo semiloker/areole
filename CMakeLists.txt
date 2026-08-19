@@ -106,6 +106,10 @@ if(WIN32)
     target_link_libraries(example_anchor PRIVATE areole_win32)
     areole_set_warnings(example_anchor)
 
+    add_executable(example_table examples/09_table/main.c)
+    target_link_libraries(example_table PRIVATE areole_win32)
+    areole_set_warnings(example_table)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
