@@ -12875,6 +12875,378 @@ static void test_the_tokenizer_copies_nothing_it_does_not_have_to(void)
           "html: and so does text with no reference in it");
 }
 
+/* ------------------------------------------------------------------------
+ * HTML tree construction
+ *
+ * These are the cases the specification exists for -- the ones where the tree
+ * is not the one the markup appears to describe. A parser that only handles
+ * well-formed input passes none of them and looks fine doing it.
+ * ------------------------------------------------------------------------ */
+
+static ar_dom_node g_dom_nodes[512];
+static ar_attr     g_dom_attrs[256];
+static char        g_dom_text[8192];
+static char        g_tree_scratch[4096];
+static ar_doc      g_doc;
+
+static ar_doc *ar__parse(const char *src)
+{
+    memset(&g_doc, 0, sizeof g_doc);
+    g_doc.nodes = g_dom_nodes;
+    g_doc.node_cap = (ar_i32)(sizeof g_dom_nodes / sizeof g_dom_nodes[0]);
+    g_doc.attrs = g_dom_attrs;
+    g_doc.attr_cap = (ar_i32)(sizeof g_dom_attrs / sizeof g_dom_attrs[0]);
+    g_doc.text = g_dom_text;
+    g_doc.text_cap = (ar_u32)sizeof g_dom_text;
+    ar_html_parse(&g_doc, src, (ar_u32)strlen(src), g_tree_scratch, (ar_u32)sizeof g_tree_scratch);
+    return &g_doc;
+}
+
+/* The tree as `tag(child child)`, so a whole shape is one string to compare.
+   Text nodes are `#`, which keeps the comparison about structure. */
+static void ar__shape(const ar_doc *d, ar_i32 i, char *out, ar_u32 cap, ar_u32 *used)
+{
+    ar_i32 c;
+
+    if (i < 0 || *used + 2 >= cap)
+    {
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_TEXT)
+    {
+        out[(*used)++] = '#';
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_COMMENT)
+    {
+        out[(*used)++] = '!';
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_DOCTYPE)
+    {
+        out[(*used)++] = '@';
+        return;
+    }
+    {
+        ar_u32 k;
+
+        for (k = 0; k < d->nodes[i].name.n && *used + 1 < cap; ++k)
+        {
+            out[(*used)++] = d->nodes[i].name.p[k];
+        }
+    }
+    if (d->nodes[i].first_child < 0)
+    {
+        return;
+    }
+    out[(*used)++] = '(';
+    for (c = d->nodes[i].first_child; c >= 0; c = d->nodes[c].next_sibling)
+    {
+        if (c != d->nodes[i].first_child && *used + 1 < cap)
+        {
+            out[(*used)++] = ' ';
+        }
+        ar__shape(d, c, out, cap, used);
+    }
+    if (*used + 1 < cap)
+    {
+        out[(*used)++] = ')';
+    }
+}
+
+static const char *ar__tree_shape(const char *src)
+{
+    static char buf[1024];
+    ar_doc     *d = ar__parse(src);
+    ar_u32      used = 0;
+
+    ar__shape(d, ar_dom_root(d), buf, (ar_u32)sizeof buf, &used);
+    buf[used] = 0;
+    return buf;
+}
+
+/* The first element with this tag, anywhere. */
+static ar_i32 ar__find(const ar_doc *d, const char *tag)
+{
+    ar_i32 i;
+
+    for (i = 0; i < d->node_count; ++i)
+    {
+        if (d->nodes[i].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[i].name, tag))
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void test_the_optional_tags_are_optional(void)
+{
+    /* Every one of html, head and body may be omitted, and most real documents
+       omit at least one. The tree has them anyway. */
+    const char *s = ar__tree_shape("<p>hi</p>");
+
+    CHECK(strcmp(s, "html(head body(p(#)))") == 0, "html: html, head and body are implied");
+    if (strcmp(s, "html(head body(p(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    s = ar__tree_shape("<html><head></head><body><p>hi</p></body></html>");
+    CHECK(strcmp(s, "html(head body(p(#)))") == 0, "html: and written out gives the same tree");
+}
+
+static void test_a_paragraph_closes_itself(void)
+{
+    /* `<p>a<p>b` is two paragraphs. It is the first thing anyone writes by
+       accident and the first thing a naive parser gets wrong. */
+    const char *s = ar__tree_shape("<p>a<p>b");
+
+    CHECK(strcmp(s, "html(head body(p(#) p(#)))") == 0, "html: <p>a<p>b is two paragraphs");
+    if (strcmp(s, "html(head body(p(#) p(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    /* And a block-level start closes an open paragraph rather than nesting. */
+    s = ar__tree_shape("<p>a<div>b</div>");
+    CHECK(strcmp(s, "html(head body(p(#) div(#)))") == 0, "html: and a div closes one too");
+    if (strcmp(s, "html(head body(p(#) div(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_list_items_close_themselves(void)
+{
+    const char *s = ar__tree_shape("<ul><li>a<li>b</ul>");
+
+    CHECK(strcmp(s, "html(head body(ul(li(#) li(#))))") == 0,
+          "html: <li>a<li>b is two items, not one inside the other");
+    if (strcmp(s, "html(head body(ul(li(#) li(#))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_foster_parenting(void)
+{
+    /*
+     * §13.2.6.1. Content inside a table where it may not be is relocated to
+     * just before the table, not dropped and not left inside. Every browser
+     * agrees because they all implement this paragraph.
+     */
+    /*
+     * Edge, asked before this number was written:
+     *
+     *     <table><em>x</em><tr><td>y</table>
+     *       =>  html(head body(em(#) table(tbody(tr(td(#))))))
+     *
+     * The emphasis is a sibling *before* the table, and the row and cell are
+     * still inside it through a tbody nobody wrote.
+     */
+    const char *s = ar__tree_shape("<table><em>x</em><tr><td>y</table>");
+
+    CHECK(strcmp(s, "html(head body(em(#) table(tbody(tr(td(#))))))") == 0,
+          "html: table content is fostered out in front, exactly as a browser does");
+    if (strcmp(s, "html(head body(em(#) table(tbody(tr(td(#))))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_a_table_implies_its_missing_parts(void)
+{
+    /* `<table><tr><td>` has no tbody written and gets one, which is why a
+       stylesheet selecting tbody works on markup that never mentions it. */
+    const char *s = ar__tree_shape("<table><tr><td>a</table>");
+
+    CHECK(strcmp(s, "html(head body(table(tbody(tr(td(#))))))") == 0,
+          "html: a table implies tbody and closes its cells");
+    if (strcmp(s, "html(head body(table(tbody(tr(td(#))))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_the_adoption_agency(void)
+{
+    /*
+     * `<b><i></b></i>` produces the same tree in every browser and it is not
+     * the tree the markup describes. The point of the check is that the
+     * document survives with both elements present and correctly nested rather
+     * than the `<b>` swallowing the rest of it.
+     */
+    const char *s = ar__tree_shape("<b>1<i>2</b>3</i>");
+
+    /* Edge, asked before this number was written:
+           <b>1<i>2</b>3</i>  =>  html(head body(b(# i(#)) i(#)))
+       The `<i>` is split in two: the part inside the `<b>` stays there and the
+       part after it becomes a sibling. That is the whole algorithm's output in
+       one string. */
+    CHECK(strcmp(s, "html(head body(b(# i(#)) i(#)))") == 0,
+          "html: <b>1<i>2</b>3</i> splits the <i> exactly as a browser does");
+    if (strcmp(s, "html(head body(b(# i(#)) i(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    /* The simple case has to keep working: <b>x</b> is one element with the
+       text inside it. */
+    {
+        s = ar__tree_shape("<b>x</b>");
+
+        CHECK(strcmp(s, "html(head body(b(#)))") == 0, "html: and the ordinary case is ordinary");
+        if (strcmp(s, "html(head body(b(#)))") != 0)
+        {
+            printf("      got %s\n", s);
+        }
+    }
+}
+
+static void test_formatting_is_reconstructed_across_a_block(void)
+{
+    /*
+     * §13.2.4.3. `<p><b>bold</p>text` puts `text` inside a *fresh* `<b>` after
+     * the paragraph: `</p>` pops the `<b>` off the stack but leaves it in the
+     * list of active formatting elements, and the next character reopens it.
+     * Without reconstruction the bold simply stops at the paragraph.
+     *
+     * The first version of this check used `<b>one<p>two</p></b>` and failed,
+     * and the check was the thing that was wrong -- an open `<b>` is still on
+     * the stack when the `<p>` arrives, so the paragraph nests *inside* it and
+     * nothing is reconstructed. Edge was asked before the code was touched:
+     *
+     *     <b>one<p>two</p></b>   =>  html(head body(b(# p(#))))
+     *     <p><b>bold</p>text     =>  html(head body(p(b(#)) b(#)))
+     *
+     * Both are checked here, because the first is the one that looks like it
+     * should reconstruct and does not.
+     */
+    const char *s = ar__tree_shape("<b>one<p>two</p></b>");
+
+    CHECK(strcmp(s, "html(head body(b(# p(#))))") == 0,
+          "html: an open <b> keeps a paragraph inside itself");
+    if (strcmp(s, "html(head body(b(# p(#))))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+
+    s = ar__tree_shape("<p><b>bold</p>text");
+    CHECK(strcmp(s, "html(head body(p(b(#)) b(#)))") == 0,
+          "html: and a closed one is reopened for the text after it");
+    if (strcmp(s, "html(head body(p(b(#)) b(#)))") != 0)
+    {
+        printf("      got %s\n", s);
+    }
+}
+
+static void test_attributes_reach_the_tree(void)
+{
+    ar_doc *d = ar__parse("<div id=\"main\" class='a b'>x</div>");
+    ar_i32  div = ar__find(d, "div");
+
+    CHECK(div >= 0 && d->nodes[div].attr_count == 2, "html: an element keeps its attributes");
+    if (div >= 0 && d->nodes[div].attr_count == 2)
+    {
+        ar_attr *a = &d->attrs[d->nodes[div].attr_first];
+
+        CHECK(ar_span_is(a[0].name, "id") && ar__text_is(a[0].value, "main"),
+              "html: the first with its value");
+        CHECK(ar_span_is(a[1].name, "class") && ar__text_is(a[1].value, "a b"),
+              "html: and the second");
+    }
+}
+
+static void test_text_with_an_entity_survives_the_next_token(void)
+{
+    /*
+     * The tokenizer decodes references into a scratch buffer it reuses for
+     * every token, so a tree that kept the span would show the *next* token's
+     * bytes. The document copies exactly those spans and leaves the rest
+     * pointing at the input.
+     *
+     * This is the check that the copy happens. Without it the failure is not a
+     * crash -- it is one paragraph showing another paragraph's text.
+     */
+    ar_doc *d = ar__parse("<p>a&amp;b</p><p>second</p><p>third</p>");
+    ar_i32  p = ar__find(d, "p");
+    ar_i32  txt;
+
+    CHECK(p >= 0, "html: the first paragraph is there");
+    txt = d->nodes[p].first_child;
+    CHECK(txt >= 0 && d->nodes[txt].kind == AR_DOM_TEXT, "html: with a text node in it");
+    CHECK(txt >= 0 && ar__text_is(d->nodes[txt].text, "a&b"),
+          "html: whose decoded text survives two more tokens being read");
+}
+
+static void test_quirks_mode(void)
+{
+    /* Quirks is not a curiosity: it changes the box model for the whole
+       document, so getting it from the doctype is load-bearing. */
+    ar_doc *d = ar__parse("<!DOCTYPE html><p>x");
+
+    CHECK(d->quirks == AR_QUIRKS_NO, "html: <!DOCTYPE html> is no-quirks");
+
+    d = ar__parse("<p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES, "html: no doctype at all is quirks");
+
+    d = ar__parse("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_YES, "html: and so is HTML 4.0 Transitional");
+
+    d = ar__parse("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><p>x");
+    CHECK(d->quirks == AR_QUIRKS_LIMITED,
+          "html: a public identifier with no system identifier is the limited form");
+}
+
+static void test_rawtext_content_is_not_markup(void)
+{
+    /* `<style>` holds text, and a `<` inside it is not a tag. A parser that
+       gets this wrong turns every stylesheet into a tree of nonsense. */
+    ar_doc *d = ar__parse("<style>a { content: \"<b>\"; }</style><p>after");
+    ar_i32  st = ar__find(d, "style");
+    ar_i32  b = ar__find(d, "b");
+
+    CHECK(st >= 0, "html: the style element is there");
+    CHECK(b < 0, "html: and the <b> inside it did not become an element");
+    CHECK(ar__find(d, "p") >= 0, "html: and the document carries on afterwards");
+}
+
+static void test_the_tree_builder_survives_anything(void)
+{
+    /* Every parse error has a defined recovery, so the ways to be wrong are to
+       hang, to overrun, or to give up. None of these may do any of the three. */
+    static const char *const NASTY[] = {"<b><i></b></i>",
+                                        "<table><td>x",
+                                        "</p></div></b>",
+                                        "<p><p><p><p><p>",
+                                        "<ul><li><ul><li>",
+                                        "<table><table><table>",
+                                        "<b><b><b><b><b>x",
+                                        "<!DOCTYPE><html></",
+                                        "<td>orphan",
+                                        "<a><a><a>x",
+                                        "<style><p>",
+                                        "<title></b>",
+                                        "<table><tr><td><table><tr><td>deep",
+                                        "",
+                                        "<<<<>>>>"};
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_doc *d = ar__parse(NASTY[i]);
+
+        if (d->overflowed)
+        {
+            printf("      %s overflowed\n", NASTY[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: no malformed document overruns the tree builder");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -13293,6 +13665,19 @@ int main(void)
     test_plaintext_never_ends();
     test_the_tokenizer_never_stalls_or_stops();
     test_the_tokenizer_copies_nothing_it_does_not_have_to();
+
+    test_the_optional_tags_are_optional();
+    test_a_paragraph_closes_itself();
+    test_list_items_close_themselves();
+    test_foster_parenting();
+    test_a_table_implies_its_missing_parts();
+    test_the_adoption_agency();
+    test_formatting_is_reconstructed_across_a_block();
+    test_attributes_reach_the_tree();
+    test_text_with_an_entity_survives_the_next_token();
+    test_quirks_mode();
+    test_rawtext_content_is_not_markup();
+    test_the_tree_builder_survives_anything();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

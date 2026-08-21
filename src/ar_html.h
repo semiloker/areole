@@ -180,4 +180,111 @@ ar_u32 ar_html_entity(const char *name, ar_u32 n);
 ar_i32      ar_html_entity_count(void);
 const char *ar_html_entity_name(ar_i32 i);
 
+/* ------------------------------------------------------------------------
+ * The document
+ *
+ * A tree, not an API. Elements with attributes, text, comments and a doctype.
+ * Index-referenced rather than pointer-linked, for the reasons the box tree
+ * gives at length in ar_node.h: indices survive the array moving, they halve
+ * the size of the links on a 64 bit target, and a flat array is what makes a
+ * walk a linear sweep.
+ *
+ * There is no scripting interface. There is nothing to script with.
+ *
+ * ------------------------------------------------------------------------
+ * Who owns the text
+ *
+ * The tokenizer owns nothing: its spans point into the caller's bytes, or into
+ * a scratch buffer it reuses for every token. The second kind cannot be kept,
+ * so the document copies exactly those into storage of its own and leaves the
+ * rest pointing at the input.
+ *
+ * That is not an optimisation for its own sake. A document of ordinary prose
+ * contains almost no character references, so almost nothing is copied, and
+ * the copy that does happen is bounded by the entities actually present rather
+ * than by the size of the document.
+ * ------------------------------------------------------------------------ */
+typedef enum ar_dom_kind
+{
+    AR_DOM_DOCUMENT = 0,
+    AR_DOM_ELEMENT,
+    AR_DOM_TEXT,
+    AR_DOM_COMMENT,
+    AR_DOM_DOCTYPE
+} ar_dom_kind;
+
+/*
+ * The three quirks modes, selected from the doctype by the specification's own
+ * table.
+ *
+ * Quirks is not a curiosity. It changes the box model to content-box-plus-
+ * padding, changes table cell inheritance and changes line height. A document
+ * with no doctype has to render the way a browser renders it or the engine is
+ * wrong about a large fraction of the web.
+ */
+typedef enum ar_quirks
+{
+    AR_QUIRKS_NO = 0,
+    AR_QUIRKS_LIMITED,
+    AR_QUIRKS_YES
+} ar_quirks;
+
+typedef struct ar_dom_node
+{
+    ar_dom_kind kind;
+
+    ar_span name; /* element tag name, or the doctype's name */
+    ar_span text; /* text data, or a comment's body */
+
+    ar_i32 parent;
+    ar_i32 first_child;
+    ar_i32 last_child;
+    ar_i32 next_sibling;
+    ar_i32 prev_sibling;
+
+    ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
+    ar_i32 attr_count;
+} ar_dom_node;
+
+typedef struct ar_doc
+{
+    ar_dom_node *nodes;
+    ar_i32       node_cap;
+    ar_i32       node_count;
+
+    ar_attr *attrs;
+    ar_i32   attr_cap;
+    ar_i32   attr_count;
+
+    /* Where text that could not stay a span of the input goes. */
+    char  *text;
+    ar_u32 text_cap;
+    ar_u32 text_used;
+
+    ar_quirks quirks;
+    ar_u32    errors;
+
+    /* Set when any of the three ran out. A document larger than the budget
+       fails cleanly and says so rather than truncating silently, which is
+       0.9.0 acceptance criterion 7. */
+    int overflowed;
+} ar_doc;
+
+/*
+ * Parse `bytes` into `doc`, which the caller has pointed at storage of its
+ * own. Returns non-zero if the whole document was built; zero if anything
+ * overflowed, in which case `doc->overflowed` says so and the tree holds as
+ * much as fitted.
+ *
+ * The input is not copied and must outlive the document.
+ */
+int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
+
+/* The root element of the document, or -1. Almost always <html>. */
+ar_i32 ar_dom_root(const ar_doc *doc);
+
+/* First child of `i` that is an element with this tag, or -1. The tree builder
+   does not need this; the tests and the box-tree bridge do. */
+ar_i32 ar_dom_child_element(const ar_doc *doc, ar_i32 i, const char *tag);
+
 #endif
