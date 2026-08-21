@@ -4591,6 +4591,50 @@ static void test_indic_survives_nonsense(void)
 /* ------------------------------------------------------------------------
  * Inheritance
  * ------------------------------------------------------------------------ */
+/*
+ * ar_style_inherit carries its own list of the properties that inherit, so it
+ * can ask for the five by name instead of asking ar_prop_inherits about all
+ * ninety -- which is where a fifth of the style phase used to go.
+ *
+ * Two records of one fact again, so this sweeps every property and compares
+ * them. Add an inheriting property to the switch, forget the list, and
+ * inheritance silently stops working for it; this is what says so.
+ *
+ * The list is static to ar_css.c, so the check is by behaviour rather than by
+ * reading it: give a parent a value, give the child nothing, and see whether
+ * the child ends up with it.
+ */
+static void test_the_inherited_list_matches_the_switch(void)
+{
+    ar_i32 prop;
+    ar_i32 mismatches = 0;
+
+    for (prop = 0; prop < AR_P_COUNT; ++prop)
+    {
+        ar_style parent, child;
+        int      flowed;
+
+        ar_style_defaults(&parent);
+        ar_style_defaults(&child);
+
+        /* A value the default is not, so "did it flow" has an answer. */
+        ar_style_put(&parent, prop, 7);
+        parent.unit[prop] = AR_UNIT_PX;
+        ar_pset_add(&parent.set, prop);
+
+        ar_style_inherit(&child, &parent);
+        flowed = (ar_style_get(&child, prop) == 7);
+
+        if (flowed != (ar_prop_inherits(prop) ? 1 : 0))
+        {
+            printf("      property %ld: ar_prop_inherits says %d, inheritance did %d\n", (long)prop,
+                   ar_prop_inherits(prop) ? 1 : 0, flowed);
+            ++mismatches;
+        }
+    }
+    CHECK(mismatches == 0, "style: every property inherits exactly when ar_prop_inherits says so");
+}
+
 static void test_inheritance_flows_down(void)
 {
     ar_surface s = ar__ui_surface(200, 120);
@@ -12882,6 +12926,7 @@ int main(void)
     test_compound_selector_matching();
     test_class_set_is_order_independent();
     test_class_list_has_a_ceiling();
+    test_the_inherited_list_matches_the_switch();
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
     test_inheritance_is_not_in_the_style_cache();
