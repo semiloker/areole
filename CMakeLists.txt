@@ -76,6 +76,9 @@ if(WIN32)
 
     add_executable(example_tour examples/02_tour/main.c)
     target_link_libraries(example_tour PRIVATE areole_win32)
+    # src/ is on the path because the 0.9.0 page parses HTML, and ar_html.h is
+    # not public API yet -- the same reason ar_bench has it for ar_text.
+    target_include_directories(example_tour PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     areole_set_warnings(example_tour)
 
     # The block corpus. A window by default, and --dump for the browser
