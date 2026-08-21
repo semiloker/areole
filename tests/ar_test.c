@@ -15,6 +15,7 @@
 #include "ar_indic.h"
 #include "ar_css.h"
 #include "ar_node.h"
+#include "ar_html.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -12558,6 +12559,322 @@ static void test_selector_depth_is_refused_not_truncated(void)
     CHECK(sheet.errors > 0, "combinator: and counted as an error rather than ignored");
 }
 
+/* ------------------------------------------------------------------------
+ * HTML tokenizer
+ *
+ * Written from the specification's own state descriptions rather than from
+ * what the tokenizer happens to do. The acceptance criterion for 0.9.0 is the
+ * html5lib tokenizer suite at 100%, which is not vendored yet -- these are the
+ * cases that suite exists to cover, in the shape this repository uses.
+ * ------------------------------------------------------------------------ */
+
+static char     g_html_scratch[4096];
+static ar_token g_tok;
+
+/* Tokenize `src` and return the token at `index`, or EOF past the end. */
+static ar_token *ar__tok_at(const char *src, ar_i32 index, ar_u32 *errors)
+{
+    ar_html_tok t;
+    ar_i32      k = 0;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    memset(&g_tok, 0, sizeof g_tok);
+    while (ar_html_next(&t, &g_tok))
+    {
+        if (k == index)
+        {
+            if (errors)
+            {
+                *errors = t.errors;
+            }
+            return &g_tok;
+        }
+        ++k;
+    }
+    if (errors)
+    {
+        *errors = t.errors;
+    }
+    return &g_tok;
+}
+
+static ar_i32 ar__tok_count(const char *src)
+{
+    ar_html_tok t;
+    ar_token    tok;
+    ar_i32      k = 0;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    while (ar_html_next(&t, &tok))
+    {
+        ++k;
+    }
+    return k;
+}
+
+static int ar__text_is(ar_span s, const char *lit)
+{
+    ar_u32 n = (ar_u32)strlen(lit);
+
+    return s.n == n && memcmp(s.p, lit, n) == 0;
+}
+
+static void test_the_entity_table_is_sorted(void)
+{
+    ar_i32 i;
+    ar_i32 bad = 0;
+    ar_i32 n = ar_html_entity_count();
+
+    /* A binary search over an unsorted table does not fail loudly. It fails on
+       one entity, in one document, and the generated table that replaces this
+       one will have two thousand more chances to do it. */
+    for (i = 1; i < n; ++i)
+    {
+        if (strcmp(ar_html_entity_name(i - 1), ar_html_entity_name(i)) >= 0)
+        {
+            printf("      out of order at %ld: %s before %s\n", (long)i, ar_html_entity_name(i - 1),
+                   ar_html_entity_name(i));
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: the named character reference table is sorted");
+    CHECK(n > 100, "html: and has the HTML 4 set in it");
+}
+
+static void test_the_tokenizer_reads_a_tag(void)
+{
+    ar_token *t = ar__tok_at("<div>", 0, 0);
+
+    CHECK(t->kind == AR_TOK_START, "html: a start tag is a start tag");
+    CHECK(ar_span_is(t->name, "div"), "html: and carries its name");
+
+    t = ar__tok_at("<DIV>", 0, 0);
+    CHECK(ar_span_is(t->name, "div"), "html: a tag name matches case-insensitively");
+
+    t = ar__tok_at("</p>", 0, 0);
+    CHECK(t->kind == AR_TOK_END && ar_span_is(t->name, "p"), "html: and an end tag is one");
+
+    t = ar__tok_at("<br/>", 0, 0);
+    CHECK(t->kind == AR_TOK_START && t->self_closing, "html: a solidus before > is self-closing");
+}
+
+static void test_the_tokenizer_reads_attributes(void)
+{
+    ar_token *t = ar__tok_at("<a href=\"x.html\" class='c' hidden>", 0, 0);
+
+    CHECK(t->attr_count == 3, "html: three attributes, however they are quoted");
+    CHECK(ar_span_is(t->attrs[0].name, "href") && ar__text_is(t->attrs[0].value, "x.html"),
+          "html: a double-quoted value");
+    CHECK(ar_span_is(t->attrs[1].name, "class") && ar__text_is(t->attrs[1].value, "c"),
+          "html: a single-quoted value");
+    CHECK(ar_span_is(t->attrs[2].name, "hidden") && t->attrs[2].value.n == 0,
+          "html: and one with no value at all");
+
+    t = ar__tok_at("<a href=x.html>", 0, 0);
+    CHECK(ar__text_is(t->attrs[0].value, "x.html"), "html: an unquoted value ends at whitespace");
+
+    /* An end tag may not carry attributes, and the tree builder relies on it:
+       `</p class=x>` must not arrive with one. */
+    t = ar__tok_at("</p class=x>", 0, 0);
+    CHECK(t->kind == AR_TOK_END && t->attr_count == 0, "html: an end tag's attributes are dropped");
+}
+
+static void test_the_tokenizer_coalesces_text(void)
+{
+    ar_token *t = ar__tok_at("hello world", 0, 0);
+
+    CHECK(t->kind == AR_TOK_TEXT && ar__text_is(t->text, "hello world"),
+          "html: a run of characters is one token, not eleven");
+
+    /* A bare ampersand does not end a run and is not an error. `AT&T` is one
+       token, and a tokenizer that splits it is doing arithmetic nobody asked
+       for on every page that mentions a company. */
+    t = ar__tok_at("AT&T", 0, 0);
+    CHECK(ar__text_is(t->text, "AT&T"), "html: a bare ampersand stays in the run");
+
+    CHECK(ar__tok_count("<p>a</p>") == 3, "html: tag, text, tag");
+}
+
+static void test_character_references(void)
+{
+    ar_u32    errors = 0;
+    ar_token *t = ar__tok_at("&amp;", 0, 0);
+
+    CHECK(ar__text_is(t->text, "&"), "html: a named reference decodes");
+
+    t = ar__tok_at("a&lt;b", 0, 0);
+    CHECK(ar__text_is(t->text, "a<b"), "html: and does so in the middle of a run");
+
+    t = ar__tok_at("&#65;", 0, 0);
+    CHECK(ar__text_is(t->text, "A"), "html: a decimal numeric reference decodes");
+
+    t = ar__tok_at("&#x41;", 0, 0);
+    CHECK(ar__text_is(t->text, "A"), "html: and a hexadecimal one");
+
+    /* The replacement table everybody forgets. `&#128;` is not U+0080: the
+       specification decodes the C1 range as Windows-1252, because a decade of
+       documents pasted curly quotes in by number. */
+    t = ar__tok_at("&#128;", 0, 0);
+    CHECK(ar__text_is(t->text, "\342\202\254"), "html: &#128; is a euro sign, not U+0080");
+    t = ar__tok_at("&#147;", 0, 0);
+    CHECK(ar__text_is(t->text, "\342\200\234"),
+          "html: and &#147; is a left double quote, which is why the table exists");
+
+    /* A reference to nothing, a surrogate, and one out of range all become the
+       replacement character rather than anything exciting. */
+    t = ar__tok_at("&#0;", 0, 0);
+    CHECK(ar__text_is(t->text, "\357\277\275"), "html: a null reference is U+FFFD");
+    t = ar__tok_at("&#xD800;", 0, 0);
+    CHECK(ar__text_is(t->text, "\357\277\275"), "html: and so is a surrogate");
+
+    /* An unknown name is left as the text that spells it, which is what a
+       browser does -- and what areole does for the 1,978 references the table
+       does not carry yet. */
+    t = ar__tok_at("&nosuchentity;", 0, &errors);
+    CHECK(ar__text_is(t->text, "&nosuchentity;"), "html: an unknown reference stays as text");
+    CHECK(errors > 0, "html: and is counted as a parse error");
+}
+
+static void test_a_reference_in_an_attribute_stops_at_a_query_string(void)
+{
+    ar_token *t = ar__tok_at("<a href=\"?cite=1&copy=2\">", 0, 0);
+
+    CHECK(ar__text_is(t->attrs[0].value, "?cite=1&copy=2"),
+          "html: &copy without a semicolon before = is not a reference in an attribute");
+
+    t = ar__tok_at("<a href=\"a&amp;b\">", 0, 0);
+    CHECK(ar__text_is(t->attrs[0].value, "a&b"), "html: but a terminated one still decodes");
+}
+
+static void test_comments_and_bogus_comments(void)
+{
+    ar_token *t = ar__tok_at("<!-- hi -->", 0, 0);
+
+    CHECK(t->kind == AR_TOK_COMMENT && ar__text_is(t->text, " hi "), "html: a comment");
+
+    /* Everything the specification funnels into the bogus comment state, which
+       is why a stray processing instruction does not eat a document. */
+    t = ar__tok_at("<?php echo 1; ?>", 0, 0);
+    CHECK(t->kind == AR_TOK_COMMENT, "html: <?php becomes a comment, not a tag");
+
+    t = ar__tok_at("<!nonsense>", 0, 0);
+    CHECK(t->kind == AR_TOK_COMMENT, "html: and so does a bogus markup declaration");
+
+    /* `</>` is dropped entirely rather than becoming an empty comment. */
+    CHECK(ar__tok_count("a</>b") == 2, "html: </> is dropped, leaving the text either side");
+}
+
+static void test_doctype(void)
+{
+    ar_token *t = ar__tok_at("<!DOCTYPE html>", 0, 0);
+
+    CHECK(t->kind == AR_TOK_DOCTYPE, "html: a doctype is a doctype");
+    CHECK(ar_span_is(t->name, "html"), "html: and carries its name");
+    CHECK(!t->force_quirks, "html: <!DOCTYPE html> does not force quirks");
+
+    t = ar__tok_at("<!doctype HTML>", 0, 0);
+    CHECK(t->kind == AR_TOK_DOCTYPE && ar_span_is(t->name, "html"),
+          "html: in either case, both halves");
+
+    t = ar__tok_at("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://x/y.dtd\">", 0, 0);
+    CHECK(ar__text_is(t->pub, "-//W3C//DTD HTML 4.01//EN"), "html: a public identifier");
+    CHECK(ar__text_is(t->sys, "http://x/y.dtd"), "html: and the system identifier after it");
+
+    t = ar__tok_at("<!DOCTYPE>", 0, 0);
+    CHECK(t->force_quirks, "html: a doctype with no name forces quirks");
+
+    /* A truncated doctype must not look like a good one. */
+    t = ar__tok_at("<!DOCTYPE html", 0, 0);
+    CHECK(t->force_quirks, "html: and so does one that ends before its >");
+}
+
+static void test_rcdata_and_rawtext_end_only_on_their_own_tag(void)
+{
+    ar_html_tok t;
+    ar_token    tok;
+
+    /* Inside <title>, `</b>` is text and only `</title>` closes it. This is
+       the rule the tokenizer keeps `last_start` for, and it is why the tree
+       builder has to be the one switching states. */
+    ar_html_tok_init(&t, "<title>a<b>c</title>", 20, g_html_scratch, (ar_u32)sizeof g_html_scratch);
+
+    ar_html_next(&t, &tok); /* <title> */
+    CHECK(tok.kind == AR_TOK_START && ar_span_is(tok.name, "title"), "html: the title tag");
+    t.state = AR_HTML_RCDATA;
+
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_TEXT && ar__text_is(tok.text, "a<b>c"),
+          "html: everything inside title is text, tags included");
+
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_END && ar_span_is(tok.name, "title"),
+          "html: and only its own end tag closes it");
+}
+
+static void test_plaintext_never_ends(void)
+{
+    ar_html_tok t;
+    ar_token    tok;
+
+    ar_html_tok_init(&t, "<b>not a tag", 12, g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    t.state = AR_HTML_PLAINTEXT;
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_TEXT && ar__text_is(tok.text, "<b>not a tag"),
+          "html: plaintext takes the rest of the file, tags and all");
+}
+
+static void test_the_tokenizer_never_stalls_or_stops(void)
+{
+    /* Every parse error in the specification has a defined recovery, so the
+       only way to be wrong here is to loop forever or to give up early. Both
+       are checked by feeding it the shapes that would cause either. */
+    static const char *const NASTY[] = {"<",      "<<<<",  "</",     "</>",    "<!",
+                                        "<!-",    "<!--",  "<!--x",  "<a",     "<a ",
+                                        "<a b",   "<a b=", "<a b='", "&",      "&#",
+                                        "&#x",    "&;",    "<!DOCT", "<?",     "a<b",
+                                        "<a b=c", "</ >",  "<>",     "&#xZZ;", "<a b=\"unclosed"};
+    ar_i32                   i;
+    ar_i32                   stalled = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_html_tok t;
+        ar_token    tok;
+        ar_i32      guard = 0;
+
+        ar_html_tok_init(&t, NASTY[i], (ar_u32)strlen(NASTY[i]), g_html_scratch,
+                         (ar_u32)sizeof g_html_scratch);
+        while (ar_html_next(&t, &tok))
+        {
+            if (++guard > 64)
+            {
+                printf("      %s did not terminate\n", NASTY[i]);
+                ++stalled;
+                break;
+            }
+        }
+    }
+    CHECK(stalled == 0, "html: no malformed input makes the tokenizer stall or run away");
+}
+
+static void test_the_tokenizer_copies_nothing_it_does_not_have_to(void)
+{
+    /* A token's spans point into the caller's bytes. That is what lets the
+       parser run inside the arena, and it is worth a check because the day
+       somebody makes a copy "for safety" the whole design goes quietly. */
+    const char *src = "<div>hello</div>";
+    ar_html_tok t;
+    ar_token    tok;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    ar_html_next(&t, &tok);
+    CHECK(tok.name.p >= src && tok.name.p < src + strlen(src),
+          "html: a tag name points into the input rather than at a copy");
+    ar_html_next(&t, &tok);
+    CHECK(tok.text.p >= src && tok.text.p < src + strlen(src),
+          "html: and so does text with no reference in it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -12963,6 +13280,19 @@ int main(void)
     test_a_region_move_is_identical_to_a_full_repaint();
     test_the_bar_repaints_when_only_its_colour_changed();
     test_a_bar_that_appears_because_content_grew();
+
+    test_the_entity_table_is_sorted();
+    test_the_tokenizer_reads_a_tag();
+    test_the_tokenizer_reads_attributes();
+    test_the_tokenizer_coalesces_text();
+    test_character_references();
+    test_a_reference_in_an_attribute_stops_at_a_query_string();
+    test_comments_and_bogus_comments();
+    test_doctype();
+    test_rcdata_and_rawtext_end_only_on_their_own_tag();
+    test_plaintext_never_ends();
+    test_the_tokenizer_never_stalls_or_stops();
+    test_the_tokenizer_copies_nothing_it_does_not_have_to();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
