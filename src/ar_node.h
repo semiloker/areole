@@ -214,6 +214,10 @@ ar_u32  ar_paint_digest(const ar_node *n);
 struct ar_ctx
 {
     ar_arena arena;
+
+    /* What the caller reserved for a parsed document at init, so
+       ar_html_parse_into does not have to be told twice. */
+    ar_u32   doc_budget;
     ar_sheet sheet;
 
     /* What the backend has said about the display it is drawing on: the

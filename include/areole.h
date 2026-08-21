@@ -500,8 +500,54 @@ typedef ar_i32 ar_scroll_pos;
 #define AR_MEM_FIXED  196608u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
+/* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
+   slots a rule carries; see ar_init_rules. */
+#define AR_BYTES_PER_RULE 588u
+
+/* A block with room for a larger rule table. Hand the same count to
+   ar_init_rules; a smaller one there wastes the space rather than corrupting
+   anything. */
+#define AR_MEM_RULES(boxes, rules)                                                                 \
+    (AR_MEM(boxes) + ((ar_u32)(rules) > 256u ? ((ar_u32)(rules) - 256u) * AR_BYTES_PER_RULE : 0u))
+
+/*
+ * A block with room for a parsed document as well.
+ *
+ * A document is per-parse rather than per-frame, so it lives in the persistent
+ * half of the arena and cannot come out of the box budget -- a caller that
+ * asked for two thousand boxes must still get two thousand. `bytes` is what
+ * ar_html_parse_into may spend: nodes, attributes, text and, when the document
+ * is not already UTF-8, the decoded copy of it.
+ *
+ * A page of ordinary prose needs roughly four times its own size. Ask for more
+ * than you think; the failure is clean and reported, but it is still a failure.
+ */
+#define AR_MEM_DOC(boxes, bytes) (AR_MEM(boxes) + (ar_u32)(bytes))
+
 /* Returns NULL if the block is too small to be useful. */
 ar_ctx *ar_init(void *mem, ar_u32 size);
+
+/*
+ * The same, for a caller that needs more than the defaults.
+ *
+ * `max_rules` -- an ar_rule is 588 bytes, most of it the property slots a rule
+ * carries to hold the two or three it states, so the default 256 already
+ * occupy 150 KB of the 192 KB AR_MEM_FIXED promises. Raising that constant
+ * would charge every application for a stylesheet only some of them have: a
+ * browser user-agent sheet is around 400 rules and an embedded panel is
+ * eleven. A count below the default is raised to it.
+ *
+ * `doc_bytes` -- what ar_html_parse_into may spend on a parsed document.
+ *
+ * Both come **out of the block and not out of the box budget**. Size the block
+ * with AR_MEM_RULES or AR_MEM_DOC and pass the same numbers here; asking for
+ * more than the block holds is refused at init rather than discovered as an
+ * overflow in the middle of a frame.
+ *
+ *     static unsigned char mem[AR_MEM_DOC(2000, 96 * 1024)];
+ *     ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes);
 
 /* Parses a stylesheet into the context. Call it as many times as you like at
    startup; each call appends. Never call it per frame: the whole point is that

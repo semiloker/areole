@@ -251,3 +251,118 @@ ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d)
     }
     return ar__collect_styles(c, d, 0);
 }
+
+/* ------------------------------------------------------------------------
+ * A document in the context's own arena
+ *
+ * The release document specifies `ar_html_parse(ar_ctx *, ...)`, and the
+ * reason it took caller storage until now is a real question rather than an
+ * oversight: a document is per-*parse*, not per-frame, so it belongs in the
+ * persistent half of the arena -- and every byte of the persistent half beyond
+ * AR_MEM_FIXED was promised to the box budget by AR_MEM.
+ *
+ * Taking it anyway would mean a caller that asked for two thousand boxes
+ * quietly getting fewer, which is exactly the class of failure this library
+ * refuses everywhere else.
+ *
+ * So the caller asks: AR_MEM_DOC(boxes, bytes) sizes the block and `budget`
+ * says how much of it the document may have. Nothing is silent and nothing is
+ * borrowed.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * How the budget is divided.
+ *
+ * Nodes dominate a document -- an element is 72 bytes and its text is usually
+ * shorter than its markup -- and attributes are the smallest share. These are
+ * measured against ordinary pages rather than derived: a document that is all
+ * text and no structure wastes the node share, and one that is all structure
+ * runs out of text first. Both fail cleanly and say which.
+ */
+#define AR_DOC_NODE_SHARE 45u /* per cent */
+#define AR_DOC_ATTR_SHARE 15u
+#define AR_DOC_TEXT_SHARE 30u
+/* and the remaining 10% is the tokenizer's scratch */
+
+ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len)
+{
+    ar_doc     *d;
+    ar_u32      node_bytes, attr_bytes, text_bytes, scratch_bytes;
+    ar_u32      skip = 0;
+    ar_encoding enc;
+    char       *scratch;
+    ar_u32      budget;
+
+    if (!c || !bytes)
+    {
+        return 0;
+    }
+    budget = c->doc_budget;
+    if (budget < 4096u)
+    {
+        return 0;
+    }
+
+    d = (ar_doc *)ar_arena_persist(&c->arena, (ar_u32)sizeof(ar_doc));
+    if (!d)
+    {
+        return 0;
+    }
+    memset(d, 0, sizeof *d);
+
+    /*
+     * The encoding, before anything else reads a byte.
+     *
+     * A byte order mark is not content and is skipped; anything that is not
+     * already UTF-8 is decoded into arena space that outlives the document,
+     * because tag names and attribute values stay spans of it.
+     */
+    enc = ar_encoding_sniff(bytes, len, &skip);
+    bytes += skip;
+    len -= skip;
+
+    if (enc != AR_ENC_UTF8)
+    {
+        /* Worst case is two bytes out per byte in, which windows-1252 hits on
+           every character above 0x7F. */
+        ar_u32 need = len * 2u + 4u;
+        char  *decoded;
+
+        if (need >= budget)
+        {
+            d->overflowed = 1;
+            return d;
+        }
+        decoded = (char *)ar_arena_persist(&c->arena, need);
+        if (!decoded)
+        {
+            d->overflowed = 1;
+            return d;
+        }
+        len = ar_encoding_decode(enc, bytes, len, decoded, need);
+        bytes = decoded;
+        budget -= need;
+    }
+
+    node_bytes = budget * AR_DOC_NODE_SHARE / 100u;
+    attr_bytes = budget * AR_DOC_ATTR_SHARE / 100u;
+    text_bytes = budget * AR_DOC_TEXT_SHARE / 100u;
+    scratch_bytes = budget - node_bytes - attr_bytes - text_bytes;
+
+    d->nodes = (ar_dom_node *)ar_arena_persist(&c->arena, node_bytes);
+    d->attrs = (ar_attr *)ar_arena_persist(&c->arena, attr_bytes);
+    d->text = (char *)ar_arena_persist(&c->arena, text_bytes);
+    scratch = (char *)ar_arena_persist(&c->arena, scratch_bytes);
+
+    if (!d->nodes || !d->attrs || !d->text || !scratch)
+    {
+        d->overflowed = 1;
+        return d;
+    }
+    d->node_cap = (ar_i32)(node_bytes / sizeof(ar_dom_node));
+    d->attr_cap = (ar_i32)(attr_bytes / sizeof(ar_attr));
+    d->text_cap = text_bytes;
+
+    ar_html_parse(d, bytes, len, scratch, scratch_bytes);
+    return d;
+}

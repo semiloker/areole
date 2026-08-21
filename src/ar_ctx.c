@@ -176,14 +176,39 @@ static ar_u32 ar__round_pow2(ar_u32 v)
     return p;
 }
 
-ar_ctx *ar_init(void *mem, ar_u32 size)
+/*
+ * The rule table is the caller's to size, and this is why.
+ *
+ * An ar_rule is 588 bytes -- most of it an ar_style, because a rule carries a
+ * full set of property slots to hold the two or three it actually states. So
+ * 256 rules is 150 KB of the 192 KB AR_MEM_FIXED promises, and doubling the
+ * count would nearly double the floor every application pays, including the
+ * ones whose stylesheet is eleven rules.
+ *
+ * The floor stays where it is and the caller asks for more, which is exactly
+ * what AR_MEM already does for boxes: size the block with AR_MEM_RULES and
+ * hand the same number here.
+ *
+ * A browser user-agent stylesheet is around 400 rules, so 0.9.1 is the first
+ * caller that needs this -- and it needs it rather than a bigger constant,
+ * because a document viewer wanting 400 rules and an embedded panel wanting 11
+ * should not be charged the same 235 KB.
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
 {
     ar_arena a;
     ar_ctx  *c;
     ar_rule *rules;
-    ar_u32   boxes, slots;
+    ar_u32   boxes, slots, extra;
 
-    if (!mem || size < AR_MEM_FIXED)
+    /* Below the floor there is not room for the fixed structures at all, and
+       above it every extra rule is the caller's own arithmetic. */
+    if (max_rules < AR_MAX_RULES)
+    {
+        max_rules = AR_MAX_RULES;
+    }
+    extra = (max_rules - AR_MAX_RULES) * (ar_u32)sizeof(ar_rule) + doc_bytes;
+    if (!mem || size < AR_MEM_FIXED + extra)
     {
         return 0;
     }
@@ -198,12 +223,12 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     memset(c, 0, sizeof *c);
     c->arena = a; /* from here on the arena lives inside the thing it allocated */
 
-    rules = (ar_rule *)ar_arena_persist(&c->arena, AR_MAX_RULES * (ar_u32)sizeof(ar_rule));
+    rules = (ar_rule *)ar_arena_persist(&c->arena, max_rules * (ar_u32)sizeof(ar_rule));
     if (!rules)
     {
         return 0;
     }
-    ar_sheet_init(&c->sheet, rules, AR_MAX_RULES);
+    ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
 
     {
         ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
@@ -228,7 +253,16 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
         ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
     }
 
-    boxes = (size - AR_MEM_FIXED) / AR_BYTES_PER_BOX;
+    /*
+     * The box budget is what is left after everything the caller asked for on
+     * top of the floor -- a larger rule table, and a document.
+     *
+     * Subtracting them is the whole point. AR_MEM_RULES and AR_MEM_DOC add
+     * those bytes to the block, so counting them as boxes here would promise a
+     * budget the frame region cannot deliver, and the caller would find out as
+     * an overflow in the middle of a frame rather than as a refusal at init.
+     */
+    boxes = (size - AR_MEM_FIXED - extra) / AR_BYTES_PER_BOX;
     if (boxes < 32u)
     {
         boxes = 32u;
@@ -245,9 +279,15 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     c->slot_cap = (ar_i32)slots;
 
     c->box_budget = (ar_i32)boxes;
+    c->doc_budget = doc_bytes;
     c->frame = 1; /* zero means an unused slot, so frames start at one */
     ar_perf_reset(&c->perf);
     return c;
+}
+
+ar_ctx *ar_init(void *mem, ar_u32 size)
+{
+    return ar_init_ex(mem, size, AR_MAX_RULES, 0);
 }
 
 static ar_u32 ar__now(ar_ctx *c)

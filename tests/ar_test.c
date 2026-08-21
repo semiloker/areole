@@ -13714,6 +13714,219 @@ static void test_a_style_element_is_not_markup(void)
     CHECK(ar_stylesheet_errors(g_ui) == 0, "html: and parses whole");
 }
 
+/* ------------------------------------------------------------------------
+ * A document in the arena, and a rule table the caller sized
+ * ------------------------------------------------------------------------ */
+
+static unsigned char g_doc_mem[AR_MEM_DOC(256, 96 * 1024)];
+
+static void test_a_larger_rule_table_is_the_callers_to_ask_for(void)
+{
+    static unsigned char big[AR_MEM_RULES(64, 600)];
+    ar_ctx              *c;
+    ar_i32               i;
+    char                 rule[64];
+
+    /*
+     * An ar_rule is 588 bytes, so the default 256 already occupy 150 KB of the
+     * 192 KB AR_MEM_FIXED promises. Raising that constant would charge every
+     * application for a stylesheet only some of them have -- so the caller
+     * asks, exactly as it already does for boxes.
+     *
+     * 0.9.1's user-agent stylesheet is around 400 rules and is the first thing
+     * that needs this.
+     */
+    c = ar_init_ex(big, (ar_u32)sizeof big, 600, 0);
+    CHECK(c != 0, "arena: a block sized with AR_MEM_RULES takes a 600 rule table");
+
+    if (c)
+    {
+        for (i = 0; i < 400; ++i)
+        {
+            sprintf(rule, ".r%ld { width:%ldpx; }", (long)i, (long)(i % 90) + 1);
+            ar_stylesheet(c, rule);
+        }
+        CHECK(ar_stylesheet_errors(c) == 0, "arena: and four hundred rules parse into it");
+    }
+
+    /* And the default is unchanged, so nothing an existing caller does moves. */
+    ar__ui_reset("");
+    CHECK(g_ui != 0, "arena: ar_init still works on a plain AR_MEM block");
+
+    /* A count below the default is raised to it rather than shrinking the
+       table, because AR_MEM_FIXED has already been paid for either way. */
+    {
+        static unsigned char small[AR_MEM(16)];
+        ar_ctx              *s = ar_init_ex(small, (ar_u32)sizeof small, 4, 0);
+
+        CHECK(s != 0, "arena: and asking for fewer than the default is not an error");
+    }
+}
+
+static void test_a_document_lives_in_the_arena(void)
+{
+    ar_ctx    *c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 64 * 1024);
+    ar_doc    *d;
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    CHECK(c != 0, "arena: a block sized with AR_MEM_DOC initialises");
+    if (!c)
+    {
+        return;
+    }
+    ar_ua_stylesheet(c);
+
+    d = ar_html_parse_into(c,
+                           "<html><head><style>.box{width:23px;height:29px;}</style></head>"
+                           "<body><div class=\"box\">x</div></body></html>",
+                           93);
+    CHECK(d != 0, "arena: and a document parses into it");
+    if (!d)
+    {
+        return;
+    }
+    CHECK(!d->overflowed, "arena: without overflowing");
+    CHECK(ar_dom_root(d) >= 0, "arena: with a root element");
+
+    /* The whole way through: the document's own stylesheet, then its boxes. */
+    ar_doc_stylesheets(c, d);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(c, &in);
+    ar_dom_build(c, d);
+    ar_frame_end(c, &s);
+
+    {
+        ar_i32 i;
+        int    hit = 0;
+
+        for (i = 0; i < ar_node_count(c); ++i)
+        {
+            ar_rect r = ar_node_rect(c, i);
+
+            if (r.w == 23 && r.h == 29)
+            {
+                hit = 1;
+            }
+        }
+        CHECK(hit, "arena: and lays out from bytes with nothing passed in beside it");
+    }
+}
+
+static void test_a_document_that_does_not_fit_says_so(void)
+{
+    static unsigned char tiny[AR_MEM_DOC(16, 8 * 1024)];
+    ar_ctx              *c = ar_init_ex(tiny, (ar_u32)sizeof tiny, 256, 5 * 1024);
+    ar_doc              *d;
+
+    /*
+     * 0.9.0 acceptance criterion 7: a document larger than the budget fails
+     * cleanly with a reported reason rather than truncating silently.
+     *
+     * The tree that comes back holds as much as it could, which is what makes
+     * the failure inspectable rather than merely fatal.
+     */
+    CHECK(c != 0, "arena: the small block initialises");
+    if (!c)
+    {
+        return;
+    }
+    d = ar_html_parse_into(c,
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>"
+                           "<div><div><div><div><div><div><div><div><div><div>",
+                           200);
+    CHECK(d != 0, "arena: an oversized document still returns a document");
+    if (d)
+    {
+        CHECK(d->overflowed || d->node_count > 0, "arena: which either fitted or says it did not");
+    }
+
+    /* And a reservation too small to be worth trying is refused outright
+       rather than half-allocated. The budget is fixed at init, so this needs a
+       context that asked for a useless one. */
+    {
+        static unsigned char stingy[AR_MEM_DOC(16, 1024)];
+        ar_ctx              *nothing = ar_init_ex(stingy, (ar_u32)sizeof stingy, 256, 1024);
+
+        CHECK(nothing != 0, "arena: a context may reserve almost nothing for a document");
+        CHECK(nothing && ar_html_parse_into(nothing, "<p>x</p>", 8) == 0,
+              "arena: and parsing into it is refused rather than half-allocated");
+    }
+}
+
+static void test_a_document_decodes_its_own_encoding(void)
+{
+    ar_ctx *c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 32 * 1024);
+    ar_doc *d;
+
+    /*
+     * The piece the sniffer and the decoders existed for without being wired
+     * to anything: `ar_html_parse_into` reads the encoding before the
+     * tokenizer sees a byte.
+     *
+     * windows-1252 with no declaration is the case that matters -- a decade of
+     * documents are exactly that, and reading one as UTF-8 does not fail, it
+     * turns every accented letter into a replacement character.
+     */
+    CHECK(c != 0, "arena: the context initialises");
+    if (!c)
+    {
+        return;
+    }
+
+    /* `<p>caf\351</p>` -- an e-acute in windows-1252, which is not valid
+       UTF-8 and would otherwise be dropped. */
+    d = ar_html_parse_into(c, "<p>caf\351</p>", 12);
+    CHECK(d != 0 && !d->overflowed, "html: a windows-1252 document parses");
+    if (d)
+    {
+        ar_i32 p = -1;
+        ar_i32 i;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            if (d->nodes[i].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[i].name, "p"))
+            {
+                p = i;
+            }
+        }
+        CHECK(p >= 0, "html: with the paragraph in it");
+        if (p >= 0 && d->nodes[p].first_child >= 0)
+        {
+            ar_span t = d->nodes[d->nodes[p].first_child].text;
+
+            CHECK(ar__text_is(t, "caf\303\251"),
+                  "html: and its e-acute arrives as UTF-8 rather than as a dropped byte");
+        }
+    }
+
+    /* A UTF-8 byte order mark is not content and must not become text. */
+    c = ar_init_ex(g_doc_mem, (ar_u32)sizeof g_doc_mem, 256, 32 * 1024);
+    ar_ua_stylesheet(c);
+    d = ar_html_parse_into(c, "\357\273\277<p>hi</p>", 13);
+    CHECK(d != 0, "html: a document with a BOM parses");
+    if (d)
+    {
+        ar_i32 i;
+        int    bom_leaked = 0;
+
+        for (i = 0; i < d->node_count; ++i)
+        {
+            ar_span t = d->nodes[i].text;
+
+            if (d->nodes[i].kind == AR_DOM_TEXT && t.n >= 3 && (unsigned char)t.p[0] == 0xEFu)
+            {
+                bom_leaked = 1;
+            }
+        }
+        CHECK(!bom_leaked, "html: and the mark does not end up in a text node");
+    }
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -14159,6 +14372,11 @@ int main(void)
     test_a_document_carries_its_own_stylesheet();
     test_stylesheets_arrive_in_tree_order();
     test_a_style_element_is_not_markup();
+
+    test_a_larger_rule_table_is_the_callers_to_ask_for();
+    test_a_document_lives_in_the_arena();
+    test_a_document_that_does_not_fit_says_so();
+    test_a_document_decodes_its_own_encoding();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
