@@ -35,6 +35,35 @@ static void ar__check(int ok, const char *what, const char *file, int line)
 #define CHECK(expr, what) ar__check((expr) ? 1 : 0, what, __FILE__, __LINE__)
 
 /* ------------------------------------------------------------------------
+ * Version
+ * ------------------------------------------------------------------------ */
+
+/* AR_VERSION_STRING and the three macros beside it are two records of one
+   fact, and they have disagreed before. The string sat at "0.6.1-dev" through
+   0.6.2, 0.6.3, 0.7.0, 0.7.1, 0.8.0, 0.8.1 and 0.8.2, and because ar_bench
+   stamps it into every result, docs/PERFORMANCE.md published its numbers under
+   an engine four minor releases old.
+
+   This catches half of that drift. Both records can be stale together and
+   agree with each other perfectly -- which is precisely what happened -- so
+   the other half is tools/gen_perf_doc.py --check, comparing this string
+   against the version the committed baseline was actually measured with. */
+#define AR__STR2(x) #x
+#define AR__STR(x)  AR__STR2(x)
+
+static void test_version_string_matches_the_macros(void)
+{
+    const char *v = ar_version();
+    const char *number =
+        AR__STR(AR_VERSION_MAJOR) "." AR__STR(AR_VERSION_MINOR) "." AR__STR(AR_VERSION_PATCH);
+    size_t n = strlen(number);
+
+    CHECK(strncmp(v, number, n) == 0, "version: the reported string begins with the three macros");
+    CHECK(v[n] == 0 || strcmp(v + n, "-dev") == 0,
+          "version: what follows the number is nothing or -dev");
+}
+
+/* ------------------------------------------------------------------------
  * Arena
  * ------------------------------------------------------------------------ */
 
@@ -12449,6 +12478,8 @@ static void test_selector_depth_is_refused_not_truncated(void)
 int main(void)
 {
     printf("areole %s\n", ar_version());
+
+    test_version_string_matches_the_macros();
 
     test_arena_alignment();
     test_arena_regions_do_not_overlap();
