@@ -448,6 +448,67 @@ static void ar__insert_node(ar__tree *t, ar_i32 node, int foster)
     }
 }
 
+/*
+ * Text, stored NUL-terminated in the document's own buffer -- always, even
+ * when the span already points at the caller's stable input.
+ *
+ * Tag names and attribute values are *compared*, so they can stay spans of
+ * whatever they came from. Text is *rendered*, and ar_text takes a C string
+ * and keeps the pointer for the whole frame. A span into the middle of a
+ * document has no terminator after it and one into the tokenizer's scratch is
+ * overwritten by the next token, so neither can be handed straight to the box
+ * tree.
+ *
+ * This is the one place areole copies a document's bytes, and it is bounded by
+ * the text the document actually contains.
+ */
+static ar_span ar__text_store(ar__tree *t, ar_span s)
+{
+    ar_span out;
+
+    out.p = 0;
+    out.n = 0;
+    if (s.n == 0)
+    {
+        return out;
+    }
+    if (t->doc->text_used + s.n + 1u > t->doc->text_cap)
+    {
+        t->doc->overflowed = 1;
+        return out;
+    }
+    memcpy(t->doc->text + t->doc->text_used, s.p, s.n);
+    out.p = t->doc->text + t->doc->text_used;
+    out.n = s.n;
+    t->doc->text_used += s.n;
+    t->doc->text[t->doc->text_used++] = 0;
+    return out;
+}
+
+/* Extend the last text node in place, overwriting its terminator. Only
+   possible when it is the most recent thing in the buffer, which is the
+   ordinary case for a run split by a character reference. */
+static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
+{
+    ar_span old = t->doc->nodes[node].text;
+
+    if (old.n == 0 || old.p + old.n + 1 != t->doc->text + t->doc->text_used)
+    {
+        return 0;
+    }
+    if (t->doc->text_used + s.n > t->doc->text_cap)
+    {
+        t->doc->overflowed = 1;
+        return 0;
+    }
+    --t->doc->text_used; /* drop the terminator; a new one goes after */
+    memcpy(t->doc->text + t->doc->text_used, s.p, s.n);
+    t->doc->text_used += s.n;
+    t->doc->text[t->doc->text_used++] = 0;
+    t->doc->nodes[node].text.n += s.n;
+    return 1;
+}
+
 static void ar__insert_text(ar__tree *t, ar_span s, int foster)
 {
     ar_i32 before = -1;
@@ -469,26 +530,15 @@ static void ar__insert_text(ar__tree *t, ar_span s, int foster)
     {
         ar_i32 last = t->doc->nodes[parent].last_child;
 
-        if (last >= 0 && t->doc->nodes[last].kind == AR_DOM_TEXT)
+        if (last >= 0 && t->doc->nodes[last].kind == AR_DOM_TEXT && ar__text_extend(t, last, s))
         {
-            ar_span kept = ar__keep(t, s);
-
-            /* Contiguous in the text buffer: extend rather than relink. */
-            if (kept.n > 0 && t->doc->nodes[last].text.p + t->doc->nodes[last].text.n == kept.p)
-            {
-                t->doc->nodes[last].text.n += kept.n;
-                return;
-            }
-            s = kept;
-        }
-        else
-        {
-            s = ar__keep(t, s);
+            return;
         }
     }
-    else
+    s = ar__text_store(t, s);
+    if (s.n == 0)
     {
-        s = ar__keep(t, s);
+        return;
     }
 
     node = ar__node(t, AR_DOM_TEXT);
