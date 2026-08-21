@@ -99,7 +99,10 @@ enum
     M_IN_ROW,
     M_IN_CELL,
     M_AFTER_BODY,
-    M_AFTER_AFTER_BODY
+    M_AFTER_AFTER_BODY,
+    M_IN_HEAD_NOSCRIPT,
+    M_IN_TEMPLATE,
+    M_IN_FRAMESET
 };
 
 /* ------------------------------------------------------------------------
@@ -1139,8 +1142,12 @@ static int ar__is_void(ar_span name)
 /* The formatting elements the adoption agency exists for. */
 static int ar__is_formatting(ar_span name)
 {
-    static const char *const FMT_TAGS[] = {"a", "b",     "big",    "code",   "em", "font", "i",
-                                           "s", "small", "strike", "strong", "tt", "u",    0};
+    /* `nobr` is one of these, which surprises people -- it is in the
+       specification's list because it nests wrongly in exactly the way `<b>`
+       does and needs the same repair. */
+    static const char *const FMT_TAGS[] = {"a",      "b",      "big",  "code", "em",
+                                           "font",   "i",      "nobr", "s",    "small",
+                                           "strike", "strong", "tt",   "u",    0};
     ar_i32                   i;
 
     for (i = 0; FMT_TAGS[i]; ++i)
@@ -1342,6 +1349,14 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
         }
         if (ar__is_void(tok->name))
         {
+            /* `<hr>` is the one void element that also closes an open
+               paragraph, and this branch runs before the block-level one, so
+               it has to do the close itself. `<p>a<hr>b` is a paragraph, a
+               rule and a text node -- not all three inside the paragraph. */
+            if (ar__closes_p(tok->name))
+            {
+                ar__close_p(t);
+            }
             ar__reconstruct(t);
             ar__insert_element(t, tok, 1);
             ar__pop(t);
@@ -1368,6 +1383,16 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                     }
                 }
             }
+            /*
+             * A nobr does the same, and for the reason a nested anchor does:
+             * the pair have no meaning nested, the specification closes an
+             * open one before opening another, and authors nest them anyway.
+             */
+            if (ar_span_is(tok->name, "nobr") && ar__in_scope(t, "nobr", 0))
+            {
+                t->doc->errors++;
+                ar__adoption(t, "nobr");
+            }
             ar__reconstruct(t);
             {
                 ar_i32 node = ar__insert_element(t, tok, 1);
@@ -1377,6 +1402,110 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                     ar__fmt_push(t, node);
                 }
             }
+            return;
+        }
+        /*
+         * `<image>` is `<img>`. Not a typo in this file -- the specification
+         * says so outright, because an early browser shipped the wrong name
+         * and enough documents used it that the mistake had to be kept.
+         */
+        if (ar_span_is(tok->name, "image"))
+        {
+            ar_token fixed = *tok;
+
+            fixed.name.p = "img";
+            fixed.name.n = 3;
+            ar__reconstruct(t);
+            ar__insert_element(t, &fixed, 1);
+            ar__pop(t);
+            return;
+        }
+        /* A heading closes an open heading rather than nesting inside it. */
+        if (ar_span_is(tok->name, "h1") || ar_span_is(tok->name, "h2") ||
+            ar_span_is(tok->name, "h3") || ar_span_is(tok->name, "h4") ||
+            ar_span_is(tok->name, "h5") || ar_span_is(tok->name, "h6"))
+        {
+            ar__close_p(t);
+            if (ar__is(t, ar__current(t), "h1") || ar__is(t, ar__current(t), "h2") ||
+                ar__is(t, ar__current(t), "h3") || ar__is(t, ar__current(t), "h4") ||
+                ar__is(t, ar__current(t), "h5") || ar__is(t, ar__current(t), "h6"))
+            {
+                t->doc->errors++;
+                ar__pop(t);
+            }
+            ar__insert_element(t, tok, 1);
+            return;
+        }
+        /* And so do an option, an optgroup and a button. */
+        if (ar_span_is(tok->name, "option") || ar_span_is(tok->name, "optgroup"))
+        {
+            if (ar__is(t, ar__current(t), "option"))
+            {
+                ar__pop(t);
+            }
+            if (ar_span_is(tok->name, "optgroup") && ar__is(t, ar__current(t), "optgroup"))
+            {
+                ar__pop(t);
+            }
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 1);
+            return;
+        }
+        if (ar_span_is(tok->name, "button"))
+        {
+            if (ar__in_scope(t, "button", 0))
+            {
+                t->doc->errors++;
+                ar__implied_end_tags(t, 0);
+                ar__pop_until(t, "button");
+            }
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 0);
+            return;
+        }
+        /*
+         * A second `<form>` is ignored while one is open. The specification
+         * keeps a form element *pointer* for exactly this, because forms may
+         * not nest and authors nest them constantly.
+         */
+        if (ar_span_is(tok->name, "form"))
+        {
+            if (t->form >= 0)
+            {
+                t->doc->errors++;
+                return;
+            }
+            ar__close_p(t);
+            t->form = ar__insert_element(t, tok, 1);
+            return;
+        }
+        /*
+         * The rawtext elements: everything inside them is text, and a `<` is
+         * not a tag. `<iframe><p>x</iframe>` holds the five characters `<p>x`,
+         * which is what makes a fallback inside an iframe invisible rather
+         * than part of the page.
+         */
+        if (ar_span_is(tok->name, "iframe") || ar_span_is(tok->name, "xmp") ||
+            ar_span_is(tok->name, "noembed") || ar_span_is(tok->name, "noframes"))
+        {
+            if (ar_span_is(tok->name, "xmp"))
+            {
+                ar__close_p(t);
+            }
+            ar__insert_element(t, tok, 1);
+            t->tok->state = AR_HTML_RAWTEXT;
+            t->original_mode = t->mode;
+            t->mode = M_TEXT;
+            return;
+        }
+        /* `<plaintext>` takes the rest of the file, tags included. It is from
+           1994, it cannot be closed, and it is two lines rather than a special
+           case somewhere else. */
+        if (ar_span_is(tok->name, "plaintext"))
+        {
+            ar__close_p(t);
+            ar__insert_element(t, tok, 1);
+            t->tok->state = AR_HTML_PLAINTEXT;
             return;
         }
         if (ar_span_is(tok->name, "textarea"))
@@ -1416,6 +1545,11 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar__process(t, tok); /* reprocessed in the new mode */
         }
         return;
+    }
+    if (ar_span_is(tok->name, "form"))
+    {
+        t->form = -1;
+        /* and then closed like any other element, below */
     }
     if (ar_span_is(tok->name, "p"))
     {
@@ -1539,6 +1673,17 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
             ar__insert_element(t, tok, 0);
             ar__fmt_marker(t);
             t->mode = M_IN_CAPTION;
+            return;
+        }
+        /* A template inside a table stays inside it. Everything else that is
+           not a table part gets fostered out; a template is head content and
+           the specification routes it to the `in head` rules instead. */
+        if (ar_span_is(tok->name, "template"))
+        {
+            ar__insert_element(t, tok, 0);
+            ar__fmt_marker(t);
+            t->original_mode = M_IN_TABLE;
+            t->mode = M_IN_TEMPLATE;
             return;
         }
         if (ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "col"))
@@ -1894,12 +2039,36 @@ static void ar__process(ar__tree *t, const ar_token *tok)
                 return;
             }
             if (ar_span_is(tok->name, "title") || ar_span_is(tok->name, "style") ||
-                ar_span_is(tok->name, "script") || ar_span_is(tok->name, "noscript"))
+                ar_span_is(tok->name, "script"))
             {
                 ar__insert_element(t, tok, 0);
                 t->tok->state = ar_span_is(tok->name, "title") ? AR_HTML_RCDATA : AR_HTML_RAWTEXT;
                 t->original_mode = M_IN_HEAD;
                 t->mode = M_TEXT;
+                return;
+            }
+            /*
+             * A noscript is not rawtext here, because there is no scripting in
+             * areole and never will be. With scripting disabled the
+             * specification parses its contents as ordinary markup and closes
+             * it on anything that is not head content -- so
+             * `<noscript><p>x</p></noscript>` is an empty noscript in the head
+             * and a paragraph in the body, which is what a browser with
+             * scripting switched off also produces.
+             */
+            if (ar_span_is(tok->name, "noscript"))
+            {
+                ar__insert_element(t, tok, 0);
+                t->mode = M_IN_HEAD_NOSCRIPT;
+                return;
+            }
+            /* A template is head content wherever it appears. */
+            if (ar_span_is(tok->name, "template"))
+            {
+                ar__insert_element(t, tok, 0);
+                ar__fmt_marker(t);
+                t->original_mode = M_IN_HEAD;
+                t->mode = M_IN_TEMPLATE;
                 return;
             }
         }
@@ -1937,6 +2106,15 @@ static void ar__process(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_BODY;
             return;
         }
+        /* A frameset document has a frameset where its body would be. There is
+           no layout for one -- the release document says parsed to the correct
+           tree and then not laid out -- but the tree has to be right. */
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "frameset"))
+        {
+            ar__insert_element(t, tok, 0);
+            t->mode = M_IN_FRAMESET;
+            return;
+        }
         ar__insert_implied(t, "body");
         t->mode = M_IN_BODY;
         ar__process(t, tok);
@@ -1969,6 +2147,112 @@ static void ar__process(ar__tree *t, const ar_token *tok)
         return;
     case M_IN_CAPTION:
         ar__in_caption(t, tok);
+        return;
+
+    case M_IN_HEAD_NOSCRIPT:
+        if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "noscript"))
+        {
+            ar__pop(t);
+            t->mode = M_IN_HEAD;
+            return;
+        }
+        if (tok->kind == AR_TOK_COMMENT || (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text)))
+        {
+            t->mode = M_IN_HEAD;
+            ar__process(t, tok);
+            t->mode = M_IN_HEAD_NOSCRIPT;
+            return;
+        }
+        /* Anything else closes it and is reprocessed, which is what puts the
+           paragraph in the body rather than inside the noscript. */
+        t->doc->errors++;
+        ar__pop(t);
+        t->mode = M_IN_HEAD;
+        ar__process(t, tok);
+        return;
+
+    case M_IN_TEMPLATE:
+        /*
+         * A table part inside a template uses the table rules, which is what
+         * `<table><template><tr><td>a</template>` needs: `in body` now ignores
+         * an orphan `<tr>` outright, so without this the row and the cell
+         * vanished and only their text survived.
+         *
+         * The specification does this with a stack of template insertion
+         * modes; this is the same routing, one level deep.
+         */
+        if (tok->kind == AR_TOK_START && t->original_mode == M_IN_TABLE)
+        {
+            if (ar_span_is(tok->name, "caption") || ar_span_is(tok->name, "colgroup") ||
+                ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
+                ar_span_is(tok->name, "thead"))
+            {
+                t->mode = M_IN_TABLE;
+                ar__process(t, tok);
+                t->mode = M_IN_TEMPLATE;
+                return;
+            }
+            if (ar_span_is(tok->name, "tr"))
+            {
+                ar__insert_element(t, tok, 0);
+                return;
+            }
+            if (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th"))
+            {
+                ar__insert_element(t, tok, 0);
+                ar__fmt_marker(t);
+                return;
+            }
+        }
+        if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "template"))
+        {
+            ar__pop_until(t, "template");
+            ar__fmt_clear_to_marker(t);
+            t->mode = t->original_mode;
+            return;
+        }
+        /*
+         * Everything else is `in body`.
+         *
+         * The specification keeps a *stack* of template insertion modes, so a
+         * template inside a table resumes the table rules when it closes.
+         * areole keeps one, so a template nested inside another resumes the
+         * outer one. Named rather than left to be found: it takes two
+         * templates and a table to notice.
+         */
+        ar__in_body(t, tok);
+        return;
+
+    case M_IN_FRAMESET:
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "frameset"))
+        {
+            ar__insert_element(t, tok, 0);
+            return;
+        }
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "frame"))
+        {
+            ar__insert_element(t, tok, 0);
+            ar__pop(t);
+            return;
+        }
+        if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "frameset"))
+        {
+            if (t->open_n > 2)
+            {
+                ar__pop(t);
+            }
+            return;
+        }
+        if (tok->kind == AR_TOK_COMMENT)
+        {
+            ar__comment_node(t, tok, -1);
+            return;
+        }
+        /* A frameset document has no body and nothing else belongs in it. */
+        if (!(tok->kind == AR_TOK_TEXT && ar__all_space(tok->text)))
+        {
+            t->doc->errors++;
+        }
         return;
 
     case M_AFTER_BODY:
@@ -2067,7 +2351,7 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
      * An empty file is still `html(head body)` in every browser, and areole
      * returned nothing at all until the tree corpus asked.
      */
-    if (t.mode < M_IN_BODY)
+    if (t.mode < M_IN_BODY && t.mode != M_IN_FRAMESET)
     {
         if (ar_dom_root(doc) < 0)
         {
@@ -2080,6 +2364,20 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
         }
         if (ar_dom_child_element(doc, ar_dom_root(doc), "body") < 0)
         {
+            /*
+             * Back to the html element first.
+             *
+             * The body is a child of html, and `ar__insert_implied` inserts
+             * into the *current* node -- which after `<template><p>x</p>
+             * </template>` is still the head, because a template is head
+             * content. So the body ended up inside the head, which is a tree
+             * no browser produces and which the corpus caught the moment a
+             * template case was added.
+             */
+            while (t.open_n > 2)
+            {
+                ar__pop(&t);
+            }
             ar__insert_implied(&t, "body");
         }
     }
