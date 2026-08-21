@@ -13927,6 +13927,86 @@ static void test_a_document_decodes_its_own_encoding(void)
     }
 }
 
+static void test_the_adoption_agency_inner_loop(void)
+{
+    /*
+     * The whole algorithm, against a browser's own answers.
+     *
+     * Every expected string here came out of Edge before it was written down.
+     * The first implementation cut the inner loop and got six of these eight
+     * right anyway -- including the three-level `<b>1<i>2<em>3</b>4</em>5</i>`
+     * -- which is exactly why a corpus of the easy cases proves nothing about
+     * this algorithm.
+     *
+     * The two it failed shared one cause: step 4.14, moving the furthest block
+     * to the common ancestor. Without it a paragraph stays inside the bold
+     * instead of beside it.
+     */
+    static const char *const CASES[] = {"<b><i><p></b></i>",
+                                        "html(head body(b(i) i p(i(b))))",
+                                        "<b><i>x</b>y</i>",
+                                        "html(head body(b(i(#)) i(#)))",
+                                        "<a><b>1</a>2</b>",
+                                        "html(head body(a(b(#)) b(#)))",
+                                        "<b>1<p>2</b>3</p>",
+                                        "html(head body(b(#) p(b(#) #)))",
+                                        "<i><b>x</i>y</b>",
+                                        "html(head body(i(b(#)) b(#)))",
+                                        "<b><em><i>q</b>r</i></em>",
+                                        "html(head body(b(em(i(#))) em(i(#))))",
+                                        "<p><b>a<i>b</b>c</i></p>",
+                                        "html(head body(p(b(# i(#)) i(#))))",
+                                        "<b>1<i>2<em>3</b>4</em>5</i>",
+                                        "html(head body(b(# i(# em(#))) i(em(#) #)))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: the adoption agency agrees with a browser on all eight");
+}
+
+static void test_the_adoption_agency_terminates_on_anything(void)
+{
+    /*
+     * The outer loop is capped at eight by the specification and the inner one
+     * needs a cap of its own, because a chain of formatting elements long
+     * enough would otherwise walk the stack forever. Step 4.13.4 -- drop a
+     * node from the list after three passes -- is the specification's own
+     * answer and is what makes these terminate.
+     */
+    static const char *const NASTY[] = {"<b><b><b><b><b><b><b><b><b><b>x</b>",
+                                        "<i><b><i><b><i><b>x</i>",
+                                        "<a><a><a><a><a>x</a>",
+                                        "<b><i><em><strong><small><big>x</b>",
+                                        "<b><p><b><p><b><p></b></p>",
+                                        "<em><b><em><b><em><b></em></b></em>"};
+    ar_i32                   i;
+    ar_i32                   bad = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_doc *d = ar__parse(NASTY[i]);
+
+        if (d->overflowed)
+        {
+            printf("      %s overflowed\n", NASTY[i]);
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: and terminates on every chain of misnested formatting");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -14377,6 +14457,9 @@ int main(void)
     test_a_document_lives_in_the_arena();
     test_a_document_that_does_not_fit_says_so();
     test_a_document_decodes_its_own_encoding();
+
+    test_the_adoption_agency_inner_loop();
+    test_the_adoption_agency_terminates_on_anything();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

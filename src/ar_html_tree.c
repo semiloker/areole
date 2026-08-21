@@ -827,24 +827,127 @@ static int ar__adoption(ar__tree *t, const char *tag)
         }
 
         /*
-         * Steps 4.8 to 4.19, the reparenting.
+         * Steps 4.9 to 4.19, in the specification's own step order.
          *
-         * The full algorithm walks an inner loop cloning every node between
-         * the formatting element and the furthest block. areole does the
-         * reparenting the inner loop exists to produce -- the furthest block's
-         * children move into a clone of the formatting element, and the clone
-         * becomes the furthest block's only formatting child -- which is the
-         * same tree for every case where the intervening nodes are not
-         * themselves in the formatting list.
+         * This is the part people warn about, and it is where the first
+         * version cut a corner: it moved the furthest block's children into a
+         * clone and stopped. Six of the eight cases a browser was asked came
+         * out right anyway -- including `<b>1<i>2<em>3</b>4</em>5</i>`, which
+         * is three levels deep -- and two did not, both for the same reason.
          *
-         * That is a real limitation and it is the one to fix first: nested
-         * misnested formatting, `<b><i><p></b></i>`, needs the inner loop.
-         * Named here rather than left to be found.
+         * The missing piece is step 4.14. The furthest block has to be moved
+         * to the **common ancestor**, the element immediately above the
+         * formatting element on the stack. Without it `<b>1<p>2</b>3</p>`
+         * leaves the paragraph inside the bold instead of beside it, which is
+         * the one thing anybody would notice on a page.
          */
         {
-            ar_i32 clone = ar__node(t, AR_DOM_ELEMENT);
+            ar_i32 common = stack_index > 0 ? t->open[stack_index - 1] : 0;
+            ar_i32 bookmark = fmt_index;
+            ar_i32 node_at = -1;
+            ar_i32 node;
+            ar_i32 last = furthest;
+            ar_i32 inner;
+            ar_i32 clone;
             ar_i32 child;
 
+            /* Where the furthest block sits, so the inner loop can walk down
+               from it towards the formatting element. */
+            for (i = 0; i < t->open_n; ++i)
+            {
+                if (t->open[i] == furthest)
+                {
+                    node_at = i;
+                }
+            }
+
+            /* 4.13, the inner loop. */
+            for (inner = 1; inner <= 64 && node_at > 0; ++inner)
+            {
+                ar_i32 k;
+                ar_i32 in_list = -1;
+
+                --node_at; /* 4.13.2: the element immediately above */
+                node = t->open[node_at];
+                if (node == formatting)
+                {
+                    break; /* 4.13.3 */
+                }
+                for (k = 0; k < t->fmt_n; ++k)
+                {
+                    if (t->fmt[k] == node)
+                    {
+                        in_list = k;
+                    }
+                }
+                /* 4.13.4: past three passes a node still in the list is
+                   dropped from it -- the specification's own guard against a
+                   pathological chain of formatting elements. */
+                if (inner > 3 && in_list >= 0)
+                {
+                    ar__fmt_remove(t, node);
+                    if (bookmark > in_list)
+                    {
+                        --bookmark;
+                    }
+                    in_list = -1;
+                }
+                if (in_list < 0)
+                {
+                    /* 4.13.5: not a formatting element. Off the stack, and the
+                       tree is left alone. */
+                    for (k = node_at; k + 1 < t->open_n; ++k)
+                    {
+                        t->open[k] = t->open[k + 1];
+                    }
+                    --t->open_n;
+                    continue;
+                }
+                /* 4.13.6: a clone takes its place in both lists. */
+                clone = ar__node(t, AR_DOM_ELEMENT);
+                if (clone < 0)
+                {
+                    return 1;
+                }
+                t->doc->nodes[clone].name = t->doc->nodes[node].name;
+                t->doc->nodes[clone].attr_first = t->doc->nodes[node].attr_first;
+                t->doc->nodes[clone].attr_count = t->doc->nodes[node].attr_count;
+                t->fmt[in_list] = clone;
+                t->open[node_at] = clone;
+                node = clone;
+
+                /* 4.13.7 */
+                if (last == furthest)
+                {
+                    bookmark = in_list + 1;
+                }
+                /* 4.13.8 */
+                ar__detach(t, last);
+                ar__append(t, node, last);
+                /* 4.13.9 */
+                last = node;
+            }
+
+            /*
+             * 4.14: the last node goes into the common ancestor.
+             *
+             * The step the first version left out, and the whole of what makes
+             * a paragraph a sibling of the bold rather than its child.
+             */
+            ar__detach(t, last);
+            if (ar__is(t, common, "table") || ar__is(t, common, "tbody") ||
+                ar__is(t, common, "tfoot") || ar__is(t, common, "thead") || ar__is(t, common, "tr"))
+            {
+                ar__insert_node(t, last, 1); /* foster parented */
+            }
+            else
+            {
+                ar__append(t, common, last);
+            }
+
+            /* 4.15 to 4.17: a clone of the formatting element takes the
+               furthest block's children and becomes its only child. */
+            clone = ar__node(t, AR_DOM_ELEMENT);
             if (clone < 0)
             {
                 return 1;
@@ -864,16 +967,27 @@ static int ar__adoption(ar__tree *t, const char *tag)
             }
             ar__append(t, furthest, clone);
 
+            /* 4.18: out of the list, and the clone in at the bookmark. */
             ar__fmt_remove(t, formatting);
-            if (fmt_index >= 0)
+            if (bookmark < 0 || bookmark > t->fmt_n)
             {
-                ar__fmt_push(t, clone);
+                bookmark = t->fmt_n;
+            }
+            if (t->fmt_n < AR_HTML_FMT)
+            {
+                for (i = t->fmt_n; i > bookmark; --i)
+                {
+                    t->fmt[i] = t->fmt[i - 1];
+                }
+                t->fmt[bookmark] = clone;
+                ++t->fmt_n;
             }
 
-            /* The formatting element leaves the stack; the furthest block and
-               everything under it stays. */
+            /* 4.19: off the stack, and the clone immediately above the
+               furthest block. */
             {
                 ar_i32 w = 0;
+                ar_i32 at = -1;
 
                 for (i = 0; i < t->open_n; ++i)
                 {
@@ -883,6 +997,22 @@ static int ar__adoption(ar__tree *t, const char *tag)
                     }
                 }
                 t->open_n = w;
+                for (i = 0; i < t->open_n; ++i)
+                {
+                    if (t->open[i] == furthest)
+                    {
+                        at = i;
+                    }
+                }
+                if (at >= 0 && t->open_n < AR_HTML_STACK)
+                {
+                    for (i = t->open_n; i > at + 1; --i)
+                    {
+                        t->open[i] = t->open[i - 1];
+                    }
+                    t->open[at + 1] = clone;
+                    ++t->open_n;
+                }
             }
         }
     }
