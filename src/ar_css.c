@@ -353,13 +353,25 @@ ar_pset ar_pset_plus(ar_pset a, ar_pset b)
     return a;
 }
 
+/*
+ * One rule's declarations onto the style being built, per matching rule.
+ *
+ * A rule states two or three properties and the mask says which, so stepping
+ * over a word of thirty-two at a time when it says none is most of the work
+ * gone -- the same reason ar_style_inherit does it, and the same arithmetic.
+ */
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set)
 {
     ar_i32 i;
 
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        if (ar_pset_has(set, (ar_i32)i))
+        if ((i & 31) == 0 && set.w[i >> 5] == 0)
+        {
+            i += 31;
+            continue;
+        }
+        if (ar_pset_has(set, i))
         {
             ar_style_put(dst, i, ar_style_get(src, i));
             dst->unit[i] = src->unit[i];
@@ -405,38 +417,85 @@ int ar_prop_inherits(ar_i32 prop)
     }
 }
 
+/*
+ * The same five, as a list.
+ *
+ * ar_prop_inherits above is the authority and this is its inverse: the answer
+ * to "which properties inherit" rather than "does this one". Both exist
+ * because they are asked in different shapes, and ar_test sweeps every
+ * property comparing the two, so they cannot drift apart.
+ */
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR, AR_P_FONT_SIZE, AR_P_VISIBILITY, AR_P_EMPTY_CELLS,
+                                      AR_P_CAPTION_SIDE};
+#define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
+
+/*
+ * Inheritance, per box, per frame -- so this is one of the three or four
+ * hottest functions in the library and it is written to stay off the property
+ * count.
+ *
+ * It used to do two things that made it grow with every release that added a
+ * property, and areole added a lot of them: it rebuilt the whole default style
+ * for every box, ninety slots and forty explicit assignments, to read at most
+ * a handful of them; and it asked `ar_prop_inherits` about all ninety to find
+ * the five that say yes.
+ *
+ * Style resolution grew 14 -> 31 us on a hundred boxes across 0.6.2 to 0.8.2,
+ * roughly one increment a release, and this is where the increments landed.
+ * Neither loop had anything to do with what the stylesheet actually said.
+ */
 void ar_style_inherit(ar_style *child, const ar_style *parent)
 {
     ar_style defaults;
-    ar_i32   i;
+    int      have_defaults = 0;
+    ar_i32   i, k;
 
-    ar_style_defaults(&defaults);
-
+    /*
+     * Pass one: the explicit keywords, which may name any property, so this
+     * one does have to consider them all -- but it asks the set mask and
+     * nothing else, and steps over a whole word of thirty-two when the box
+     * stated nothing in it. Most boxes state a handful.
+     */
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        /* The explicit keywords first, because they override the question of
-           whether the property inherits by default -- that is what they are
-           for. `inherit` on a non-inherited property is the interesting case
-           and the one CSS authors reach for. */
-        if (ar_pset_has(child->set, i))
+        if ((i & 31) == 0 && child->set.w[i >> 5] == 0)
         {
-            if (child->unit[i] == AR_UNIT_INHERIT)
-            {
-                ar_style_put(child, i, ar_style_get(parent, i));
-                child->unit[i] = parent->unit[i];
-                continue;
-            }
-            if (child->unit[i] == AR_UNIT_INITIAL)
-            {
-                ar_style_put(child, i, ar_style_get(&defaults, i));
-                child->unit[i] = defaults.unit[i];
-                continue;
-            }
+            i += 31;
+            continue;
         }
-        if (!ar_prop_inherits(i))
+        if (!ar_pset_has(child->set, i))
         {
             continue;
         }
+        if (child->unit[i] == AR_UNIT_INHERIT)
+        {
+            ar_style_put(child, i, ar_style_get(parent, i));
+            child->unit[i] = parent->unit[i];
+            continue;
+        }
+        if (child->unit[i] == AR_UNIT_INITIAL)
+        {
+            /*
+             * Built once, and only if somebody actually wrote `initial` or
+             * `unset` on a property that does not inherit. That is rare, and
+             * it used to cost every box in the tree whether or not it was
+             * anywhere in the stylesheet.
+             */
+            if (!have_defaults)
+            {
+                ar_style_defaults(&defaults);
+                have_defaults = 1;
+            }
+            ar_style_put(child, i, ar_style_get(&defaults, i));
+            child->unit[i] = defaults.unit[i];
+        }
+    }
+
+    /* Pass two: the properties that inherit by default, asked by name. */
+    for (k = 0; k < AR__INHERITED_COUNT; ++k)
+    {
+        i = (ar_i32)AR__INHERITED[k];
+
         if (ar_pset_has(child->set, i))
         {
             continue; /* the child said something; it wins */
@@ -992,6 +1051,11 @@ void ar_sheet_note_tables(ar_sheet *sheet)
         }
         if (ar_pset_has(sheet->rules[i].set, AR_P_DISPLAY) &&
             sheet->rules[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID)
+        {
+            sheet->has_grid = 1;
+        }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_GRID_COLS) ||
+            ar_pset_has(sheet->rules[i].set, AR_P_GRID_ROWS))
         {
             sheet->has_grid = 1;
         }
@@ -2028,7 +2092,41 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
     if (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS || prop == AR_P_GRID_AUTO_COLS ||
         prop == AR_P_GRID_AUTO_ROWS)
     {
-        ar_i32 header = sheet ? ar__parse_track_list(z, sheet) : 0;
+        ar_i32 header;
+
+        /* `subgrid` is a whole template rather than a track in one, so it is
+           read before the list parser rather than inside it. */
+        {
+            const char *save = z->p;
+            const char *word;
+            ar_u32      wlen;
+
+            ar__skip_ws(z);
+            wlen = ar__ident(z, &word);
+            if (wlen && ar__same(word, wlen, "subgrid") &&
+                (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS))
+            {
+                before_set = rule->set;
+                ar__set(rule, (ar_u8)prop, AR_TRACKS_SUBGRID, AR_UNIT_PX);
+                if (ar__take_important(z))
+                {
+                    rule->important =
+                        ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
+                }
+                while (z->p < z->end && *z->p != ';' && *z->p != '}')
+                {
+                    z->p++;
+                }
+                if (z->p < z->end && *z->p == ';')
+                {
+                    z->p++;
+                }
+                return;
+            }
+            z->p = save;
+        }
+
+        header = sheet ? ar__parse_track_list(z, sheet) : 0;
 
         before_set = rule->set;
         if (header > 0)
@@ -2120,6 +2218,28 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         {
             important = ar__take_important(z);
             break;
+        }
+
+        /*
+         * A slash separates values, it does not fail to be one.
+         *
+         * `grid-column: 1 / 3` -- the way essentially every stylesheet on the
+         * web writes grid placement -- reported a stylesheet error. The values
+         * either side were read and the placement was right, so nothing looked
+         * wrong; ar_stylesheet_errors just went up, and any caller that treats
+         * that as fatal refused the sheet. The grid corpus is such a caller,
+         * which is how this was found.
+         *
+         * The comment on the grid-column shorthand said the slash `is skipped
+         * by the value loop the way any punctuation is`. Half true, and the
+         * wrong half was the one nobody checked: it was skipped by the
+         * recovery branch, which exists for input that is actually broken and
+         * counts an error on the way past.
+         */
+        if (*z->p == '/')
+        {
+            z->p++;
+            continue;
         }
 
         before = z->p;

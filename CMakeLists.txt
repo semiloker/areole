@@ -114,6 +114,10 @@ if(WIN32)
     target_link_libraries(example_table_responsive PRIVATE areole_win32)
     areole_set_warnings(example_table_responsive)
 
+    add_executable(example_grid examples/11_grid/main.c)
+    target_link_libraries(example_grid PRIVATE areole_win32)
+    areole_set_warnings(example_grid)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)

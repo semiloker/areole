@@ -482,6 +482,57 @@ ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch
                     AR_WIDE(&ch->style, ar_axis_max_prop(axis)));
 }
 
+/*
+ * Whether this box's height was handed to it by its parent rather than taken
+ * from its own contents.
+ *
+ * A grid item, and a flex item on a row, are stretched across the cross axis
+ * by default -- so their height is the row's, and a row is as tall as the
+ * tallest thing in it. Writing the contents' height back over that undoes the
+ * only thing the row height means.
+ *
+ * That sentence is lifted from the table-cell exception a few lines below,
+ * because it is the same exception and the table found it first. The grid and
+ * flex cases went unnoticed for the reason stated there too: `ar__place` only
+ * visits a box that *has children*, so an empty stretched item keeps its
+ * height and one with anything inside it silently loses it. In the grid corpus
+ * exactly the items with a child came out zero tall while their siblings
+ * beside them, in the same row, came out sixty.
+ */
+static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
+{
+    const ar_node *p;
+    ar_i32         mode;
+
+    if (n->parent < 0)
+    {
+        return 0;
+    }
+    p = &nodes[n->parent];
+
+    if (ar_is_grid(p))
+    {
+        /* No writing modes, so a grid's cross axis is always the block one. */
+    }
+    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) && ar_axis_main(p) == 0)
+    {
+        /* A flex row: the cross axis is the block axis here too. A column's
+           cross axis is horizontal and its stretch settles widths, which this
+           function is not being asked about. */
+    }
+    else
+    {
+        return 0;
+    }
+
+    mode = n->style.v[AR_P_ALIGN_SELF];
+    if (mode == AR_ALIGN_AUTO)
+    {
+        mode = p->style.v[AR_P_ALIGN];
+    }
+    return (mode & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH;
+}
+
 /* ------------------------------------------------------------------------
  * Pass two, downwards: what each box actually gets
  * ------------------------------------------------------------------------ */
@@ -939,7 +990,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
      * A caption is settled by the table for the same reason.
      */
     if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0 && !ar_is_table_block(n) &&
-        n->style.v[AR_P_ASPECT_RATIO] <= 0)
+        n->style.v[AR_P_ASPECT_RATIO] <= 0 && !ar__stretched_by_parent(nodes, n))
     {
         ar_i32 used = cursor;
 
