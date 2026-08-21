@@ -1280,6 +1280,24 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_TABLE;
             return;
         }
+        /*
+         * A table part with no table around it is ignored -- the element is
+         * not created at all, though its contents still are.
+         *
+         * `<td>orphan` is a paragraph of text in every browser, not a cell
+         * floating in the body, and a cell outside a table would be laid out
+         * by the table formatting context with nothing to belong to.
+         */
+        if (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th") ||
+            ar_span_is(tok->name, "tr") || ar_span_is(tok->name, "tbody") ||
+            ar_span_is(tok->name, "tfoot") || ar_span_is(tok->name, "thead") ||
+            ar_span_is(tok->name, "caption") || ar_span_is(tok->name, "col") ||
+            ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "frame") ||
+            ar_span_is(tok->name, "frameset"))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (ar_span_is(tok->name, "li"))
         {
             /* An open <li> closes before a new one opens, which is why
@@ -1602,6 +1620,18 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
         t->mode = M_IN_CELL;
         return;
     }
+    if (tok->kind == AR_TOK_START &&
+        (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption")))
+    {
+        while (t->open_n > 1 && !ar__is(t, ar__current(t), "table"))
+        {
+            ar__pop(t);
+        }
+        t->mode = M_IN_TABLE;
+        ar__process(t, tok);
+        return;
+    }
     if (tok->kind == AR_TOK_END &&
         (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
          ar_span_is(tok->name, "thead")))
@@ -1640,6 +1670,19 @@ static void ar__in_row(ar__tree *t, const ar_token *tok)
         ar__insert_element(t, tok, 0);
         return;
     }
+    /* A row group opening inside a row closes the row and its group. */
+    if (tok->kind == AR_TOK_START &&
+        (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption")))
+    {
+        while (t->open_n > 1 && !ar__is(t, ar__current(t), "table"))
+        {
+            ar__pop(t);
+        }
+        t->mode = M_IN_TABLE;
+        ar__process(t, tok);
+        return;
+    }
     if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "table"))
     {
         ar__pop_until(t, "table");
@@ -1660,10 +1703,19 @@ static void ar__in_cell(ar__tree *t, const ar_token *tok)
         return;
     }
     if (tok->kind == AR_TOK_START &&
-        (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th") || ar_span_is(tok->name, "tr")))
+        (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th") ||
+         ar_span_is(tok->name, "tr") || ar_span_is(tok->name, "tbody") ||
+         ar_span_is(tok->name, "tfoot") || ar_span_is(tok->name, "thead") ||
+         ar_span_is(tok->name, "caption") || ar_span_is(tok->name, "col") ||
+         ar_span_is(tok->name, "colgroup")))
     {
         /* A new cell closes the open one. Missing `</td>` is the normal state
-           of hand-written tables. */
+           of hand-written tables.
+
+           Every other table structural tag closes it too, which is what makes
+           `<thead><tr><td>h<tbody>` two row groups rather than a tbody inside
+           a cell -- the tree the corpus found when only td, th and tr were
+           listed here. */
         ar__implied_end_tags(t, 0);
         while (t->open_n > 1 && !ar__is(t, ar__current(t), "td") &&
                !ar__is(t, ar__current(t), "th"))
@@ -1708,6 +1760,28 @@ static void ar__in_caption(ar__tree *t, const ar_token *tok)
 /* ------------------------------------------------------------------------
  * The dispatcher
  * ------------------------------------------------------------------------ */
+/*
+ * An end tag arriving before the body exists.
+ *
+ * `before html`, `before head`, `in head` and `after head` each let exactly
+ * `head`, `body`, `html` and `br` through and **ignore everything else**.
+ * Falling through instead builds the skeleton and reprocesses the tag in
+ * `in body`, where `</p>` inserts an empty paragraph -- so a document opening
+ * with a stray `</p>` gained one that no browser has.
+ *
+ * Found by the tree corpus: `</p></div></b><p>a` came out as two paragraphs
+ * against a browser's one.
+ */
+static int ar__early_end_tag_ignored(const ar_token *tok)
+{
+    if (tok->kind != AR_TOK_END)
+    {
+        return 0;
+    }
+    return !ar_span_is(tok->name, "head") && !ar_span_is(tok->name, "body") &&
+           !ar_span_is(tok->name, "html") && !ar_span_is(tok->name, "br");
+}
+
 static void ar__process(ar__tree *t, const ar_token *tok)
 {
     switch (t->mode)
@@ -1744,6 +1818,11 @@ static void ar__process(ar__tree *t, const ar_token *tok)
         return;
 
     case M_BEFORE_HTML:
+        if (ar__early_end_tag_ignored(tok))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (tok->kind == AR_TOK_COMMENT)
         {
             ar__comment_node(t, tok, 0);
@@ -1765,6 +1844,11 @@ static void ar__process(ar__tree *t, const ar_token *tok)
         return;
 
     case M_BEFORE_HEAD:
+        if (ar__early_end_tag_ignored(tok))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
         {
             return;
@@ -1786,6 +1870,11 @@ static void ar__process(ar__tree *t, const ar_token *tok)
         return;
 
     case M_IN_HEAD:
+        if (ar__early_end_tag_ignored(tok))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
         {
             ar__insert_text(t, tok->text, 0);
@@ -1827,6 +1916,11 @@ static void ar__process(ar__tree *t, const ar_token *tok)
         return;
 
     case M_AFTER_HEAD:
+        if (ar__early_end_tag_ignored(tok))
+        {
+            t->doc->errors++;
+            return;
+        }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
         {
             ar__insert_text(t, tok->text, 0);
@@ -1963,6 +2057,31 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
     while (ar_html_next(&tk, &tok))
     {
         ar__process(&t, &tok);
+    }
+
+    /*
+     * The end of the file, which every insertion mode has a rule for and all
+     * of them come to the same thing: a document has an html, a head and a
+     * body whether or not anything was written.
+     *
+     * An empty file is still `html(head body)` in every browser, and areole
+     * returned nothing at all until the tree corpus asked.
+     */
+    if (t.mode < M_IN_BODY)
+    {
+        if (ar_dom_root(doc) < 0)
+        {
+            ar__insert_implied(&t, "html");
+        }
+        if (t.head < 0)
+        {
+            t.head = ar__insert_implied(&t, "head");
+            ar__pop(&t);
+        }
+        if (ar_dom_child_element(doc, ar_dom_root(doc), "body") < 0)
+        {
+            ar__insert_implied(&t, "body");
+        }
     }
 
     doc->errors += tk.errors;

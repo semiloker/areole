@@ -138,6 +138,17 @@ jobs:
           ./build/example_grid.exe --html > /tmp/grid.html
           diff -u examples/11_grid/grid.html /tmp/grid.html
 
+      # The HTML tree corpus. Unlike the layout corpora this one needs no
+      # window at all -- its output is a tree per case -- so the dump runs
+      # here and only the browser half is local.
+      - name: HTML tree corpus dumps
+        run: ./build/example_html.exe --dump > /dev/null
+
+      - name: The HTML twin is up to date
+        run: |
+          ./build/example_html.exe --html > /tmp/cases.html
+          diff -u examples/12_html/cases.html /tmp/cases.html
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest

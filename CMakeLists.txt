@@ -121,6 +121,14 @@ if(WIN32)
     target_link_libraries(example_grid PRIVATE areole_win32)
     areole_set_warnings(example_grid)
 
+    # The HTML tree corpus needs no window: its subject is a tree per case, not
+    # where boxes land. src/ is on the path because ar_html.h is not public API
+    # yet, the same reason ar_bench and the tour have it.
+    add_executable(example_html examples/12_html/main.c)
+    target_link_libraries(example_html PRIVATE areole)
+    target_include_directories(example_html PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    areole_set_warnings(example_html)
+
     add_executable(example_showcase examples/04_showcase/main.c)
     target_link_libraries(example_showcase PRIVATE areole_win32)
     areole_set_warnings(example_showcase)
