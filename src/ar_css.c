@@ -2161,6 +2161,28 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
             break;
         }
 
+        /*
+         * A slash separates values, it does not fail to be one.
+         *
+         * `grid-column: 1 / 3` -- the way essentially every stylesheet on the
+         * web writes grid placement -- reported a stylesheet error. The values
+         * either side were read and the placement was right, so nothing looked
+         * wrong; ar_stylesheet_errors just went up, and any caller that treats
+         * that as fatal refused the sheet. The grid corpus is such a caller,
+         * which is how this was found.
+         *
+         * The comment on the grid-column shorthand said the slash `is skipped
+         * by the value loop the way any punctuation is`. Half true, and the
+         * wrong half was the one nobody checked: it was skipped by the
+         * recovery branch, which exists for input that is actually broken and
+         * counts an error on the way past.
+         */
+        if (*z->p == '/')
+        {
+            z->p++;
+            continue;
+        }
+
         before = z->p;
         val = ar__parse_value(z, as);
         if (!val.ok)
