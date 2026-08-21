@@ -125,6 +125,19 @@ jobs:
       - name: Block corpus renders
         run: ./build/example_block.exe --dump > /dev/null
 
+      # The flex, grid and subgrid corpus. Like the block one it only renders
+      # here; the browser half needs Chromium and runs locally. It is gated at
+      # all because a corpus that stops building is a corpus nobody runs.
+      - name: Grid corpus renders
+        run: ./build/example_grid.exe --dump > /dev/null
+
+      # And its twin is generated, so it cannot drift from the C side unless
+      # somebody forgets to regenerate. This says so.
+      - name: The grid twin is up to date
+        run: |
+          ./build/example_grid.exe --html > /tmp/grid.html
+          diff -u examples/11_grid/grid.html /tmp/grid.html
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest
