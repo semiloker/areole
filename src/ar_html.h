@@ -280,6 +280,53 @@ typedef struct ar_doc
  */
 int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
 
+/* ------------------------------------------------------------------------
+ * Encoding, §13.2.3.2
+ *
+ * The tokenizer reads UTF-8 and a document on disk is whatever somebody saved
+ * it as. Reading windows-1252 as UTF-8 does not fail -- every byte is valid on
+ * its own -- it renders every accented letter as a replacement character and
+ * looks like a font problem.
+ * ------------------------------------------------------------------------ */
+typedef enum ar_encoding
+{
+    AR_ENC_UNKNOWN = 0,
+    AR_ENC_UTF8,
+    AR_ENC_UTF16LE,
+    AR_ENC_UTF16BE,
+    AR_ENC_WINDOWS1252
+} ar_encoding;
+
+/*
+ * What these bytes are, and how many of them are a byte order mark.
+ *
+ * A BOM beats a `<meta charset>` that disagrees with it, which is the
+ * specification's rule and matters because authoring tools write both and
+ * contradict themselves constantly.
+ */
+ar_encoding ar_encoding_sniff(const char *bytes, ar_u32 len, ar_u32 *skip);
+
+/* A label such as "utf-8" or "iso-8859-1" to an encoding. AR_ENC_UNKNOWN if it
+   is not one this build knows. */
+ar_encoding ar_encoding_from_label(const char *label, ar_u32 n);
+
+/* Into UTF-8, in the caller's buffer. Returns the bytes written, which is
+   truncated rather than overrun if the buffer is too small. */
+ar_u32 ar_encoding_decode(ar_encoding enc, const char *in, ar_u32 len, char *out, ar_u32 cap);
+
+/*
+ * Hand every `<style>` element in the document to ar_stylesheet, in tree
+ * order -- which is cascade order, and is why it is a walk rather than a
+ * search.
+ *
+ * Call it after parsing and **before the first frame**, for the reason
+ * ar_stylesheet states: a frame reserves the whole box budget from the other
+ * end of the arena and does not release it until the next ar_frame_begin.
+ *
+ * Returns how many sheets were found.
+ */
+ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d);
+
 /*
  * The document into the box tree.
  *
