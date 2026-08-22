@@ -45,7 +45,6 @@
  * has drifted from its C side -- tour.html stops at 0.6.0 while main.c has
  * fifteen pages -- and CI diffs the committed file against a fresh one.
  */
-#include "ar_html.h"
 #include "areole.h"
 
 #include <stdio.h>

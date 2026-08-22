@@ -28,7 +28,7 @@
  * rate the harness cannot compute is better stated once than approximated
  * every run.
  */
-#include "ar_html.h"
+#include "areole.h"
 #include "bench.h"
 
 #include <string.h>

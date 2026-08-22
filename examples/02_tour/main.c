@@ -27,7 +27,6 @@
  */
 #include "areole.h"
 #include "areole_win32.h"
-#include "ar_html.h"
 
 #include <stdarg.h>
 #include <stdio.h>

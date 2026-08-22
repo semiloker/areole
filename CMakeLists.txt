@@ -59,6 +59,17 @@ areole_set_warnings(ar_test)
 
 add_test(NAME ar_test COMMAND ar_test)
 
+# --- the public header --------------------------------------------------------
+# Note what is missing: no target_include_directories for src/. That absence is
+# the test. ar_test includes src/ar_internal.h on purpose and therefore cannot
+# tell whether a declaration is reachable from outside the repository; this can,
+# because it is compiled the way an application compiles.
+add_executable(ar_public tests/ar_public.c)
+target_link_libraries(ar_public PRIVATE areole)
+areole_set_warnings(ar_public)
+
+add_test(NAME ar_public COMMAND ar_public)
+
 # --- the fuzzer ---------------------------------------------------------------
 # HTML is the one input this library takes that somebody else wrote, so the
 # parser gets a gate rather than an exercise. Links against the plain library:
@@ -95,7 +106,6 @@ if(WIN32)
     target_link_libraries(example_tour PRIVATE areole_win32)
     # src/ is on the path because the 0.9.0 page parses HTML, and ar_html.h is
     # not public API yet -- the same reason ar_bench has it for ar_text.
-    target_include_directories(example_tour PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     areole_set_warnings(example_tour)
 
     # The block corpus. A window by default, and --dump for the browser
@@ -143,7 +153,6 @@ if(WIN32)
     # yet, the same reason ar_bench and the tour have it.
     add_executable(example_html examples/12_html/main.c)
     target_link_libraries(example_html PRIVATE areole)
-    target_include_directories(example_html PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     areole_set_warnings(example_html)
 
     add_executable(example_showcase examples/04_showcase/main.c)
