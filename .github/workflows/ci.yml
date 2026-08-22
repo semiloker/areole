@@ -172,6 +172,22 @@ jobs:
       - name: The entity table round-trips
         run: python tools/gen_entities.py --check
 
+      # 0.9.0 acceptance criterion 1: the html5lib tokenizer suite at 100%.
+      # Not 98, not "almost" -- the tokenizer is finite and fully specified.
+      # ar_html5lib exits non-zero if either suite is under its gate.
+      - name: html5lib tokenizer suite
+        run: ./build/ar_html5lib.exe --tokenizer --quiet
+
+      # Criterion 2 is 98% of tree construction and is NOT met: it is 52.95%,
+      # and the gap is foreign content and template contents, neither of which
+      # exists yet. This step reports the number without failing the build,
+      # because a gate that is red every single run is a gate nobody reads.
+      #
+      # It is here rather than absent so the number moves in public, and it
+      # becomes a real gate the day the two features land.
+      - name: html5lib tree construction (reported, not yet gated)
+        run: ./build/ar_html5lib.exe --tree --quiet || true
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest

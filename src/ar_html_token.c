@@ -187,6 +187,145 @@ static ar_u32 ar__win1252(ar_u32 cp)
     return cp;
 }
 
+/* ------------------------------------------------------------------------
+ * Preprocessing the input stream, §13.2.3.5
+ *
+ * Two substitutions apply everywhere, before any state sees a character:
+ * a carriage return, alone or followed by a line feed, becomes one line feed;
+ * and a NUL becomes U+FFFD REPLACEMENT CHARACTER.
+ *
+ * The specification does this by rewriting the stream. areole cannot: the
+ * bytes are the caller's and are never copied, which is the property that lets
+ * the whole parser run inside an arena somebody else supplied. So it happens
+ * where characters are produced instead, using the same scratch buffer a
+ * character reference already needs -- and only when the range actually
+ * contains one of the two, which in a document written on any system since
+ * about 2005 is never.
+ *
+ * Getting this wrong is not subtle. A file saved on Windows has a carriage
+ * return before every line feed, and without this every text node in it
+ * carries invisible bytes that no comparison expects and no shaper can lay
+ * out.
+ * ------------------------------------------------------------------------ */
+static int ar__needs_fix(const char *p, const char *end)
+{
+    while (p < end)
+    {
+        if (*p == '\r' || *p == 0)
+        {
+            return 1;
+        }
+        ++p;
+    }
+    return 0;
+}
+
+/* Everything plain so far has to move into scratch before anything decoded
+   can follow it, and only once. Both text loops and the attribute value need
+   the same three lines. */
+static int ar__begin_scratch(ar_html_tok *t, const char *start, ar_u32 plain, int *used)
+{
+    ar_u32 k;
+
+    if (*used)
+    {
+        return 1;
+    }
+    for (k = 0; k < plain; ++k)
+    {
+        if (!ar__scratch_byte(t, start[k]))
+        {
+            return 0;
+        }
+    }
+    *used = 1;
+    return 1;
+}
+
+static ar_span ar__clean(ar_html_tok *t, const char *p, const char *end)
+{
+    ar_u32 begin;
+
+    if (!ar__needs_fix(p, end))
+    {
+        return ar__span(p, (ar_u32)(end - p));
+    }
+    begin = t->scratch_used;
+    while (p < end)
+    {
+        if (*p == '\r')
+        {
+            ar__scratch_byte(t, '\n');
+            ++p;
+            if (p < end && *p == '\n')
+            {
+                ++p; /* CRLF is one line feed, not two */
+            }
+        }
+        else if (*p == 0)
+        {
+            t->errors++;
+            ar__scratch_cp(t, 0xFFFDu);
+            ++p;
+        }
+        else
+        {
+            ar__scratch_byte(t, *p);
+            ++p;
+        }
+    }
+    return ar__span(t->scratch + begin, t->scratch_used - begin);
+}
+
+/*
+ * A tag or doctype name: lowercased, and preprocessed.
+ *
+ * The specification lowercases ASCII upper alpha in the tag name state, and it
+ * is not only for comparison -- a document object model reports `div` for
+ * `<DIV>`, and anything that serialises the tree says so too. The comparison
+ * folds case anyway, which is why this went unnoticed until the tree
+ * construction suite printed `<DIV>` where every browser prints `<div>`.
+ *
+ * A name with no upper case and no NUL -- every name in every document
+ * anybody has written this century -- is still a span of the input.
+ */
+static ar_span ar__name_clean(ar_html_tok *t, const char *p, const char *end)
+{
+    const char *q = p;
+    ar_u32      begin;
+    int         need = 0;
+
+    while (q < end)
+    {
+        if ((*q >= 'A' && *q <= 'Z') || *q == 0)
+        {
+            need = 1;
+            break;
+        }
+        ++q;
+    }
+    if (!need)
+    {
+        return ar__span(p, (ar_u32)(end - p));
+    }
+
+    begin = t->scratch_used;
+    while (p < end)
+    {
+        if (*p == 0)
+        {
+            t->errors++;
+            ar__scratch_cp(t, 0xFFFDu);
+        }
+        else
+        {
+            ar__scratch_byte(t, (char)ar__h_lower((unsigned char)*p));
+        }
+        ++p;
+    }
+    return ar__span(t->scratch + begin, t->scratch_used - begin);
+}
+
 /*
  * One character reference, starting at the `&`.
  *
@@ -375,25 +514,47 @@ static void ar__text(ar_html_tok *t, ar_token *out, int allow_tags, int allow_re
         {
             break;
         }
+        /* §13.2.3.5, applied where the characters are produced. See ar__clean. */
+        if (c == '\r')
+        {
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
+            {
+                break;
+            }
+            if (!ar__scratch_byte(t, '\n'))
+            {
+                break;
+            }
+            ++t->p;
+            if (t->p < t->end && *t->p == '\n')
+            {
+                ++t->p;
+            }
+            continue;
+        }
+        if (c == 0)
+        {
+            /*
+             * §13.2.5.1 data state: "emit the current input character as a
+             * character token". The NUL is a parse error and it is *kept*.
+             *
+             * The replacement character belongs to the other states -- RCDATA,
+             * RAWTEXT, script data, tag names, attributes, comments, doctypes
+             * -- and putting it here as well cost twenty-one conformance tests
+             * that had been passing. The rule is stated per state, not per
+             * stream, which is easy to miss because the preprocessing section
+             * reads as though it covers everything.
+             */
+            t->errors++;
+        }
         if (allow_refs && c == '&')
         {
             const char *before = t->p;
             ar_u32      had = t->scratch_used;
 
-            /* Everything plain so far has to move into scratch before the
-               decoded bytes can follow it, and only once. */
-            if (!used_scratch)
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
             {
-                ar_u32 k;
-
-                for (k = 0; k < plain; ++k)
-                {
-                    if (!ar__scratch_byte(t, start[k]))
-                    {
-                        break;
-                    }
-                }
-                used_scratch = 1;
+                break;
             }
             if (ar__reference(t, 0))
             {
@@ -485,34 +646,132 @@ static int ar__is_appropriate_end(ar_html_tok *t, const char *p)
     }
 }
 
+/* `<script` or `</script` followed by something that could end a tag name. */
+static int ar__is_script_tag(const ar_html_tok *t, const char *p, int closing)
+{
+    static const char NAME[] = "script";
+    const char       *q = p + (closing ? 2 : 1);
+    ar_u32            i;
+
+    if (p[0] != '<' || (closing && p[1] != '/'))
+    {
+        return 0;
+    }
+    if (q + 6 > t->end)
+    {
+        return 0;
+    }
+    for (i = 0; i < 6; ++i)
+    {
+        if (ar__h_lower((unsigned char)q[i]) != NAME[i])
+        {
+            return 0;
+        }
+    }
+    q += 6;
+    return q >= t->end || ar__h_space(*q) || *q == '>' || *q == '/';
+}
+
 static void ar__raw_text(ar_html_tok *t, ar_token *out, int allow_refs)
 {
     const char *start = t->p;
     ar_u32      plain = 0;
     int         used_scratch = 0;
+    int         script = t->state == AR_HTML_SCRIPT;
+    int         escaped = 0;
+    int         double_escaped = 0;
 
     ar__scratch_reset(t);
 
     while (t->p < t->end)
     {
-        if (*t->p == '<' && ar__is_appropriate_end(t, t->p))
+        /*
+         * Script data escaped and double escaped, §13.2.5.15 to §13.2.5.28.
+         *
+         * Fourteen states in the specification, and what they add up to is
+         * this: inside a script, `<!--` opens a comment-ish region, and inside
+         * *that*, `<script` opens a second one in which `</script>` is text
+         * rather than the end of the element. The first `</script>` closes the
+         * inner region; the next one is the real end tag.
+         *
+         * It exists because of one pattern from 1998 --
+         * `<script><!-- document.write("<script>...</script>") --></script>`
+         * -- and every browser implements it, so a parser that does not ends
+         * the script at the wrong place and renders the rest of the page as
+         * source code.
+         *
+         * Tracked with two flags rather than fourteen states because the only
+         * question this loop asks is whether the end tag it just found counts.
+         */
+        int closes_double = 0;
+
+        if (script)
+        {
+            if (!escaped && t->p + 4 <= t->end && t->p[0] == '<' && t->p[1] == '!' &&
+                t->p[2] == '-' && t->p[3] == '-')
+            {
+                escaped = 1;
+            }
+            else if (escaped && !double_escaped && ar__is_script_tag(t, t->p, 0))
+            {
+                double_escaped = 1;
+            }
+            else if (escaped && double_escaped && ar__is_script_tag(t, t->p, 1))
+            {
+                /* This one ends the inner region and is text; the *next*
+                   end tag is the real one. Without the flag the loop clears
+                   double_escaped and then reads the same characters as the
+                   end of the script, one position too early. */
+                double_escaped = 0;
+                closes_double = 1;
+            }
+            else if (escaped && t->p + 3 <= t->end && t->p[0] == '-' && t->p[1] == '-' &&
+                     t->p[2] == '>')
+            {
+                escaped = 0;
+                double_escaped = 0;
+            }
+        }
+        if (*t->p == '<' && !double_escaped && !closes_double && ar__is_appropriate_end(t, t->p))
         {
             break;
         }
+        if (*t->p == '\r' || *t->p == 0)
+        {
+            char c = *t->p;
+
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
+            {
+                break;
+            }
+            if (c == '\r')
+            {
+                if (!ar__scratch_byte(t, '\n'))
+                {
+                    break;
+                }
+                ++t->p;
+                if (t->p < t->end && *t->p == '\n')
+                {
+                    ++t->p;
+                }
+            }
+            else
+            {
+                t->errors++;
+                if (!ar__scratch_cp(t, 0xFFFDu))
+                {
+                    break;
+                }
+                ++t->p;
+            }
+            continue;
+        }
         if (allow_refs && *t->p == '&')
         {
-            if (!used_scratch)
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
             {
-                ar_u32 k;
-
-                for (k = 0; k < plain; ++k)
-                {
-                    if (!ar__scratch_byte(t, start[k]))
-                    {
-                        break;
-                    }
-                }
-                used_scratch = 1;
+                break;
             }
             if (ar__reference(t, 0))
             {
@@ -553,27 +812,139 @@ static void ar__raw_text(ar_html_tok *t, ar_token *out, int allow_refs)
 /* ------------------------------------------------------------------------
  * Comments -- §13.2.5.43 onwards
  * ------------------------------------------------------------------------ */
+/*
+ * A comment, §13.2.5.43 to §13.2.5.52.
+ *
+ * Ten states in the specification and the reason is the last one: inside a
+ * comment, `<!--` starts a bracket that `--!>` and `-->` both close, and the
+ * characters that open it are *not* part of the data. `<!-- <!--` at end of
+ * file is the comment ` <!` -- not ` <!--` -- because the two dashes went into
+ * the comment-less-than-sign-bang-dash-dash state and never came back out.
+ *
+ * The abrupt closings matter more in practice. `<!-->` and `<!--->` are both
+ * an empty comment, not a comment containing `>` or `->`, and they turn up in
+ * hand-written markup constantly.
+ */
 static void ar__comment(ar_html_tok *t, ar_token *out)
 {
     const char *start;
+    const char *data_end;
 
-    /* `<!--` has been consumed. */
+    out->kind = AR_TOK_COMMENT;
+
+    /* `<!--` has been consumed. Comment start state, then comment start dash
+       state: a `>` in either is an abrupt-closing-of-empty-comment. */
+    if (t->p < t->end && *t->p == '>')
+    {
+        t->errors++;
+        ++t->p;
+        out->text = ar__span(t->p, 0);
+        return;
+    }
+    if (t->p + 1 < t->end && t->p[0] == '-' && t->p[1] == '>')
+    {
+        t->errors++;
+        t->p += 2;
+        out->text = ar__span(t->p, 0);
+        return;
+    }
+
     start = t->p;
     while (t->p < t->end)
     {
-        if (t->p + 2 < t->end && t->p[0] == '-' && t->p[1] == '-' && t->p[2] == '>')
+        if (t->p[0] == '<')
         {
-            out->kind = AR_TOK_COMMENT;
-            out->text = ar__span(start, (ar_u32)(t->p - start));
-            t->p += 3;
-            return;
+            /*
+             * Comment less-than sign state and the four after it. `<!--` opens
+             * a bracket whose dashes belong to no comment data; anything else
+             * beginning with `<` is ordinary data.
+             */
+            if (t->p + 3 < t->end && t->p[1] == '!' && t->p[2] == '-' && t->p[3] == '-')
+            {
+                data_end = t->p + 2; /* the `<!` is data; the dashes are not */
+                t->p += 4;
+                if (t->p < t->end && *t->p == '>')
+                {
+                    ++t->p;
+                    out->text = ar__clean(t, start, data_end);
+                    return;
+                }
+                if (t->p >= t->end)
+                {
+                    t->errors++; /* eof-in-comment */
+                    out->text = ar__clean(t, start, data_end);
+                    return;
+                }
+                continue;
+            }
+            ++t->p;
+            continue;
+        }
+        if (t->p[0] == '-' && t->p + 1 < t->end && t->p[1] == '-')
+        {
+            /* Comment end state. `-->` closes it, and so does `--!>`. */
+            const char *q = t->p + 2;
+
+            while (q < t->end && *q == '-')
+            {
+                ++q;
+            }
+            if (q < t->end && *q == '>')
+            {
+                /*
+                 * Of a run of dashes, exactly the last two close the comment
+                 * and the rest are data: `<!----->` is a comment containing
+                 * one dash. The specification gets there by looping in the
+                 * comment end state, appending a dash each time round; this is
+                 * the same arithmetic in one step.
+                 */
+                data_end = t->p + (ar_u32)(q - t->p) - 2;
+                t->p = q + 1;
+                out->text = ar__clean(t, start, data_end);
+                return;
+            }
+            if (q < t->end && *q == '!' && q + 1 < t->end && q[1] == '>')
+            {
+                t->errors++; /* incorrectly-closed-comment */
+                data_end = t->p;
+                t->p = q + 2;
+                out->text = ar__clean(t, start, data_end);
+                return;
+            }
+            t->p += 2;
+            continue;
         }
         ++t->p;
     }
-    /* eof-in-comment: emit what there is, which is what a browser shows. */
-    t->errors++;
-    out->kind = AR_TOK_COMMENT;
-    out->text = ar__span(start, (ar_u32)(t->end - start));
+    /*
+     * eof-in-comment. What there is, minus the dashes that were on their way
+     * to closing it.
+     *
+     * At end of file the specification is in comment end dash, comment end or
+     * comment end bang state, and the characters that put it there were never
+     * appended to the data: `<!-- -` is the comment ` `, not ` -`, and
+     * `<!----!` is the empty comment. Emitting the raw range instead adds one
+     * or three characters that no browser shows, to every unterminated comment
+     * in every truncated document.
+     */
+    {
+        const char *stop = t->end;
+
+        if (stop - start >= 3 && stop[-1] == '!' && stop[-2] == '-' && stop[-3] == '-')
+        {
+            stop -= 3;
+        }
+        else if (stop - start >= 2 && stop[-1] == '-' && stop[-2] == '-')
+        {
+            stop -= 2;
+        }
+        else if (stop - start >= 1 && stop[-1] == '-')
+        {
+            stop -= 1;
+        }
+        t->errors++;
+        out->text = ar__clean(t, start, stop);
+    }
 }
 
 /*
@@ -591,7 +962,7 @@ static void ar__bogus_comment(ar_html_tok *t, ar_token *out)
         ++t->p;
     }
     out->kind = AR_TOK_COMMENT;
-    out->text = ar__span(start, (ar_u32)(t->p - start));
+    out->text = ar__clean(t, start, t->p);
     if (t->p < t->end)
     {
         ++t->p;
@@ -606,14 +977,29 @@ static void ar__bogus_comment(ar_html_tok *t, ar_token *out)
  * What is decided here is the specification's own force-quirks flag: a
  * doctype that is malformed, or ends before its `>`, sets it.
  * ------------------------------------------------------------------------ */
-static void ar__doctype_quoted(ar_html_tok *t, ar_span *out)
+/*
+ * A quoted public or system identifier.
+ *
+ * Three answers, because two are not enough:
+ *
+ *   2  read and closed by its own quote
+ *   1  the quote was there and a `>` or the end of the file arrived first --
+ *      abrupt-doctype-public-identifier, which forces quirks but *keeps* the
+ *      identifier, because the state was entered and an empty identifier is
+ *      not the same as no identifier
+ *   0  there was no quote at all, so there is no identifier
+ *
+ * Collapsing 1 and 0 makes `<!DOCTYPE html PUBLIC '` report no public
+ * identifier where every browser reports an empty one.
+ */
+static int ar__doctype_quoted(ar_html_tok *t, ar_span *out)
 {
     char        q;
     const char *start;
 
     if (t->p >= t->end || (*t->p != '"' && *t->p != '\''))
     {
-        return;
+        return 0;
     }
     q = *t->p++;
     start = t->p;
@@ -621,15 +1007,22 @@ static void ar__doctype_quoted(ar_html_tok *t, ar_span *out)
     {
         ++t->p;
     }
-    *out = ar__span(start, (ar_u32)(t->p - start));
+    /* A NUL inside an identifier is the replacement character, and a
+       carriage return is a line feed: §13.2.5.65 and its neighbours say so
+       for every one of the quoted states. */
+    *out = ar__clean(t, start, t->p);
     if (t->p < t->end && *t->p == q)
     {
         ++t->p;
+        return 2;
     }
+    return 1; /* a `>`, or the end of the file */
 }
 
 static void ar__doctype(ar_html_tok *t, ar_token *out)
 {
+    int bogus = 0;
+
     out->kind = AR_TOK_DOCTYPE;
 
     while (t->p < t->end && ar__h_space(*t->p))
@@ -645,7 +1038,7 @@ static void ar__doctype(ar_html_tok *t, ar_token *out)
         {
             ++t->p;
         }
-        out->name = ar__span(start, (ar_u32)(t->p - start));
+        out->name = ar__name_clean(t, start, t->p);
         if (out->name.n == 0)
         {
             t->errors++;
@@ -653,9 +1046,29 @@ static void ar__doctype(ar_html_tok *t, ar_token *out)
         }
     }
 
-    /* PUBLIC / SYSTEM, in whichever order and however malformed. */
+    /*
+     * PUBLIC and SYSTEM, §13.2.5.56 to §13.2.5.71.
+     *
+     * Three rules here are easy to get backwards, and each of them decides the
+     * box model for a whole document:
+     *
+     *   - Anything after the name that is not the PUBLIC or SYSTEM keyword --
+     *     including a quote -- is invalid-character-sequence-after-doctype-name.
+     *     Force quirks, then ignore everything to the `>`. It does *not* become
+     *     an identifier: `<!DOCTYPE a "` has no system identifier.
+     *   - A `>` inside a quoted identifier ends the doctype and forces quirks.
+     *   - Junk *after* a complete identifier is a parse error and forces
+     *     nothing. `<!DOCTYPE a SYSTEM''a` is a perfectly good doctype with a
+     *     stray letter after it, and a document that renders in standards mode.
+     */
     while (t->p < t->end && *t->p != '>')
     {
+        const char *kw;
+        ar_u32      n = 0;
+        int         ok = 0;
+        int         junk = 0;
+        int         got_system = 0;
+
         while (t->p < t->end && ar__h_space(*t->p))
         {
             ++t->p;
@@ -664,55 +1077,100 @@ static void ar__doctype(ar_html_tok *t, ar_token *out)
         {
             break;
         }
-        if (*t->p == '"' || *t->p == '\'')
-        {
-            /* An identifier with no keyword in front of it. Malformed, and the
-               specification says take it as the system identifier. */
-            ar__doctype_quoted(t, &out->sys);
-            continue;
-        }
-        {
-            const char *kw = t->p;
-            ar_u32      n = 0;
 
-            while (t->p < t->end && ar__h_alpha(*t->p))
+        kw = t->p;
+        while (t->p < t->end && ar__h_alpha(*t->p))
+        {
+            ++t->p;
+            ++n;
+        }
+        while (t->p < t->end && ar__h_space(*t->p))
+        {
+            ++t->p;
+        }
+
+        if (n && ar_span_is(ar__span(kw, n), "public"))
+        {
+            ok = ar__doctype_quoted(t, &out->pub);
+            if (ok == 2)
             {
-                ++t->p;
-                ++n;
-            }
-            if (n == 0)
-            {
-                t->errors++;
-                out->force_quirks = 1;
-                ++t->p;
-                continue;
-            }
-            while (t->p < t->end && ar__h_space(*t->p))
-            {
-                ++t->p;
-            }
-            if (ar_span_is(ar__span(kw, n), "public"))
-            {
-                ar__doctype_quoted(t, &out->pub);
                 while (t->p < t->end && ar__h_space(*t->p))
                 {
                     ++t->p;
                 }
                 if (t->p < t->end && (*t->p == '"' || *t->p == '\''))
                 {
-                    ar__doctype_quoted(t, &out->sys);
+                    ok = ar__doctype_quoted(t, &out->sys);
+                    got_system = ok == 2;
                 }
             }
-            else if (ar_span_is(ar__span(kw, n), "system"))
+        }
+        else if (n && ar_span_is(ar__span(kw, n), "system"))
+        {
+            ok = ar__doctype_quoted(t, &out->sys);
+            got_system = ok == 2;
+        }
+
+        if (ok != 2)
+        {
+            t->errors++;
+            out->force_quirks = 1;
+        }
+        if (ok == 0)
+        {
+            /* The keyword itself was wrong, or nothing followed it. Bogus
+               DOCTYPE state, and there are no identifiers at all -- which is
+               why `<!DOCTYPE a "` has none and `<!DOCTYPE a PUBLIC "` has an
+               empty one. */
+            out->pub = ar__span(0, 0);
+            out->sys = ar__span(0, 0);
+        }
+        /*
+         * Either way, nothing else in this doctype is read.
+         *
+         * Trailing junk after a good identifier is a parse error and forces
+         * nothing -- and it also changes what the *end of the file* means.
+         * The after-DOCTYPE-system-identifier state forces quirks at EOF; the
+         * bogus DOCTYPE state, which is where the junk puts us, does not. So
+         * `<!DOCTYPE a SYSTEM''` is quirks and `<!DOCTYPE a SYSTEM''!` is
+         * not, on the strength of one exclamation mark.
+         */
+        while (t->p < t->end && *t->p != '>')
+        {
+            if (!ar__h_space(*t->p))
             {
-                ar__doctype_quoted(t, &out->sys);
+                junk = 1;
+            }
+            ++t->p;
+        }
+        if (junk)
+        {
+            t->errors++;
+            if (got_system)
+            {
+                /*
+                 * unexpected-character-after-doctype-system-identifier, and it
+                 * forces nothing: `<!DOCTYPE a SYSTEM''!` renders in standards
+                 * mode. Reaching the bogus DOCTYPE state also changes what end
+                 * of file means, because that state does not force quirks
+                 * there either.
+                 */
+                bogus = 1;
             }
             else
             {
-                t->errors++;
+                /*
+                 * The other side of the same coin.
+                 * missing-quote-before-doctype-system-identifier: anything but
+                 * a quote after a *public* identifier does force quirks,
+                 * because what should have followed was the system identifier
+                 * and it is missing. One character apart in the input, opposite
+                 * answers, and the answer is the box model for the document.
+                 */
                 out->force_quirks = 1;
             }
         }
+        break;
     }
 
     if (t->p < t->end)
@@ -722,9 +1180,13 @@ static void ar__doctype(ar_html_tok *t, ar_token *out)
     else
     {
         /* eof-in-doctype forces quirks, which is the specification's answer
-           and matters: a truncated doctype must not look like a good one. */
+           and matters: a truncated doctype must not look like a good one.
+           Unless the bogus DOCTYPE state got there first -- see above. */
         t->errors++;
-        out->force_quirks = 1;
+        if (!bogus)
+        {
+            out->force_quirks = 1;
+        }
     }
 }
 
@@ -758,20 +1220,42 @@ static ar_span ar__attr_value(ar_html_tok *t)
         {
             break;
         }
+        /* An attribute value is one of the states that replaces a NUL, and
+           one of the states a carriage return is normalised in. */
+        if (c == '\r' || c == 0)
+        {
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
+            {
+                break;
+            }
+            if (c == '\r')
+            {
+                if (!ar__scratch_byte(t, '\n'))
+                {
+                    break;
+                }
+                ++t->p;
+                if (t->p < t->end && *t->p == '\n')
+                {
+                    ++t->p;
+                }
+            }
+            else
+            {
+                t->errors++;
+                if (!ar__scratch_cp(t, 0xFFFDu))
+                {
+                    break;
+                }
+                ++t->p;
+            }
+            continue;
+        }
         if (c == '&')
         {
-            if (!used_scratch)
+            if (!ar__begin_scratch(t, start, plain, &used_scratch))
             {
-                ar_u32 k;
-
-                for (k = 0; k < plain; ++k)
-                {
-                    if (!ar__scratch_byte(t, start[k]))
-                    {
-                        break;
-                    }
-                }
-                used_scratch = 1;
+                break;
             }
             if (ar__reference(t, 1))
             {
@@ -836,16 +1320,15 @@ static int ar__tag(ar_html_tok *t, ar_token *out, int is_end)
     out->kind = is_end ? AR_TOK_END : AR_TOK_START;
     ar__scratch_reset(t);
 
-    /* Tag name state. Lowercased in place is impossible -- the input is the
-       caller's -- so the span points at the original and every comparison
-       goes through ar_span_is, which folds case. */
+    /* Tag name state, §13.2.5.10. Lowercased -- see ar__name_clean, which
+       leaves a name that is already lower case as a span of the input. */
     start = t->p;
     while (t->p < t->end && !ar__h_space(*t->p) && *t->p != '>' && *t->p != '/')
     {
         ++t->p;
         ++n;
     }
-    out->name = ar__span(start, n);
+    out->name = ar__name_clean(t, start, start + n);
 
     /* Before attribute name state, and everything after it. */
     for (;;)
@@ -879,13 +1362,30 @@ static int ar__tag(ar_html_tok *t, ar_token *out, int is_end)
             continue;
         }
 
-        /* Attribute name state. */
+        /* Attribute name state, §13.2.5.32 onwards. */
         {
             const char *an = t->p;
             ar_u32      alen = 0;
             ar_span     value;
+            ar_span     aname;
 
             value = ar__span(t->p, 0);
+
+            /*
+             * `=` before a name starts an attribute *called* `=`.
+             *
+             * unexpected-equals-sign-before-attribute-name: the specification
+             * says to begin a new attribute, set its name to the equals sign,
+             * and carry on. `<z =>` is an element with one attribute whose
+             * name is `=` and whose value is empty, which looks absurd and is
+             * what every browser does.
+             */
+            if (*t->p == '=')
+            {
+                t->errors++;
+                ++t->p;
+                ++alen;
+            }
             while (t->p < t->end && !ar__h_space(*t->p) && *t->p != '=' && *t->p != '>' &&
                    *t->p != '/')
             {
@@ -912,9 +1412,35 @@ static int ar__tag(ar_html_tok *t, ar_token *out, int is_end)
 
             if (alen > 0)
             {
-                if (out->attr_count < AR_HTML_MAX_ATTRS)
+                ar_i32 k;
+                int    duplicate = 0;
+
+                aname = ar__name_clean(t, an, an + alen);
+
+                /*
+                 * duplicate-attribute: the first one wins and the rest are
+                 * dropped. Not a curiosity -- `<x x=1 x=2 X=3>` is one
+                 * attribute, and a parser that keeps all three hands the
+                 * cascade three declarations where the author wrote one.
+                 * Compared after lowercasing, which is why `X=3` counts.
+                 */
+                for (k = 0; k < out->attr_count; ++k)
                 {
-                    out->attrs[out->attr_count].name = ar__span(an, alen);
+                    if (out->attrs[k].name.n == aname.n &&
+                        (aname.n == 0 || memcmp(out->attrs[k].name.p, aname.p, aname.n) == 0))
+                    {
+                        duplicate = 1;
+                        t->errors++;
+                        break;
+                    }
+                }
+                if (duplicate)
+                {
+                    /* nothing: the first is kept */
+                }
+                else if (out->attr_count < AR_HTML_MAX_ATTRS)
+                {
+                    out->attrs[out->attr_count].name = aname;
                     out->attrs[out->attr_count].value = value;
                     ++out->attr_count;
                 }
@@ -924,6 +1450,22 @@ static int ar__tag(ar_html_tok *t, ar_token *out, int is_end)
                 }
             }
         }
+    }
+
+    /*
+     * An end tag out of RCDATA, RAWTEXT or script data puts the tokenizer back
+     * in the data state.
+     *
+     * The tree builder does this too, and did it alone until the conformance
+     * suite ran: only the *appropriate* end tag reaches here, so `</xmp>`
+     * inside `<xmp>` ends the raw text and everything after it is ordinary
+     * markup. Leaving it to the tree builder means a caller driving the
+     * tokenizer by itself never leaves RAWTEXT, and the comment after the
+     * closing tag comes out as text.
+     */
+    if (is_end && t->state != AR_HTML_DATA && t->state != AR_HTML_PLAINTEXT)
+    {
+        t->state = AR_HTML_DATA;
     }
 
     /* An end tag with attributes is an error and its attributes are dropped,
@@ -978,7 +1520,9 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
     if (t->state == AR_HTML_PLAINTEXT)
     {
         out->kind = AR_TOK_TEXT;
-        out->text = ar__span(t->p, (ar_u32)(t->end - t->p));
+        /* Even here: PLAINTEXT replaces a NUL with U+FFFD, and a document
+           from 1994 is exactly the kind that has one. */
+        out->text = ar__clean(t, t->p, t->end);
         t->p = t->end;
         return 1;
     }
@@ -1032,6 +1576,16 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
                 t->p = next + 2;
                 return ar_html_next(t, out);
             }
+            if (next + 1 >= t->end)
+            {
+                /* eof-before-tag-name: `</` at the end of the file is the two
+                   characters, not the start of anything. */
+                t->errors++;
+                out->kind = AR_TOK_TEXT;
+                out->text = ar__span(t->p, 2);
+                t->p = t->end;
+                return 1;
+            }
             t->errors++;
             t->p = next + 1;
             ar__bogus_comment(t, out);
@@ -1072,7 +1626,24 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
             ar__bogus_comment(t, out);
             return 1;
         }
-        /* A `<` that begins nothing is just text, and the run below takes it. */
+        /*
+         * invalid-first-character-of-tag-name, §13.2.5.6: a `<` that begins no
+         * tag is emitted as a character and the next one is reconsidered.
+         *
+         * It has to be its own token rather than the start of the text run
+         * below, because that run stops at every `<` -- which is what made
+         * `foo < bar` come out as `foo  bar`, with the character silently
+         * gone. Adjacent character tokens are one text node to the tree
+         * builder, so nothing downstream sees the split.
+         */
+        out->kind = AR_TOK_TEXT;
+        out->text = ar__span(t->p, 1);
+        ++t->p;
+        if (next < t->end)
+        {
+            t->errors++;
+        }
+        return 1;
     }
 
     ar__text(t, out, 1, 1);
