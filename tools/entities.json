@@ -1,0 +1,13481 @@
+{
+ "&AElig": {
+  "characters": "\u00c6",
+  "codepoints": [
+   198
+  ]
+ },
+ "&AElig;": {
+  "characters": "\u00c6",
+  "codepoints": [
+   198
+  ]
+ },
+ "&AMP": {
+  "characters": "&",
+  "codepoints": [
+   38
+  ]
+ },
+ "&AMP;": {
+  "characters": "&",
+  "codepoints": [
+   38
+  ]
+ },
+ "&Aacute": {
+  "characters": "\u00c1",
+  "codepoints": [
+   193
+  ]
+ },
+ "&Aacute;": {
+  "characters": "\u00c1",
+  "codepoints": [
+   193
+  ]
+ },
+ "&Abreve;": {
+  "characters": "\u0102",
+  "codepoints": [
+   258
+  ]
+ },
+ "&Acirc": {
+  "characters": "\u00c2",
+  "codepoints": [
+   194
+  ]
+ },
+ "&Acirc;": {
+  "characters": "\u00c2",
+  "codepoints": [
+   194
+  ]
+ },
+ "&Acy;": {
+  "characters": "\u0410",
+  "codepoints": [
+   1040
+  ]
+ },
+ "&Afr;": {
+  "characters": "\ud835\udd04",
+  "codepoints": [
+   120068
+  ]
+ },
+ "&Agrave": {
+  "characters": "\u00c0",
+  "codepoints": [
+   192
+  ]
+ },
+ "&Agrave;": {
+  "characters": "\u00c0",
+  "codepoints": [
+   192
+  ]
+ },
+ "&Alpha;": {
+  "characters": "\u0391",
+  "codepoints": [
+   913
+  ]
+ },
+ "&Amacr;": {
+  "characters": "\u0100",
+  "codepoints": [
+   256
+  ]
+ },
+ "&And;": {
+  "characters": "\u2a53",
+  "codepoints": [
+   10835
+  ]
+ },
+ "&Aogon;": {
+  "characters": "\u0104",
+  "codepoints": [
+   260
+  ]
+ },
+ "&Aopf;": {
+  "characters": "\ud835\udd38",
+  "codepoints": [
+   120120
+  ]
+ },
+ "&ApplyFunction;": {
+  "characters": "\u2061",
+  "codepoints": [
+   8289
+  ]
+ },
+ "&Aring": {
+  "characters": "\u00c5",
+  "codepoints": [
+   197
+  ]
+ },
+ "&Aring;": {
+  "characters": "\u00c5",
+  "codepoints": [
+   197
+  ]
+ },
+ "&Ascr;": {
+  "characters": "\ud835\udc9c",
+  "codepoints": [
+   119964
+  ]
+ },
+ "&Assign;": {
+  "characters": "\u2254",
+  "codepoints": [
+   8788
+  ]
+ },
+ "&Atilde": {
+  "characters": "\u00c3",
+  "codepoints": [
+   195
+  ]
+ },
+ "&Atilde;": {
+  "characters": "\u00c3",
+  "codepoints": [
+   195
+  ]
+ },
+ "&Auml": {
+  "characters": "\u00c4",
+  "codepoints": [
+   196
+  ]
+ },
+ "&Auml;": {
+  "characters": "\u00c4",
+  "codepoints": [
+   196
+  ]
+ },
+ "&Backslash;": {
+  "characters": "\u2216",
+  "codepoints": [
+   8726
+  ]
+ },
+ "&Barv;": {
+  "characters": "\u2ae7",
+  "codepoints": [
+   10983
+  ]
+ },
+ "&Barwed;": {
+  "characters": "\u2306",
+  "codepoints": [
+   8966
+  ]
+ },
+ "&Bcy;": {
+  "characters": "\u0411",
+  "codepoints": [
+   1041
+  ]
+ },
+ "&Because;": {
+  "characters": "\u2235",
+  "codepoints": [
+   8757
+  ]
+ },
+ "&Bernoullis;": {
+  "characters": "\u212c",
+  "codepoints": [
+   8492
+  ]
+ },
+ "&Beta;": {
+  "characters": "\u0392",
+  "codepoints": [
+   914
+  ]
+ },
+ "&Bfr;": {
+  "characters": "\ud835\udd05",
+  "codepoints": [
+   120069
+  ]
+ },
+ "&Bopf;": {
+  "characters": "\ud835\udd39",
+  "codepoints": [
+   120121
+  ]
+ },
+ "&Breve;": {
+  "characters": "\u02d8",
+  "codepoints": [
+   728
+  ]
+ },
+ "&Bscr;": {
+  "characters": "\u212c",
+  "codepoints": [
+   8492
+  ]
+ },
+ "&Bumpeq;": {
+  "characters": "\u224e",
+  "codepoints": [
+   8782
+  ]
+ },
+ "&CHcy;": {
+  "characters": "\u0427",
+  "codepoints": [
+   1063
+  ]
+ },
+ "&COPY": {
+  "characters": "\u00a9",
+  "codepoints": [
+   169
+  ]
+ },
+ "&COPY;": {
+  "characters": "\u00a9",
+  "codepoints": [
+   169
+  ]
+ },
+ "&Cacute;": {
+  "characters": "\u0106",
+  "codepoints": [
+   262
+  ]
+ },
+ "&Cap;": {
+  "characters": "\u22d2",
+  "codepoints": [
+   8914
+  ]
+ },
+ "&CapitalDifferentialD;": {
+  "characters": "\u2145",
+  "codepoints": [
+   8517
+  ]
+ },
+ "&Cayleys;": {
+  "characters": "\u212d",
+  "codepoints": [
+   8493
+  ]
+ },
+ "&Ccaron;": {
+  "characters": "\u010c",
+  "codepoints": [
+   268
+  ]
+ },
+ "&Ccedil": {
+  "characters": "\u00c7",
+  "codepoints": [
+   199
+  ]
+ },
+ "&Ccedil;": {
+  "characters": "\u00c7",
+  "codepoints": [
+   199
+  ]
+ },
+ "&Ccirc;": {
+  "characters": "\u0108",
+  "codepoints": [
+   264
+  ]
+ },
+ "&Cconint;": {
+  "characters": "\u2230",
+  "codepoints": [
+   8752
+  ]
+ },
+ "&Cdot;": {
+  "characters": "\u010a",
+  "codepoints": [
+   266
+  ]
+ },
+ "&Cedilla;": {
+  "characters": "\u00b8",
+  "codepoints": [
+   184
+  ]
+ },
+ "&CenterDot;": {
+  "characters": "\u00b7",
+  "codepoints": [
+   183
+  ]
+ },
+ "&Cfr;": {
+  "characters": "\u212d",
+  "codepoints": [
+   8493
+  ]
+ },
+ "&Chi;": {
+  "characters": "\u03a7",
+  "codepoints": [
+   935
+  ]
+ },
+ "&CircleDot;": {
+  "characters": "\u2299",
+  "codepoints": [
+   8857
+  ]
+ },
+ "&CircleMinus;": {
+  "characters": "\u2296",
+  "codepoints": [
+   8854
+  ]
+ },
+ "&CirclePlus;": {
+  "characters": "\u2295",
+  "codepoints": [
+   8853
+  ]
+ },
+ "&CircleTimes;": {
+  "characters": "\u2297",
+  "codepoints": [
+   8855
+  ]
+ },
+ "&ClockwiseContourIntegral;": {
+  "characters": "\u2232",
+  "codepoints": [
+   8754
+  ]
+ },
+ "&CloseCurlyDoubleQuote;": {
+  "characters": "\u201d",
+  "codepoints": [
+   8221
+  ]
+ },
+ "&CloseCurlyQuote;": {
+  "characters": "\u2019",
+  "codepoints": [
+   8217
+  ]
+ },
+ "&Colon;": {
+  "characters": "\u2237",
+  "codepoints": [
+   8759
+  ]
+ },
+ "&Colone;": {
+  "characters": "\u2a74",
+  "codepoints": [
+   10868
+  ]
+ },
+ "&Congruent;": {
+  "characters": "\u2261",
+  "codepoints": [
+   8801
+  ]
+ },
+ "&Conint;": {
+  "characters": "\u222f",
+  "codepoints": [
+   8751
+  ]
+ },
+ "&ContourIntegral;": {
+  "characters": "\u222e",
+  "codepoints": [
+   8750
+  ]
+ },
+ "&Copf;": {
+  "characters": "\u2102",
+  "codepoints": [
+   8450
+  ]
+ },
+ "&Coproduct;": {
+  "characters": "\u2210",
+  "codepoints": [
+   8720
+  ]
+ },
+ "&CounterClockwiseContourIntegral;": {
+  "characters": "\u2233",
+  "codepoints": [
+   8755
+  ]
+ },
+ "&Cross;": {
+  "characters": "\u2a2f",
+  "codepoints": [
+   10799
+  ]
+ },
+ "&Cscr;": {
+  "characters": "\ud835\udc9e",
+  "codepoints": [
+   119966
+  ]
+ },
+ "&Cup;": {
+  "characters": "\u22d3",
+  "codepoints": [
+   8915
+  ]
+ },
+ "&CupCap;": {
+  "characters": "\u224d",
+  "codepoints": [
+   8781
+  ]
+ },
+ "&DD;": {
+  "characters": "\u2145",
+  "codepoints": [
+   8517
+  ]
+ },
+ "&DDotrahd;": {
+  "characters": "\u2911",
+  "codepoints": [
+   10513
+  ]
+ },
+ "&DJcy;": {
+  "characters": "\u0402",
+  "codepoints": [
+   1026
+  ]
+ },
+ "&DScy;": {
+  "characters": "\u0405",
+  "codepoints": [
+   1029
+  ]
+ },
+ "&DZcy;": {
+  "characters": "\u040f",
+  "codepoints": [
+   1039
+  ]
+ },
+ "&Dagger;": {
+  "characters": "\u2021",
+  "codepoints": [
+   8225
+  ]
+ },
+ "&Darr;": {
+  "characters": "\u21a1",
+  "codepoints": [
+   8609
+  ]
+ },
+ "&Dashv;": {
+  "characters": "\u2ae4",
+  "codepoints": [
+   10980
+  ]
+ },
+ "&Dcaron;": {
+  "characters": "\u010e",
+  "codepoints": [
+   270
+  ]
+ },
+ "&Dcy;": {
+  "characters": "\u0414",
+  "codepoints": [
+   1044
+  ]
+ },
+ "&Del;": {
+  "characters": "\u2207",
+  "codepoints": [
+   8711
+  ]
+ },
+ "&Delta;": {
+  "characters": "\u0394",
+  "codepoints": [
+   916
+  ]
+ },
+ "&Dfr;": {
+  "characters": "\ud835\udd07",
+  "codepoints": [
+   120071
+  ]
+ },
+ "&DiacriticalAcute;": {
+  "characters": "\u00b4",
+  "codepoints": [
+   180
+  ]
+ },
+ "&DiacriticalDot;": {
+  "characters": "\u02d9",
+  "codepoints": [
+   729
+  ]
+ },
+ "&DiacriticalDoubleAcute;": {
+  "characters": "\u02dd",
+  "codepoints": [
+   733
+  ]
+ },
+ "&DiacriticalGrave;": {
+  "characters": "`",
+  "codepoints": [
+   96
+  ]
+ },
+ "&DiacriticalTilde;": {
+  "characters": "\u02dc",
+  "codepoints": [
+   732
+  ]
+ },
+ "&Diamond;": {
+  "characters": "\u22c4",
+  "codepoints": [
+   8900
+  ]
+ },
+ "&DifferentialD;": {
+  "characters": "\u2146",
+  "codepoints": [
+   8518
+  ]
+ },
+ "&Dopf;": {
+  "characters": "\ud835\udd3b",
+  "codepoints": [
+   120123
+  ]
+ },
+ "&Dot;": {
+  "characters": "\u00a8",
+  "codepoints": [
+   168
+  ]
+ },
+ "&DotDot;": {
+  "characters": "\u20dc",
+  "codepoints": [
+   8412
+  ]
+ },
+ "&DotEqual;": {
+  "characters": "\u2250",
+  "codepoints": [
+   8784
+  ]
+ },
+ "&DoubleContourIntegral;": {
+  "characters": "\u222f",
+  "codepoints": [
+   8751
+  ]
+ },
+ "&DoubleDot;": {
+  "characters": "\u00a8",
+  "codepoints": [
+   168
+  ]
+ },
+ "&DoubleDownArrow;": {
+  "characters": "\u21d3",
+  "codepoints": [
+   8659
+  ]
+ },
+ "&DoubleLeftArrow;": {
+  "characters": "\u21d0",
+  "codepoints": [
+   8656
+  ]
+ },
+ "&DoubleLeftRightArrow;": {
+  "characters": "\u21d4",
+  "codepoints": [
+   8660
+  ]
+ },
+ "&DoubleLeftTee;": {
+  "characters": "\u2ae4",
+  "codepoints": [
+   10980
+  ]
+ },
+ "&DoubleLongLeftArrow;": {
+  "characters": "\u27f8",
+  "codepoints": [
+   10232
+  ]
+ },
+ "&DoubleLongLeftRightArrow;": {
+  "characters": "\u27fa",
+  "codepoints": [
+   10234
+  ]
+ },
+ "&DoubleLongRightArrow;": {
+  "characters": "\u27f9",
+  "codepoints": [
+   10233
+  ]
+ },
+ "&DoubleRightArrow;": {
+  "characters": "\u21d2",
+  "codepoints": [
+   8658
+  ]
+ },
+ "&DoubleRightTee;": {
+  "characters": "\u22a8",
+  "codepoints": [
+   8872
+  ]
+ },
+ "&DoubleUpArrow;": {
+  "characters": "\u21d1",
+  "codepoints": [
+   8657
+  ]
+ },
+ "&DoubleUpDownArrow;": {
+  "characters": "\u21d5",
+  "codepoints": [
+   8661
+  ]
+ },
+ "&DoubleVerticalBar;": {
+  "characters": "\u2225",
+  "codepoints": [
+   8741
+  ]
+ },
+ "&DownArrow;": {
+  "characters": "\u2193",
+  "codepoints": [
+   8595
+  ]
+ },
+ "&DownArrowBar;": {
+  "characters": "\u2913",
+  "codepoints": [
+   10515
+  ]
+ },
+ "&DownArrowUpArrow;": {
+  "characters": "\u21f5",
+  "codepoints": [
+   8693
+  ]
+ },
+ "&DownBreve;": {
+  "characters": "\u0311",
+  "codepoints": [
+   785
+  ]
+ },
+ "&DownLeftRightVector;": {
+  "characters": "\u2950",
+  "codepoints": [
+   10576
+  ]
+ },
+ "&DownLeftTeeVector;": {
+  "characters": "\u295e",
+  "codepoints": [
+   10590
+  ]
+ },
+ "&DownLeftVector;": {
+  "characters": "\u21bd",
+  "codepoints": [
+   8637
+  ]
+ },
+ "&DownLeftVectorBar;": {
+  "characters": "\u2956",
+  "codepoints": [
+   10582
+  ]
+ },
+ "&DownRightTeeVector;": {
+  "characters": "\u295f",
+  "codepoints": [
+   10591
+  ]
+ },
+ "&DownRightVector;": {
+  "characters": "\u21c1",
+  "codepoints": [
+   8641
+  ]
+ },
+ "&DownRightVectorBar;": {
+  "characters": "\u2957",
+  "codepoints": [
+   10583
+  ]
+ },
+ "&DownTee;": {
+  "characters": "\u22a4",
+  "codepoints": [
+   8868
+  ]
+ },
+ "&DownTeeArrow;": {
+  "characters": "\u21a7",
+  "codepoints": [
+   8615
+  ]
+ },
+ "&Downarrow;": {
+  "characters": "\u21d3",
+  "codepoints": [
+   8659
+  ]
+ },
+ "&Dscr;": {
+  "characters": "\ud835\udc9f",
+  "codepoints": [
+   119967
+  ]
+ },
+ "&Dstrok;": {
+  "characters": "\u0110",
+  "codepoints": [
+   272
+  ]
+ },
+ "&ENG;": {
+  "characters": "\u014a",
+  "codepoints": [
+   330
+  ]
+ },
+ "&ETH": {
+  "characters": "\u00d0",
+  "codepoints": [
+   208
+  ]
+ },
+ "&ETH;": {
+  "characters": "\u00d0",
+  "codepoints": [
+   208
+  ]
+ },
+ "&Eacute": {
+  "characters": "\u00c9",
+  "codepoints": [
+   201
+  ]
+ },
+ "&Eacute;": {
+  "characters": "\u00c9",
+  "codepoints": [
+   201
+  ]
+ },
+ "&Ecaron;": {
+  "characters": "\u011a",
+  "codepoints": [
+   282
+  ]
+ },
+ "&Ecirc": {
+  "characters": "\u00ca",
+  "codepoints": [
+   202
+  ]
+ },
+ "&Ecirc;": {
+  "characters": "\u00ca",
+  "codepoints": [
+   202
+  ]
+ },
+ "&Ecy;": {
+  "characters": "\u042d",
+  "codepoints": [
+   1069
+  ]
+ },
+ "&Edot;": {
+  "characters": "\u0116",
+  "codepoints": [
+   278
+  ]
+ },
+ "&Efr;": {
+  "characters": "\ud835\udd08",
+  "codepoints": [
+   120072
+  ]
+ },
+ "&Egrave": {
+  "characters": "\u00c8",
+  "codepoints": [
+   200
+  ]
+ },
+ "&Egrave;": {
+  "characters": "\u00c8",
+  "codepoints": [
+   200
+  ]
+ },
+ "&Element;": {
+  "characters": "\u2208",
+  "codepoints": [
+   8712
+  ]
+ },
+ "&Emacr;": {
+  "characters": "\u0112",
+  "codepoints": [
+   274
+  ]
+ },
+ "&EmptySmallSquare;": {
+  "characters": "\u25fb",
+  "codepoints": [
+   9723
+  ]
+ },
+ "&EmptyVerySmallSquare;": {
+  "characters": "\u25ab",
+  "codepoints": [
+   9643
+  ]
+ },
+ "&Eogon;": {
+  "characters": "\u0118",
+  "codepoints": [
+   280
+  ]
+ },
+ "&Eopf;": {
+  "characters": "\ud835\udd3c",
+  "codepoints": [
+   120124
+  ]
+ },
+ "&Epsilon;": {
+  "characters": "\u0395",
+  "codepoints": [
+   917
+  ]
+ },
+ "&Equal;": {
+  "characters": "\u2a75",
+  "codepoints": [
+   10869
+  ]
+ },
+ "&EqualTilde;": {
+  "characters": "\u2242",
+  "codepoints": [
+   8770
+  ]
+ },
+ "&Equilibrium;": {
+  "characters": "\u21cc",
+  "codepoints": [
+   8652
+  ]
+ },
+ "&Escr;": {
+  "characters": "\u2130",
+  "codepoints": [
+   8496
+  ]
+ },
+ "&Esim;": {
+  "characters": "\u2a73",
+  "codepoints": [
+   10867
+  ]
+ },
+ "&Eta;": {
+  "characters": "\u0397",
+  "codepoints": [
+   919
+  ]
+ },
+ "&Euml": {
+  "characters": "\u00cb",
+  "codepoints": [
+   203
+  ]
+ },
+ "&Euml;": {
+  "characters": "\u00cb",
+  "codepoints": [
+   203
+  ]
+ },
+ "&Exists;": {
+  "characters": "\u2203",
+  "codepoints": [
+   8707
+  ]
+ },
+ "&ExponentialE;": {
+  "characters": "\u2147",
+  "codepoints": [
+   8519
+  ]
+ },
+ "&Fcy;": {
+  "characters": "\u0424",
+  "codepoints": [
+   1060
+  ]
+ },
+ "&Ffr;": {
+  "characters": "\ud835\udd09",
+  "codepoints": [
+   120073
+  ]
+ },
+ "&FilledSmallSquare;": {
+  "characters": "\u25fc",
+  "codepoints": [
+   9724
+  ]
+ },
+ "&FilledVerySmallSquare;": {
+  "characters": "\u25aa",
+  "codepoints": [
+   9642
+  ]
+ },
+ "&Fopf;": {
+  "characters": "\ud835\udd3d",
+  "codepoints": [
+   120125
+  ]
+ },
+ "&ForAll;": {
+  "characters": "\u2200",
+  "codepoints": [
+   8704
+  ]
+ },
+ "&Fouriertrf;": {
+  "characters": "\u2131",
+  "codepoints": [
+   8497
+  ]
+ },
+ "&Fscr;": {
+  "characters": "\u2131",
+  "codepoints": [
+   8497
+  ]
+ },
+ "&GJcy;": {
+  "characters": "\u0403",
+  "codepoints": [
+   1027
+  ]
+ },
+ "&GT": {
+  "characters": ">",
+  "codepoints": [
+   62
+  ]
+ },
+ "&GT;": {
+  "characters": ">",
+  "codepoints": [
+   62
+  ]
+ },
+ "&Gamma;": {
+  "characters": "\u0393",
+  "codepoints": [
+   915
+  ]
+ },
+ "&Gammad;": {
+  "characters": "\u03dc",
+  "codepoints": [
+   988
+  ]
+ },
+ "&Gbreve;": {
+  "characters": "\u011e",
+  "codepoints": [
+   286
+  ]
+ },
+ "&Gcedil;": {
+  "characters": "\u0122",
+  "codepoints": [
+   290
+  ]
+ },
+ "&Gcirc;": {
+  "characters": "\u011c",
+  "codepoints": [
+   284
+  ]
+ },
+ "&Gcy;": {
+  "characters": "\u0413",
+  "codepoints": [
+   1043
+  ]
+ },
+ "&Gdot;": {
+  "characters": "\u0120",
+  "codepoints": [
+   288
+  ]
+ },
+ "&Gfr;": {
+  "characters": "\ud835\udd0a",
+  "codepoints": [
+   120074
+  ]
+ },
+ "&Gg;": {
+  "characters": "\u22d9",
+  "codepoints": [
+   8921
+  ]
+ },
+ "&Gopf;": {
+  "characters": "\ud835\udd3e",
+  "codepoints": [
+   120126
+  ]
+ },
+ "&GreaterEqual;": {
+  "characters": "\u2265",
+  "codepoints": [
+   8805
+  ]
+ },
+ "&GreaterEqualLess;": {
+  "characters": "\u22db",
+  "codepoints": [
+   8923
+  ]
+ },
+ "&GreaterFullEqual;": {
+  "characters": "\u2267",
+  "codepoints": [
+   8807
+  ]
+ },
+ "&GreaterGreater;": {
+  "characters": "\u2aa2",
+  "codepoints": [
+   10914
+  ]
+ },
+ "&GreaterLess;": {
+  "characters": "\u2277",
+  "codepoints": [
+   8823
+  ]
+ },
+ "&GreaterSlantEqual;": {
+  "characters": "\u2a7e",
+  "codepoints": [
+   10878
+  ]
+ },
+ "&GreaterTilde;": {
+  "characters": "\u2273",
+  "codepoints": [
+   8819
+  ]
+ },
+ "&Gscr;": {
+  "characters": "\ud835\udca2",
+  "codepoints": [
+   119970
+  ]
+ },
+ "&Gt;": {
+  "characters": "\u226b",
+  "codepoints": [
+   8811
+  ]
+ },
+ "&HARDcy;": {
+  "characters": "\u042a",
+  "codepoints": [
+   1066
+  ]
+ },
+ "&Hacek;": {
+  "characters": "\u02c7",
+  "codepoints": [
+   711
+  ]
+ },
+ "&Hat;": {
+  "characters": "^",
+  "codepoints": [
+   94
+  ]
+ },
+ "&Hcirc;": {
+  "characters": "\u0124",
+  "codepoints": [
+   292
+  ]
+ },
+ "&Hfr;": {
+  "characters": "\u210c",
+  "codepoints": [
+   8460
+  ]
+ },
+ "&HilbertSpace;": {
+  "characters": "\u210b",
+  "codepoints": [
+   8459
+  ]
+ },
+ "&Hopf;": {
+  "characters": "\u210d",
+  "codepoints": [
+   8461
+  ]
+ },
+ "&HorizontalLine;": {
+  "characters": "\u2500",
+  "codepoints": [
+   9472
+  ]
+ },
+ "&Hscr;": {
+  "characters": "\u210b",
+  "codepoints": [
+   8459
+  ]
+ },
+ "&Hstrok;": {
+  "characters": "\u0126",
+  "codepoints": [
+   294
+  ]
+ },
+ "&HumpDownHump;": {
+  "characters": "\u224e",
+  "codepoints": [
+   8782
+  ]
+ },
+ "&HumpEqual;": {
+  "characters": "\u224f",
+  "codepoints": [
+   8783
+  ]
+ },
+ "&IEcy;": {
+  "characters": "\u0415",
+  "codepoints": [
+   1045
+  ]
+ },
+ "&IJlig;": {
+  "characters": "\u0132",
+  "codepoints": [
+   306
+  ]
+ },
+ "&IOcy;": {
+  "characters": "\u0401",
+  "codepoints": [
+   1025
+  ]
+ },
+ "&Iacute": {
+  "characters": "\u00cd",
+  "codepoints": [
+   205
+  ]
+ },
+ "&Iacute;": {
+  "characters": "\u00cd",
+  "codepoints": [
+   205
+  ]
+ },
+ "&Icirc": {
+  "characters": "\u00ce",
+  "codepoints": [
+   206
+  ]
+ },
+ "&Icirc;": {
+  "characters": "\u00ce",
+  "codepoints": [
+   206
+  ]
+ },
+ "&Icy;": {
+  "characters": "\u0418",
+  "codepoints": [
+   1048
+  ]
+ },
+ "&Idot;": {
+  "characters": "\u0130",
+  "codepoints": [
+   304
+  ]
+ },
+ "&Ifr;": {
+  "characters": "\u2111",
+  "codepoints": [
+   8465
+  ]
+ },
+ "&Igrave": {
+  "characters": "\u00cc",
+  "codepoints": [
+   204
+  ]
+ },
+ "&Igrave;": {
+  "characters": "\u00cc",
+  "codepoints": [
+   204
+  ]
+ },
+ "&Im;": {
+  "characters": "\u2111",
+  "codepoints": [
+   8465
+  ]
+ },
+ "&Imacr;": {
+  "characters": "\u012a",
+  "codepoints": [
+   298
+  ]
+ },
+ "&ImaginaryI;": {
+  "characters": "\u2148",
+  "codepoints": [
+   8520
+  ]
+ },
+ "&Implies;": {
+  "characters": "\u21d2",
+  "codepoints": [
+   8658
+  ]
+ },
+ "&Int;": {
+  "characters": "\u222c",
+  "codepoints": [
+   8748
+  ]
+ },
+ "&Integral;": {
+  "characters": "\u222b",
+  "codepoints": [
+   8747
+  ]
+ },
+ "&Intersection;": {
+  "characters": "\u22c2",
+  "codepoints": [
+   8898
+  ]
+ },
+ "&InvisibleComma;": {
+  "characters": "\u2063",
+  "codepoints": [
+   8291
+  ]
+ },
+ "&InvisibleTimes;": {
+  "characters": "\u2062",
+  "codepoints": [
+   8290
+  ]
+ },
+ "&Iogon;": {
+  "characters": "\u012e",
+  "codepoints": [
+   302
+  ]
+ },
+ "&Iopf;": {
+  "characters": "\ud835\udd40",
+  "codepoints": [
+   120128
+  ]
+ },
+ "&Iota;": {
+  "characters": "\u0399",
+  "codepoints": [
+   921
+  ]
+ },
+ "&Iscr;": {
+  "characters": "\u2110",
+  "codepoints": [
+   8464
+  ]
+ },
+ "&Itilde;": {
+  "characters": "\u0128",
+  "codepoints": [
+   296
+  ]
+ },
+ "&Iukcy;": {
+  "characters": "\u0406",
+  "codepoints": [
+   1030
+  ]
+ },
+ "&Iuml": {
+  "characters": "\u00cf",
+  "codepoints": [
+   207
+  ]
+ },
+ "&Iuml;": {
+  "characters": "\u00cf",
+  "codepoints": [
+   207
+  ]
+ },
+ "&Jcirc;": {
+  "characters": "\u0134",
+  "codepoints": [
+   308
+  ]
+ },
+ "&Jcy;": {
+  "characters": "\u0419",
+  "codepoints": [
+   1049
+  ]
+ },
+ "&Jfr;": {
+  "characters": "\ud835\udd0d",
+  "codepoints": [
+   120077
+  ]
+ },
+ "&Jopf;": {
+  "characters": "\ud835\udd41",
+  "codepoints": [
+   120129
+  ]
+ },
+ "&Jscr;": {
+  "characters": "\ud835\udca5",
+  "codepoints": [
+   119973
+  ]
+ },
+ "&Jsercy;": {
+  "characters": "\u0408",
+  "codepoints": [
+   1032
+  ]
+ },
+ "&Jukcy;": {
+  "characters": "\u0404",
+  "codepoints": [
+   1028
+  ]
+ },
+ "&KHcy;": {
+  "characters": "\u0425",
+  "codepoints": [
+   1061
+  ]
+ },
+ "&KJcy;": {
+  "characters": "\u040c",
+  "codepoints": [
+   1036
+  ]
+ },
+ "&Kappa;": {
+  "characters": "\u039a",
+  "codepoints": [
+   922
+  ]
+ },
+ "&Kcedil;": {
+  "characters": "\u0136",
+  "codepoints": [
+   310
+  ]
+ },
+ "&Kcy;": {
+  "characters": "\u041a",
+  "codepoints": [
+   1050
+  ]
+ },
+ "&Kfr;": {
+  "characters": "\ud835\udd0e",
+  "codepoints": [
+   120078
+  ]
+ },
+ "&Kopf;": {
+  "characters": "\ud835\udd42",
+  "codepoints": [
+   120130
+  ]
+ },
+ "&Kscr;": {
+  "characters": "\ud835\udca6",
+  "codepoints": [
+   119974
+  ]
+ },
+ "&LJcy;": {
+  "characters": "\u0409",
+  "codepoints": [
+   1033
+  ]
+ },
+ "&LT": {
+  "characters": "<",
+  "codepoints": [
+   60
+  ]
+ },
+ "&LT;": {
+  "characters": "<",
+  "codepoints": [
+   60
+  ]
+ },
+ "&Lacute;": {
+  "characters": "\u0139",
+  "codepoints": [
+   313
+  ]
+ },
+ "&Lambda;": {
+  "characters": "\u039b",
+  "codepoints": [
+   923
+  ]
+ },
+ "&Lang;": {
+  "characters": "\u27ea",
+  "codepoints": [
+   10218
+  ]
+ },
+ "&Laplacetrf;": {
+  "characters": "\u2112",
+  "codepoints": [
+   8466
+  ]
+ },
+ "&Larr;": {
+  "characters": "\u219e",
+  "codepoints": [
+   8606
+  ]
+ },
+ "&Lcaron;": {
+  "characters": "\u013d",
+  "codepoints": [
+   317
+  ]
+ },
+ "&Lcedil;": {
+  "characters": "\u013b",
+  "codepoints": [
+   315
+  ]
+ },
+ "&Lcy;": {
+  "characters": "\u041b",
+  "codepoints": [
+   1051
+  ]
+ },
+ "&LeftAngleBracket;": {
+  "characters": "\u27e8",
+  "codepoints": [
+   10216
+  ]
+ },
+ "&LeftArrow;": {
+  "characters": "\u2190",
+  "codepoints": [
+   8592
+  ]
+ },
+ "&LeftArrowBar;": {
+  "characters": "\u21e4",
+  "codepoints": [
+   8676
+  ]
+ },
+ "&LeftArrowRightArrow;": {
+  "characters": "\u21c6",
+  "codepoints": [
+   8646
+  ]
+ },
+ "&LeftCeiling;": {
+  "characters": "\u2308",
+  "codepoints": [
+   8968
+  ]
+ },
+ "&LeftDoubleBracket;": {
+  "characters": "\u27e6",
+  "codepoints": [
+   10214
+  ]
+ },
+ "&LeftDownTeeVector;": {
+  "characters": "\u2961",
+  "codepoints": [
+   10593
+  ]
+ },
+ "&LeftDownVector;": {
+  "characters": "\u21c3",
+  "codepoints": [
+   8643
+  ]
+ },
+ "&LeftDownVectorBar;": {
+  "characters": "\u2959",
+  "codepoints": [
+   10585
+  ]
+ },
+ "&LeftFloor;": {
+  "characters": "\u230a",
+  "codepoints": [
+   8970
+  ]
+ },
+ "&LeftRightArrow;": {
+  "characters": "\u2194",
+  "codepoints": [
+   8596
+  ]
+ },
+ "&LeftRightVector;": {
+  "characters": "\u294e",
+  "codepoints": [
+   10574
+  ]
+ },
+ "&LeftTee;": {
+  "characters": "\u22a3",
+  "codepoints": [
+   8867
+  ]
+ },
+ "&LeftTeeArrow;": {
+  "characters": "\u21a4",
+  "codepoints": [
+   8612
+  ]
+ },
+ "&LeftTeeVector;": {
+  "characters": "\u295a",
+  "codepoints": [
+   10586
+  ]
+ },
+ "&LeftTriangle;": {
+  "characters": "\u22b2",
+  "codepoints": [
+   8882
+  ]
+ },
+ "&LeftTriangleBar;": {
+  "characters": "\u29cf",
+  "codepoints": [
+   10703
+  ]
+ },
+ "&LeftTriangleEqual;": {
+  "characters": "\u22b4",
+  "codepoints": [
+   8884
+  ]
+ },
+ "&LeftUpDownVector;": {
+  "characters": "\u2951",
+  "codepoints": [
+   10577
+  ]
+ },
+ "&LeftUpTeeVector;": {
+  "characters": "\u2960",
+  "codepoints": [
+   10592
+  ]
+ },
+ "&LeftUpVector;": {
+  "characters": "\u21bf",
+  "codepoints": [
+   8639
+  ]
+ },
+ "&LeftUpVectorBar;": {
+  "characters": "\u2958",
+  "codepoints": [
+   10584
+  ]
+ },
+ "&LeftVector;": {
+  "characters": "\u21bc",
+  "codepoints": [
+   8636
+  ]
+ },
+ "&LeftVectorBar;": {
+  "characters": "\u2952",
+  "codepoints": [
+   10578
+  ]
+ },
+ "&Leftarrow;": {
+  "characters": "\u21d0",
+  "codepoints": [
+   8656
+  ]
+ },
+ "&Leftrightarrow;": {
+  "characters": "\u21d4",
+  "codepoints": [
+   8660
+  ]
+ },
+ "&LessEqualGreater;": {
+  "characters": "\u22da",
+  "codepoints": [
+   8922
+  ]
+ },
+ "&LessFullEqual;": {
+  "characters": "\u2266",
+  "codepoints": [
+   8806
+  ]
+ },
+ "&LessGreater;": {
+  "characters": "\u2276",
+  "codepoints": [
+   8822
+  ]
+ },
+ "&LessLess;": {
+  "characters": "\u2aa1",
+  "codepoints": [
+   10913
+  ]
+ },
+ "&LessSlantEqual;": {
+  "characters": "\u2a7d",
+  "codepoints": [
+   10877
+  ]
+ },
+ "&LessTilde;": {
+  "characters": "\u2272",
+  "codepoints": [
+   8818
+  ]
+ },
+ "&Lfr;": {
+  "characters": "\ud835\udd0f",
+  "codepoints": [
+   120079
+  ]
+ },
+ "&Ll;": {
+  "characters": "\u22d8",
+  "codepoints": [
+   8920
+  ]
+ },
+ "&Lleftarrow;": {
+  "characters": "\u21da",
+  "codepoints": [
+   8666
+  ]
+ },
+ "&Lmidot;": {
+  "characters": "\u013f",
+  "codepoints": [
+   319
+  ]
+ },
+ "&LongLeftArrow;": {
+  "characters": "\u27f5",
+  "codepoints": [
+   10229
+  ]
+ },
+ "&LongLeftRightArrow;": {
+  "characters": "\u27f7",
+  "codepoints": [
+   10231
+  ]
+ },
+ "&LongRightArrow;": {
+  "characters": "\u27f6",
+  "codepoints": [
+   10230
+  ]
+ },
+ "&Longleftarrow;": {
+  "characters": "\u27f8",
+  "codepoints": [
+   10232
+  ]
+ },
+ "&Longleftrightarrow;": {
+  "characters": "\u27fa",
+  "codepoints": [
+   10234
+  ]
+ },
+ "&Longrightarrow;": {
+  "characters": "\u27f9",
+  "codepoints": [
+   10233
+  ]
+ },
+ "&Lopf;": {
+  "characters": "\ud835\udd43",
+  "codepoints": [
+   120131
+  ]
+ },
+ "&LowerLeftArrow;": {
+  "characters": "\u2199",
+  "codepoints": [
+   8601
+  ]
+ },
+ "&LowerRightArrow;": {
+  "characters": "\u2198",
+  "codepoints": [
+   8600
+  ]
+ },
+ "&Lscr;": {
+  "characters": "\u2112",
+  "codepoints": [
+   8466
+  ]
+ },
+ "&Lsh;": {
+  "characters": "\u21b0",
+  "codepoints": [
+   8624
+  ]
+ },
+ "&Lstrok;": {
+  "characters": "\u0141",
+  "codepoints": [
+   321
+  ]
+ },
+ "&Lt;": {
+  "characters": "\u226a",
+  "codepoints": [
+   8810
+  ]
+ },
+ "&Map;": {
+  "characters": "\u2905",
+  "codepoints": [
+   10501
+  ]
+ },
+ "&Mcy;": {
+  "characters": "\u041c",
+  "codepoints": [
+   1052
+  ]
+ },
+ "&MediumSpace;": {
+  "characters": "\u205f",
+  "codepoints": [
+   8287
+  ]
+ },
+ "&Mellintrf;": {
+  "characters": "\u2133",
+  "codepoints": [
+   8499
+  ]
+ },
+ "&Mfr;": {
+  "characters": "\ud835\udd10",
+  "codepoints": [
+   120080
+  ]
+ },
+ "&MinusPlus;": {
+  "characters": "\u2213",
+  "codepoints": [
+   8723
+  ]
+ },
+ "&Mopf;": {
+  "characters": "\ud835\udd44",
+  "codepoints": [
+   120132
+  ]
+ },
+ "&Mscr;": {
+  "characters": "\u2133",
+  "codepoints": [
+   8499
+  ]
+ },
+ "&Mu;": {
+  "characters": "\u039c",
+  "codepoints": [
+   924
+  ]
+ },
+ "&NJcy;": {
+  "characters": "\u040a",
+  "codepoints": [
+   1034
+  ]
+ },
+ "&Nacute;": {
+  "characters": "\u0143",
+  "codepoints": [
+   323
+  ]
+ },
+ "&Ncaron;": {
+  "characters": "\u0147",
+  "codepoints": [
+   327
+  ]
+ },
+ "&Ncedil;": {
+  "characters": "\u0145",
+  "codepoints": [
+   325
+  ]
+ },
+ "&Ncy;": {
+  "characters": "\u041d",
+  "codepoints": [
+   1053
+  ]
+ },
+ "&NegativeMediumSpace;": {
+  "characters": "\u200b",
+  "codepoints": [
+   8203
+  ]
+ },
+ "&NegativeThickSpace;": {
+  "characters": "\u200b",
+  "codepoints": [
+   8203
+  ]
+ },
+ "&NegativeThinSpace;": {
+  "characters": "\u200b",
+  "codepoints": [
+   8203
+  ]
+ },
+ "&NegativeVeryThinSpace;": {
+  "characters": "\u200b",
+  "codepoints": [
+   8203
+  ]
+ },
+ "&NestedGreaterGreater;": {
+  "characters": "\u226b",
+  "codepoints": [
+   8811
+  ]
+ },
+ "&NestedLessLess;": {
+  "characters": "\u226a",
+  "codepoints": [
+   8810
+  ]
+ },
+ "&NewLine;": {
+  "characters": "\n",
+  "codepoints": [
+   10
+  ]
+ },
+ "&Nfr;": {
+  "characters": "\ud835\udd11",
+  "codepoints": [
+   120081
+  ]
+ },
+ "&NoBreak;": {
+  "characters": "\u2060",
+  "codepoints": [
+   8288
+  ]
+ },
+ "&NonBreakingSpace;": {
+  "characters": "\u00a0",
+  "codepoints": [
+   160
+  ]
+ },
+ "&Nopf;": {
+  "characters": "\u2115",
+  "codepoints": [
+   8469
+  ]
+ },
+ "&Not;": {
+  "characters": "\u2aec",
+  "codepoints": [
+   10988
+  ]
+ },
+ "&NotCongruent;": {
+  "characters": "\u2262",
+  "codepoints": [
+   8802
+  ]
+ },
+ "&NotCupCap;": {
+  "characters": "\u226d",
+  "codepoints": [
+   8813
+  ]
+ },
+ "&NotDoubleVerticalBar;": {
+  "characters": "\u2226",
+  "codepoints": [
+   8742
+  ]
+ },
+ "&NotElement;": {
+  "characters": "\u2209",
+  "codepoints": [
+   8713
+  ]
+ },
+ "&NotEqual;": {
+  "characters": "\u2260",
+  "codepoints": [
+   8800
+  ]
+ },
+ "&NotEqualTilde;": {
+  "characters": "\u2242\u0338",
+  "codepoints": [
+   8770,
+   824
+  ]
+ },
+ "&NotExists;": {
+  "characters": "\u2204",
+  "codepoints": [
+   8708
+  ]
+ },
+ "&NotGreater;": {
+  "characters": "\u226f",
+  "codepoints": [
+   8815
+  ]
+ },
+ "&NotGreaterEqual;": {
+  "characters": "\u2271",
+  "codepoints": [
+   8817
+  ]
+ },
+ "&NotGreaterFullEqual;": {
+  "characters": "\u2267\u0338",
+  "codepoints": [
+   8807,
+   824
+  ]
+ },
+ "&NotGreaterGreater;": {
+  "characters": "\u226b\u0338",
+  "codepoints": [
+   8811,
+   824
+  ]
+ },
+ "&NotGreaterLess;": {
+  "characters": "\u2279",
+  "codepoints": [
+   8825
+  ]
+ },
+ "&NotGreaterSlantEqual;": {
+  "characters": "\u2a7e\u0338",
+  "codepoints": [
+   10878,
+   824
+  ]
+ },
+ "&NotGreaterTilde;": {
+  "characters": "\u2275",
+  "codepoints": [
+   8821
+  ]
+ },
+ "&NotHumpDownHump;": {
+  "characters": "\u224e\u0338",
+  "codepoints": [
+   8782,
+   824
+  ]
+ },
+ "&NotHumpEqual;": {
+  "characters": "\u224f\u0338",
+  "codepoints": [
+   8783,
+   824
+  ]
+ },
+ "&NotLeftTriangle;": {
+  "characters": "\u22ea",
+  "codepoints": [
+   8938
+  ]
+ },
+ "&NotLeftTriangleBar;": {
+  "characters": "\u29cf\u0338",
+  "codepoints": [
+   10703,
+   824
+  ]
+ },
+ "&NotLeftTriangleEqual;": {
+  "characters": "\u22ec",
+  "codepoints": [
+   8940
+  ]
+ },
+ "&NotLess;": {
+  "characters": "\u226e",
+  "codepoints": [
+   8814
+  ]
+ },
+ "&NotLessEqual;": {
+  "characters": "\u2270",
+  "codepoints": [
+   8816
+  ]
+ },
+ "&NotLessGreater;": {
+  "characters": "\u2278",
+  "codepoints": [
+   8824
+  ]
+ },
+ "&NotLessLess;": {
+  "characters": "\u226a\u0338",
+  "codepoints": [
+   8810,
+   824
+  ]
+ },
+ "&NotLessSlantEqual;": {
+  "characters": "\u2a7d\u0338",
+  "codepoints": [
+   10877,
+   824
+  ]
+ },
+ "&NotLessTilde;": {
+  "characters": "\u2274",
+  "codepoints": [
+   8820
+  ]
+ },
+ "&NotNestedGreaterGreater;": {
+  "characters": "\u2aa2\u0338",
+  "codepoints": [
+   10914,
+   824
+  ]
+ },
+ "&NotNestedLessLess;": {
+  "characters": "\u2aa1\u0338",
+  "codepoints": [
+   10913,
+   824
+  ]
+ },
+ "&NotPrecedes;": {
+  "characters": "\u2280",
+  "codepoints": [
+   8832
+  ]
+ },
+ "&NotPrecedesEqual;": {
+  "characters": "\u2aaf\u0338",
+  "codepoints": [
+   10927,
+   824
+  ]
+ },
+ "&NotPrecedesSlantEqual;": {
+  "characters": "\u22e0",
+  "codepoints": [
+   8928
+  ]
+ },
+ "&NotReverseElement;": {
+  "characters": "\u220c",
+  "codepoints": [
+   8716
+  ]
+ },
+ "&NotRightTriangle;": {
+  "characters": "\u22eb",
+  "codepoints": [
+   8939
+  ]
+ },
+ "&NotRightTriangleBar;": {
+  "characters": "\u29d0\u0338",
+  "codepoints": [
+   10704,
+   824
+  ]
+ },
+ "&NotRightTriangleEqual;": {
+  "characters": "\u22ed",
+  "codepoints": [
+   8941
+  ]
+ },
+ "&NotSquareSubset;": {
+  "characters": "\u228f\u0338",
+  "codepoints": [
+   8847,
+   824
+  ]
+ },
+ "&NotSquareSubsetEqual;": {
+  "characters": "\u22e2",
+  "codepoints": [
+   8930
+  ]
+ },
+ "&NotSquareSuperset;": {
+  "characters": "\u2290\u0338",
+  "codepoints": [
+   8848,
+   824
+  ]
+ },
+ "&NotSquareSupersetEqual;": {
+  "characters": "\u22e3",
+  "codepoints": [
+   8931
+  ]
+ },
+ "&NotSubset;": {
+  "characters": "\u2282\u20d2",
+  "codepoints": [
+   8834,
+   8402
+  ]
+ },
+ "&NotSubsetEqual;": {
+  "characters": "\u2288",
+  "codepoints": [
+   8840
+  ]
+ },
+ "&NotSucceeds;": {
+  "characters": "\u2281",
+  "codepoints": [
+   8833
+  ]
+ },
+ "&NotSucceedsEqual;": {
+  "characters": "\u2ab0\u0338",
+  "codepoints": [
+   10928,
+   824
+  ]
+ },
+ "&NotSucceedsSlantEqual;": {
+  "characters": "\u22e1",
+  "codepoints": [
+   8929
+  ]
+ },
+ "&NotSucceedsTilde;": {
+  "characters": "\u227f\u0338",
+  "codepoints": [
+   8831,
+   824
+  ]
+ },
+ "&NotSuperset;": {
+  "characters": "\u2283\u20d2",
+  "codepoints": [
+   8835,
+   8402
+  ]
+ },
+ "&NotSupersetEqual;": {
+  "characters": "\u2289",
+  "codepoints": [
+   8841
+  ]
+ },
+ "&NotTilde;": {
+  "characters": "\u2241",
+  "codepoints": [
+   8769
+  ]
+ },
+ "&NotTildeEqual;": {
+  "characters": "\u2244",
+  "codepoints": [
+   8772
+  ]
+ },
+ "&NotTildeFullEqual;": {
+  "characters": "\u2247",
+  "codepoints": [
+   8775
+  ]
+ },
+ "&NotTildeTilde;": {
+  "characters": "\u2249",
+  "codepoints": [
+   8777
+  ]
+ },
+ "&NotVerticalBar;": {
+  "characters": "\u2224",
+  "codepoints": [
+   8740
+  ]
+ },
+ "&Nscr;": {
+  "characters": "\ud835\udca9",
+  "codepoints": [
+   119977
+  ]
+ },
+ "&Ntilde": {
+  "characters": "\u00d1",
+  "codepoints": [
+   209
+  ]
+ },
+ "&Ntilde;": {
+  "characters": "\u00d1",
+  "codepoints": [
+   209
+  ]
+ },
+ "&Nu;": {
+  "characters": "\u039d",
+  "codepoints": [
+   925
+  ]
+ },
+ "&OElig;": {
+  "characters": "\u0152",
+  "codepoints": [
+   338
+  ]
+ },
+ "&Oacute": {
+  "characters": "\u00d3",
+  "codepoints": [
+   211
+  ]
+ },
+ "&Oacute;": {
+  "characters": "\u00d3",
+  "codepoints": [
+   211
+  ]
+ },
+ "&Ocirc": {
+  "characters": "\u00d4",
+  "codepoints": [
+   212
+  ]
+ },
+ "&Ocirc;": {
+  "characters": "\u00d4",
+  "codepoints": [
+   212
+  ]
+ },
+ "&Ocy;": {
+  "characters": "\u041e",
+  "codepoints": [
+   1054
+  ]
+ },
+ "&Odblac;": {
+  "characters": "\u0150",
+  "codepoints": [
+   336
+  ]
+ },
+ "&Ofr;": {
+  "characters": "\ud835\udd12",
+  "codepoints": [
+   120082
+  ]
+ },
+ "&Ograve": {
+  "characters": "\u00d2",
+  "codepoints": [
+   210
+  ]
+ },
+ "&Ograve;": {
+  "characters": "\u00d2",
+  "codepoints": [
+   210
+  ]
+ },
+ "&Omacr;": {
+  "characters": "\u014c",
+  "codepoints": [
+   332
+  ]
+ },
+ "&Omega;": {
+  "characters": "\u03a9",
+  "codepoints": [
+   937
+  ]
+ },
+ "&Omicron;": {
+  "characters": "\u039f",
+  "codepoints": [
+   927
+  ]
+ },
+ "&Oopf;": {
+  "characters": "\ud835\udd46",
+  "codepoints": [
+   120134
+  ]
+ },
+ "&OpenCurlyDoubleQuote;": {
+  "characters": "\u201c",
+  "codepoints": [
+   8220
+  ]
+ },
+ "&OpenCurlyQuote;": {
+  "characters": "\u2018",
+  "codepoints": [
+   8216
+  ]
+ },
+ "&Or;": {
+  "characters": "\u2a54",
+  "codepoints": [
+   10836
+  ]
+ },
+ "&Oscr;": {
+  "characters": "\ud835\udcaa",
+  "codepoints": [
+   119978
+  ]
+ },
+ "&Oslash": {
+  "characters": "\u00d8",
+  "codepoints": [
+   216
+  ]
+ },
+ "&Oslash;": {
+  "characters": "\u00d8",
+  "codepoints": [
+   216
+  ]
+ },
+ "&Otilde": {
+  "characters": "\u00d5",
+  "codepoints": [
+   213
+  ]
+ },
+ "&Otilde;": {
+  "characters": "\u00d5",
+  "codepoints": [
+   213
+  ]
+ },
+ "&Otimes;": {
+  "characters": "\u2a37",
+  "codepoints": [
+   10807
+  ]
+ },
+ "&Ouml": {
+  "characters": "\u00d6",
+  "codepoints": [
+   214
+  ]
+ },
+ "&Ouml;": {
+  "characters": "\u00d6",
+  "codepoints": [
+   214
+  ]
+ },
+ "&OverBar;": {
+  "characters": "\u203e",
+  "codepoints": [
+   8254
+  ]
+ },
+ "&OverBrace;": {
+  "characters": "\u23de",
+  "codepoints": [
+   9182
+  ]
+ },
+ "&OverBracket;": {
+  "characters": "\u23b4",
+  "codepoints": [
+   9140
+  ]
+ },
+ "&OverParenthesis;": {
+  "characters": "\u23dc",
+  "codepoints": [
+   9180
+  ]
+ },
+ "&PartialD;": {
+  "characters": "\u2202",
+  "codepoints": [
+   8706
+  ]
+ },
+ "&Pcy;": {
+  "characters": "\u041f",
+  "codepoints": [
+   1055
+  ]
+ },
+ "&Pfr;": {
+  "characters": "\ud835\udd13",
+  "codepoints": [
+   120083
+  ]
+ },
+ "&Phi;": {
+  "characters": "\u03a6",
+  "codepoints": [
+   934
+  ]
+ },
+ "&Pi;": {
+  "characters": "\u03a0",
+  "codepoints": [
+   928
+  ]
+ },
+ "&PlusMinus;": {
+  "characters": "\u00b1",
+  "codepoints": [
+   177
+  ]
+ },
+ "&Poincareplane;": {
+  "characters": "\u210c",
+  "codepoints": [
+   8460
+  ]
+ },
+ "&Popf;": {
+  "characters": "\u2119",
+  "codepoints": [
+   8473
+  ]
+ },
+ "&Pr;": {
+  "characters": "\u2abb",
+  "codepoints": [
+   10939
+  ]
+ },
+ "&Precedes;": {
+  "characters": "\u227a",
+  "codepoints": [
+   8826
+  ]
+ },
+ "&PrecedesEqual;": {
+  "characters": "\u2aaf",
+  "codepoints": [
+   10927
+  ]
+ },
+ "&PrecedesSlantEqual;": {
+  "characters": "\u227c",
+  "codepoints": [
+   8828
+  ]
+ },
+ "&PrecedesTilde;": {
+  "characters": "\u227e",
+  "codepoints": [
+   8830
+  ]
+ },
+ "&Prime;": {
+  "characters": "\u2033",
+  "codepoints": [
+   8243
+  ]
+ },
+ "&Product;": {
+  "characters": "\u220f",
+  "codepoints": [
+   8719
+  ]
+ },
+ "&Proportion;": {
+  "characters": "\u2237",
+  "codepoints": [
+   8759
+  ]
+ },
+ "&Proportional;": {
+  "characters": "\u221d",
+  "codepoints": [
+   8733
+  ]
+ },
+ "&Pscr;": {
+  "characters": "\ud835\udcab",
+  "codepoints": [
+   119979
+  ]
+ },
+ "&Psi;": {
+  "characters": "\u03a8",
+  "codepoints": [
+   936
+  ]
+ },
+ "&QUOT": {
+  "characters": "\"",
+  "codepoints": [
+   34
+  ]
+ },
+ "&QUOT;": {
+  "characters": "\"",
+  "codepoints": [
+   34
+  ]
+ },
+ "&Qfr;": {
+  "characters": "\ud835\udd14",
+  "codepoints": [
+   120084
+  ]
+ },
+ "&Qopf;": {
+  "characters": "\u211a",
+  "codepoints": [
+   8474
+  ]
+ },
+ "&Qscr;": {
+  "characters": "\ud835\udcac",
+  "codepoints": [
+   119980
+  ]
+ },
+ "&RBarr;": {
+  "characters": "\u2910",
+  "codepoints": [
+   10512
+  ]
+ },
+ "&REG": {
+  "characters": "\u00ae",
+  "codepoints": [
+   174
+  ]
+ },
+ "&REG;": {
+  "characters": "\u00ae",
+  "codepoints": [
+   174
+  ]
+ },
+ "&Racute;": {
+  "characters": "\u0154",
+  "codepoints": [
+   340
+  ]
+ },
+ "&Rang;": {
+  "characters": "\u27eb",
+  "codepoints": [
+   10219
+  ]
+ },
+ "&Rarr;": {
+  "characters": "\u21a0",
+  "codepoints": [
+   8608
+  ]
+ },
+ "&Rarrtl;": {
+  "characters": "\u2916",
+  "codepoints": [
+   10518
+  ]
+ },
+ "&Rcaron;": {
+  "characters": "\u0158",
+  "codepoints": [
+   344
+  ]
+ },
+ "&Rcedil;": {
+  "characters": "\u0156",
+  "codepoints": [
+   342
+  ]
+ },
+ "&Rcy;": {
+  "characters": "\u0420",
+  "codepoints": [
+   1056
+  ]
+ },
+ "&Re;": {
+  "characters": "\u211c",
+  "codepoints": [
+   8476
+  ]
+ },
+ "&ReverseElement;": {
+  "characters": "\u220b",
+  "codepoints": [
+   8715
+  ]
+ },
+ "&ReverseEquilibrium;": {
+  "characters": "\u21cb",
+  "codepoints": [
+   8651
+  ]
+ },
+ "&ReverseUpEquilibrium;": {
+  "characters": "\u296f",
+  "codepoints": [
+   10607
+  ]
+ },
+ "&Rfr;": {
+  "characters": "\u211c",
+  "codepoints": [
+   8476
+  ]
+ },
+ "&Rho;": {
+  "characters": "\u03a1",
+  "codepoints": [
+   929
+  ]
+ },
+ "&RightAngleBracket;": {
+  "characters": "\u27e9",
+  "codepoints": [
+   10217
+  ]
+ },
+ "&RightArrow;": {
+  "characters": "\u2192",
+  "codepoints": [
+   8594
+  ]
+ },
+ "&RightArrowBar;": {
+  "characters": "\u21e5",
+  "codepoints": [
+   8677
+  ]
+ },
+ "&RightArrowLeftArrow;": {
+  "characters": "\u21c4",
+  "codepoints": [
+   8644
+  ]
+ },
+ "&RightCeiling;": {
+  "characters": "\u2309",
+  "codepoints": [
+   8969
+  ]
+ },
+ "&RightDoubleBracket;": {
+  "characters": "\u27e7",
+  "codepoints": [
+   10215
+  ]
+ },
+ "&RightDownTeeVector;": {
+  "characters": "\u295d",
+  "codepoints": [
+   10589
+  ]
+ },
+ "&RightDownVector;": {
+  "characters": "\u21c2",
+  "codepoints": [
+   8642
+  ]
+ },
+ "&RightDownVectorBar;": {
+  "characters": "\u2955",
+  "codepoints": [
+   10581
+  ]
+ },
+ "&RightFloor;": {
+  "characters": "\u230b",
+  "codepoints": [
+   8971
+  ]
+ },
+ "&RightTee;": {
+  "characters": "\u22a2",
+  "codepoints": [
+   8866
+  ]
+ },
+ "&RightTeeArrow;": {
+  "characters": "\u21a6",
+  "codepoints": [
+   8614
+  ]
+ },
+ "&RightTeeVector;": {
+  "characters": "\u295b",
+  "codepoints": [
+   10587
+  ]
+ },
+ "&RightTriangle;": {
+  "characters": "\u22b3",
+  "codepoints": [
+   8883
+  ]
+ },
+ "&RightTriangleBar;": {
+  "characters": "\u29d0",
+  "codepoints": [
+   10704
+  ]
+ },
+ "&RightTriangleEqual;": {
+  "characters": "\u22b5",
+  "codepoints": [
+   8885
+  ]
+ },
+ "&RightUpDownVector;": {
+  "characters": "\u294f",
+  "codepoints": [
+   10575
+  ]
+ },
+ "&RightUpTeeVector;": {
+  "characters": "\u295c",
+  "codepoints": [
+   10588
+  ]
+ },
+ "&RightUpVector;": {
+  "characters": "\u21be",
+  "codepoints": [
+   8638
+  ]
+ },
+ "&RightUpVectorBar;": {
+  "characters": "\u2954",
+  "codepoints": [
+   10580
+  ]
+ },
+ "&RightVector;": {
+  "characters": "\u21c0",
+  "codepoints": [
+   8640
+  ]
+ },
+ "&RightVectorBar;": {
+  "characters": "\u2953",
+  "codepoints": [
+   10579
+  ]
+ },
+ "&Rightarrow;": {
+  "characters": "\u21d2",
+  "codepoints": [
+   8658
+  ]
+ },
+ "&Ropf;": {
+  "characters": "\u211d",
+  "codepoints": [
+   8477
+  ]
+ },
+ "&RoundImplies;": {
+  "characters": "\u2970",
+  "codepoints": [
+   10608
+  ]
+ },
+ "&Rrightarrow;": {
+  "characters": "\u21db",
+  "codepoints": [
+   8667
+  ]
+ },
+ "&Rscr;": {
+  "characters": "\u211b",
+  "codepoints": [
+   8475
+  ]
+ },
+ "&Rsh;": {
+  "characters": "\u21b1",
+  "codepoints": [
+   8625
+  ]
+ },
+ "&RuleDelayed;": {
+  "characters": "\u29f4",
+  "codepoints": [
+   10740
+  ]
+ },
+ "&SHCHcy;": {
+  "characters": "\u0429",
+  "codepoints": [
+   1065
+  ]
+ },
+ "&SHcy;": {
+  "characters": "\u0428",
+  "codepoints": [
+   1064
+  ]
+ },
+ "&SOFTcy;": {
+  "characters": "\u042c",
+  "codepoints": [
+   1068
+  ]
+ },
+ "&Sacute;": {
+  "characters": "\u015a",
+  "codepoints": [
+   346
+  ]
+ },
+ "&Sc;": {
+  "characters": "\u2abc",
+  "codepoints": [
+   10940
+  ]
+ },
+ "&Scaron;": {
+  "characters": "\u0160",
+  "codepoints": [
+   352
+  ]
+ },
+ "&Scedil;": {
+  "characters": "\u015e",
+  "codepoints": [
+   350
+  ]
+ },
+ "&Scirc;": {
+  "characters": "\u015c",
+  "codepoints": [
+   348
+  ]
+ },
+ "&Scy;": {
+  "characters": "\u0421",
+  "codepoints": [
+   1057
+  ]
+ },
+ "&Sfr;": {
+  "characters": "\ud835\udd16",
+  "codepoints": [
+   120086
+  ]
+ },
+ "&ShortDownArrow;": {
+  "characters": "\u2193",
+  "codepoints": [
+   8595
+  ]
+ },
+ "&ShortLeftArrow;": {
+  "characters": "\u2190",
+  "codepoints": [
+   8592
+  ]
+ },
+ "&ShortRightArrow;": {
+  "characters": "\u2192",
+  "codepoints": [
+   8594
+  ]
+ },
+ "&ShortUpArrow;": {
+  "characters": "\u2191",
+  "codepoints": [
+   8593
+  ]
+ },
+ "&Sigma;": {
+  "characters": "\u03a3",
+  "codepoints": [
+   931
+  ]
+ },
+ "&SmallCircle;": {
+  "characters": "\u2218",
+  "codepoints": [
+   8728
+  ]
+ },
+ "&Sopf;": {
+  "characters": "\ud835\udd4a",
+  "codepoints": [
+   120138
+  ]
+ },
+ "&Sqrt;": {
+  "characters": "\u221a",
+  "codepoints": [
+   8730
+  ]
+ },
+ "&Square;": {
+  "characters": "\u25a1",
+  "codepoints": [
+   9633
+  ]
+ },
+ "&SquareIntersection;": {
+  "characters": "\u2293",
+  "codepoints": [
+   8851
+  ]
+ },
+ "&SquareSubset;": {
+  "characters": "\u228f",
+  "codepoints": [
+   8847
+  ]
+ },
+ "&SquareSubsetEqual;": {
+  "characters": "\u2291",
+  "codepoints": [
+   8849
+  ]
+ },
+ "&SquareSuperset;": {
+  "characters": "\u2290",
+  "codepoints": [
+   8848
+  ]
+ },
+ "&SquareSupersetEqual;": {
+  "characters": "\u2292",
+  "codepoints": [
+   8850
+  ]
+ },
+ "&SquareUnion;": {
+  "characters": "\u2294",
+  "codepoints": [
+   8852
+  ]
+ },
+ "&Sscr;": {
+  "characters": "\ud835\udcae",
+  "codepoints": [
+   119982
+  ]
+ },
+ "&Star;": {
+  "characters": "\u22c6",
+  "codepoints": [
+   8902
+  ]
+ },
+ "&Sub;": {
+  "characters": "\u22d0",
+  "codepoints": [
+   8912
+  ]
+ },
+ "&Subset;": {
+  "characters": "\u22d0",
+  "codepoints": [
+   8912
+  ]
+ },
+ "&SubsetEqual;": {
+  "characters": "\u2286",
+  "codepoints": [
+   8838
+  ]
+ },
+ "&Succeeds;": {
+  "characters": "\u227b",
+  "codepoints": [
+   8827
+  ]
+ },
+ "&SucceedsEqual;": {
+  "characters": "\u2ab0",
+  "codepoints": [
+   10928
+  ]
+ },
+ "&SucceedsSlantEqual;": {
+  "characters": "\u227d",
+  "codepoints": [
+   8829
+  ]
+ },
+ "&SucceedsTilde;": {
+  "characters": "\u227f",
+  "codepoints": [
+   8831
+  ]
+ },
+ "&SuchThat;": {
+  "characters": "\u220b",
+  "codepoints": [
+   8715
+  ]
+ },
+ "&Sum;": {
+  "characters": "\u2211",
+  "codepoints": [
+   8721
+  ]
+ },
+ "&Sup;": {
+  "characters": "\u22d1",
+  "codepoints": [
+   8913
+  ]
+ },
+ "&Superset;": {
+  "characters": "\u2283",
+  "codepoints": [
+   8835
+  ]
+ },
+ "&SupersetEqual;": {
+  "characters": "\u2287",
+  "codepoints": [
+   8839
+  ]
+ },
+ "&Supset;": {
+  "characters": "\u22d1",
+  "codepoints": [
+   8913
+  ]
+ },
+ "&THORN": {
+  "characters": "\u00de",
+  "codepoints": [
+   222
+  ]
+ },
+ "&THORN;": {
+  "characters": "\u00de",
+  "codepoints": [
+   222
+  ]
+ },
+ "&TRADE;": {
+  "characters": "\u2122",
+  "codepoints": [
+   8482
+  ]
+ },
+ "&TSHcy;": {
+  "characters": "\u040b",
+  "codepoints": [
+   1035
+  ]
+ },
+ "&TScy;": {
+  "characters": "\u0426",
+  "codepoints": [
+   1062
+  ]
+ },
+ "&Tab;": {
+  "characters": "\t",
+  "codepoints": [
+   9
+  ]
+ },
+ "&Tau;": {
+  "characters": "\u03a4",
+  "codepoints": [
+   932
+  ]
+ },
+ "&Tcaron;": {
+  "characters": "\u0164",
+  "codepoints": [
+   356
+  ]
+ },
+ "&Tcedil;": {
+  "characters": "\u0162",
+  "codepoints": [
+   354
+  ]
+ },
+ "&Tcy;": {
+  "characters": "\u0422",
+  "codepoints": [
+   1058
+  ]
+ },
+ "&Tfr;": {
+  "characters": "\ud835\udd17",
+  "codepoints": [
+   120087
+  ]
+ },
+ "&Therefore;": {
+  "characters": "\u2234",
+  "codepoints": [
+   8756
+  ]
+ },
+ "&Theta;": {
+  "characters": "\u0398",
+  "codepoints": [
+   920
+  ]
+ },
+ "&ThickSpace;": {
+  "characters": "\u205f\u200a",
+  "codepoints": [
+   8287,
+   8202
+  ]
+ },
+ "&ThinSpace;": {
+  "characters": "\u2009",
+  "codepoints": [
+   8201
+  ]
+ },
+ "&Tilde;": {
+  "characters": "\u223c",
+  "codepoints": [
+   8764
+  ]
+ },
+ "&TildeEqual;": {
+  "characters": "\u2243",
+  "codepoints": [
+   8771
+  ]
+ },
+ "&TildeFullEqual;": {
+  "characters": "\u2245",
+  "codepoints": [
+   8773
+  ]
+ },
+ "&TildeTilde;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&Topf;": {
+  "characters": "\ud835\udd4b",
+  "codepoints": [
+   120139
+  ]
+ },
+ "&TripleDot;": {
+  "characters": "\u20db",
+  "codepoints": [
+   8411
+  ]
+ },
+ "&Tscr;": {
+  "characters": "\ud835\udcaf",
+  "codepoints": [
+   119983
+  ]
+ },
+ "&Tstrok;": {
+  "characters": "\u0166",
+  "codepoints": [
+   358
+  ]
+ },
+ "&Uacute": {
+  "characters": "\u00da",
+  "codepoints": [
+   218
+  ]
+ },
+ "&Uacute;": {
+  "characters": "\u00da",
+  "codepoints": [
+   218
+  ]
+ },
+ "&Uarr;": {
+  "characters": "\u219f",
+  "codepoints": [
+   8607
+  ]
+ },
+ "&Uarrocir;": {
+  "characters": "\u2949",
+  "codepoints": [
+   10569
+  ]
+ },
+ "&Ubrcy;": {
+  "characters": "\u040e",
+  "codepoints": [
+   1038
+  ]
+ },
+ "&Ubreve;": {
+  "characters": "\u016c",
+  "codepoints": [
+   364
+  ]
+ },
+ "&Ucirc": {
+  "characters": "\u00db",
+  "codepoints": [
+   219
+  ]
+ },
+ "&Ucirc;": {
+  "characters": "\u00db",
+  "codepoints": [
+   219
+  ]
+ },
+ "&Ucy;": {
+  "characters": "\u0423",
+  "codepoints": [
+   1059
+  ]
+ },
+ "&Udblac;": {
+  "characters": "\u0170",
+  "codepoints": [
+   368
+  ]
+ },
+ "&Ufr;": {
+  "characters": "\ud835\udd18",
+  "codepoints": [
+   120088
+  ]
+ },
+ "&Ugrave": {
+  "characters": "\u00d9",
+  "codepoints": [
+   217
+  ]
+ },
+ "&Ugrave;": {
+  "characters": "\u00d9",
+  "codepoints": [
+   217
+  ]
+ },
+ "&Umacr;": {
+  "characters": "\u016a",
+  "codepoints": [
+   362
+  ]
+ },
+ "&UnderBar;": {
+  "characters": "_",
+  "codepoints": [
+   95
+  ]
+ },
+ "&UnderBrace;": {
+  "characters": "\u23df",
+  "codepoints": [
+   9183
+  ]
+ },
+ "&UnderBracket;": {
+  "characters": "\u23b5",
+  "codepoints": [
+   9141
+  ]
+ },
+ "&UnderParenthesis;": {
+  "characters": "\u23dd",
+  "codepoints": [
+   9181
+  ]
+ },
+ "&Union;": {
+  "characters": "\u22c3",
+  "codepoints": [
+   8899
+  ]
+ },
+ "&UnionPlus;": {
+  "characters": "\u228e",
+  "codepoints": [
+   8846
+  ]
+ },
+ "&Uogon;": {
+  "characters": "\u0172",
+  "codepoints": [
+   370
+  ]
+ },
+ "&Uopf;": {
+  "characters": "\ud835\udd4c",
+  "codepoints": [
+   120140
+  ]
+ },
+ "&UpArrow;": {
+  "characters": "\u2191",
+  "codepoints": [
+   8593
+  ]
+ },
+ "&UpArrowBar;": {
+  "characters": "\u2912",
+  "codepoints": [
+   10514
+  ]
+ },
+ "&UpArrowDownArrow;": {
+  "characters": "\u21c5",
+  "codepoints": [
+   8645
+  ]
+ },
+ "&UpDownArrow;": {
+  "characters": "\u2195",
+  "codepoints": [
+   8597
+  ]
+ },
+ "&UpEquilibrium;": {
+  "characters": "\u296e",
+  "codepoints": [
+   10606
+  ]
+ },
+ "&UpTee;": {
+  "characters": "\u22a5",
+  "codepoints": [
+   8869
+  ]
+ },
+ "&UpTeeArrow;": {
+  "characters": "\u21a5",
+  "codepoints": [
+   8613
+  ]
+ },
+ "&Uparrow;": {
+  "characters": "\u21d1",
+  "codepoints": [
+   8657
+  ]
+ },
+ "&Updownarrow;": {
+  "characters": "\u21d5",
+  "codepoints": [
+   8661
+  ]
+ },
+ "&UpperLeftArrow;": {
+  "characters": "\u2196",
+  "codepoints": [
+   8598
+  ]
+ },
+ "&UpperRightArrow;": {
+  "characters": "\u2197",
+  "codepoints": [
+   8599
+  ]
+ },
+ "&Upsi;": {
+  "characters": "\u03d2",
+  "codepoints": [
+   978
+  ]
+ },
+ "&Upsilon;": {
+  "characters": "\u03a5",
+  "codepoints": [
+   933
+  ]
+ },
+ "&Uring;": {
+  "characters": "\u016e",
+  "codepoints": [
+   366
+  ]
+ },
+ "&Uscr;": {
+  "characters": "\ud835\udcb0",
+  "codepoints": [
+   119984
+  ]
+ },
+ "&Utilde;": {
+  "characters": "\u0168",
+  "codepoints": [
+   360
+  ]
+ },
+ "&Uuml": {
+  "characters": "\u00dc",
+  "codepoints": [
+   220
+  ]
+ },
+ "&Uuml;": {
+  "characters": "\u00dc",
+  "codepoints": [
+   220
+  ]
+ },
+ "&VDash;": {
+  "characters": "\u22ab",
+  "codepoints": [
+   8875
+  ]
+ },
+ "&Vbar;": {
+  "characters": "\u2aeb",
+  "codepoints": [
+   10987
+  ]
+ },
+ "&Vcy;": {
+  "characters": "\u0412",
+  "codepoints": [
+   1042
+  ]
+ },
+ "&Vdash;": {
+  "characters": "\u22a9",
+  "codepoints": [
+   8873
+  ]
+ },
+ "&Vdashl;": {
+  "characters": "\u2ae6",
+  "codepoints": [
+   10982
+  ]
+ },
+ "&Vee;": {
+  "characters": "\u22c1",
+  "codepoints": [
+   8897
+  ]
+ },
+ "&Verbar;": {
+  "characters": "\u2016",
+  "codepoints": [
+   8214
+  ]
+ },
+ "&Vert;": {
+  "characters": "\u2016",
+  "codepoints": [
+   8214
+  ]
+ },
+ "&VerticalBar;": {
+  "characters": "\u2223",
+  "codepoints": [
+   8739
+  ]
+ },
+ "&VerticalLine;": {
+  "characters": "|",
+  "codepoints": [
+   124
+  ]
+ },
+ "&VerticalSeparator;": {
+  "characters": "\u2758",
+  "codepoints": [
+   10072
+  ]
+ },
+ "&VerticalTilde;": {
+  "characters": "\u2240",
+  "codepoints": [
+   8768
+  ]
+ },
+ "&VeryThinSpace;": {
+  "characters": "\u200a",
+  "codepoints": [
+   8202
+  ]
+ },
+ "&Vfr;": {
+  "characters": "\ud835\udd19",
+  "codepoints": [
+   120089
+  ]
+ },
+ "&Vopf;": {
+  "characters": "\ud835\udd4d",
+  "codepoints": [
+   120141
+  ]
+ },
+ "&Vscr;": {
+  "characters": "\ud835\udcb1",
+  "codepoints": [
+   119985
+  ]
+ },
+ "&Vvdash;": {
+  "characters": "\u22aa",
+  "codepoints": [
+   8874
+  ]
+ },
+ "&Wcirc;": {
+  "characters": "\u0174",
+  "codepoints": [
+   372
+  ]
+ },
+ "&Wedge;": {
+  "characters": "\u22c0",
+  "codepoints": [
+   8896
+  ]
+ },
+ "&Wfr;": {
+  "characters": "\ud835\udd1a",
+  "codepoints": [
+   120090
+  ]
+ },
+ "&Wopf;": {
+  "characters": "\ud835\udd4e",
+  "codepoints": [
+   120142
+  ]
+ },
+ "&Wscr;": {
+  "characters": "\ud835\udcb2",
+  "codepoints": [
+   119986
+  ]
+ },
+ "&Xfr;": {
+  "characters": "\ud835\udd1b",
+  "codepoints": [
+   120091
+  ]
+ },
+ "&Xi;": {
+  "characters": "\u039e",
+  "codepoints": [
+   926
+  ]
+ },
+ "&Xopf;": {
+  "characters": "\ud835\udd4f",
+  "codepoints": [
+   120143
+  ]
+ },
+ "&Xscr;": {
+  "characters": "\ud835\udcb3",
+  "codepoints": [
+   119987
+  ]
+ },
+ "&YAcy;": {
+  "characters": "\u042f",
+  "codepoints": [
+   1071
+  ]
+ },
+ "&YIcy;": {
+  "characters": "\u0407",
+  "codepoints": [
+   1031
+  ]
+ },
+ "&YUcy;": {
+  "characters": "\u042e",
+  "codepoints": [
+   1070
+  ]
+ },
+ "&Yacute": {
+  "characters": "\u00dd",
+  "codepoints": [
+   221
+  ]
+ },
+ "&Yacute;": {
+  "characters": "\u00dd",
+  "codepoints": [
+   221
+  ]
+ },
+ "&Ycirc;": {
+  "characters": "\u0176",
+  "codepoints": [
+   374
+  ]
+ },
+ "&Ycy;": {
+  "characters": "\u042b",
+  "codepoints": [
+   1067
+  ]
+ },
+ "&Yfr;": {
+  "characters": "\ud835\udd1c",
+  "codepoints": [
+   120092
+  ]
+ },
+ "&Yopf;": {
+  "characters": "\ud835\udd50",
+  "codepoints": [
+   120144
+  ]
+ },
+ "&Yscr;": {
+  "characters": "\ud835\udcb4",
+  "codepoints": [
+   119988
+  ]
+ },
+ "&Yuml;": {
+  "characters": "\u0178",
+  "codepoints": [
+   376
+  ]
+ },
+ "&ZHcy;": {
+  "characters": "\u0416",
+  "codepoints": [
+   1046
+  ]
+ },
+ "&Zacute;": {
+  "characters": "\u0179",
+  "codepoints": [
+   377
+  ]
+ },
+ "&Zcaron;": {
+  "characters": "\u017d",
+  "codepoints": [
+   381
+  ]
+ },
+ "&Zcy;": {
+  "characters": "\u0417",
+  "codepoints": [
+   1047
+  ]
+ },
+ "&Zdot;": {
+  "characters": "\u017b",
+  "codepoints": [
+   379
+  ]
+ },
+ "&ZeroWidthSpace;": {
+  "characters": "\u200b",
+  "codepoints": [
+   8203
+  ]
+ },
+ "&Zeta;": {
+  "characters": "\u0396",
+  "codepoints": [
+   918
+  ]
+ },
+ "&Zfr;": {
+  "characters": "\u2128",
+  "codepoints": [
+   8488
+  ]
+ },
+ "&Zopf;": {
+  "characters": "\u2124",
+  "codepoints": [
+   8484
+  ]
+ },
+ "&Zscr;": {
+  "characters": "\ud835\udcb5",
+  "codepoints": [
+   119989
+  ]
+ },
+ "&aacute": {
+  "characters": "\u00e1",
+  "codepoints": [
+   225
+  ]
+ },
+ "&aacute;": {
+  "characters": "\u00e1",
+  "codepoints": [
+   225
+  ]
+ },
+ "&abreve;": {
+  "characters": "\u0103",
+  "codepoints": [
+   259
+  ]
+ },
+ "&ac;": {
+  "characters": "\u223e",
+  "codepoints": [
+   8766
+  ]
+ },
+ "&acE;": {
+  "characters": "\u223e\u0333",
+  "codepoints": [
+   8766,
+   819
+  ]
+ },
+ "&acd;": {
+  "characters": "\u223f",
+  "codepoints": [
+   8767
+  ]
+ },
+ "&acirc": {
+  "characters": "\u00e2",
+  "codepoints": [
+   226
+  ]
+ },
+ "&acirc;": {
+  "characters": "\u00e2",
+  "codepoints": [
+   226
+  ]
+ },
+ "&acute": {
+  "characters": "\u00b4",
+  "codepoints": [
+   180
+  ]
+ },
+ "&acute;": {
+  "characters": "\u00b4",
+  "codepoints": [
+   180
+  ]
+ },
+ "&acy;": {
+  "characters": "\u0430",
+  "codepoints": [
+   1072
+  ]
+ },
+ "&aelig": {
+  "characters": "\u00e6",
+  "codepoints": [
+   230
+  ]
+ },
+ "&aelig;": {
+  "characters": "\u00e6",
+  "codepoints": [
+   230
+  ]
+ },
+ "&af;": {
+  "characters": "\u2061",
+  "codepoints": [
+   8289
+  ]
+ },
+ "&afr;": {
+  "characters": "\ud835\udd1e",
+  "codepoints": [
+   120094
+  ]
+ },
+ "&agrave": {
+  "characters": "\u00e0",
+  "codepoints": [
+   224
+  ]
+ },
+ "&agrave;": {
+  "characters": "\u00e0",
+  "codepoints": [
+   224
+  ]
+ },
+ "&alefsym;": {
+  "characters": "\u2135",
+  "codepoints": [
+   8501
+  ]
+ },
+ "&aleph;": {
+  "characters": "\u2135",
+  "codepoints": [
+   8501
+  ]
+ },
+ "&alpha;": {
+  "characters": "\u03b1",
+  "codepoints": [
+   945
+  ]
+ },
+ "&amacr;": {
+  "characters": "\u0101",
+  "codepoints": [
+   257
+  ]
+ },
+ "&amalg;": {
+  "characters": "\u2a3f",
+  "codepoints": [
+   10815
+  ]
+ },
+ "&amp": {
+  "characters": "&",
+  "codepoints": [
+   38
+  ]
+ },
+ "&amp;": {
+  "characters": "&",
+  "codepoints": [
+   38
+  ]
+ },
+ "&and;": {
+  "characters": "\u2227",
+  "codepoints": [
+   8743
+  ]
+ },
+ "&andand;": {
+  "characters": "\u2a55",
+  "codepoints": [
+   10837
+  ]
+ },
+ "&andd;": {
+  "characters": "\u2a5c",
+  "codepoints": [
+   10844
+  ]
+ },
+ "&andslope;": {
+  "characters": "\u2a58",
+  "codepoints": [
+   10840
+  ]
+ },
+ "&andv;": {
+  "characters": "\u2a5a",
+  "codepoints": [
+   10842
+  ]
+ },
+ "&ang;": {
+  "characters": "\u2220",
+  "codepoints": [
+   8736
+  ]
+ },
+ "&ange;": {
+  "characters": "\u29a4",
+  "codepoints": [
+   10660
+  ]
+ },
+ "&angle;": {
+  "characters": "\u2220",
+  "codepoints": [
+   8736
+  ]
+ },
+ "&angmsd;": {
+  "characters": "\u2221",
+  "codepoints": [
+   8737
+  ]
+ },
+ "&angmsdaa;": {
+  "characters": "\u29a8",
+  "codepoints": [
+   10664
+  ]
+ },
+ "&angmsdab;": {
+  "characters": "\u29a9",
+  "codepoints": [
+   10665
+  ]
+ },
+ "&angmsdac;": {
+  "characters": "\u29aa",
+  "codepoints": [
+   10666
+  ]
+ },
+ "&angmsdad;": {
+  "characters": "\u29ab",
+  "codepoints": [
+   10667
+  ]
+ },
+ "&angmsdae;": {
+  "characters": "\u29ac",
+  "codepoints": [
+   10668
+  ]
+ },
+ "&angmsdaf;": {
+  "characters": "\u29ad",
+  "codepoints": [
+   10669
+  ]
+ },
+ "&angmsdag;": {
+  "characters": "\u29ae",
+  "codepoints": [
+   10670
+  ]
+ },
+ "&angmsdah;": {
+  "characters": "\u29af",
+  "codepoints": [
+   10671
+  ]
+ },
+ "&angrt;": {
+  "characters": "\u221f",
+  "codepoints": [
+   8735
+  ]
+ },
+ "&angrtvb;": {
+  "characters": "\u22be",
+  "codepoints": [
+   8894
+  ]
+ },
+ "&angrtvbd;": {
+  "characters": "\u299d",
+  "codepoints": [
+   10653
+  ]
+ },
+ "&angsph;": {
+  "characters": "\u2222",
+  "codepoints": [
+   8738
+  ]
+ },
+ "&angst;": {
+  "characters": "\u00c5",
+  "codepoints": [
+   197
+  ]
+ },
+ "&angzarr;": {
+  "characters": "\u237c",
+  "codepoints": [
+   9084
+  ]
+ },
+ "&aogon;": {
+  "characters": "\u0105",
+  "codepoints": [
+   261
+  ]
+ },
+ "&aopf;": {
+  "characters": "\ud835\udd52",
+  "codepoints": [
+   120146
+  ]
+ },
+ "&ap;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&apE;": {
+  "characters": "\u2a70",
+  "codepoints": [
+   10864
+  ]
+ },
+ "&apacir;": {
+  "characters": "\u2a6f",
+  "codepoints": [
+   10863
+  ]
+ },
+ "&ape;": {
+  "characters": "\u224a",
+  "codepoints": [
+   8778
+  ]
+ },
+ "&apid;": {
+  "characters": "\u224b",
+  "codepoints": [
+   8779
+  ]
+ },
+ "&apos;": {
+  "characters": "'",
+  "codepoints": [
+   39
+  ]
+ },
+ "&approx;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&approxeq;": {
+  "characters": "\u224a",
+  "codepoints": [
+   8778
+  ]
+ },
+ "&aring": {
+  "characters": "\u00e5",
+  "codepoints": [
+   229
+  ]
+ },
+ "&aring;": {
+  "characters": "\u00e5",
+  "codepoints": [
+   229
+  ]
+ },
+ "&ascr;": {
+  "characters": "\ud835\udcb6",
+  "codepoints": [
+   119990
+  ]
+ },
+ "&ast;": {
+  "characters": "*",
+  "codepoints": [
+   42
+  ]
+ },
+ "&asymp;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&asympeq;": {
+  "characters": "\u224d",
+  "codepoints": [
+   8781
+  ]
+ },
+ "&atilde": {
+  "characters": "\u00e3",
+  "codepoints": [
+   227
+  ]
+ },
+ "&atilde;": {
+  "characters": "\u00e3",
+  "codepoints": [
+   227
+  ]
+ },
+ "&auml": {
+  "characters": "\u00e4",
+  "codepoints": [
+   228
+  ]
+ },
+ "&auml;": {
+  "characters": "\u00e4",
+  "codepoints": [
+   228
+  ]
+ },
+ "&awconint;": {
+  "characters": "\u2233",
+  "codepoints": [
+   8755
+  ]
+ },
+ "&awint;": {
+  "characters": "\u2a11",
+  "codepoints": [
+   10769
+  ]
+ },
+ "&bNot;": {
+  "characters": "\u2aed",
+  "codepoints": [
+   10989
+  ]
+ },
+ "&backcong;": {
+  "characters": "\u224c",
+  "codepoints": [
+   8780
+  ]
+ },
+ "&backepsilon;": {
+  "characters": "\u03f6",
+  "codepoints": [
+   1014
+  ]
+ },
+ "&backprime;": {
+  "characters": "\u2035",
+  "codepoints": [
+   8245
+  ]
+ },
+ "&backsim;": {
+  "characters": "\u223d",
+  "codepoints": [
+   8765
+  ]
+ },
+ "&backsimeq;": {
+  "characters": "\u22cd",
+  "codepoints": [
+   8909
+  ]
+ },
+ "&barvee;": {
+  "characters": "\u22bd",
+  "codepoints": [
+   8893
+  ]
+ },
+ "&barwed;": {
+  "characters": "\u2305",
+  "codepoints": [
+   8965
+  ]
+ },
+ "&barwedge;": {
+  "characters": "\u2305",
+  "codepoints": [
+   8965
+  ]
+ },
+ "&bbrk;": {
+  "characters": "\u23b5",
+  "codepoints": [
+   9141
+  ]
+ },
+ "&bbrktbrk;": {
+  "characters": "\u23b6",
+  "codepoints": [
+   9142
+  ]
+ },
+ "&bcong;": {
+  "characters": "\u224c",
+  "codepoints": [
+   8780
+  ]
+ },
+ "&bcy;": {
+  "characters": "\u0431",
+  "codepoints": [
+   1073
+  ]
+ },
+ "&bdquo;": {
+  "characters": "\u201e",
+  "codepoints": [
+   8222
+  ]
+ },
+ "&becaus;": {
+  "characters": "\u2235",
+  "codepoints": [
+   8757
+  ]
+ },
+ "&because;": {
+  "characters": "\u2235",
+  "codepoints": [
+   8757
+  ]
+ },
+ "&bemptyv;": {
+  "characters": "\u29b0",
+  "codepoints": [
+   10672
+  ]
+ },
+ "&bepsi;": {
+  "characters": "\u03f6",
+  "codepoints": [
+   1014
+  ]
+ },
+ "&bernou;": {
+  "characters": "\u212c",
+  "codepoints": [
+   8492
+  ]
+ },
+ "&beta;": {
+  "characters": "\u03b2",
+  "codepoints": [
+   946
+  ]
+ },
+ "&beth;": {
+  "characters": "\u2136",
+  "codepoints": [
+   8502
+  ]
+ },
+ "&between;": {
+  "characters": "\u226c",
+  "codepoints": [
+   8812
+  ]
+ },
+ "&bfr;": {
+  "characters": "\ud835\udd1f",
+  "codepoints": [
+   120095
+  ]
+ },
+ "&bigcap;": {
+  "characters": "\u22c2",
+  "codepoints": [
+   8898
+  ]
+ },
+ "&bigcirc;": {
+  "characters": "\u25ef",
+  "codepoints": [
+   9711
+  ]
+ },
+ "&bigcup;": {
+  "characters": "\u22c3",
+  "codepoints": [
+   8899
+  ]
+ },
+ "&bigodot;": {
+  "characters": "\u2a00",
+  "codepoints": [
+   10752
+  ]
+ },
+ "&bigoplus;": {
+  "characters": "\u2a01",
+  "codepoints": [
+   10753
+  ]
+ },
+ "&bigotimes;": {
+  "characters": "\u2a02",
+  "codepoints": [
+   10754
+  ]
+ },
+ "&bigsqcup;": {
+  "characters": "\u2a06",
+  "codepoints": [
+   10758
+  ]
+ },
+ "&bigstar;": {
+  "characters": "\u2605",
+  "codepoints": [
+   9733
+  ]
+ },
+ "&bigtriangledown;": {
+  "characters": "\u25bd",
+  "codepoints": [
+   9661
+  ]
+ },
+ "&bigtriangleup;": {
+  "characters": "\u25b3",
+  "codepoints": [
+   9651
+  ]
+ },
+ "&biguplus;": {
+  "characters": "\u2a04",
+  "codepoints": [
+   10756
+  ]
+ },
+ "&bigvee;": {
+  "characters": "\u22c1",
+  "codepoints": [
+   8897
+  ]
+ },
+ "&bigwedge;": {
+  "characters": "\u22c0",
+  "codepoints": [
+   8896
+  ]
+ },
+ "&bkarow;": {
+  "characters": "\u290d",
+  "codepoints": [
+   10509
+  ]
+ },
+ "&blacklozenge;": {
+  "characters": "\u29eb",
+  "codepoints": [
+   10731
+  ]
+ },
+ "&blacksquare;": {
+  "characters": "\u25aa",
+  "codepoints": [
+   9642
+  ]
+ },
+ "&blacktriangle;": {
+  "characters": "\u25b4",
+  "codepoints": [
+   9652
+  ]
+ },
+ "&blacktriangledown;": {
+  "characters": "\u25be",
+  "codepoints": [
+   9662
+  ]
+ },
+ "&blacktriangleleft;": {
+  "characters": "\u25c2",
+  "codepoints": [
+   9666
+  ]
+ },
+ "&blacktriangleright;": {
+  "characters": "\u25b8",
+  "codepoints": [
+   9656
+  ]
+ },
+ "&blank;": {
+  "characters": "\u2423",
+  "codepoints": [
+   9251
+  ]
+ },
+ "&blk12;": {
+  "characters": "\u2592",
+  "codepoints": [
+   9618
+  ]
+ },
+ "&blk14;": {
+  "characters": "\u2591",
+  "codepoints": [
+   9617
+  ]
+ },
+ "&blk34;": {
+  "characters": "\u2593",
+  "codepoints": [
+   9619
+  ]
+ },
+ "&block;": {
+  "characters": "\u2588",
+  "codepoints": [
+   9608
+  ]
+ },
+ "&bne;": {
+  "characters": "=\u20e5",
+  "codepoints": [
+   61,
+   8421
+  ]
+ },
+ "&bnequiv;": {
+  "characters": "\u2261\u20e5",
+  "codepoints": [
+   8801,
+   8421
+  ]
+ },
+ "&bnot;": {
+  "characters": "\u2310",
+  "codepoints": [
+   8976
+  ]
+ },
+ "&bopf;": {
+  "characters": "\ud835\udd53",
+  "codepoints": [
+   120147
+  ]
+ },
+ "&bot;": {
+  "characters": "\u22a5",
+  "codepoints": [
+   8869
+  ]
+ },
+ "&bottom;": {
+  "characters": "\u22a5",
+  "codepoints": [
+   8869
+  ]
+ },
+ "&bowtie;": {
+  "characters": "\u22c8",
+  "codepoints": [
+   8904
+  ]
+ },
+ "&boxDL;": {
+  "characters": "\u2557",
+  "codepoints": [
+   9559
+  ]
+ },
+ "&boxDR;": {
+  "characters": "\u2554",
+  "codepoints": [
+   9556
+  ]
+ },
+ "&boxDl;": {
+  "characters": "\u2556",
+  "codepoints": [
+   9558
+  ]
+ },
+ "&boxDr;": {
+  "characters": "\u2553",
+  "codepoints": [
+   9555
+  ]
+ },
+ "&boxH;": {
+  "characters": "\u2550",
+  "codepoints": [
+   9552
+  ]
+ },
+ "&boxHD;": {
+  "characters": "\u2566",
+  "codepoints": [
+   9574
+  ]
+ },
+ "&boxHU;": {
+  "characters": "\u2569",
+  "codepoints": [
+   9577
+  ]
+ },
+ "&boxHd;": {
+  "characters": "\u2564",
+  "codepoints": [
+   9572
+  ]
+ },
+ "&boxHu;": {
+  "characters": "\u2567",
+  "codepoints": [
+   9575
+  ]
+ },
+ "&boxUL;": {
+  "characters": "\u255d",
+  "codepoints": [
+   9565
+  ]
+ },
+ "&boxUR;": {
+  "characters": "\u255a",
+  "codepoints": [
+   9562
+  ]
+ },
+ "&boxUl;": {
+  "characters": "\u255c",
+  "codepoints": [
+   9564
+  ]
+ },
+ "&boxUr;": {
+  "characters": "\u2559",
+  "codepoints": [
+   9561
+  ]
+ },
+ "&boxV;": {
+  "characters": "\u2551",
+  "codepoints": [
+   9553
+  ]
+ },
+ "&boxVH;": {
+  "characters": "\u256c",
+  "codepoints": [
+   9580
+  ]
+ },
+ "&boxVL;": {
+  "characters": "\u2563",
+  "codepoints": [
+   9571
+  ]
+ },
+ "&boxVR;": {
+  "characters": "\u2560",
+  "codepoints": [
+   9568
+  ]
+ },
+ "&boxVh;": {
+  "characters": "\u256b",
+  "codepoints": [
+   9579
+  ]
+ },
+ "&boxVl;": {
+  "characters": "\u2562",
+  "codepoints": [
+   9570
+  ]
+ },
+ "&boxVr;": {
+  "characters": "\u255f",
+  "codepoints": [
+   9567
+  ]
+ },
+ "&boxbox;": {
+  "characters": "\u29c9",
+  "codepoints": [
+   10697
+  ]
+ },
+ "&boxdL;": {
+  "characters": "\u2555",
+  "codepoints": [
+   9557
+  ]
+ },
+ "&boxdR;": {
+  "characters": "\u2552",
+  "codepoints": [
+   9554
+  ]
+ },
+ "&boxdl;": {
+  "characters": "\u2510",
+  "codepoints": [
+   9488
+  ]
+ },
+ "&boxdr;": {
+  "characters": "\u250c",
+  "codepoints": [
+   9484
+  ]
+ },
+ "&boxh;": {
+  "characters": "\u2500",
+  "codepoints": [
+   9472
+  ]
+ },
+ "&boxhD;": {
+  "characters": "\u2565",
+  "codepoints": [
+   9573
+  ]
+ },
+ "&boxhU;": {
+  "characters": "\u2568",
+  "codepoints": [
+   9576
+  ]
+ },
+ "&boxhd;": {
+  "characters": "\u252c",
+  "codepoints": [
+   9516
+  ]
+ },
+ "&boxhu;": {
+  "characters": "\u2534",
+  "codepoints": [
+   9524
+  ]
+ },
+ "&boxminus;": {
+  "characters": "\u229f",
+  "codepoints": [
+   8863
+  ]
+ },
+ "&boxplus;": {
+  "characters": "\u229e",
+  "codepoints": [
+   8862
+  ]
+ },
+ "&boxtimes;": {
+  "characters": "\u22a0",
+  "codepoints": [
+   8864
+  ]
+ },
+ "&boxuL;": {
+  "characters": "\u255b",
+  "codepoints": [
+   9563
+  ]
+ },
+ "&boxuR;": {
+  "characters": "\u2558",
+  "codepoints": [
+   9560
+  ]
+ },
+ "&boxul;": {
+  "characters": "\u2518",
+  "codepoints": [
+   9496
+  ]
+ },
+ "&boxur;": {
+  "characters": "\u2514",
+  "codepoints": [
+   9492
+  ]
+ },
+ "&boxv;": {
+  "characters": "\u2502",
+  "codepoints": [
+   9474
+  ]
+ },
+ "&boxvH;": {
+  "characters": "\u256a",
+  "codepoints": [
+   9578
+  ]
+ },
+ "&boxvL;": {
+  "characters": "\u2561",
+  "codepoints": [
+   9569
+  ]
+ },
+ "&boxvR;": {
+  "characters": "\u255e",
+  "codepoints": [
+   9566
+  ]
+ },
+ "&boxvh;": {
+  "characters": "\u253c",
+  "codepoints": [
+   9532
+  ]
+ },
+ "&boxvl;": {
+  "characters": "\u2524",
+  "codepoints": [
+   9508
+  ]
+ },
+ "&boxvr;": {
+  "characters": "\u251c",
+  "codepoints": [
+   9500
+  ]
+ },
+ "&bprime;": {
+  "characters": "\u2035",
+  "codepoints": [
+   8245
+  ]
+ },
+ "&breve;": {
+  "characters": "\u02d8",
+  "codepoints": [
+   728
+  ]
+ },
+ "&brvbar": {
+  "characters": "\u00a6",
+  "codepoints": [
+   166
+  ]
+ },
+ "&brvbar;": {
+  "characters": "\u00a6",
+  "codepoints": [
+   166
+  ]
+ },
+ "&bscr;": {
+  "characters": "\ud835\udcb7",
+  "codepoints": [
+   119991
+  ]
+ },
+ "&bsemi;": {
+  "characters": "\u204f",
+  "codepoints": [
+   8271
+  ]
+ },
+ "&bsim;": {
+  "characters": "\u223d",
+  "codepoints": [
+   8765
+  ]
+ },
+ "&bsime;": {
+  "characters": "\u22cd",
+  "codepoints": [
+   8909
+  ]
+ },
+ "&bsol;": {
+  "characters": "\\",
+  "codepoints": [
+   92
+  ]
+ },
+ "&bsolb;": {
+  "characters": "\u29c5",
+  "codepoints": [
+   10693
+  ]
+ },
+ "&bsolhsub;": {
+  "characters": "\u27c8",
+  "codepoints": [
+   10184
+  ]
+ },
+ "&bull;": {
+  "characters": "\u2022",
+  "codepoints": [
+   8226
+  ]
+ },
+ "&bullet;": {
+  "characters": "\u2022",
+  "codepoints": [
+   8226
+  ]
+ },
+ "&bump;": {
+  "characters": "\u224e",
+  "codepoints": [
+   8782
+  ]
+ },
+ "&bumpE;": {
+  "characters": "\u2aae",
+  "codepoints": [
+   10926
+  ]
+ },
+ "&bumpe;": {
+  "characters": "\u224f",
+  "codepoints": [
+   8783
+  ]
+ },
+ "&bumpeq;": {
+  "characters": "\u224f",
+  "codepoints": [
+   8783
+  ]
+ },
+ "&cacute;": {
+  "characters": "\u0107",
+  "codepoints": [
+   263
+  ]
+ },
+ "&cap;": {
+  "characters": "\u2229",
+  "codepoints": [
+   8745
+  ]
+ },
+ "&capand;": {
+  "characters": "\u2a44",
+  "codepoints": [
+   10820
+  ]
+ },
+ "&capbrcup;": {
+  "characters": "\u2a49",
+  "codepoints": [
+   10825
+  ]
+ },
+ "&capcap;": {
+  "characters": "\u2a4b",
+  "codepoints": [
+   10827
+  ]
+ },
+ "&capcup;": {
+  "characters": "\u2a47",
+  "codepoints": [
+   10823
+  ]
+ },
+ "&capdot;": {
+  "characters": "\u2a40",
+  "codepoints": [
+   10816
+  ]
+ },
+ "&caps;": {
+  "characters": "\u2229\ufe00",
+  "codepoints": [
+   8745,
+   65024
+  ]
+ },
+ "&caret;": {
+  "characters": "\u2041",
+  "codepoints": [
+   8257
+  ]
+ },
+ "&caron;": {
+  "characters": "\u02c7",
+  "codepoints": [
+   711
+  ]
+ },
+ "&ccaps;": {
+  "characters": "\u2a4d",
+  "codepoints": [
+   10829
+  ]
+ },
+ "&ccaron;": {
+  "characters": "\u010d",
+  "codepoints": [
+   269
+  ]
+ },
+ "&ccedil": {
+  "characters": "\u00e7",
+  "codepoints": [
+   231
+  ]
+ },
+ "&ccedil;": {
+  "characters": "\u00e7",
+  "codepoints": [
+   231
+  ]
+ },
+ "&ccirc;": {
+  "characters": "\u0109",
+  "codepoints": [
+   265
+  ]
+ },
+ "&ccups;": {
+  "characters": "\u2a4c",
+  "codepoints": [
+   10828
+  ]
+ },
+ "&ccupssm;": {
+  "characters": "\u2a50",
+  "codepoints": [
+   10832
+  ]
+ },
+ "&cdot;": {
+  "characters": "\u010b",
+  "codepoints": [
+   267
+  ]
+ },
+ "&cedil": {
+  "characters": "\u00b8",
+  "codepoints": [
+   184
+  ]
+ },
+ "&cedil;": {
+  "characters": "\u00b8",
+  "codepoints": [
+   184
+  ]
+ },
+ "&cemptyv;": {
+  "characters": "\u29b2",
+  "codepoints": [
+   10674
+  ]
+ },
+ "&cent": {
+  "characters": "\u00a2",
+  "codepoints": [
+   162
+  ]
+ },
+ "&cent;": {
+  "characters": "\u00a2",
+  "codepoints": [
+   162
+  ]
+ },
+ "&centerdot;": {
+  "characters": "\u00b7",
+  "codepoints": [
+   183
+  ]
+ },
+ "&cfr;": {
+  "characters": "\ud835\udd20",
+  "codepoints": [
+   120096
+  ]
+ },
+ "&chcy;": {
+  "characters": "\u0447",
+  "codepoints": [
+   1095
+  ]
+ },
+ "&check;": {
+  "characters": "\u2713",
+  "codepoints": [
+   10003
+  ]
+ },
+ "&checkmark;": {
+  "characters": "\u2713",
+  "codepoints": [
+   10003
+  ]
+ },
+ "&chi;": {
+  "characters": "\u03c7",
+  "codepoints": [
+   967
+  ]
+ },
+ "&cir;": {
+  "characters": "\u25cb",
+  "codepoints": [
+   9675
+  ]
+ },
+ "&cirE;": {
+  "characters": "\u29c3",
+  "codepoints": [
+   10691
+  ]
+ },
+ "&circ;": {
+  "characters": "\u02c6",
+  "codepoints": [
+   710
+  ]
+ },
+ "&circeq;": {
+  "characters": "\u2257",
+  "codepoints": [
+   8791
+  ]
+ },
+ "&circlearrowleft;": {
+  "characters": "\u21ba",
+  "codepoints": [
+   8634
+  ]
+ },
+ "&circlearrowright;": {
+  "characters": "\u21bb",
+  "codepoints": [
+   8635
+  ]
+ },
+ "&circledR;": {
+  "characters": "\u00ae",
+  "codepoints": [
+   174
+  ]
+ },
+ "&circledS;": {
+  "characters": "\u24c8",
+  "codepoints": [
+   9416
+  ]
+ },
+ "&circledast;": {
+  "characters": "\u229b",
+  "codepoints": [
+   8859
+  ]
+ },
+ "&circledcirc;": {
+  "characters": "\u229a",
+  "codepoints": [
+   8858
+  ]
+ },
+ "&circleddash;": {
+  "characters": "\u229d",
+  "codepoints": [
+   8861
+  ]
+ },
+ "&cire;": {
+  "characters": "\u2257",
+  "codepoints": [
+   8791
+  ]
+ },
+ "&cirfnint;": {
+  "characters": "\u2a10",
+  "codepoints": [
+   10768
+  ]
+ },
+ "&cirmid;": {
+  "characters": "\u2aef",
+  "codepoints": [
+   10991
+  ]
+ },
+ "&cirscir;": {
+  "characters": "\u29c2",
+  "codepoints": [
+   10690
+  ]
+ },
+ "&clubs;": {
+  "characters": "\u2663",
+  "codepoints": [
+   9827
+  ]
+ },
+ "&clubsuit;": {
+  "characters": "\u2663",
+  "codepoints": [
+   9827
+  ]
+ },
+ "&colon;": {
+  "characters": ":",
+  "codepoints": [
+   58
+  ]
+ },
+ "&colone;": {
+  "characters": "\u2254",
+  "codepoints": [
+   8788
+  ]
+ },
+ "&coloneq;": {
+  "characters": "\u2254",
+  "codepoints": [
+   8788
+  ]
+ },
+ "&comma;": {
+  "characters": ",",
+  "codepoints": [
+   44
+  ]
+ },
+ "&commat;": {
+  "characters": "@",
+  "codepoints": [
+   64
+  ]
+ },
+ "&comp;": {
+  "characters": "\u2201",
+  "codepoints": [
+   8705
+  ]
+ },
+ "&compfn;": {
+  "characters": "\u2218",
+  "codepoints": [
+   8728
+  ]
+ },
+ "&complement;": {
+  "characters": "\u2201",
+  "codepoints": [
+   8705
+  ]
+ },
+ "&complexes;": {
+  "characters": "\u2102",
+  "codepoints": [
+   8450
+  ]
+ },
+ "&cong;": {
+  "characters": "\u2245",
+  "codepoints": [
+   8773
+  ]
+ },
+ "&congdot;": {
+  "characters": "\u2a6d",
+  "codepoints": [
+   10861
+  ]
+ },
+ "&conint;": {
+  "characters": "\u222e",
+  "codepoints": [
+   8750
+  ]
+ },
+ "&copf;": {
+  "characters": "\ud835\udd54",
+  "codepoints": [
+   120148
+  ]
+ },
+ "&coprod;": {
+  "characters": "\u2210",
+  "codepoints": [
+   8720
+  ]
+ },
+ "&copy": {
+  "characters": "\u00a9",
+  "codepoints": [
+   169
+  ]
+ },
+ "&copy;": {
+  "characters": "\u00a9",
+  "codepoints": [
+   169
+  ]
+ },
+ "&copysr;": {
+  "characters": "\u2117",
+  "codepoints": [
+   8471
+  ]
+ },
+ "&crarr;": {
+  "characters": "\u21b5",
+  "codepoints": [
+   8629
+  ]
+ },
+ "&cross;": {
+  "characters": "\u2717",
+  "codepoints": [
+   10007
+  ]
+ },
+ "&cscr;": {
+  "characters": "\ud835\udcb8",
+  "codepoints": [
+   119992
+  ]
+ },
+ "&csub;": {
+  "characters": "\u2acf",
+  "codepoints": [
+   10959
+  ]
+ },
+ "&csube;": {
+  "characters": "\u2ad1",
+  "codepoints": [
+   10961
+  ]
+ },
+ "&csup;": {
+  "characters": "\u2ad0",
+  "codepoints": [
+   10960
+  ]
+ },
+ "&csupe;": {
+  "characters": "\u2ad2",
+  "codepoints": [
+   10962
+  ]
+ },
+ "&ctdot;": {
+  "characters": "\u22ef",
+  "codepoints": [
+   8943
+  ]
+ },
+ "&cudarrl;": {
+  "characters": "\u2938",
+  "codepoints": [
+   10552
+  ]
+ },
+ "&cudarrr;": {
+  "characters": "\u2935",
+  "codepoints": [
+   10549
+  ]
+ },
+ "&cuepr;": {
+  "characters": "\u22de",
+  "codepoints": [
+   8926
+  ]
+ },
+ "&cuesc;": {
+  "characters": "\u22df",
+  "codepoints": [
+   8927
+  ]
+ },
+ "&cularr;": {
+  "characters": "\u21b6",
+  "codepoints": [
+   8630
+  ]
+ },
+ "&cularrp;": {
+  "characters": "\u293d",
+  "codepoints": [
+   10557
+  ]
+ },
+ "&cup;": {
+  "characters": "\u222a",
+  "codepoints": [
+   8746
+  ]
+ },
+ "&cupbrcap;": {
+  "characters": "\u2a48",
+  "codepoints": [
+   10824
+  ]
+ },
+ "&cupcap;": {
+  "characters": "\u2a46",
+  "codepoints": [
+   10822
+  ]
+ },
+ "&cupcup;": {
+  "characters": "\u2a4a",
+  "codepoints": [
+   10826
+  ]
+ },
+ "&cupdot;": {
+  "characters": "\u228d",
+  "codepoints": [
+   8845
+  ]
+ },
+ "&cupor;": {
+  "characters": "\u2a45",
+  "codepoints": [
+   10821
+  ]
+ },
+ "&cups;": {
+  "characters": "\u222a\ufe00",
+  "codepoints": [
+   8746,
+   65024
+  ]
+ },
+ "&curarr;": {
+  "characters": "\u21b7",
+  "codepoints": [
+   8631
+  ]
+ },
+ "&curarrm;": {
+  "characters": "\u293c",
+  "codepoints": [
+   10556
+  ]
+ },
+ "&curlyeqprec;": {
+  "characters": "\u22de",
+  "codepoints": [
+   8926
+  ]
+ },
+ "&curlyeqsucc;": {
+  "characters": "\u22df",
+  "codepoints": [
+   8927
+  ]
+ },
+ "&curlyvee;": {
+  "characters": "\u22ce",
+  "codepoints": [
+   8910
+  ]
+ },
+ "&curlywedge;": {
+  "characters": "\u22cf",
+  "codepoints": [
+   8911
+  ]
+ },
+ "&curren": {
+  "characters": "\u00a4",
+  "codepoints": [
+   164
+  ]
+ },
+ "&curren;": {
+  "characters": "\u00a4",
+  "codepoints": [
+   164
+  ]
+ },
+ "&curvearrowleft;": {
+  "characters": "\u21b6",
+  "codepoints": [
+   8630
+  ]
+ },
+ "&curvearrowright;": {
+  "characters": "\u21b7",
+  "codepoints": [
+   8631
+  ]
+ },
+ "&cuvee;": {
+  "characters": "\u22ce",
+  "codepoints": [
+   8910
+  ]
+ },
+ "&cuwed;": {
+  "characters": "\u22cf",
+  "codepoints": [
+   8911
+  ]
+ },
+ "&cwconint;": {
+  "characters": "\u2232",
+  "codepoints": [
+   8754
+  ]
+ },
+ "&cwint;": {
+  "characters": "\u2231",
+  "codepoints": [
+   8753
+  ]
+ },
+ "&cylcty;": {
+  "characters": "\u232d",
+  "codepoints": [
+   9005
+  ]
+ },
+ "&dArr;": {
+  "characters": "\u21d3",
+  "codepoints": [
+   8659
+  ]
+ },
+ "&dHar;": {
+  "characters": "\u2965",
+  "codepoints": [
+   10597
+  ]
+ },
+ "&dagger;": {
+  "characters": "\u2020",
+  "codepoints": [
+   8224
+  ]
+ },
+ "&daleth;": {
+  "characters": "\u2138",
+  "codepoints": [
+   8504
+  ]
+ },
+ "&darr;": {
+  "characters": "\u2193",
+  "codepoints": [
+   8595
+  ]
+ },
+ "&dash;": {
+  "characters": "\u2010",
+  "codepoints": [
+   8208
+  ]
+ },
+ "&dashv;": {
+  "characters": "\u22a3",
+  "codepoints": [
+   8867
+  ]
+ },
+ "&dbkarow;": {
+  "characters": "\u290f",
+  "codepoints": [
+   10511
+  ]
+ },
+ "&dblac;": {
+  "characters": "\u02dd",
+  "codepoints": [
+   733
+  ]
+ },
+ "&dcaron;": {
+  "characters": "\u010f",
+  "codepoints": [
+   271
+  ]
+ },
+ "&dcy;": {
+  "characters": "\u0434",
+  "codepoints": [
+   1076
+  ]
+ },
+ "&dd;": {
+  "characters": "\u2146",
+  "codepoints": [
+   8518
+  ]
+ },
+ "&ddagger;": {
+  "characters": "\u2021",
+  "codepoints": [
+   8225
+  ]
+ },
+ "&ddarr;": {
+  "characters": "\u21ca",
+  "codepoints": [
+   8650
+  ]
+ },
+ "&ddotseq;": {
+  "characters": "\u2a77",
+  "codepoints": [
+   10871
+  ]
+ },
+ "&deg": {
+  "characters": "\u00b0",
+  "codepoints": [
+   176
+  ]
+ },
+ "&deg;": {
+  "characters": "\u00b0",
+  "codepoints": [
+   176
+  ]
+ },
+ "&delta;": {
+  "characters": "\u03b4",
+  "codepoints": [
+   948
+  ]
+ },
+ "&demptyv;": {
+  "characters": "\u29b1",
+  "codepoints": [
+   10673
+  ]
+ },
+ "&dfisht;": {
+  "characters": "\u297f",
+  "codepoints": [
+   10623
+  ]
+ },
+ "&dfr;": {
+  "characters": "\ud835\udd21",
+  "codepoints": [
+   120097
+  ]
+ },
+ "&dharl;": {
+  "characters": "\u21c3",
+  "codepoints": [
+   8643
+  ]
+ },
+ "&dharr;": {
+  "characters": "\u21c2",
+  "codepoints": [
+   8642
+  ]
+ },
+ "&diam;": {
+  "characters": "\u22c4",
+  "codepoints": [
+   8900
+  ]
+ },
+ "&diamond;": {
+  "characters": "\u22c4",
+  "codepoints": [
+   8900
+  ]
+ },
+ "&diamondsuit;": {
+  "characters": "\u2666",
+  "codepoints": [
+   9830
+  ]
+ },
+ "&diams;": {
+  "characters": "\u2666",
+  "codepoints": [
+   9830
+  ]
+ },
+ "&die;": {
+  "characters": "\u00a8",
+  "codepoints": [
+   168
+  ]
+ },
+ "&digamma;": {
+  "characters": "\u03dd",
+  "codepoints": [
+   989
+  ]
+ },
+ "&disin;": {
+  "characters": "\u22f2",
+  "codepoints": [
+   8946
+  ]
+ },
+ "&div;": {
+  "characters": "\u00f7",
+  "codepoints": [
+   247
+  ]
+ },
+ "&divide": {
+  "characters": "\u00f7",
+  "codepoints": [
+   247
+  ]
+ },
+ "&divide;": {
+  "characters": "\u00f7",
+  "codepoints": [
+   247
+  ]
+ },
+ "&divideontimes;": {
+  "characters": "\u22c7",
+  "codepoints": [
+   8903
+  ]
+ },
+ "&divonx;": {
+  "characters": "\u22c7",
+  "codepoints": [
+   8903
+  ]
+ },
+ "&djcy;": {
+  "characters": "\u0452",
+  "codepoints": [
+   1106
+  ]
+ },
+ "&dlcorn;": {
+  "characters": "\u231e",
+  "codepoints": [
+   8990
+  ]
+ },
+ "&dlcrop;": {
+  "characters": "\u230d",
+  "codepoints": [
+   8973
+  ]
+ },
+ "&dollar;": {
+  "characters": "$",
+  "codepoints": [
+   36
+  ]
+ },
+ "&dopf;": {
+  "characters": "\ud835\udd55",
+  "codepoints": [
+   120149
+  ]
+ },
+ "&dot;": {
+  "characters": "\u02d9",
+  "codepoints": [
+   729
+  ]
+ },
+ "&doteq;": {
+  "characters": "\u2250",
+  "codepoints": [
+   8784
+  ]
+ },
+ "&doteqdot;": {
+  "characters": "\u2251",
+  "codepoints": [
+   8785
+  ]
+ },
+ "&dotminus;": {
+  "characters": "\u2238",
+  "codepoints": [
+   8760
+  ]
+ },
+ "&dotplus;": {
+  "characters": "\u2214",
+  "codepoints": [
+   8724
+  ]
+ },
+ "&dotsquare;": {
+  "characters": "\u22a1",
+  "codepoints": [
+   8865
+  ]
+ },
+ "&doublebarwedge;": {
+  "characters": "\u2306",
+  "codepoints": [
+   8966
+  ]
+ },
+ "&downarrow;": {
+  "characters": "\u2193",
+  "codepoints": [
+   8595
+  ]
+ },
+ "&downdownarrows;": {
+  "characters": "\u21ca",
+  "codepoints": [
+   8650
+  ]
+ },
+ "&downharpoonleft;": {
+  "characters": "\u21c3",
+  "codepoints": [
+   8643
+  ]
+ },
+ "&downharpoonright;": {
+  "characters": "\u21c2",
+  "codepoints": [
+   8642
+  ]
+ },
+ "&drbkarow;": {
+  "characters": "\u2910",
+  "codepoints": [
+   10512
+  ]
+ },
+ "&drcorn;": {
+  "characters": "\u231f",
+  "codepoints": [
+   8991
+  ]
+ },
+ "&drcrop;": {
+  "characters": "\u230c",
+  "codepoints": [
+   8972
+  ]
+ },
+ "&dscr;": {
+  "characters": "\ud835\udcb9",
+  "codepoints": [
+   119993
+  ]
+ },
+ "&dscy;": {
+  "characters": "\u0455",
+  "codepoints": [
+   1109
+  ]
+ },
+ "&dsol;": {
+  "characters": "\u29f6",
+  "codepoints": [
+   10742
+  ]
+ },
+ "&dstrok;": {
+  "characters": "\u0111",
+  "codepoints": [
+   273
+  ]
+ },
+ "&dtdot;": {
+  "characters": "\u22f1",
+  "codepoints": [
+   8945
+  ]
+ },
+ "&dtri;": {
+  "characters": "\u25bf",
+  "codepoints": [
+   9663
+  ]
+ },
+ "&dtrif;": {
+  "characters": "\u25be",
+  "codepoints": [
+   9662
+  ]
+ },
+ "&duarr;": {
+  "characters": "\u21f5",
+  "codepoints": [
+   8693
+  ]
+ },
+ "&duhar;": {
+  "characters": "\u296f",
+  "codepoints": [
+   10607
+  ]
+ },
+ "&dwangle;": {
+  "characters": "\u29a6",
+  "codepoints": [
+   10662
+  ]
+ },
+ "&dzcy;": {
+  "characters": "\u045f",
+  "codepoints": [
+   1119
+  ]
+ },
+ "&dzigrarr;": {
+  "characters": "\u27ff",
+  "codepoints": [
+   10239
+  ]
+ },
+ "&eDDot;": {
+  "characters": "\u2a77",
+  "codepoints": [
+   10871
+  ]
+ },
+ "&eDot;": {
+  "characters": "\u2251",
+  "codepoints": [
+   8785
+  ]
+ },
+ "&eacute": {
+  "characters": "\u00e9",
+  "codepoints": [
+   233
+  ]
+ },
+ "&eacute;": {
+  "characters": "\u00e9",
+  "codepoints": [
+   233
+  ]
+ },
+ "&easter;": {
+  "characters": "\u2a6e",
+  "codepoints": [
+   10862
+  ]
+ },
+ "&ecaron;": {
+  "characters": "\u011b",
+  "codepoints": [
+   283
+  ]
+ },
+ "&ecir;": {
+  "characters": "\u2256",
+  "codepoints": [
+   8790
+  ]
+ },
+ "&ecirc": {
+  "characters": "\u00ea",
+  "codepoints": [
+   234
+  ]
+ },
+ "&ecirc;": {
+  "characters": "\u00ea",
+  "codepoints": [
+   234
+  ]
+ },
+ "&ecolon;": {
+  "characters": "\u2255",
+  "codepoints": [
+   8789
+  ]
+ },
+ "&ecy;": {
+  "characters": "\u044d",
+  "codepoints": [
+   1101
+  ]
+ },
+ "&edot;": {
+  "characters": "\u0117",
+  "codepoints": [
+   279
+  ]
+ },
+ "&ee;": {
+  "characters": "\u2147",
+  "codepoints": [
+   8519
+  ]
+ },
+ "&efDot;": {
+  "characters": "\u2252",
+  "codepoints": [
+   8786
+  ]
+ },
+ "&efr;": {
+  "characters": "\ud835\udd22",
+  "codepoints": [
+   120098
+  ]
+ },
+ "&eg;": {
+  "characters": "\u2a9a",
+  "codepoints": [
+   10906
+  ]
+ },
+ "&egrave": {
+  "characters": "\u00e8",
+  "codepoints": [
+   232
+  ]
+ },
+ "&egrave;": {
+  "characters": "\u00e8",
+  "codepoints": [
+   232
+  ]
+ },
+ "&egs;": {
+  "characters": "\u2a96",
+  "codepoints": [
+   10902
+  ]
+ },
+ "&egsdot;": {
+  "characters": "\u2a98",
+  "codepoints": [
+   10904
+  ]
+ },
+ "&el;": {
+  "characters": "\u2a99",
+  "codepoints": [
+   10905
+  ]
+ },
+ "&elinters;": {
+  "characters": "\u23e7",
+  "codepoints": [
+   9191
+  ]
+ },
+ "&ell;": {
+  "characters": "\u2113",
+  "codepoints": [
+   8467
+  ]
+ },
+ "&els;": {
+  "characters": "\u2a95",
+  "codepoints": [
+   10901
+  ]
+ },
+ "&elsdot;": {
+  "characters": "\u2a97",
+  "codepoints": [
+   10903
+  ]
+ },
+ "&emacr;": {
+  "characters": "\u0113",
+  "codepoints": [
+   275
+  ]
+ },
+ "&empty;": {
+  "characters": "\u2205",
+  "codepoints": [
+   8709
+  ]
+ },
+ "&emptyset;": {
+  "characters": "\u2205",
+  "codepoints": [
+   8709
+  ]
+ },
+ "&emptyv;": {
+  "characters": "\u2205",
+  "codepoints": [
+   8709
+  ]
+ },
+ "&emsp13;": {
+  "characters": "\u2004",
+  "codepoints": [
+   8196
+  ]
+ },
+ "&emsp14;": {
+  "characters": "\u2005",
+  "codepoints": [
+   8197
+  ]
+ },
+ "&emsp;": {
+  "characters": "\u2003",
+  "codepoints": [
+   8195
+  ]
+ },
+ "&eng;": {
+  "characters": "\u014b",
+  "codepoints": [
+   331
+  ]
+ },
+ "&ensp;": {
+  "characters": "\u2002",
+  "codepoints": [
+   8194
+  ]
+ },
+ "&eogon;": {
+  "characters": "\u0119",
+  "codepoints": [
+   281
+  ]
+ },
+ "&eopf;": {
+  "characters": "\ud835\udd56",
+  "codepoints": [
+   120150
+  ]
+ },
+ "&epar;": {
+  "characters": "\u22d5",
+  "codepoints": [
+   8917
+  ]
+ },
+ "&eparsl;": {
+  "characters": "\u29e3",
+  "codepoints": [
+   10723
+  ]
+ },
+ "&eplus;": {
+  "characters": "\u2a71",
+  "codepoints": [
+   10865
+  ]
+ },
+ "&epsi;": {
+  "characters": "\u03b5",
+  "codepoints": [
+   949
+  ]
+ },
+ "&epsilon;": {
+  "characters": "\u03b5",
+  "codepoints": [
+   949
+  ]
+ },
+ "&epsiv;": {
+  "characters": "\u03f5",
+  "codepoints": [
+   1013
+  ]
+ },
+ "&eqcirc;": {
+  "characters": "\u2256",
+  "codepoints": [
+   8790
+  ]
+ },
+ "&eqcolon;": {
+  "characters": "\u2255",
+  "codepoints": [
+   8789
+  ]
+ },
+ "&eqsim;": {
+  "characters": "\u2242",
+  "codepoints": [
+   8770
+  ]
+ },
+ "&eqslantgtr;": {
+  "characters": "\u2a96",
+  "codepoints": [
+   10902
+  ]
+ },
+ "&eqslantless;": {
+  "characters": "\u2a95",
+  "codepoints": [
+   10901
+  ]
+ },
+ "&equals;": {
+  "characters": "=",
+  "codepoints": [
+   61
+  ]
+ },
+ "&equest;": {
+  "characters": "\u225f",
+  "codepoints": [
+   8799
+  ]
+ },
+ "&equiv;": {
+  "characters": "\u2261",
+  "codepoints": [
+   8801
+  ]
+ },
+ "&equivDD;": {
+  "characters": "\u2a78",
+  "codepoints": [
+   10872
+  ]
+ },
+ "&eqvparsl;": {
+  "characters": "\u29e5",
+  "codepoints": [
+   10725
+  ]
+ },
+ "&erDot;": {
+  "characters": "\u2253",
+  "codepoints": [
+   8787
+  ]
+ },
+ "&erarr;": {
+  "characters": "\u2971",
+  "codepoints": [
+   10609
+  ]
+ },
+ "&escr;": {
+  "characters": "\u212f",
+  "codepoints": [
+   8495
+  ]
+ },
+ "&esdot;": {
+  "characters": "\u2250",
+  "codepoints": [
+   8784
+  ]
+ },
+ "&esim;": {
+  "characters": "\u2242",
+  "codepoints": [
+   8770
+  ]
+ },
+ "&eta;": {
+  "characters": "\u03b7",
+  "codepoints": [
+   951
+  ]
+ },
+ "&eth": {
+  "characters": "\u00f0",
+  "codepoints": [
+   240
+  ]
+ },
+ "&eth;": {
+  "characters": "\u00f0",
+  "codepoints": [
+   240
+  ]
+ },
+ "&euml": {
+  "characters": "\u00eb",
+  "codepoints": [
+   235
+  ]
+ },
+ "&euml;": {
+  "characters": "\u00eb",
+  "codepoints": [
+   235
+  ]
+ },
+ "&euro;": {
+  "characters": "\u20ac",
+  "codepoints": [
+   8364
+  ]
+ },
+ "&excl;": {
+  "characters": "!",
+  "codepoints": [
+   33
+  ]
+ },
+ "&exist;": {
+  "characters": "\u2203",
+  "codepoints": [
+   8707
+  ]
+ },
+ "&expectation;": {
+  "characters": "\u2130",
+  "codepoints": [
+   8496
+  ]
+ },
+ "&exponentiale;": {
+  "characters": "\u2147",
+  "codepoints": [
+   8519
+  ]
+ },
+ "&fallingdotseq;": {
+  "characters": "\u2252",
+  "codepoints": [
+   8786
+  ]
+ },
+ "&fcy;": {
+  "characters": "\u0444",
+  "codepoints": [
+   1092
+  ]
+ },
+ "&female;": {
+  "characters": "\u2640",
+  "codepoints": [
+   9792
+  ]
+ },
+ "&ffilig;": {
+  "characters": "\ufb03",
+  "codepoints": [
+   64259
+  ]
+ },
+ "&fflig;": {
+  "characters": "\ufb00",
+  "codepoints": [
+   64256
+  ]
+ },
+ "&ffllig;": {
+  "characters": "\ufb04",
+  "codepoints": [
+   64260
+  ]
+ },
+ "&ffr;": {
+  "characters": "\ud835\udd23",
+  "codepoints": [
+   120099
+  ]
+ },
+ "&filig;": {
+  "characters": "\ufb01",
+  "codepoints": [
+   64257
+  ]
+ },
+ "&fjlig;": {
+  "characters": "fj",
+  "codepoints": [
+   102,
+   106
+  ]
+ },
+ "&flat;": {
+  "characters": "\u266d",
+  "codepoints": [
+   9837
+  ]
+ },
+ "&fllig;": {
+  "characters": "\ufb02",
+  "codepoints": [
+   64258
+  ]
+ },
+ "&fltns;": {
+  "characters": "\u25b1",
+  "codepoints": [
+   9649
+  ]
+ },
+ "&fnof;": {
+  "characters": "\u0192",
+  "codepoints": [
+   402
+  ]
+ },
+ "&fopf;": {
+  "characters": "\ud835\udd57",
+  "codepoints": [
+   120151
+  ]
+ },
+ "&forall;": {
+  "characters": "\u2200",
+  "codepoints": [
+   8704
+  ]
+ },
+ "&fork;": {
+  "characters": "\u22d4",
+  "codepoints": [
+   8916
+  ]
+ },
+ "&forkv;": {
+  "characters": "\u2ad9",
+  "codepoints": [
+   10969
+  ]
+ },
+ "&fpartint;": {
+  "characters": "\u2a0d",
+  "codepoints": [
+   10765
+  ]
+ },
+ "&frac12": {
+  "characters": "\u00bd",
+  "codepoints": [
+   189
+  ]
+ },
+ "&frac12;": {
+  "characters": "\u00bd",
+  "codepoints": [
+   189
+  ]
+ },
+ "&frac13;": {
+  "characters": "\u2153",
+  "codepoints": [
+   8531
+  ]
+ },
+ "&frac14": {
+  "characters": "\u00bc",
+  "codepoints": [
+   188
+  ]
+ },
+ "&frac14;": {
+  "characters": "\u00bc",
+  "codepoints": [
+   188
+  ]
+ },
+ "&frac15;": {
+  "characters": "\u2155",
+  "codepoints": [
+   8533
+  ]
+ },
+ "&frac16;": {
+  "characters": "\u2159",
+  "codepoints": [
+   8537
+  ]
+ },
+ "&frac18;": {
+  "characters": "\u215b",
+  "codepoints": [
+   8539
+  ]
+ },
+ "&frac23;": {
+  "characters": "\u2154",
+  "codepoints": [
+   8532
+  ]
+ },
+ "&frac25;": {
+  "characters": "\u2156",
+  "codepoints": [
+   8534
+  ]
+ },
+ "&frac34": {
+  "characters": "\u00be",
+  "codepoints": [
+   190
+  ]
+ },
+ "&frac34;": {
+  "characters": "\u00be",
+  "codepoints": [
+   190
+  ]
+ },
+ "&frac35;": {
+  "characters": "\u2157",
+  "codepoints": [
+   8535
+  ]
+ },
+ "&frac38;": {
+  "characters": "\u215c",
+  "codepoints": [
+   8540
+  ]
+ },
+ "&frac45;": {
+  "characters": "\u2158",
+  "codepoints": [
+   8536
+  ]
+ },
+ "&frac56;": {
+  "characters": "\u215a",
+  "codepoints": [
+   8538
+  ]
+ },
+ "&frac58;": {
+  "characters": "\u215d",
+  "codepoints": [
+   8541
+  ]
+ },
+ "&frac78;": {
+  "characters": "\u215e",
+  "codepoints": [
+   8542
+  ]
+ },
+ "&frasl;": {
+  "characters": "\u2044",
+  "codepoints": [
+   8260
+  ]
+ },
+ "&frown;": {
+  "characters": "\u2322",
+  "codepoints": [
+   8994
+  ]
+ },
+ "&fscr;": {
+  "characters": "\ud835\udcbb",
+  "codepoints": [
+   119995
+  ]
+ },
+ "&gE;": {
+  "characters": "\u2267",
+  "codepoints": [
+   8807
+  ]
+ },
+ "&gEl;": {
+  "characters": "\u2a8c",
+  "codepoints": [
+   10892
+  ]
+ },
+ "&gacute;": {
+  "characters": "\u01f5",
+  "codepoints": [
+   501
+  ]
+ },
+ "&gamma;": {
+  "characters": "\u03b3",
+  "codepoints": [
+   947
+  ]
+ },
+ "&gammad;": {
+  "characters": "\u03dd",
+  "codepoints": [
+   989
+  ]
+ },
+ "&gap;": {
+  "characters": "\u2a86",
+  "codepoints": [
+   10886
+  ]
+ },
+ "&gbreve;": {
+  "characters": "\u011f",
+  "codepoints": [
+   287
+  ]
+ },
+ "&gcirc;": {
+  "characters": "\u011d",
+  "codepoints": [
+   285
+  ]
+ },
+ "&gcy;": {
+  "characters": "\u0433",
+  "codepoints": [
+   1075
+  ]
+ },
+ "&gdot;": {
+  "characters": "\u0121",
+  "codepoints": [
+   289
+  ]
+ },
+ "&ge;": {
+  "characters": "\u2265",
+  "codepoints": [
+   8805
+  ]
+ },
+ "&gel;": {
+  "characters": "\u22db",
+  "codepoints": [
+   8923
+  ]
+ },
+ "&geq;": {
+  "characters": "\u2265",
+  "codepoints": [
+   8805
+  ]
+ },
+ "&geqq;": {
+  "characters": "\u2267",
+  "codepoints": [
+   8807
+  ]
+ },
+ "&geqslant;": {
+  "characters": "\u2a7e",
+  "codepoints": [
+   10878
+  ]
+ },
+ "&ges;": {
+  "characters": "\u2a7e",
+  "codepoints": [
+   10878
+  ]
+ },
+ "&gescc;": {
+  "characters": "\u2aa9",
+  "codepoints": [
+   10921
+  ]
+ },
+ "&gesdot;": {
+  "characters": "\u2a80",
+  "codepoints": [
+   10880
+  ]
+ },
+ "&gesdoto;": {
+  "characters": "\u2a82",
+  "codepoints": [
+   10882
+  ]
+ },
+ "&gesdotol;": {
+  "characters": "\u2a84",
+  "codepoints": [
+   10884
+  ]
+ },
+ "&gesl;": {
+  "characters": "\u22db\ufe00",
+  "codepoints": [
+   8923,
+   65024
+  ]
+ },
+ "&gesles;": {
+  "characters": "\u2a94",
+  "codepoints": [
+   10900
+  ]
+ },
+ "&gfr;": {
+  "characters": "\ud835\udd24",
+  "codepoints": [
+   120100
+  ]
+ },
+ "&gg;": {
+  "characters": "\u226b",
+  "codepoints": [
+   8811
+  ]
+ },
+ "&ggg;": {
+  "characters": "\u22d9",
+  "codepoints": [
+   8921
+  ]
+ },
+ "&gimel;": {
+  "characters": "\u2137",
+  "codepoints": [
+   8503
+  ]
+ },
+ "&gjcy;": {
+  "characters": "\u0453",
+  "codepoints": [
+   1107
+  ]
+ },
+ "&gl;": {
+  "characters": "\u2277",
+  "codepoints": [
+   8823
+  ]
+ },
+ "&glE;": {
+  "characters": "\u2a92",
+  "codepoints": [
+   10898
+  ]
+ },
+ "&gla;": {
+  "characters": "\u2aa5",
+  "codepoints": [
+   10917
+  ]
+ },
+ "&glj;": {
+  "characters": "\u2aa4",
+  "codepoints": [
+   10916
+  ]
+ },
+ "&gnE;": {
+  "characters": "\u2269",
+  "codepoints": [
+   8809
+  ]
+ },
+ "&gnap;": {
+  "characters": "\u2a8a",
+  "codepoints": [
+   10890
+  ]
+ },
+ "&gnapprox;": {
+  "characters": "\u2a8a",
+  "codepoints": [
+   10890
+  ]
+ },
+ "&gne;": {
+  "characters": "\u2a88",
+  "codepoints": [
+   10888
+  ]
+ },
+ "&gneq;": {
+  "characters": "\u2a88",
+  "codepoints": [
+   10888
+  ]
+ },
+ "&gneqq;": {
+  "characters": "\u2269",
+  "codepoints": [
+   8809
+  ]
+ },
+ "&gnsim;": {
+  "characters": "\u22e7",
+  "codepoints": [
+   8935
+  ]
+ },
+ "&gopf;": {
+  "characters": "\ud835\udd58",
+  "codepoints": [
+   120152
+  ]
+ },
+ "&grave;": {
+  "characters": "`",
+  "codepoints": [
+   96
+  ]
+ },
+ "&gscr;": {
+  "characters": "\u210a",
+  "codepoints": [
+   8458
+  ]
+ },
+ "&gsim;": {
+  "characters": "\u2273",
+  "codepoints": [
+   8819
+  ]
+ },
+ "&gsime;": {
+  "characters": "\u2a8e",
+  "codepoints": [
+   10894
+  ]
+ },
+ "&gsiml;": {
+  "characters": "\u2a90",
+  "codepoints": [
+   10896
+  ]
+ },
+ "&gt": {
+  "characters": ">",
+  "codepoints": [
+   62
+  ]
+ },
+ "&gt;": {
+  "characters": ">",
+  "codepoints": [
+   62
+  ]
+ },
+ "&gtcc;": {
+  "characters": "\u2aa7",
+  "codepoints": [
+   10919
+  ]
+ },
+ "&gtcir;": {
+  "characters": "\u2a7a",
+  "codepoints": [
+   10874
+  ]
+ },
+ "&gtdot;": {
+  "characters": "\u22d7",
+  "codepoints": [
+   8919
+  ]
+ },
+ "&gtlPar;": {
+  "characters": "\u2995",
+  "codepoints": [
+   10645
+  ]
+ },
+ "&gtquest;": {
+  "characters": "\u2a7c",
+  "codepoints": [
+   10876
+  ]
+ },
+ "&gtrapprox;": {
+  "characters": "\u2a86",
+  "codepoints": [
+   10886
+  ]
+ },
+ "&gtrarr;": {
+  "characters": "\u2978",
+  "codepoints": [
+   10616
+  ]
+ },
+ "&gtrdot;": {
+  "characters": "\u22d7",
+  "codepoints": [
+   8919
+  ]
+ },
+ "&gtreqless;": {
+  "characters": "\u22db",
+  "codepoints": [
+   8923
+  ]
+ },
+ "&gtreqqless;": {
+  "characters": "\u2a8c",
+  "codepoints": [
+   10892
+  ]
+ },
+ "&gtrless;": {
+  "characters": "\u2277",
+  "codepoints": [
+   8823
+  ]
+ },
+ "&gtrsim;": {
+  "characters": "\u2273",
+  "codepoints": [
+   8819
+  ]
+ },
+ "&gvertneqq;": {
+  "characters": "\u2269\ufe00",
+  "codepoints": [
+   8809,
+   65024
+  ]
+ },
+ "&gvnE;": {
+  "characters": "\u2269\ufe00",
+  "codepoints": [
+   8809,
+   65024
+  ]
+ },
+ "&hArr;": {
+  "characters": "\u21d4",
+  "codepoints": [
+   8660
+  ]
+ },
+ "&hairsp;": {
+  "characters": "\u200a",
+  "codepoints": [
+   8202
+  ]
+ },
+ "&half;": {
+  "characters": "\u00bd",
+  "codepoints": [
+   189
+  ]
+ },
+ "&hamilt;": {
+  "characters": "\u210b",
+  "codepoints": [
+   8459
+  ]
+ },
+ "&hardcy;": {
+  "characters": "\u044a",
+  "codepoints": [
+   1098
+  ]
+ },
+ "&harr;": {
+  "characters": "\u2194",
+  "codepoints": [
+   8596
+  ]
+ },
+ "&harrcir;": {
+  "characters": "\u2948",
+  "codepoints": [
+   10568
+  ]
+ },
+ "&harrw;": {
+  "characters": "\u21ad",
+  "codepoints": [
+   8621
+  ]
+ },
+ "&hbar;": {
+  "characters": "\u210f",
+  "codepoints": [
+   8463
+  ]
+ },
+ "&hcirc;": {
+  "characters": "\u0125",
+  "codepoints": [
+   293
+  ]
+ },
+ "&hearts;": {
+  "characters": "\u2665",
+  "codepoints": [
+   9829
+  ]
+ },
+ "&heartsuit;": {
+  "characters": "\u2665",
+  "codepoints": [
+   9829
+  ]
+ },
+ "&hellip;": {
+  "characters": "\u2026",
+  "codepoints": [
+   8230
+  ]
+ },
+ "&hercon;": {
+  "characters": "\u22b9",
+  "codepoints": [
+   8889
+  ]
+ },
+ "&hfr;": {
+  "characters": "\ud835\udd25",
+  "codepoints": [
+   120101
+  ]
+ },
+ "&hksearow;": {
+  "characters": "\u2925",
+  "codepoints": [
+   10533
+  ]
+ },
+ "&hkswarow;": {
+  "characters": "\u2926",
+  "codepoints": [
+   10534
+  ]
+ },
+ "&hoarr;": {
+  "characters": "\u21ff",
+  "codepoints": [
+   8703
+  ]
+ },
+ "&homtht;": {
+  "characters": "\u223b",
+  "codepoints": [
+   8763
+  ]
+ },
+ "&hookleftarrow;": {
+  "characters": "\u21a9",
+  "codepoints": [
+   8617
+  ]
+ },
+ "&hookrightarrow;": {
+  "characters": "\u21aa",
+  "codepoints": [
+   8618
+  ]
+ },
+ "&hopf;": {
+  "characters": "\ud835\udd59",
+  "codepoints": [
+   120153
+  ]
+ },
+ "&horbar;": {
+  "characters": "\u2015",
+  "codepoints": [
+   8213
+  ]
+ },
+ "&hscr;": {
+  "characters": "\ud835\udcbd",
+  "codepoints": [
+   119997
+  ]
+ },
+ "&hslash;": {
+  "characters": "\u210f",
+  "codepoints": [
+   8463
+  ]
+ },
+ "&hstrok;": {
+  "characters": "\u0127",
+  "codepoints": [
+   295
+  ]
+ },
+ "&hybull;": {
+  "characters": "\u2043",
+  "codepoints": [
+   8259
+  ]
+ },
+ "&hyphen;": {
+  "characters": "\u2010",
+  "codepoints": [
+   8208
+  ]
+ },
+ "&iacute": {
+  "characters": "\u00ed",
+  "codepoints": [
+   237
+  ]
+ },
+ "&iacute;": {
+  "characters": "\u00ed",
+  "codepoints": [
+   237
+  ]
+ },
+ "&ic;": {
+  "characters": "\u2063",
+  "codepoints": [
+   8291
+  ]
+ },
+ "&icirc": {
+  "characters": "\u00ee",
+  "codepoints": [
+   238
+  ]
+ },
+ "&icirc;": {
+  "characters": "\u00ee",
+  "codepoints": [
+   238
+  ]
+ },
+ "&icy;": {
+  "characters": "\u0438",
+  "codepoints": [
+   1080
+  ]
+ },
+ "&iecy;": {
+  "characters": "\u0435",
+  "codepoints": [
+   1077
+  ]
+ },
+ "&iexcl": {
+  "characters": "\u00a1",
+  "codepoints": [
+   161
+  ]
+ },
+ "&iexcl;": {
+  "characters": "\u00a1",
+  "codepoints": [
+   161
+  ]
+ },
+ "&iff;": {
+  "characters": "\u21d4",
+  "codepoints": [
+   8660
+  ]
+ },
+ "&ifr;": {
+  "characters": "\ud835\udd26",
+  "codepoints": [
+   120102
+  ]
+ },
+ "&igrave": {
+  "characters": "\u00ec",
+  "codepoints": [
+   236
+  ]
+ },
+ "&igrave;": {
+  "characters": "\u00ec",
+  "codepoints": [
+   236
+  ]
+ },
+ "&ii;": {
+  "characters": "\u2148",
+  "codepoints": [
+   8520
+  ]
+ },
+ "&iiiint;": {
+  "characters": "\u2a0c",
+  "codepoints": [
+   10764
+  ]
+ },
+ "&iiint;": {
+  "characters": "\u222d",
+  "codepoints": [
+   8749
+  ]
+ },
+ "&iinfin;": {
+  "characters": "\u29dc",
+  "codepoints": [
+   10716
+  ]
+ },
+ "&iiota;": {
+  "characters": "\u2129",
+  "codepoints": [
+   8489
+  ]
+ },
+ "&ijlig;": {
+  "characters": "\u0133",
+  "codepoints": [
+   307
+  ]
+ },
+ "&imacr;": {
+  "characters": "\u012b",
+  "codepoints": [
+   299
+  ]
+ },
+ "&image;": {
+  "characters": "\u2111",
+  "codepoints": [
+   8465
+  ]
+ },
+ "&imagline;": {
+  "characters": "\u2110",
+  "codepoints": [
+   8464
+  ]
+ },
+ "&imagpart;": {
+  "characters": "\u2111",
+  "codepoints": [
+   8465
+  ]
+ },
+ "&imath;": {
+  "characters": "\u0131",
+  "codepoints": [
+   305
+  ]
+ },
+ "&imof;": {
+  "characters": "\u22b7",
+  "codepoints": [
+   8887
+  ]
+ },
+ "&imped;": {
+  "characters": "\u01b5",
+  "codepoints": [
+   437
+  ]
+ },
+ "&in;": {
+  "characters": "\u2208",
+  "codepoints": [
+   8712
+  ]
+ },
+ "&incare;": {
+  "characters": "\u2105",
+  "codepoints": [
+   8453
+  ]
+ },
+ "&infin;": {
+  "characters": "\u221e",
+  "codepoints": [
+   8734
+  ]
+ },
+ "&infintie;": {
+  "characters": "\u29dd",
+  "codepoints": [
+   10717
+  ]
+ },
+ "&inodot;": {
+  "characters": "\u0131",
+  "codepoints": [
+   305
+  ]
+ },
+ "&int;": {
+  "characters": "\u222b",
+  "codepoints": [
+   8747
+  ]
+ },
+ "&intcal;": {
+  "characters": "\u22ba",
+  "codepoints": [
+   8890
+  ]
+ },
+ "&integers;": {
+  "characters": "\u2124",
+  "codepoints": [
+   8484
+  ]
+ },
+ "&intercal;": {
+  "characters": "\u22ba",
+  "codepoints": [
+   8890
+  ]
+ },
+ "&intlarhk;": {
+  "characters": "\u2a17",
+  "codepoints": [
+   10775
+  ]
+ },
+ "&intprod;": {
+  "characters": "\u2a3c",
+  "codepoints": [
+   10812
+  ]
+ },
+ "&iocy;": {
+  "characters": "\u0451",
+  "codepoints": [
+   1105
+  ]
+ },
+ "&iogon;": {
+  "characters": "\u012f",
+  "codepoints": [
+   303
+  ]
+ },
+ "&iopf;": {
+  "characters": "\ud835\udd5a",
+  "codepoints": [
+   120154
+  ]
+ },
+ "&iota;": {
+  "characters": "\u03b9",
+  "codepoints": [
+   953
+  ]
+ },
+ "&iprod;": {
+  "characters": "\u2a3c",
+  "codepoints": [
+   10812
+  ]
+ },
+ "&iquest": {
+  "characters": "\u00bf",
+  "codepoints": [
+   191
+  ]
+ },
+ "&iquest;": {
+  "characters": "\u00bf",
+  "codepoints": [
+   191
+  ]
+ },
+ "&iscr;": {
+  "characters": "\ud835\udcbe",
+  "codepoints": [
+   119998
+  ]
+ },
+ "&isin;": {
+  "characters": "\u2208",
+  "codepoints": [
+   8712
+  ]
+ },
+ "&isinE;": {
+  "characters": "\u22f9",
+  "codepoints": [
+   8953
+  ]
+ },
+ "&isindot;": {
+  "characters": "\u22f5",
+  "codepoints": [
+   8949
+  ]
+ },
+ "&isins;": {
+  "characters": "\u22f4",
+  "codepoints": [
+   8948
+  ]
+ },
+ "&isinsv;": {
+  "characters": "\u22f3",
+  "codepoints": [
+   8947
+  ]
+ },
+ "&isinv;": {
+  "characters": "\u2208",
+  "codepoints": [
+   8712
+  ]
+ },
+ "&it;": {
+  "characters": "\u2062",
+  "codepoints": [
+   8290
+  ]
+ },
+ "&itilde;": {
+  "characters": "\u0129",
+  "codepoints": [
+   297
+  ]
+ },
+ "&iukcy;": {
+  "characters": "\u0456",
+  "codepoints": [
+   1110
+  ]
+ },
+ "&iuml": {
+  "characters": "\u00ef",
+  "codepoints": [
+   239
+  ]
+ },
+ "&iuml;": {
+  "characters": "\u00ef",
+  "codepoints": [
+   239
+  ]
+ },
+ "&jcirc;": {
+  "characters": "\u0135",
+  "codepoints": [
+   309
+  ]
+ },
+ "&jcy;": {
+  "characters": "\u0439",
+  "codepoints": [
+   1081
+  ]
+ },
+ "&jfr;": {
+  "characters": "\ud835\udd27",
+  "codepoints": [
+   120103
+  ]
+ },
+ "&jmath;": {
+  "characters": "\u0237",
+  "codepoints": [
+   567
+  ]
+ },
+ "&jopf;": {
+  "characters": "\ud835\udd5b",
+  "codepoints": [
+   120155
+  ]
+ },
+ "&jscr;": {
+  "characters": "\ud835\udcbf",
+  "codepoints": [
+   119999
+  ]
+ },
+ "&jsercy;": {
+  "characters": "\u0458",
+  "codepoints": [
+   1112
+  ]
+ },
+ "&jukcy;": {
+  "characters": "\u0454",
+  "codepoints": [
+   1108
+  ]
+ },
+ "&kappa;": {
+  "characters": "\u03ba",
+  "codepoints": [
+   954
+  ]
+ },
+ "&kappav;": {
+  "characters": "\u03f0",
+  "codepoints": [
+   1008
+  ]
+ },
+ "&kcedil;": {
+  "characters": "\u0137",
+  "codepoints": [
+   311
+  ]
+ },
+ "&kcy;": {
+  "characters": "\u043a",
+  "codepoints": [
+   1082
+  ]
+ },
+ "&kfr;": {
+  "characters": "\ud835\udd28",
+  "codepoints": [
+   120104
+  ]
+ },
+ "&kgreen;": {
+  "characters": "\u0138",
+  "codepoints": [
+   312
+  ]
+ },
+ "&khcy;": {
+  "characters": "\u0445",
+  "codepoints": [
+   1093
+  ]
+ },
+ "&kjcy;": {
+  "characters": "\u045c",
+  "codepoints": [
+   1116
+  ]
+ },
+ "&kopf;": {
+  "characters": "\ud835\udd5c",
+  "codepoints": [
+   120156
+  ]
+ },
+ "&kscr;": {
+  "characters": "\ud835\udcc0",
+  "codepoints": [
+   120000
+  ]
+ },
+ "&lAarr;": {
+  "characters": "\u21da",
+  "codepoints": [
+   8666
+  ]
+ },
+ "&lArr;": {
+  "characters": "\u21d0",
+  "codepoints": [
+   8656
+  ]
+ },
+ "&lAtail;": {
+  "characters": "\u291b",
+  "codepoints": [
+   10523
+  ]
+ },
+ "&lBarr;": {
+  "characters": "\u290e",
+  "codepoints": [
+   10510
+  ]
+ },
+ "&lE;": {
+  "characters": "\u2266",
+  "codepoints": [
+   8806
+  ]
+ },
+ "&lEg;": {
+  "characters": "\u2a8b",
+  "codepoints": [
+   10891
+  ]
+ },
+ "&lHar;": {
+  "characters": "\u2962",
+  "codepoints": [
+   10594
+  ]
+ },
+ "&lacute;": {
+  "characters": "\u013a",
+  "codepoints": [
+   314
+  ]
+ },
+ "&laemptyv;": {
+  "characters": "\u29b4",
+  "codepoints": [
+   10676
+  ]
+ },
+ "&lagran;": {
+  "characters": "\u2112",
+  "codepoints": [
+   8466
+  ]
+ },
+ "&lambda;": {
+  "characters": "\u03bb",
+  "codepoints": [
+   955
+  ]
+ },
+ "&lang;": {
+  "characters": "\u27e8",
+  "codepoints": [
+   10216
+  ]
+ },
+ "&langd;": {
+  "characters": "\u2991",
+  "codepoints": [
+   10641
+  ]
+ },
+ "&langle;": {
+  "characters": "\u27e8",
+  "codepoints": [
+   10216
+  ]
+ },
+ "&lap;": {
+  "characters": "\u2a85",
+  "codepoints": [
+   10885
+  ]
+ },
+ "&laquo": {
+  "characters": "\u00ab",
+  "codepoints": [
+   171
+  ]
+ },
+ "&laquo;": {
+  "characters": "\u00ab",
+  "codepoints": [
+   171
+  ]
+ },
+ "&larr;": {
+  "characters": "\u2190",
+  "codepoints": [
+   8592
+  ]
+ },
+ "&larrb;": {
+  "characters": "\u21e4",
+  "codepoints": [
+   8676
+  ]
+ },
+ "&larrbfs;": {
+  "characters": "\u291f",
+  "codepoints": [
+   10527
+  ]
+ },
+ "&larrfs;": {
+  "characters": "\u291d",
+  "codepoints": [
+   10525
+  ]
+ },
+ "&larrhk;": {
+  "characters": "\u21a9",
+  "codepoints": [
+   8617
+  ]
+ },
+ "&larrlp;": {
+  "characters": "\u21ab",
+  "codepoints": [
+   8619
+  ]
+ },
+ "&larrpl;": {
+  "characters": "\u2939",
+  "codepoints": [
+   10553
+  ]
+ },
+ "&larrsim;": {
+  "characters": "\u2973",
+  "codepoints": [
+   10611
+  ]
+ },
+ "&larrtl;": {
+  "characters": "\u21a2",
+  "codepoints": [
+   8610
+  ]
+ },
+ "&lat;": {
+  "characters": "\u2aab",
+  "codepoints": [
+   10923
+  ]
+ },
+ "&latail;": {
+  "characters": "\u2919",
+  "codepoints": [
+   10521
+  ]
+ },
+ "&late;": {
+  "characters": "\u2aad",
+  "codepoints": [
+   10925
+  ]
+ },
+ "&lates;": {
+  "characters": "\u2aad\ufe00",
+  "codepoints": [
+   10925,
+   65024
+  ]
+ },
+ "&lbarr;": {
+  "characters": "\u290c",
+  "codepoints": [
+   10508
+  ]
+ },
+ "&lbbrk;": {
+  "characters": "\u2772",
+  "codepoints": [
+   10098
+  ]
+ },
+ "&lbrace;": {
+  "characters": "{",
+  "codepoints": [
+   123
+  ]
+ },
+ "&lbrack;": {
+  "characters": "[",
+  "codepoints": [
+   91
+  ]
+ },
+ "&lbrke;": {
+  "characters": "\u298b",
+  "codepoints": [
+   10635
+  ]
+ },
+ "&lbrksld;": {
+  "characters": "\u298f",
+  "codepoints": [
+   10639
+  ]
+ },
+ "&lbrkslu;": {
+  "characters": "\u298d",
+  "codepoints": [
+   10637
+  ]
+ },
+ "&lcaron;": {
+  "characters": "\u013e",
+  "codepoints": [
+   318
+  ]
+ },
+ "&lcedil;": {
+  "characters": "\u013c",
+  "codepoints": [
+   316
+  ]
+ },
+ "&lceil;": {
+  "characters": "\u2308",
+  "codepoints": [
+   8968
+  ]
+ },
+ "&lcub;": {
+  "characters": "{",
+  "codepoints": [
+   123
+  ]
+ },
+ "&lcy;": {
+  "characters": "\u043b",
+  "codepoints": [
+   1083
+  ]
+ },
+ "&ldca;": {
+  "characters": "\u2936",
+  "codepoints": [
+   10550
+  ]
+ },
+ "&ldquo;": {
+  "characters": "\u201c",
+  "codepoints": [
+   8220
+  ]
+ },
+ "&ldquor;": {
+  "characters": "\u201e",
+  "codepoints": [
+   8222
+  ]
+ },
+ "&ldrdhar;": {
+  "characters": "\u2967",
+  "codepoints": [
+   10599
+  ]
+ },
+ "&ldrushar;": {
+  "characters": "\u294b",
+  "codepoints": [
+   10571
+  ]
+ },
+ "&ldsh;": {
+  "characters": "\u21b2",
+  "codepoints": [
+   8626
+  ]
+ },
+ "&le;": {
+  "characters": "\u2264",
+  "codepoints": [
+   8804
+  ]
+ },
+ "&leftarrow;": {
+  "characters": "\u2190",
+  "codepoints": [
+   8592
+  ]
+ },
+ "&leftarrowtail;": {
+  "characters": "\u21a2",
+  "codepoints": [
+   8610
+  ]
+ },
+ "&leftharpoondown;": {
+  "characters": "\u21bd",
+  "codepoints": [
+   8637
+  ]
+ },
+ "&leftharpoonup;": {
+  "characters": "\u21bc",
+  "codepoints": [
+   8636
+  ]
+ },
+ "&leftleftarrows;": {
+  "characters": "\u21c7",
+  "codepoints": [
+   8647
+  ]
+ },
+ "&leftrightarrow;": {
+  "characters": "\u2194",
+  "codepoints": [
+   8596
+  ]
+ },
+ "&leftrightarrows;": {
+  "characters": "\u21c6",
+  "codepoints": [
+   8646
+  ]
+ },
+ "&leftrightharpoons;": {
+  "characters": "\u21cb",
+  "codepoints": [
+   8651
+  ]
+ },
+ "&leftrightsquigarrow;": {
+  "characters": "\u21ad",
+  "codepoints": [
+   8621
+  ]
+ },
+ "&leftthreetimes;": {
+  "characters": "\u22cb",
+  "codepoints": [
+   8907
+  ]
+ },
+ "&leg;": {
+  "characters": "\u22da",
+  "codepoints": [
+   8922
+  ]
+ },
+ "&leq;": {
+  "characters": "\u2264",
+  "codepoints": [
+   8804
+  ]
+ },
+ "&leqq;": {
+  "characters": "\u2266",
+  "codepoints": [
+   8806
+  ]
+ },
+ "&leqslant;": {
+  "characters": "\u2a7d",
+  "codepoints": [
+   10877
+  ]
+ },
+ "&les;": {
+  "characters": "\u2a7d",
+  "codepoints": [
+   10877
+  ]
+ },
+ "&lescc;": {
+  "characters": "\u2aa8",
+  "codepoints": [
+   10920
+  ]
+ },
+ "&lesdot;": {
+  "characters": "\u2a7f",
+  "codepoints": [
+   10879
+  ]
+ },
+ "&lesdoto;": {
+  "characters": "\u2a81",
+  "codepoints": [
+   10881
+  ]
+ },
+ "&lesdotor;": {
+  "characters": "\u2a83",
+  "codepoints": [
+   10883
+  ]
+ },
+ "&lesg;": {
+  "characters": "\u22da\ufe00",
+  "codepoints": [
+   8922,
+   65024
+  ]
+ },
+ "&lesges;": {
+  "characters": "\u2a93",
+  "codepoints": [
+   10899
+  ]
+ },
+ "&lessapprox;": {
+  "characters": "\u2a85",
+  "codepoints": [
+   10885
+  ]
+ },
+ "&lessdot;": {
+  "characters": "\u22d6",
+  "codepoints": [
+   8918
+  ]
+ },
+ "&lesseqgtr;": {
+  "characters": "\u22da",
+  "codepoints": [
+   8922
+  ]
+ },
+ "&lesseqqgtr;": {
+  "characters": "\u2a8b",
+  "codepoints": [
+   10891
+  ]
+ },
+ "&lessgtr;": {
+  "characters": "\u2276",
+  "codepoints": [
+   8822
+  ]
+ },
+ "&lesssim;": {
+  "characters": "\u2272",
+  "codepoints": [
+   8818
+  ]
+ },
+ "&lfisht;": {
+  "characters": "\u297c",
+  "codepoints": [
+   10620
+  ]
+ },
+ "&lfloor;": {
+  "characters": "\u230a",
+  "codepoints": [
+   8970
+  ]
+ },
+ "&lfr;": {
+  "characters": "\ud835\udd29",
+  "codepoints": [
+   120105
+  ]
+ },
+ "&lg;": {
+  "characters": "\u2276",
+  "codepoints": [
+   8822
+  ]
+ },
+ "&lgE;": {
+  "characters": "\u2a91",
+  "codepoints": [
+   10897
+  ]
+ },
+ "&lhard;": {
+  "characters": "\u21bd",
+  "codepoints": [
+   8637
+  ]
+ },
+ "&lharu;": {
+  "characters": "\u21bc",
+  "codepoints": [
+   8636
+  ]
+ },
+ "&lharul;": {
+  "characters": "\u296a",
+  "codepoints": [
+   10602
+  ]
+ },
+ "&lhblk;": {
+  "characters": "\u2584",
+  "codepoints": [
+   9604
+  ]
+ },
+ "&ljcy;": {
+  "characters": "\u0459",
+  "codepoints": [
+   1113
+  ]
+ },
+ "&ll;": {
+  "characters": "\u226a",
+  "codepoints": [
+   8810
+  ]
+ },
+ "&llarr;": {
+  "characters": "\u21c7",
+  "codepoints": [
+   8647
+  ]
+ },
+ "&llcorner;": {
+  "characters": "\u231e",
+  "codepoints": [
+   8990
+  ]
+ },
+ "&llhard;": {
+  "characters": "\u296b",
+  "codepoints": [
+   10603
+  ]
+ },
+ "&lltri;": {
+  "characters": "\u25fa",
+  "codepoints": [
+   9722
+  ]
+ },
+ "&lmidot;": {
+  "characters": "\u0140",
+  "codepoints": [
+   320
+  ]
+ },
+ "&lmoust;": {
+  "characters": "\u23b0",
+  "codepoints": [
+   9136
+  ]
+ },
+ "&lmoustache;": {
+  "characters": "\u23b0",
+  "codepoints": [
+   9136
+  ]
+ },
+ "&lnE;": {
+  "characters": "\u2268",
+  "codepoints": [
+   8808
+  ]
+ },
+ "&lnap;": {
+  "characters": "\u2a89",
+  "codepoints": [
+   10889
+  ]
+ },
+ "&lnapprox;": {
+  "characters": "\u2a89",
+  "codepoints": [
+   10889
+  ]
+ },
+ "&lne;": {
+  "characters": "\u2a87",
+  "codepoints": [
+   10887
+  ]
+ },
+ "&lneq;": {
+  "characters": "\u2a87",
+  "codepoints": [
+   10887
+  ]
+ },
+ "&lneqq;": {
+  "characters": "\u2268",
+  "codepoints": [
+   8808
+  ]
+ },
+ "&lnsim;": {
+  "characters": "\u22e6",
+  "codepoints": [
+   8934
+  ]
+ },
+ "&loang;": {
+  "characters": "\u27ec",
+  "codepoints": [
+   10220
+  ]
+ },
+ "&loarr;": {
+  "characters": "\u21fd",
+  "codepoints": [
+   8701
+  ]
+ },
+ "&lobrk;": {
+  "characters": "\u27e6",
+  "codepoints": [
+   10214
+  ]
+ },
+ "&longleftarrow;": {
+  "characters": "\u27f5",
+  "codepoints": [
+   10229
+  ]
+ },
+ "&longleftrightarrow;": {
+  "characters": "\u27f7",
+  "codepoints": [
+   10231
+  ]
+ },
+ "&longmapsto;": {
+  "characters": "\u27fc",
+  "codepoints": [
+   10236
+  ]
+ },
+ "&longrightarrow;": {
+  "characters": "\u27f6",
+  "codepoints": [
+   10230
+  ]
+ },
+ "&looparrowleft;": {
+  "characters": "\u21ab",
+  "codepoints": [
+   8619
+  ]
+ },
+ "&looparrowright;": {
+  "characters": "\u21ac",
+  "codepoints": [
+   8620
+  ]
+ },
+ "&lopar;": {
+  "characters": "\u2985",
+  "codepoints": [
+   10629
+  ]
+ },
+ "&lopf;": {
+  "characters": "\ud835\udd5d",
+  "codepoints": [
+   120157
+  ]
+ },
+ "&loplus;": {
+  "characters": "\u2a2d",
+  "codepoints": [
+   10797
+  ]
+ },
+ "&lotimes;": {
+  "characters": "\u2a34",
+  "codepoints": [
+   10804
+  ]
+ },
+ "&lowast;": {
+  "characters": "\u2217",
+  "codepoints": [
+   8727
+  ]
+ },
+ "&lowbar;": {
+  "characters": "_",
+  "codepoints": [
+   95
+  ]
+ },
+ "&loz;": {
+  "characters": "\u25ca",
+  "codepoints": [
+   9674
+  ]
+ },
+ "&lozenge;": {
+  "characters": "\u25ca",
+  "codepoints": [
+   9674
+  ]
+ },
+ "&lozf;": {
+  "characters": "\u29eb",
+  "codepoints": [
+   10731
+  ]
+ },
+ "&lpar;": {
+  "characters": "(",
+  "codepoints": [
+   40
+  ]
+ },
+ "&lparlt;": {
+  "characters": "\u2993",
+  "codepoints": [
+   10643
+  ]
+ },
+ "&lrarr;": {
+  "characters": "\u21c6",
+  "codepoints": [
+   8646
+  ]
+ },
+ "&lrcorner;": {
+  "characters": "\u231f",
+  "codepoints": [
+   8991
+  ]
+ },
+ "&lrhar;": {
+  "characters": "\u21cb",
+  "codepoints": [
+   8651
+  ]
+ },
+ "&lrhard;": {
+  "characters": "\u296d",
+  "codepoints": [
+   10605
+  ]
+ },
+ "&lrm;": {
+  "characters": "\u200e",
+  "codepoints": [
+   8206
+  ]
+ },
+ "&lrtri;": {
+  "characters": "\u22bf",
+  "codepoints": [
+   8895
+  ]
+ },
+ "&lsaquo;": {
+  "characters": "\u2039",
+  "codepoints": [
+   8249
+  ]
+ },
+ "&lscr;": {
+  "characters": "\ud835\udcc1",
+  "codepoints": [
+   120001
+  ]
+ },
+ "&lsh;": {
+  "characters": "\u21b0",
+  "codepoints": [
+   8624
+  ]
+ },
+ "&lsim;": {
+  "characters": "\u2272",
+  "codepoints": [
+   8818
+  ]
+ },
+ "&lsime;": {
+  "characters": "\u2a8d",
+  "codepoints": [
+   10893
+  ]
+ },
+ "&lsimg;": {
+  "characters": "\u2a8f",
+  "codepoints": [
+   10895
+  ]
+ },
+ "&lsqb;": {
+  "characters": "[",
+  "codepoints": [
+   91
+  ]
+ },
+ "&lsquo;": {
+  "characters": "\u2018",
+  "codepoints": [
+   8216
+  ]
+ },
+ "&lsquor;": {
+  "characters": "\u201a",
+  "codepoints": [
+   8218
+  ]
+ },
+ "&lstrok;": {
+  "characters": "\u0142",
+  "codepoints": [
+   322
+  ]
+ },
+ "&lt": {
+  "characters": "<",
+  "codepoints": [
+   60
+  ]
+ },
+ "&lt;": {
+  "characters": "<",
+  "codepoints": [
+   60
+  ]
+ },
+ "&ltcc;": {
+  "characters": "\u2aa6",
+  "codepoints": [
+   10918
+  ]
+ },
+ "&ltcir;": {
+  "characters": "\u2a79",
+  "codepoints": [
+   10873
+  ]
+ },
+ "&ltdot;": {
+  "characters": "\u22d6",
+  "codepoints": [
+   8918
+  ]
+ },
+ "&lthree;": {
+  "characters": "\u22cb",
+  "codepoints": [
+   8907
+  ]
+ },
+ "&ltimes;": {
+  "characters": "\u22c9",
+  "codepoints": [
+   8905
+  ]
+ },
+ "&ltlarr;": {
+  "characters": "\u2976",
+  "codepoints": [
+   10614
+  ]
+ },
+ "&ltquest;": {
+  "characters": "\u2a7b",
+  "codepoints": [
+   10875
+  ]
+ },
+ "&ltrPar;": {
+  "characters": "\u2996",
+  "codepoints": [
+   10646
+  ]
+ },
+ "&ltri;": {
+  "characters": "\u25c3",
+  "codepoints": [
+   9667
+  ]
+ },
+ "&ltrie;": {
+  "characters": "\u22b4",
+  "codepoints": [
+   8884
+  ]
+ },
+ "&ltrif;": {
+  "characters": "\u25c2",
+  "codepoints": [
+   9666
+  ]
+ },
+ "&lurdshar;": {
+  "characters": "\u294a",
+  "codepoints": [
+   10570
+  ]
+ },
+ "&luruhar;": {
+  "characters": "\u2966",
+  "codepoints": [
+   10598
+  ]
+ },
+ "&lvertneqq;": {
+  "characters": "\u2268\ufe00",
+  "codepoints": [
+   8808,
+   65024
+  ]
+ },
+ "&lvnE;": {
+  "characters": "\u2268\ufe00",
+  "codepoints": [
+   8808,
+   65024
+  ]
+ },
+ "&mDDot;": {
+  "characters": "\u223a",
+  "codepoints": [
+   8762
+  ]
+ },
+ "&macr": {
+  "characters": "\u00af",
+  "codepoints": [
+   175
+  ]
+ },
+ "&macr;": {
+  "characters": "\u00af",
+  "codepoints": [
+   175
+  ]
+ },
+ "&male;": {
+  "characters": "\u2642",
+  "codepoints": [
+   9794
+  ]
+ },
+ "&malt;": {
+  "characters": "\u2720",
+  "codepoints": [
+   10016
+  ]
+ },
+ "&maltese;": {
+  "characters": "\u2720",
+  "codepoints": [
+   10016
+  ]
+ },
+ "&map;": {
+  "characters": "\u21a6",
+  "codepoints": [
+   8614
+  ]
+ },
+ "&mapsto;": {
+  "characters": "\u21a6",
+  "codepoints": [
+   8614
+  ]
+ },
+ "&mapstodown;": {
+  "characters": "\u21a7",
+  "codepoints": [
+   8615
+  ]
+ },
+ "&mapstoleft;": {
+  "characters": "\u21a4",
+  "codepoints": [
+   8612
+  ]
+ },
+ "&mapstoup;": {
+  "characters": "\u21a5",
+  "codepoints": [
+   8613
+  ]
+ },
+ "&marker;": {
+  "characters": "\u25ae",
+  "codepoints": [
+   9646
+  ]
+ },
+ "&mcomma;": {
+  "characters": "\u2a29",
+  "codepoints": [
+   10793
+  ]
+ },
+ "&mcy;": {
+  "characters": "\u043c",
+  "codepoints": [
+   1084
+  ]
+ },
+ "&mdash;": {
+  "characters": "\u2014",
+  "codepoints": [
+   8212
+  ]
+ },
+ "&measuredangle;": {
+  "characters": "\u2221",
+  "codepoints": [
+   8737
+  ]
+ },
+ "&mfr;": {
+  "characters": "\ud835\udd2a",
+  "codepoints": [
+   120106
+  ]
+ },
+ "&mho;": {
+  "characters": "\u2127",
+  "codepoints": [
+   8487
+  ]
+ },
+ "&micro": {
+  "characters": "\u00b5",
+  "codepoints": [
+   181
+  ]
+ },
+ "&micro;": {
+  "characters": "\u00b5",
+  "codepoints": [
+   181
+  ]
+ },
+ "&mid;": {
+  "characters": "\u2223",
+  "codepoints": [
+   8739
+  ]
+ },
+ "&midast;": {
+  "characters": "*",
+  "codepoints": [
+   42
+  ]
+ },
+ "&midcir;": {
+  "characters": "\u2af0",
+  "codepoints": [
+   10992
+  ]
+ },
+ "&middot": {
+  "characters": "\u00b7",
+  "codepoints": [
+   183
+  ]
+ },
+ "&middot;": {
+  "characters": "\u00b7",
+  "codepoints": [
+   183
+  ]
+ },
+ "&minus;": {
+  "characters": "\u2212",
+  "codepoints": [
+   8722
+  ]
+ },
+ "&minusb;": {
+  "characters": "\u229f",
+  "codepoints": [
+   8863
+  ]
+ },
+ "&minusd;": {
+  "characters": "\u2238",
+  "codepoints": [
+   8760
+  ]
+ },
+ "&minusdu;": {
+  "characters": "\u2a2a",
+  "codepoints": [
+   10794
+  ]
+ },
+ "&mlcp;": {
+  "characters": "\u2adb",
+  "codepoints": [
+   10971
+  ]
+ },
+ "&mldr;": {
+  "characters": "\u2026",
+  "codepoints": [
+   8230
+  ]
+ },
+ "&mnplus;": {
+  "characters": "\u2213",
+  "codepoints": [
+   8723
+  ]
+ },
+ "&models;": {
+  "characters": "\u22a7",
+  "codepoints": [
+   8871
+  ]
+ },
+ "&mopf;": {
+  "characters": "\ud835\udd5e",
+  "codepoints": [
+   120158
+  ]
+ },
+ "&mp;": {
+  "characters": "\u2213",
+  "codepoints": [
+   8723
+  ]
+ },
+ "&mscr;": {
+  "characters": "\ud835\udcc2",
+  "codepoints": [
+   120002
+  ]
+ },
+ "&mstpos;": {
+  "characters": "\u223e",
+  "codepoints": [
+   8766
+  ]
+ },
+ "&mu;": {
+  "characters": "\u03bc",
+  "codepoints": [
+   956
+  ]
+ },
+ "&multimap;": {
+  "characters": "\u22b8",
+  "codepoints": [
+   8888
+  ]
+ },
+ "&mumap;": {
+  "characters": "\u22b8",
+  "codepoints": [
+   8888
+  ]
+ },
+ "&nGg;": {
+  "characters": "\u22d9\u0338",
+  "codepoints": [
+   8921,
+   824
+  ]
+ },
+ "&nGt;": {
+  "characters": "\u226b\u20d2",
+  "codepoints": [
+   8811,
+   8402
+  ]
+ },
+ "&nGtv;": {
+  "characters": "\u226b\u0338",
+  "codepoints": [
+   8811,
+   824
+  ]
+ },
+ "&nLeftarrow;": {
+  "characters": "\u21cd",
+  "codepoints": [
+   8653
+  ]
+ },
+ "&nLeftrightarrow;": {
+  "characters": "\u21ce",
+  "codepoints": [
+   8654
+  ]
+ },
+ "&nLl;": {
+  "characters": "\u22d8\u0338",
+  "codepoints": [
+   8920,
+   824
+  ]
+ },
+ "&nLt;": {
+  "characters": "\u226a\u20d2",
+  "codepoints": [
+   8810,
+   8402
+  ]
+ },
+ "&nLtv;": {
+  "characters": "\u226a\u0338",
+  "codepoints": [
+   8810,
+   824
+  ]
+ },
+ "&nRightarrow;": {
+  "characters": "\u21cf",
+  "codepoints": [
+   8655
+  ]
+ },
+ "&nVDash;": {
+  "characters": "\u22af",
+  "codepoints": [
+   8879
+  ]
+ },
+ "&nVdash;": {
+  "characters": "\u22ae",
+  "codepoints": [
+   8878
+  ]
+ },
+ "&nabla;": {
+  "characters": "\u2207",
+  "codepoints": [
+   8711
+  ]
+ },
+ "&nacute;": {
+  "characters": "\u0144",
+  "codepoints": [
+   324
+  ]
+ },
+ "&nang;": {
+  "characters": "\u2220\u20d2",
+  "codepoints": [
+   8736,
+   8402
+  ]
+ },
+ "&nap;": {
+  "characters": "\u2249",
+  "codepoints": [
+   8777
+  ]
+ },
+ "&napE;": {
+  "characters": "\u2a70\u0338",
+  "codepoints": [
+   10864,
+   824
+  ]
+ },
+ "&napid;": {
+  "characters": "\u224b\u0338",
+  "codepoints": [
+   8779,
+   824
+  ]
+ },
+ "&napos;": {
+  "characters": "\u0149",
+  "codepoints": [
+   329
+  ]
+ },
+ "&napprox;": {
+  "characters": "\u2249",
+  "codepoints": [
+   8777
+  ]
+ },
+ "&natur;": {
+  "characters": "\u266e",
+  "codepoints": [
+   9838
+  ]
+ },
+ "&natural;": {
+  "characters": "\u266e",
+  "codepoints": [
+   9838
+  ]
+ },
+ "&naturals;": {
+  "characters": "\u2115",
+  "codepoints": [
+   8469
+  ]
+ },
+ "&nbsp": {
+  "characters": "\u00a0",
+  "codepoints": [
+   160
+  ]
+ },
+ "&nbsp;": {
+  "characters": "\u00a0",
+  "codepoints": [
+   160
+  ]
+ },
+ "&nbump;": {
+  "characters": "\u224e\u0338",
+  "codepoints": [
+   8782,
+   824
+  ]
+ },
+ "&nbumpe;": {
+  "characters": "\u224f\u0338",
+  "codepoints": [
+   8783,
+   824
+  ]
+ },
+ "&ncap;": {
+  "characters": "\u2a43",
+  "codepoints": [
+   10819
+  ]
+ },
+ "&ncaron;": {
+  "characters": "\u0148",
+  "codepoints": [
+   328
+  ]
+ },
+ "&ncedil;": {
+  "characters": "\u0146",
+  "codepoints": [
+   326
+  ]
+ },
+ "&ncong;": {
+  "characters": "\u2247",
+  "codepoints": [
+   8775
+  ]
+ },
+ "&ncongdot;": {
+  "characters": "\u2a6d\u0338",
+  "codepoints": [
+   10861,
+   824
+  ]
+ },
+ "&ncup;": {
+  "characters": "\u2a42",
+  "codepoints": [
+   10818
+  ]
+ },
+ "&ncy;": {
+  "characters": "\u043d",
+  "codepoints": [
+   1085
+  ]
+ },
+ "&ndash;": {
+  "characters": "\u2013",
+  "codepoints": [
+   8211
+  ]
+ },
+ "&ne;": {
+  "characters": "\u2260",
+  "codepoints": [
+   8800
+  ]
+ },
+ "&neArr;": {
+  "characters": "\u21d7",
+  "codepoints": [
+   8663
+  ]
+ },
+ "&nearhk;": {
+  "characters": "\u2924",
+  "codepoints": [
+   10532
+  ]
+ },
+ "&nearr;": {
+  "characters": "\u2197",
+  "codepoints": [
+   8599
+  ]
+ },
+ "&nearrow;": {
+  "characters": "\u2197",
+  "codepoints": [
+   8599
+  ]
+ },
+ "&nedot;": {
+  "characters": "\u2250\u0338",
+  "codepoints": [
+   8784,
+   824
+  ]
+ },
+ "&nequiv;": {
+  "characters": "\u2262",
+  "codepoints": [
+   8802
+  ]
+ },
+ "&nesear;": {
+  "characters": "\u2928",
+  "codepoints": [
+   10536
+  ]
+ },
+ "&nesim;": {
+  "characters": "\u2242\u0338",
+  "codepoints": [
+   8770,
+   824
+  ]
+ },
+ "&nexist;": {
+  "characters": "\u2204",
+  "codepoints": [
+   8708
+  ]
+ },
+ "&nexists;": {
+  "characters": "\u2204",
+  "codepoints": [
+   8708
+  ]
+ },
+ "&nfr;": {
+  "characters": "\ud835\udd2b",
+  "codepoints": [
+   120107
+  ]
+ },
+ "&ngE;": {
+  "characters": "\u2267\u0338",
+  "codepoints": [
+   8807,
+   824
+  ]
+ },
+ "&nge;": {
+  "characters": "\u2271",
+  "codepoints": [
+   8817
+  ]
+ },
+ "&ngeq;": {
+  "characters": "\u2271",
+  "codepoints": [
+   8817
+  ]
+ },
+ "&ngeqq;": {
+  "characters": "\u2267\u0338",
+  "codepoints": [
+   8807,
+   824
+  ]
+ },
+ "&ngeqslant;": {
+  "characters": "\u2a7e\u0338",
+  "codepoints": [
+   10878,
+   824
+  ]
+ },
+ "&nges;": {
+  "characters": "\u2a7e\u0338",
+  "codepoints": [
+   10878,
+   824
+  ]
+ },
+ "&ngsim;": {
+  "characters": "\u2275",
+  "codepoints": [
+   8821
+  ]
+ },
+ "&ngt;": {
+  "characters": "\u226f",
+  "codepoints": [
+   8815
+  ]
+ },
+ "&ngtr;": {
+  "characters": "\u226f",
+  "codepoints": [
+   8815
+  ]
+ },
+ "&nhArr;": {
+  "characters": "\u21ce",
+  "codepoints": [
+   8654
+  ]
+ },
+ "&nharr;": {
+  "characters": "\u21ae",
+  "codepoints": [
+   8622
+  ]
+ },
+ "&nhpar;": {
+  "characters": "\u2af2",
+  "codepoints": [
+   10994
+  ]
+ },
+ "&ni;": {
+  "characters": "\u220b",
+  "codepoints": [
+   8715
+  ]
+ },
+ "&nis;": {
+  "characters": "\u22fc",
+  "codepoints": [
+   8956
+  ]
+ },
+ "&nisd;": {
+  "characters": "\u22fa",
+  "codepoints": [
+   8954
+  ]
+ },
+ "&niv;": {
+  "characters": "\u220b",
+  "codepoints": [
+   8715
+  ]
+ },
+ "&njcy;": {
+  "characters": "\u045a",
+  "codepoints": [
+   1114
+  ]
+ },
+ "&nlArr;": {
+  "characters": "\u21cd",
+  "codepoints": [
+   8653
+  ]
+ },
+ "&nlE;": {
+  "characters": "\u2266\u0338",
+  "codepoints": [
+   8806,
+   824
+  ]
+ },
+ "&nlarr;": {
+  "characters": "\u219a",
+  "codepoints": [
+   8602
+  ]
+ },
+ "&nldr;": {
+  "characters": "\u2025",
+  "codepoints": [
+   8229
+  ]
+ },
+ "&nle;": {
+  "characters": "\u2270",
+  "codepoints": [
+   8816
+  ]
+ },
+ "&nleftarrow;": {
+  "characters": "\u219a",
+  "codepoints": [
+   8602
+  ]
+ },
+ "&nleftrightarrow;": {
+  "characters": "\u21ae",
+  "codepoints": [
+   8622
+  ]
+ },
+ "&nleq;": {
+  "characters": "\u2270",
+  "codepoints": [
+   8816
+  ]
+ },
+ "&nleqq;": {
+  "characters": "\u2266\u0338",
+  "codepoints": [
+   8806,
+   824
+  ]
+ },
+ "&nleqslant;": {
+  "characters": "\u2a7d\u0338",
+  "codepoints": [
+   10877,
+   824
+  ]
+ },
+ "&nles;": {
+  "characters": "\u2a7d\u0338",
+  "codepoints": [
+   10877,
+   824
+  ]
+ },
+ "&nless;": {
+  "characters": "\u226e",
+  "codepoints": [
+   8814
+  ]
+ },
+ "&nlsim;": {
+  "characters": "\u2274",
+  "codepoints": [
+   8820
+  ]
+ },
+ "&nlt;": {
+  "characters": "\u226e",
+  "codepoints": [
+   8814
+  ]
+ },
+ "&nltri;": {
+  "characters": "\u22ea",
+  "codepoints": [
+   8938
+  ]
+ },
+ "&nltrie;": {
+  "characters": "\u22ec",
+  "codepoints": [
+   8940
+  ]
+ },
+ "&nmid;": {
+  "characters": "\u2224",
+  "codepoints": [
+   8740
+  ]
+ },
+ "&nopf;": {
+  "characters": "\ud835\udd5f",
+  "codepoints": [
+   120159
+  ]
+ },
+ "&not": {
+  "characters": "\u00ac",
+  "codepoints": [
+   172
+  ]
+ },
+ "&not;": {
+  "characters": "\u00ac",
+  "codepoints": [
+   172
+  ]
+ },
+ "&notin;": {
+  "characters": "\u2209",
+  "codepoints": [
+   8713
+  ]
+ },
+ "&notinE;": {
+  "characters": "\u22f9\u0338",
+  "codepoints": [
+   8953,
+   824
+  ]
+ },
+ "&notindot;": {
+  "characters": "\u22f5\u0338",
+  "codepoints": [
+   8949,
+   824
+  ]
+ },
+ "&notinva;": {
+  "characters": "\u2209",
+  "codepoints": [
+   8713
+  ]
+ },
+ "&notinvb;": {
+  "characters": "\u22f7",
+  "codepoints": [
+   8951
+  ]
+ },
+ "&notinvc;": {
+  "characters": "\u22f6",
+  "codepoints": [
+   8950
+  ]
+ },
+ "&notni;": {
+  "characters": "\u220c",
+  "codepoints": [
+   8716
+  ]
+ },
+ "&notniva;": {
+  "characters": "\u220c",
+  "codepoints": [
+   8716
+  ]
+ },
+ "&notnivb;": {
+  "characters": "\u22fe",
+  "codepoints": [
+   8958
+  ]
+ },
+ "&notnivc;": {
+  "characters": "\u22fd",
+  "codepoints": [
+   8957
+  ]
+ },
+ "&npar;": {
+  "characters": "\u2226",
+  "codepoints": [
+   8742
+  ]
+ },
+ "&nparallel;": {
+  "characters": "\u2226",
+  "codepoints": [
+   8742
+  ]
+ },
+ "&nparsl;": {
+  "characters": "\u2afd\u20e5",
+  "codepoints": [
+   11005,
+   8421
+  ]
+ },
+ "&npart;": {
+  "characters": "\u2202\u0338",
+  "codepoints": [
+   8706,
+   824
+  ]
+ },
+ "&npolint;": {
+  "characters": "\u2a14",
+  "codepoints": [
+   10772
+  ]
+ },
+ "&npr;": {
+  "characters": "\u2280",
+  "codepoints": [
+   8832
+  ]
+ },
+ "&nprcue;": {
+  "characters": "\u22e0",
+  "codepoints": [
+   8928
+  ]
+ },
+ "&npre;": {
+  "characters": "\u2aaf\u0338",
+  "codepoints": [
+   10927,
+   824
+  ]
+ },
+ "&nprec;": {
+  "characters": "\u2280",
+  "codepoints": [
+   8832
+  ]
+ },
+ "&npreceq;": {
+  "characters": "\u2aaf\u0338",
+  "codepoints": [
+   10927,
+   824
+  ]
+ },
+ "&nrArr;": {
+  "characters": "\u21cf",
+  "codepoints": [
+   8655
+  ]
+ },
+ "&nrarr;": {
+  "characters": "\u219b",
+  "codepoints": [
+   8603
+  ]
+ },
+ "&nrarrc;": {
+  "characters": "\u2933\u0338",
+  "codepoints": [
+   10547,
+   824
+  ]
+ },
+ "&nrarrw;": {
+  "characters": "\u219d\u0338",
+  "codepoints": [
+   8605,
+   824
+  ]
+ },
+ "&nrightarrow;": {
+  "characters": "\u219b",
+  "codepoints": [
+   8603
+  ]
+ },
+ "&nrtri;": {
+  "characters": "\u22eb",
+  "codepoints": [
+   8939
+  ]
+ },
+ "&nrtrie;": {
+  "characters": "\u22ed",
+  "codepoints": [
+   8941
+  ]
+ },
+ "&nsc;": {
+  "characters": "\u2281",
+  "codepoints": [
+   8833
+  ]
+ },
+ "&nsccue;": {
+  "characters": "\u22e1",
+  "codepoints": [
+   8929
+  ]
+ },
+ "&nsce;": {
+  "characters": "\u2ab0\u0338",
+  "codepoints": [
+   10928,
+   824
+  ]
+ },
+ "&nscr;": {
+  "characters": "\ud835\udcc3",
+  "codepoints": [
+   120003
+  ]
+ },
+ "&nshortmid;": {
+  "characters": "\u2224",
+  "codepoints": [
+   8740
+  ]
+ },
+ "&nshortparallel;": {
+  "characters": "\u2226",
+  "codepoints": [
+   8742
+  ]
+ },
+ "&nsim;": {
+  "characters": "\u2241",
+  "codepoints": [
+   8769
+  ]
+ },
+ "&nsime;": {
+  "characters": "\u2244",
+  "codepoints": [
+   8772
+  ]
+ },
+ "&nsimeq;": {
+  "characters": "\u2244",
+  "codepoints": [
+   8772
+  ]
+ },
+ "&nsmid;": {
+  "characters": "\u2224",
+  "codepoints": [
+   8740
+  ]
+ },
+ "&nspar;": {
+  "characters": "\u2226",
+  "codepoints": [
+   8742
+  ]
+ },
+ "&nsqsube;": {
+  "characters": "\u22e2",
+  "codepoints": [
+   8930
+  ]
+ },
+ "&nsqsupe;": {
+  "characters": "\u22e3",
+  "codepoints": [
+   8931
+  ]
+ },
+ "&nsub;": {
+  "characters": "\u2284",
+  "codepoints": [
+   8836
+  ]
+ },
+ "&nsubE;": {
+  "characters": "\u2ac5\u0338",
+  "codepoints": [
+   10949,
+   824
+  ]
+ },
+ "&nsube;": {
+  "characters": "\u2288",
+  "codepoints": [
+   8840
+  ]
+ },
+ "&nsubset;": {
+  "characters": "\u2282\u20d2",
+  "codepoints": [
+   8834,
+   8402
+  ]
+ },
+ "&nsubseteq;": {
+  "characters": "\u2288",
+  "codepoints": [
+   8840
+  ]
+ },
+ "&nsubseteqq;": {
+  "characters": "\u2ac5\u0338",
+  "codepoints": [
+   10949,
+   824
+  ]
+ },
+ "&nsucc;": {
+  "characters": "\u2281",
+  "codepoints": [
+   8833
+  ]
+ },
+ "&nsucceq;": {
+  "characters": "\u2ab0\u0338",
+  "codepoints": [
+   10928,
+   824
+  ]
+ },
+ "&nsup;": {
+  "characters": "\u2285",
+  "codepoints": [
+   8837
+  ]
+ },
+ "&nsupE;": {
+  "characters": "\u2ac6\u0338",
+  "codepoints": [
+   10950,
+   824
+  ]
+ },
+ "&nsupe;": {
+  "characters": "\u2289",
+  "codepoints": [
+   8841
+  ]
+ },
+ "&nsupset;": {
+  "characters": "\u2283\u20d2",
+  "codepoints": [
+   8835,
+   8402
+  ]
+ },
+ "&nsupseteq;": {
+  "characters": "\u2289",
+  "codepoints": [
+   8841
+  ]
+ },
+ "&nsupseteqq;": {
+  "characters": "\u2ac6\u0338",
+  "codepoints": [
+   10950,
+   824
+  ]
+ },
+ "&ntgl;": {
+  "characters": "\u2279",
+  "codepoints": [
+   8825
+  ]
+ },
+ "&ntilde": {
+  "characters": "\u00f1",
+  "codepoints": [
+   241
+  ]
+ },
+ "&ntilde;": {
+  "characters": "\u00f1",
+  "codepoints": [
+   241
+  ]
+ },
+ "&ntlg;": {
+  "characters": "\u2278",
+  "codepoints": [
+   8824
+  ]
+ },
+ "&ntriangleleft;": {
+  "characters": "\u22ea",
+  "codepoints": [
+   8938
+  ]
+ },
+ "&ntrianglelefteq;": {
+  "characters": "\u22ec",
+  "codepoints": [
+   8940
+  ]
+ },
+ "&ntriangleright;": {
+  "characters": "\u22eb",
+  "codepoints": [
+   8939
+  ]
+ },
+ "&ntrianglerighteq;": {
+  "characters": "\u22ed",
+  "codepoints": [
+   8941
+  ]
+ },
+ "&nu;": {
+  "characters": "\u03bd",
+  "codepoints": [
+   957
+  ]
+ },
+ "&num;": {
+  "characters": "#",
+  "codepoints": [
+   35
+  ]
+ },
+ "&numero;": {
+  "characters": "\u2116",
+  "codepoints": [
+   8470
+  ]
+ },
+ "&numsp;": {
+  "characters": "\u2007",
+  "codepoints": [
+   8199
+  ]
+ },
+ "&nvDash;": {
+  "characters": "\u22ad",
+  "codepoints": [
+   8877
+  ]
+ },
+ "&nvHarr;": {
+  "characters": "\u2904",
+  "codepoints": [
+   10500
+  ]
+ },
+ "&nvap;": {
+  "characters": "\u224d\u20d2",
+  "codepoints": [
+   8781,
+   8402
+  ]
+ },
+ "&nvdash;": {
+  "characters": "\u22ac",
+  "codepoints": [
+   8876
+  ]
+ },
+ "&nvge;": {
+  "characters": "\u2265\u20d2",
+  "codepoints": [
+   8805,
+   8402
+  ]
+ },
+ "&nvgt;": {
+  "characters": ">\u20d2",
+  "codepoints": [
+   62,
+   8402
+  ]
+ },
+ "&nvinfin;": {
+  "characters": "\u29de",
+  "codepoints": [
+   10718
+  ]
+ },
+ "&nvlArr;": {
+  "characters": "\u2902",
+  "codepoints": [
+   10498
+  ]
+ },
+ "&nvle;": {
+  "characters": "\u2264\u20d2",
+  "codepoints": [
+   8804,
+   8402
+  ]
+ },
+ "&nvlt;": {
+  "characters": "<\u20d2",
+  "codepoints": [
+   60,
+   8402
+  ]
+ },
+ "&nvltrie;": {
+  "characters": "\u22b4\u20d2",
+  "codepoints": [
+   8884,
+   8402
+  ]
+ },
+ "&nvrArr;": {
+  "characters": "\u2903",
+  "codepoints": [
+   10499
+  ]
+ },
+ "&nvrtrie;": {
+  "characters": "\u22b5\u20d2",
+  "codepoints": [
+   8885,
+   8402
+  ]
+ },
+ "&nvsim;": {
+  "characters": "\u223c\u20d2",
+  "codepoints": [
+   8764,
+   8402
+  ]
+ },
+ "&nwArr;": {
+  "characters": "\u21d6",
+  "codepoints": [
+   8662
+  ]
+ },
+ "&nwarhk;": {
+  "characters": "\u2923",
+  "codepoints": [
+   10531
+  ]
+ },
+ "&nwarr;": {
+  "characters": "\u2196",
+  "codepoints": [
+   8598
+  ]
+ },
+ "&nwarrow;": {
+  "characters": "\u2196",
+  "codepoints": [
+   8598
+  ]
+ },
+ "&nwnear;": {
+  "characters": "\u2927",
+  "codepoints": [
+   10535
+  ]
+ },
+ "&oS;": {
+  "characters": "\u24c8",
+  "codepoints": [
+   9416
+  ]
+ },
+ "&oacute": {
+  "characters": "\u00f3",
+  "codepoints": [
+   243
+  ]
+ },
+ "&oacute;": {
+  "characters": "\u00f3",
+  "codepoints": [
+   243
+  ]
+ },
+ "&oast;": {
+  "characters": "\u229b",
+  "codepoints": [
+   8859
+  ]
+ },
+ "&ocir;": {
+  "characters": "\u229a",
+  "codepoints": [
+   8858
+  ]
+ },
+ "&ocirc": {
+  "characters": "\u00f4",
+  "codepoints": [
+   244
+  ]
+ },
+ "&ocirc;": {
+  "characters": "\u00f4",
+  "codepoints": [
+   244
+  ]
+ },
+ "&ocy;": {
+  "characters": "\u043e",
+  "codepoints": [
+   1086
+  ]
+ },
+ "&odash;": {
+  "characters": "\u229d",
+  "codepoints": [
+   8861
+  ]
+ },
+ "&odblac;": {
+  "characters": "\u0151",
+  "codepoints": [
+   337
+  ]
+ },
+ "&odiv;": {
+  "characters": "\u2a38",
+  "codepoints": [
+   10808
+  ]
+ },
+ "&odot;": {
+  "characters": "\u2299",
+  "codepoints": [
+   8857
+  ]
+ },
+ "&odsold;": {
+  "characters": "\u29bc",
+  "codepoints": [
+   10684
+  ]
+ },
+ "&oelig;": {
+  "characters": "\u0153",
+  "codepoints": [
+   339
+  ]
+ },
+ "&ofcir;": {
+  "characters": "\u29bf",
+  "codepoints": [
+   10687
+  ]
+ },
+ "&ofr;": {
+  "characters": "\ud835\udd2c",
+  "codepoints": [
+   120108
+  ]
+ },
+ "&ogon;": {
+  "characters": "\u02db",
+  "codepoints": [
+   731
+  ]
+ },
+ "&ograve": {
+  "characters": "\u00f2",
+  "codepoints": [
+   242
+  ]
+ },
+ "&ograve;": {
+  "characters": "\u00f2",
+  "codepoints": [
+   242
+  ]
+ },
+ "&ogt;": {
+  "characters": "\u29c1",
+  "codepoints": [
+   10689
+  ]
+ },
+ "&ohbar;": {
+  "characters": "\u29b5",
+  "codepoints": [
+   10677
+  ]
+ },
+ "&ohm;": {
+  "characters": "\u03a9",
+  "codepoints": [
+   937
+  ]
+ },
+ "&oint;": {
+  "characters": "\u222e",
+  "codepoints": [
+   8750
+  ]
+ },
+ "&olarr;": {
+  "characters": "\u21ba",
+  "codepoints": [
+   8634
+  ]
+ },
+ "&olcir;": {
+  "characters": "\u29be",
+  "codepoints": [
+   10686
+  ]
+ },
+ "&olcross;": {
+  "characters": "\u29bb",
+  "codepoints": [
+   10683
+  ]
+ },
+ "&oline;": {
+  "characters": "\u203e",
+  "codepoints": [
+   8254
+  ]
+ },
+ "&olt;": {
+  "characters": "\u29c0",
+  "codepoints": [
+   10688
+  ]
+ },
+ "&omacr;": {
+  "characters": "\u014d",
+  "codepoints": [
+   333
+  ]
+ },
+ "&omega;": {
+  "characters": "\u03c9",
+  "codepoints": [
+   969
+  ]
+ },
+ "&omicron;": {
+  "characters": "\u03bf",
+  "codepoints": [
+   959
+  ]
+ },
+ "&omid;": {
+  "characters": "\u29b6",
+  "codepoints": [
+   10678
+  ]
+ },
+ "&ominus;": {
+  "characters": "\u2296",
+  "codepoints": [
+   8854
+  ]
+ },
+ "&oopf;": {
+  "characters": "\ud835\udd60",
+  "codepoints": [
+   120160
+  ]
+ },
+ "&opar;": {
+  "characters": "\u29b7",
+  "codepoints": [
+   10679
+  ]
+ },
+ "&operp;": {
+  "characters": "\u29b9",
+  "codepoints": [
+   10681
+  ]
+ },
+ "&oplus;": {
+  "characters": "\u2295",
+  "codepoints": [
+   8853
+  ]
+ },
+ "&or;": {
+  "characters": "\u2228",
+  "codepoints": [
+   8744
+  ]
+ },
+ "&orarr;": {
+  "characters": "\u21bb",
+  "codepoints": [
+   8635
+  ]
+ },
+ "&ord;": {
+  "characters": "\u2a5d",
+  "codepoints": [
+   10845
+  ]
+ },
+ "&order;": {
+  "characters": "\u2134",
+  "codepoints": [
+   8500
+  ]
+ },
+ "&orderof;": {
+  "characters": "\u2134",
+  "codepoints": [
+   8500
+  ]
+ },
+ "&ordf": {
+  "characters": "\u00aa",
+  "codepoints": [
+   170
+  ]
+ },
+ "&ordf;": {
+  "characters": "\u00aa",
+  "codepoints": [
+   170
+  ]
+ },
+ "&ordm": {
+  "characters": "\u00ba",
+  "codepoints": [
+   186
+  ]
+ },
+ "&ordm;": {
+  "characters": "\u00ba",
+  "codepoints": [
+   186
+  ]
+ },
+ "&origof;": {
+  "characters": "\u22b6",
+  "codepoints": [
+   8886
+  ]
+ },
+ "&oror;": {
+  "characters": "\u2a56",
+  "codepoints": [
+   10838
+  ]
+ },
+ "&orslope;": {
+  "characters": "\u2a57",
+  "codepoints": [
+   10839
+  ]
+ },
+ "&orv;": {
+  "characters": "\u2a5b",
+  "codepoints": [
+   10843
+  ]
+ },
+ "&oscr;": {
+  "characters": "\u2134",
+  "codepoints": [
+   8500
+  ]
+ },
+ "&oslash": {
+  "characters": "\u00f8",
+  "codepoints": [
+   248
+  ]
+ },
+ "&oslash;": {
+  "characters": "\u00f8",
+  "codepoints": [
+   248
+  ]
+ },
+ "&osol;": {
+  "characters": "\u2298",
+  "codepoints": [
+   8856
+  ]
+ },
+ "&otilde": {
+  "characters": "\u00f5",
+  "codepoints": [
+   245
+  ]
+ },
+ "&otilde;": {
+  "characters": "\u00f5",
+  "codepoints": [
+   245
+  ]
+ },
+ "&otimes;": {
+  "characters": "\u2297",
+  "codepoints": [
+   8855
+  ]
+ },
+ "&otimesas;": {
+  "characters": "\u2a36",
+  "codepoints": [
+   10806
+  ]
+ },
+ "&ouml": {
+  "characters": "\u00f6",
+  "codepoints": [
+   246
+  ]
+ },
+ "&ouml;": {
+  "characters": "\u00f6",
+  "codepoints": [
+   246
+  ]
+ },
+ "&ovbar;": {
+  "characters": "\u233d",
+  "codepoints": [
+   9021
+  ]
+ },
+ "&par;": {
+  "characters": "\u2225",
+  "codepoints": [
+   8741
+  ]
+ },
+ "&para": {
+  "characters": "\u00b6",
+  "codepoints": [
+   182
+  ]
+ },
+ "&para;": {
+  "characters": "\u00b6",
+  "codepoints": [
+   182
+  ]
+ },
+ "&parallel;": {
+  "characters": "\u2225",
+  "codepoints": [
+   8741
+  ]
+ },
+ "&parsim;": {
+  "characters": "\u2af3",
+  "codepoints": [
+   10995
+  ]
+ },
+ "&parsl;": {
+  "characters": "\u2afd",
+  "codepoints": [
+   11005
+  ]
+ },
+ "&part;": {
+  "characters": "\u2202",
+  "codepoints": [
+   8706
+  ]
+ },
+ "&pcy;": {
+  "characters": "\u043f",
+  "codepoints": [
+   1087
+  ]
+ },
+ "&percnt;": {
+  "characters": "%",
+  "codepoints": [
+   37
+  ]
+ },
+ "&period;": {
+  "characters": ".",
+  "codepoints": [
+   46
+  ]
+ },
+ "&permil;": {
+  "characters": "\u2030",
+  "codepoints": [
+   8240
+  ]
+ },
+ "&perp;": {
+  "characters": "\u22a5",
+  "codepoints": [
+   8869
+  ]
+ },
+ "&pertenk;": {
+  "characters": "\u2031",
+  "codepoints": [
+   8241
+  ]
+ },
+ "&pfr;": {
+  "characters": "\ud835\udd2d",
+  "codepoints": [
+   120109
+  ]
+ },
+ "&phi;": {
+  "characters": "\u03c6",
+  "codepoints": [
+   966
+  ]
+ },
+ "&phiv;": {
+  "characters": "\u03d5",
+  "codepoints": [
+   981
+  ]
+ },
+ "&phmmat;": {
+  "characters": "\u2133",
+  "codepoints": [
+   8499
+  ]
+ },
+ "&phone;": {
+  "characters": "\u260e",
+  "codepoints": [
+   9742
+  ]
+ },
+ "&pi;": {
+  "characters": "\u03c0",
+  "codepoints": [
+   960
+  ]
+ },
+ "&pitchfork;": {
+  "characters": "\u22d4",
+  "codepoints": [
+   8916
+  ]
+ },
+ "&piv;": {
+  "characters": "\u03d6",
+  "codepoints": [
+   982
+  ]
+ },
+ "&planck;": {
+  "characters": "\u210f",
+  "codepoints": [
+   8463
+  ]
+ },
+ "&planckh;": {
+  "characters": "\u210e",
+  "codepoints": [
+   8462
+  ]
+ },
+ "&plankv;": {
+  "characters": "\u210f",
+  "codepoints": [
+   8463
+  ]
+ },
+ "&plus;": {
+  "characters": "+",
+  "codepoints": [
+   43
+  ]
+ },
+ "&plusacir;": {
+  "characters": "\u2a23",
+  "codepoints": [
+   10787
+  ]
+ },
+ "&plusb;": {
+  "characters": "\u229e",
+  "codepoints": [
+   8862
+  ]
+ },
+ "&pluscir;": {
+  "characters": "\u2a22",
+  "codepoints": [
+   10786
+  ]
+ },
+ "&plusdo;": {
+  "characters": "\u2214",
+  "codepoints": [
+   8724
+  ]
+ },
+ "&plusdu;": {
+  "characters": "\u2a25",
+  "codepoints": [
+   10789
+  ]
+ },
+ "&pluse;": {
+  "characters": "\u2a72",
+  "codepoints": [
+   10866
+  ]
+ },
+ "&plusmn": {
+  "characters": "\u00b1",
+  "codepoints": [
+   177
+  ]
+ },
+ "&plusmn;": {
+  "characters": "\u00b1",
+  "codepoints": [
+   177
+  ]
+ },
+ "&plussim;": {
+  "characters": "\u2a26",
+  "codepoints": [
+   10790
+  ]
+ },
+ "&plustwo;": {
+  "characters": "\u2a27",
+  "codepoints": [
+   10791
+  ]
+ },
+ "&pm;": {
+  "characters": "\u00b1",
+  "codepoints": [
+   177
+  ]
+ },
+ "&pointint;": {
+  "characters": "\u2a15",
+  "codepoints": [
+   10773
+  ]
+ },
+ "&popf;": {
+  "characters": "\ud835\udd61",
+  "codepoints": [
+   120161
+  ]
+ },
+ "&pound": {
+  "characters": "\u00a3",
+  "codepoints": [
+   163
+  ]
+ },
+ "&pound;": {
+  "characters": "\u00a3",
+  "codepoints": [
+   163
+  ]
+ },
+ "&pr;": {
+  "characters": "\u227a",
+  "codepoints": [
+   8826
+  ]
+ },
+ "&prE;": {
+  "characters": "\u2ab3",
+  "codepoints": [
+   10931
+  ]
+ },
+ "&prap;": {
+  "characters": "\u2ab7",
+  "codepoints": [
+   10935
+  ]
+ },
+ "&prcue;": {
+  "characters": "\u227c",
+  "codepoints": [
+   8828
+  ]
+ },
+ "&pre;": {
+  "characters": "\u2aaf",
+  "codepoints": [
+   10927
+  ]
+ },
+ "&prec;": {
+  "characters": "\u227a",
+  "codepoints": [
+   8826
+  ]
+ },
+ "&precapprox;": {
+  "characters": "\u2ab7",
+  "codepoints": [
+   10935
+  ]
+ },
+ "&preccurlyeq;": {
+  "characters": "\u227c",
+  "codepoints": [
+   8828
+  ]
+ },
+ "&preceq;": {
+  "characters": "\u2aaf",
+  "codepoints": [
+   10927
+  ]
+ },
+ "&precnapprox;": {
+  "characters": "\u2ab9",
+  "codepoints": [
+   10937
+  ]
+ },
+ "&precneqq;": {
+  "characters": "\u2ab5",
+  "codepoints": [
+   10933
+  ]
+ },
+ "&precnsim;": {
+  "characters": "\u22e8",
+  "codepoints": [
+   8936
+  ]
+ },
+ "&precsim;": {
+  "characters": "\u227e",
+  "codepoints": [
+   8830
+  ]
+ },
+ "&prime;": {
+  "characters": "\u2032",
+  "codepoints": [
+   8242
+  ]
+ },
+ "&primes;": {
+  "characters": "\u2119",
+  "codepoints": [
+   8473
+  ]
+ },
+ "&prnE;": {
+  "characters": "\u2ab5",
+  "codepoints": [
+   10933
+  ]
+ },
+ "&prnap;": {
+  "characters": "\u2ab9",
+  "codepoints": [
+   10937
+  ]
+ },
+ "&prnsim;": {
+  "characters": "\u22e8",
+  "codepoints": [
+   8936
+  ]
+ },
+ "&prod;": {
+  "characters": "\u220f",
+  "codepoints": [
+   8719
+  ]
+ },
+ "&profalar;": {
+  "characters": "\u232e",
+  "codepoints": [
+   9006
+  ]
+ },
+ "&profline;": {
+  "characters": "\u2312",
+  "codepoints": [
+   8978
+  ]
+ },
+ "&profsurf;": {
+  "characters": "\u2313",
+  "codepoints": [
+   8979
+  ]
+ },
+ "&prop;": {
+  "characters": "\u221d",
+  "codepoints": [
+   8733
+  ]
+ },
+ "&propto;": {
+  "characters": "\u221d",
+  "codepoints": [
+   8733
+  ]
+ },
+ "&prsim;": {
+  "characters": "\u227e",
+  "codepoints": [
+   8830
+  ]
+ },
+ "&prurel;": {
+  "characters": "\u22b0",
+  "codepoints": [
+   8880
+  ]
+ },
+ "&pscr;": {
+  "characters": "\ud835\udcc5",
+  "codepoints": [
+   120005
+  ]
+ },
+ "&psi;": {
+  "characters": "\u03c8",
+  "codepoints": [
+   968
+  ]
+ },
+ "&puncsp;": {
+  "characters": "\u2008",
+  "codepoints": [
+   8200
+  ]
+ },
+ "&qfr;": {
+  "characters": "\ud835\udd2e",
+  "codepoints": [
+   120110
+  ]
+ },
+ "&qint;": {
+  "characters": "\u2a0c",
+  "codepoints": [
+   10764
+  ]
+ },
+ "&qopf;": {
+  "characters": "\ud835\udd62",
+  "codepoints": [
+   120162
+  ]
+ },
+ "&qprime;": {
+  "characters": "\u2057",
+  "codepoints": [
+   8279
+  ]
+ },
+ "&qscr;": {
+  "characters": "\ud835\udcc6",
+  "codepoints": [
+   120006
+  ]
+ },
+ "&quaternions;": {
+  "characters": "\u210d",
+  "codepoints": [
+   8461
+  ]
+ },
+ "&quatint;": {
+  "characters": "\u2a16",
+  "codepoints": [
+   10774
+  ]
+ },
+ "&quest;": {
+  "characters": "?",
+  "codepoints": [
+   63
+  ]
+ },
+ "&questeq;": {
+  "characters": "\u225f",
+  "codepoints": [
+   8799
+  ]
+ },
+ "&quot": {
+  "characters": "\"",
+  "codepoints": [
+   34
+  ]
+ },
+ "&quot;": {
+  "characters": "\"",
+  "codepoints": [
+   34
+  ]
+ },
+ "&rAarr;": {
+  "characters": "\u21db",
+  "codepoints": [
+   8667
+  ]
+ },
+ "&rArr;": {
+  "characters": "\u21d2",
+  "codepoints": [
+   8658
+  ]
+ },
+ "&rAtail;": {
+  "characters": "\u291c",
+  "codepoints": [
+   10524
+  ]
+ },
+ "&rBarr;": {
+  "characters": "\u290f",
+  "codepoints": [
+   10511
+  ]
+ },
+ "&rHar;": {
+  "characters": "\u2964",
+  "codepoints": [
+   10596
+  ]
+ },
+ "&race;": {
+  "characters": "\u223d\u0331",
+  "codepoints": [
+   8765,
+   817
+  ]
+ },
+ "&racute;": {
+  "characters": "\u0155",
+  "codepoints": [
+   341
+  ]
+ },
+ "&radic;": {
+  "characters": "\u221a",
+  "codepoints": [
+   8730
+  ]
+ },
+ "&raemptyv;": {
+  "characters": "\u29b3",
+  "codepoints": [
+   10675
+  ]
+ },
+ "&rang;": {
+  "characters": "\u27e9",
+  "codepoints": [
+   10217
+  ]
+ },
+ "&rangd;": {
+  "characters": "\u2992",
+  "codepoints": [
+   10642
+  ]
+ },
+ "&range;": {
+  "characters": "\u29a5",
+  "codepoints": [
+   10661
+  ]
+ },
+ "&rangle;": {
+  "characters": "\u27e9",
+  "codepoints": [
+   10217
+  ]
+ },
+ "&raquo": {
+  "characters": "\u00bb",
+  "codepoints": [
+   187
+  ]
+ },
+ "&raquo;": {
+  "characters": "\u00bb",
+  "codepoints": [
+   187
+  ]
+ },
+ "&rarr;": {
+  "characters": "\u2192",
+  "codepoints": [
+   8594
+  ]
+ },
+ "&rarrap;": {
+  "characters": "\u2975",
+  "codepoints": [
+   10613
+  ]
+ },
+ "&rarrb;": {
+  "characters": "\u21e5",
+  "codepoints": [
+   8677
+  ]
+ },
+ "&rarrbfs;": {
+  "characters": "\u2920",
+  "codepoints": [
+   10528
+  ]
+ },
+ "&rarrc;": {
+  "characters": "\u2933",
+  "codepoints": [
+   10547
+  ]
+ },
+ "&rarrfs;": {
+  "characters": "\u291e",
+  "codepoints": [
+   10526
+  ]
+ },
+ "&rarrhk;": {
+  "characters": "\u21aa",
+  "codepoints": [
+   8618
+  ]
+ },
+ "&rarrlp;": {
+  "characters": "\u21ac",
+  "codepoints": [
+   8620
+  ]
+ },
+ "&rarrpl;": {
+  "characters": "\u2945",
+  "codepoints": [
+   10565
+  ]
+ },
+ "&rarrsim;": {
+  "characters": "\u2974",
+  "codepoints": [
+   10612
+  ]
+ },
+ "&rarrtl;": {
+  "characters": "\u21a3",
+  "codepoints": [
+   8611
+  ]
+ },
+ "&rarrw;": {
+  "characters": "\u219d",
+  "codepoints": [
+   8605
+  ]
+ },
+ "&ratail;": {
+  "characters": "\u291a",
+  "codepoints": [
+   10522
+  ]
+ },
+ "&ratio;": {
+  "characters": "\u2236",
+  "codepoints": [
+   8758
+  ]
+ },
+ "&rationals;": {
+  "characters": "\u211a",
+  "codepoints": [
+   8474
+  ]
+ },
+ "&rbarr;": {
+  "characters": "\u290d",
+  "codepoints": [
+   10509
+  ]
+ },
+ "&rbbrk;": {
+  "characters": "\u2773",
+  "codepoints": [
+   10099
+  ]
+ },
+ "&rbrace;": {
+  "characters": "}",
+  "codepoints": [
+   125
+  ]
+ },
+ "&rbrack;": {
+  "characters": "]",
+  "codepoints": [
+   93
+  ]
+ },
+ "&rbrke;": {
+  "characters": "\u298c",
+  "codepoints": [
+   10636
+  ]
+ },
+ "&rbrksld;": {
+  "characters": "\u298e",
+  "codepoints": [
+   10638
+  ]
+ },
+ "&rbrkslu;": {
+  "characters": "\u2990",
+  "codepoints": [
+   10640
+  ]
+ },
+ "&rcaron;": {
+  "characters": "\u0159",
+  "codepoints": [
+   345
+  ]
+ },
+ "&rcedil;": {
+  "characters": "\u0157",
+  "codepoints": [
+   343
+  ]
+ },
+ "&rceil;": {
+  "characters": "\u2309",
+  "codepoints": [
+   8969
+  ]
+ },
+ "&rcub;": {
+  "characters": "}",
+  "codepoints": [
+   125
+  ]
+ },
+ "&rcy;": {
+  "characters": "\u0440",
+  "codepoints": [
+   1088
+  ]
+ },
+ "&rdca;": {
+  "characters": "\u2937",
+  "codepoints": [
+   10551
+  ]
+ },
+ "&rdldhar;": {
+  "characters": "\u2969",
+  "codepoints": [
+   10601
+  ]
+ },
+ "&rdquo;": {
+  "characters": "\u201d",
+  "codepoints": [
+   8221
+  ]
+ },
+ "&rdquor;": {
+  "characters": "\u201d",
+  "codepoints": [
+   8221
+  ]
+ },
+ "&rdsh;": {
+  "characters": "\u21b3",
+  "codepoints": [
+   8627
+  ]
+ },
+ "&real;": {
+  "characters": "\u211c",
+  "codepoints": [
+   8476
+  ]
+ },
+ "&realine;": {
+  "characters": "\u211b",
+  "codepoints": [
+   8475
+  ]
+ },
+ "&realpart;": {
+  "characters": "\u211c",
+  "codepoints": [
+   8476
+  ]
+ },
+ "&reals;": {
+  "characters": "\u211d",
+  "codepoints": [
+   8477
+  ]
+ },
+ "&rect;": {
+  "characters": "\u25ad",
+  "codepoints": [
+   9645
+  ]
+ },
+ "&reg": {
+  "characters": "\u00ae",
+  "codepoints": [
+   174
+  ]
+ },
+ "&reg;": {
+  "characters": "\u00ae",
+  "codepoints": [
+   174
+  ]
+ },
+ "&rfisht;": {
+  "characters": "\u297d",
+  "codepoints": [
+   10621
+  ]
+ },
+ "&rfloor;": {
+  "characters": "\u230b",
+  "codepoints": [
+   8971
+  ]
+ },
+ "&rfr;": {
+  "characters": "\ud835\udd2f",
+  "codepoints": [
+   120111
+  ]
+ },
+ "&rhard;": {
+  "characters": "\u21c1",
+  "codepoints": [
+   8641
+  ]
+ },
+ "&rharu;": {
+  "characters": "\u21c0",
+  "codepoints": [
+   8640
+  ]
+ },
+ "&rharul;": {
+  "characters": "\u296c",
+  "codepoints": [
+   10604
+  ]
+ },
+ "&rho;": {
+  "characters": "\u03c1",
+  "codepoints": [
+   961
+  ]
+ },
+ "&rhov;": {
+  "characters": "\u03f1",
+  "codepoints": [
+   1009
+  ]
+ },
+ "&rightarrow;": {
+  "characters": "\u2192",
+  "codepoints": [
+   8594
+  ]
+ },
+ "&rightarrowtail;": {
+  "characters": "\u21a3",
+  "codepoints": [
+   8611
+  ]
+ },
+ "&rightharpoondown;": {
+  "characters": "\u21c1",
+  "codepoints": [
+   8641
+  ]
+ },
+ "&rightharpoonup;": {
+  "characters": "\u21c0",
+  "codepoints": [
+   8640
+  ]
+ },
+ "&rightleftarrows;": {
+  "characters": "\u21c4",
+  "codepoints": [
+   8644
+  ]
+ },
+ "&rightleftharpoons;": {
+  "characters": "\u21cc",
+  "codepoints": [
+   8652
+  ]
+ },
+ "&rightrightarrows;": {
+  "characters": "\u21c9",
+  "codepoints": [
+   8649
+  ]
+ },
+ "&rightsquigarrow;": {
+  "characters": "\u219d",
+  "codepoints": [
+   8605
+  ]
+ },
+ "&rightthreetimes;": {
+  "characters": "\u22cc",
+  "codepoints": [
+   8908
+  ]
+ },
+ "&ring;": {
+  "characters": "\u02da",
+  "codepoints": [
+   730
+  ]
+ },
+ "&risingdotseq;": {
+  "characters": "\u2253",
+  "codepoints": [
+   8787
+  ]
+ },
+ "&rlarr;": {
+  "characters": "\u21c4",
+  "codepoints": [
+   8644
+  ]
+ },
+ "&rlhar;": {
+  "characters": "\u21cc",
+  "codepoints": [
+   8652
+  ]
+ },
+ "&rlm;": {
+  "characters": "\u200f",
+  "codepoints": [
+   8207
+  ]
+ },
+ "&rmoust;": {
+  "characters": "\u23b1",
+  "codepoints": [
+   9137
+  ]
+ },
+ "&rmoustache;": {
+  "characters": "\u23b1",
+  "codepoints": [
+   9137
+  ]
+ },
+ "&rnmid;": {
+  "characters": "\u2aee",
+  "codepoints": [
+   10990
+  ]
+ },
+ "&roang;": {
+  "characters": "\u27ed",
+  "codepoints": [
+   10221
+  ]
+ },
+ "&roarr;": {
+  "characters": "\u21fe",
+  "codepoints": [
+   8702
+  ]
+ },
+ "&robrk;": {
+  "characters": "\u27e7",
+  "codepoints": [
+   10215
+  ]
+ },
+ "&ropar;": {
+  "characters": "\u2986",
+  "codepoints": [
+   10630
+  ]
+ },
+ "&ropf;": {
+  "characters": "\ud835\udd63",
+  "codepoints": [
+   120163
+  ]
+ },
+ "&roplus;": {
+  "characters": "\u2a2e",
+  "codepoints": [
+   10798
+  ]
+ },
+ "&rotimes;": {
+  "characters": "\u2a35",
+  "codepoints": [
+   10805
+  ]
+ },
+ "&rpar;": {
+  "characters": ")",
+  "codepoints": [
+   41
+  ]
+ },
+ "&rpargt;": {
+  "characters": "\u2994",
+  "codepoints": [
+   10644
+  ]
+ },
+ "&rppolint;": {
+  "characters": "\u2a12",
+  "codepoints": [
+   10770
+  ]
+ },
+ "&rrarr;": {
+  "characters": "\u21c9",
+  "codepoints": [
+   8649
+  ]
+ },
+ "&rsaquo;": {
+  "characters": "\u203a",
+  "codepoints": [
+   8250
+  ]
+ },
+ "&rscr;": {
+  "characters": "\ud835\udcc7",
+  "codepoints": [
+   120007
+  ]
+ },
+ "&rsh;": {
+  "characters": "\u21b1",
+  "codepoints": [
+   8625
+  ]
+ },
+ "&rsqb;": {
+  "characters": "]",
+  "codepoints": [
+   93
+  ]
+ },
+ "&rsquo;": {
+  "characters": "\u2019",
+  "codepoints": [
+   8217
+  ]
+ },
+ "&rsquor;": {
+  "characters": "\u2019",
+  "codepoints": [
+   8217
+  ]
+ },
+ "&rthree;": {
+  "characters": "\u22cc",
+  "codepoints": [
+   8908
+  ]
+ },
+ "&rtimes;": {
+  "characters": "\u22ca",
+  "codepoints": [
+   8906
+  ]
+ },
+ "&rtri;": {
+  "characters": "\u25b9",
+  "codepoints": [
+   9657
+  ]
+ },
+ "&rtrie;": {
+  "characters": "\u22b5",
+  "codepoints": [
+   8885
+  ]
+ },
+ "&rtrif;": {
+  "characters": "\u25b8",
+  "codepoints": [
+   9656
+  ]
+ },
+ "&rtriltri;": {
+  "characters": "\u29ce",
+  "codepoints": [
+   10702
+  ]
+ },
+ "&ruluhar;": {
+  "characters": "\u2968",
+  "codepoints": [
+   10600
+  ]
+ },
+ "&rx;": {
+  "characters": "\u211e",
+  "codepoints": [
+   8478
+  ]
+ },
+ "&sacute;": {
+  "characters": "\u015b",
+  "codepoints": [
+   347
+  ]
+ },
+ "&sbquo;": {
+  "characters": "\u201a",
+  "codepoints": [
+   8218
+  ]
+ },
+ "&sc;": {
+  "characters": "\u227b",
+  "codepoints": [
+   8827
+  ]
+ },
+ "&scE;": {
+  "characters": "\u2ab4",
+  "codepoints": [
+   10932
+  ]
+ },
+ "&scap;": {
+  "characters": "\u2ab8",
+  "codepoints": [
+   10936
+  ]
+ },
+ "&scaron;": {
+  "characters": "\u0161",
+  "codepoints": [
+   353
+  ]
+ },
+ "&sccue;": {
+  "characters": "\u227d",
+  "codepoints": [
+   8829
+  ]
+ },
+ "&sce;": {
+  "characters": "\u2ab0",
+  "codepoints": [
+   10928
+  ]
+ },
+ "&scedil;": {
+  "characters": "\u015f",
+  "codepoints": [
+   351
+  ]
+ },
+ "&scirc;": {
+  "characters": "\u015d",
+  "codepoints": [
+   349
+  ]
+ },
+ "&scnE;": {
+  "characters": "\u2ab6",
+  "codepoints": [
+   10934
+  ]
+ },
+ "&scnap;": {
+  "characters": "\u2aba",
+  "codepoints": [
+   10938
+  ]
+ },
+ "&scnsim;": {
+  "characters": "\u22e9",
+  "codepoints": [
+   8937
+  ]
+ },
+ "&scpolint;": {
+  "characters": "\u2a13",
+  "codepoints": [
+   10771
+  ]
+ },
+ "&scsim;": {
+  "characters": "\u227f",
+  "codepoints": [
+   8831
+  ]
+ },
+ "&scy;": {
+  "characters": "\u0441",
+  "codepoints": [
+   1089
+  ]
+ },
+ "&sdot;": {
+  "characters": "\u22c5",
+  "codepoints": [
+   8901
+  ]
+ },
+ "&sdotb;": {
+  "characters": "\u22a1",
+  "codepoints": [
+   8865
+  ]
+ },
+ "&sdote;": {
+  "characters": "\u2a66",
+  "codepoints": [
+   10854
+  ]
+ },
+ "&seArr;": {
+  "characters": "\u21d8",
+  "codepoints": [
+   8664
+  ]
+ },
+ "&searhk;": {
+  "characters": "\u2925",
+  "codepoints": [
+   10533
+  ]
+ },
+ "&searr;": {
+  "characters": "\u2198",
+  "codepoints": [
+   8600
+  ]
+ },
+ "&searrow;": {
+  "characters": "\u2198",
+  "codepoints": [
+   8600
+  ]
+ },
+ "&sect": {
+  "characters": "\u00a7",
+  "codepoints": [
+   167
+  ]
+ },
+ "&sect;": {
+  "characters": "\u00a7",
+  "codepoints": [
+   167
+  ]
+ },
+ "&semi;": {
+  "characters": ";",
+  "codepoints": [
+   59
+  ]
+ },
+ "&seswar;": {
+  "characters": "\u2929",
+  "codepoints": [
+   10537
+  ]
+ },
+ "&setminus;": {
+  "characters": "\u2216",
+  "codepoints": [
+   8726
+  ]
+ },
+ "&setmn;": {
+  "characters": "\u2216",
+  "codepoints": [
+   8726
+  ]
+ },
+ "&sext;": {
+  "characters": "\u2736",
+  "codepoints": [
+   10038
+  ]
+ },
+ "&sfr;": {
+  "characters": "\ud835\udd30",
+  "codepoints": [
+   120112
+  ]
+ },
+ "&sfrown;": {
+  "characters": "\u2322",
+  "codepoints": [
+   8994
+  ]
+ },
+ "&sharp;": {
+  "characters": "\u266f",
+  "codepoints": [
+   9839
+  ]
+ },
+ "&shchcy;": {
+  "characters": "\u0449",
+  "codepoints": [
+   1097
+  ]
+ },
+ "&shcy;": {
+  "characters": "\u0448",
+  "codepoints": [
+   1096
+  ]
+ },
+ "&shortmid;": {
+  "characters": "\u2223",
+  "codepoints": [
+   8739
+  ]
+ },
+ "&shortparallel;": {
+  "characters": "\u2225",
+  "codepoints": [
+   8741
+  ]
+ },
+ "&shy": {
+  "characters": "\u00ad",
+  "codepoints": [
+   173
+  ]
+ },
+ "&shy;": {
+  "characters": "\u00ad",
+  "codepoints": [
+   173
+  ]
+ },
+ "&sigma;": {
+  "characters": "\u03c3",
+  "codepoints": [
+   963
+  ]
+ },
+ "&sigmaf;": {
+  "characters": "\u03c2",
+  "codepoints": [
+   962
+  ]
+ },
+ "&sigmav;": {
+  "characters": "\u03c2",
+  "codepoints": [
+   962
+  ]
+ },
+ "&sim;": {
+  "characters": "\u223c",
+  "codepoints": [
+   8764
+  ]
+ },
+ "&simdot;": {
+  "characters": "\u2a6a",
+  "codepoints": [
+   10858
+  ]
+ },
+ "&sime;": {
+  "characters": "\u2243",
+  "codepoints": [
+   8771
+  ]
+ },
+ "&simeq;": {
+  "characters": "\u2243",
+  "codepoints": [
+   8771
+  ]
+ },
+ "&simg;": {
+  "characters": "\u2a9e",
+  "codepoints": [
+   10910
+  ]
+ },
+ "&simgE;": {
+  "characters": "\u2aa0",
+  "codepoints": [
+   10912
+  ]
+ },
+ "&siml;": {
+  "characters": "\u2a9d",
+  "codepoints": [
+   10909
+  ]
+ },
+ "&simlE;": {
+  "characters": "\u2a9f",
+  "codepoints": [
+   10911
+  ]
+ },
+ "&simne;": {
+  "characters": "\u2246",
+  "codepoints": [
+   8774
+  ]
+ },
+ "&simplus;": {
+  "characters": "\u2a24",
+  "codepoints": [
+   10788
+  ]
+ },
+ "&simrarr;": {
+  "characters": "\u2972",
+  "codepoints": [
+   10610
+  ]
+ },
+ "&slarr;": {
+  "characters": "\u2190",
+  "codepoints": [
+   8592
+  ]
+ },
+ "&smallsetminus;": {
+  "characters": "\u2216",
+  "codepoints": [
+   8726
+  ]
+ },
+ "&smashp;": {
+  "characters": "\u2a33",
+  "codepoints": [
+   10803
+  ]
+ },
+ "&smeparsl;": {
+  "characters": "\u29e4",
+  "codepoints": [
+   10724
+  ]
+ },
+ "&smid;": {
+  "characters": "\u2223",
+  "codepoints": [
+   8739
+  ]
+ },
+ "&smile;": {
+  "characters": "\u2323",
+  "codepoints": [
+   8995
+  ]
+ },
+ "&smt;": {
+  "characters": "\u2aaa",
+  "codepoints": [
+   10922
+  ]
+ },
+ "&smte;": {
+  "characters": "\u2aac",
+  "codepoints": [
+   10924
+  ]
+ },
+ "&smtes;": {
+  "characters": "\u2aac\ufe00",
+  "codepoints": [
+   10924,
+   65024
+  ]
+ },
+ "&softcy;": {
+  "characters": "\u044c",
+  "codepoints": [
+   1100
+  ]
+ },
+ "&sol;": {
+  "characters": "/",
+  "codepoints": [
+   47
+  ]
+ },
+ "&solb;": {
+  "characters": "\u29c4",
+  "codepoints": [
+   10692
+  ]
+ },
+ "&solbar;": {
+  "characters": "\u233f",
+  "codepoints": [
+   9023
+  ]
+ },
+ "&sopf;": {
+  "characters": "\ud835\udd64",
+  "codepoints": [
+   120164
+  ]
+ },
+ "&spades;": {
+  "characters": "\u2660",
+  "codepoints": [
+   9824
+  ]
+ },
+ "&spadesuit;": {
+  "characters": "\u2660",
+  "codepoints": [
+   9824
+  ]
+ },
+ "&spar;": {
+  "characters": "\u2225",
+  "codepoints": [
+   8741
+  ]
+ },
+ "&sqcap;": {
+  "characters": "\u2293",
+  "codepoints": [
+   8851
+  ]
+ },
+ "&sqcaps;": {
+  "characters": "\u2293\ufe00",
+  "codepoints": [
+   8851,
+   65024
+  ]
+ },
+ "&sqcup;": {
+  "characters": "\u2294",
+  "codepoints": [
+   8852
+  ]
+ },
+ "&sqcups;": {
+  "characters": "\u2294\ufe00",
+  "codepoints": [
+   8852,
+   65024
+  ]
+ },
+ "&sqsub;": {
+  "characters": "\u228f",
+  "codepoints": [
+   8847
+  ]
+ },
+ "&sqsube;": {
+  "characters": "\u2291",
+  "codepoints": [
+   8849
+  ]
+ },
+ "&sqsubset;": {
+  "characters": "\u228f",
+  "codepoints": [
+   8847
+  ]
+ },
+ "&sqsubseteq;": {
+  "characters": "\u2291",
+  "codepoints": [
+   8849
+  ]
+ },
+ "&sqsup;": {
+  "characters": "\u2290",
+  "codepoints": [
+   8848
+  ]
+ },
+ "&sqsupe;": {
+  "characters": "\u2292",
+  "codepoints": [
+   8850
+  ]
+ },
+ "&sqsupset;": {
+  "characters": "\u2290",
+  "codepoints": [
+   8848
+  ]
+ },
+ "&sqsupseteq;": {
+  "characters": "\u2292",
+  "codepoints": [
+   8850
+  ]
+ },
+ "&squ;": {
+  "characters": "\u25a1",
+  "codepoints": [
+   9633
+  ]
+ },
+ "&square;": {
+  "characters": "\u25a1",
+  "codepoints": [
+   9633
+  ]
+ },
+ "&squarf;": {
+  "characters": "\u25aa",
+  "codepoints": [
+   9642
+  ]
+ },
+ "&squf;": {
+  "characters": "\u25aa",
+  "codepoints": [
+   9642
+  ]
+ },
+ "&srarr;": {
+  "characters": "\u2192",
+  "codepoints": [
+   8594
+  ]
+ },
+ "&sscr;": {
+  "characters": "\ud835\udcc8",
+  "codepoints": [
+   120008
+  ]
+ },
+ "&ssetmn;": {
+  "characters": "\u2216",
+  "codepoints": [
+   8726
+  ]
+ },
+ "&ssmile;": {
+  "characters": "\u2323",
+  "codepoints": [
+   8995
+  ]
+ },
+ "&sstarf;": {
+  "characters": "\u22c6",
+  "codepoints": [
+   8902
+  ]
+ },
+ "&star;": {
+  "characters": "\u2606",
+  "codepoints": [
+   9734
+  ]
+ },
+ "&starf;": {
+  "characters": "\u2605",
+  "codepoints": [
+   9733
+  ]
+ },
+ "&straightepsilon;": {
+  "characters": "\u03f5",
+  "codepoints": [
+   1013
+  ]
+ },
+ "&straightphi;": {
+  "characters": "\u03d5",
+  "codepoints": [
+   981
+  ]
+ },
+ "&strns;": {
+  "characters": "\u00af",
+  "codepoints": [
+   175
+  ]
+ },
+ "&sub;": {
+  "characters": "\u2282",
+  "codepoints": [
+   8834
+  ]
+ },
+ "&subE;": {
+  "characters": "\u2ac5",
+  "codepoints": [
+   10949
+  ]
+ },
+ "&subdot;": {
+  "characters": "\u2abd",
+  "codepoints": [
+   10941
+  ]
+ },
+ "&sube;": {
+  "characters": "\u2286",
+  "codepoints": [
+   8838
+  ]
+ },
+ "&subedot;": {
+  "characters": "\u2ac3",
+  "codepoints": [
+   10947
+  ]
+ },
+ "&submult;": {
+  "characters": "\u2ac1",
+  "codepoints": [
+   10945
+  ]
+ },
+ "&subnE;": {
+  "characters": "\u2acb",
+  "codepoints": [
+   10955
+  ]
+ },
+ "&subne;": {
+  "characters": "\u228a",
+  "codepoints": [
+   8842
+  ]
+ },
+ "&subplus;": {
+  "characters": "\u2abf",
+  "codepoints": [
+   10943
+  ]
+ },
+ "&subrarr;": {
+  "characters": "\u2979",
+  "codepoints": [
+   10617
+  ]
+ },
+ "&subset;": {
+  "characters": "\u2282",
+  "codepoints": [
+   8834
+  ]
+ },
+ "&subseteq;": {
+  "characters": "\u2286",
+  "codepoints": [
+   8838
+  ]
+ },
+ "&subseteqq;": {
+  "characters": "\u2ac5",
+  "codepoints": [
+   10949
+  ]
+ },
+ "&subsetneq;": {
+  "characters": "\u228a",
+  "codepoints": [
+   8842
+  ]
+ },
+ "&subsetneqq;": {
+  "characters": "\u2acb",
+  "codepoints": [
+   10955
+  ]
+ },
+ "&subsim;": {
+  "characters": "\u2ac7",
+  "codepoints": [
+   10951
+  ]
+ },
+ "&subsub;": {
+  "characters": "\u2ad5",
+  "codepoints": [
+   10965
+  ]
+ },
+ "&subsup;": {
+  "characters": "\u2ad3",
+  "codepoints": [
+   10963
+  ]
+ },
+ "&succ;": {
+  "characters": "\u227b",
+  "codepoints": [
+   8827
+  ]
+ },
+ "&succapprox;": {
+  "characters": "\u2ab8",
+  "codepoints": [
+   10936
+  ]
+ },
+ "&succcurlyeq;": {
+  "characters": "\u227d",
+  "codepoints": [
+   8829
+  ]
+ },
+ "&succeq;": {
+  "characters": "\u2ab0",
+  "codepoints": [
+   10928
+  ]
+ },
+ "&succnapprox;": {
+  "characters": "\u2aba",
+  "codepoints": [
+   10938
+  ]
+ },
+ "&succneqq;": {
+  "characters": "\u2ab6",
+  "codepoints": [
+   10934
+  ]
+ },
+ "&succnsim;": {
+  "characters": "\u22e9",
+  "codepoints": [
+   8937
+  ]
+ },
+ "&succsim;": {
+  "characters": "\u227f",
+  "codepoints": [
+   8831
+  ]
+ },
+ "&sum;": {
+  "characters": "\u2211",
+  "codepoints": [
+   8721
+  ]
+ },
+ "&sung;": {
+  "characters": "\u266a",
+  "codepoints": [
+   9834
+  ]
+ },
+ "&sup1": {
+  "characters": "\u00b9",
+  "codepoints": [
+   185
+  ]
+ },
+ "&sup1;": {
+  "characters": "\u00b9",
+  "codepoints": [
+   185
+  ]
+ },
+ "&sup2": {
+  "characters": "\u00b2",
+  "codepoints": [
+   178
+  ]
+ },
+ "&sup2;": {
+  "characters": "\u00b2",
+  "codepoints": [
+   178
+  ]
+ },
+ "&sup3": {
+  "characters": "\u00b3",
+  "codepoints": [
+   179
+  ]
+ },
+ "&sup3;": {
+  "characters": "\u00b3",
+  "codepoints": [
+   179
+  ]
+ },
+ "&sup;": {
+  "characters": "\u2283",
+  "codepoints": [
+   8835
+  ]
+ },
+ "&supE;": {
+  "characters": "\u2ac6",
+  "codepoints": [
+   10950
+  ]
+ },
+ "&supdot;": {
+  "characters": "\u2abe",
+  "codepoints": [
+   10942
+  ]
+ },
+ "&supdsub;": {
+  "characters": "\u2ad8",
+  "codepoints": [
+   10968
+  ]
+ },
+ "&supe;": {
+  "characters": "\u2287",
+  "codepoints": [
+   8839
+  ]
+ },
+ "&supedot;": {
+  "characters": "\u2ac4",
+  "codepoints": [
+   10948
+  ]
+ },
+ "&suphsol;": {
+  "characters": "\u27c9",
+  "codepoints": [
+   10185
+  ]
+ },
+ "&suphsub;": {
+  "characters": "\u2ad7",
+  "codepoints": [
+   10967
+  ]
+ },
+ "&suplarr;": {
+  "characters": "\u297b",
+  "codepoints": [
+   10619
+  ]
+ },
+ "&supmult;": {
+  "characters": "\u2ac2",
+  "codepoints": [
+   10946
+  ]
+ },
+ "&supnE;": {
+  "characters": "\u2acc",
+  "codepoints": [
+   10956
+  ]
+ },
+ "&supne;": {
+  "characters": "\u228b",
+  "codepoints": [
+   8843
+  ]
+ },
+ "&supplus;": {
+  "characters": "\u2ac0",
+  "codepoints": [
+   10944
+  ]
+ },
+ "&supset;": {
+  "characters": "\u2283",
+  "codepoints": [
+   8835
+  ]
+ },
+ "&supseteq;": {
+  "characters": "\u2287",
+  "codepoints": [
+   8839
+  ]
+ },
+ "&supseteqq;": {
+  "characters": "\u2ac6",
+  "codepoints": [
+   10950
+  ]
+ },
+ "&supsetneq;": {
+  "characters": "\u228b",
+  "codepoints": [
+   8843
+  ]
+ },
+ "&supsetneqq;": {
+  "characters": "\u2acc",
+  "codepoints": [
+   10956
+  ]
+ },
+ "&supsim;": {
+  "characters": "\u2ac8",
+  "codepoints": [
+   10952
+  ]
+ },
+ "&supsub;": {
+  "characters": "\u2ad4",
+  "codepoints": [
+   10964
+  ]
+ },
+ "&supsup;": {
+  "characters": "\u2ad6",
+  "codepoints": [
+   10966
+  ]
+ },
+ "&swArr;": {
+  "characters": "\u21d9",
+  "codepoints": [
+   8665
+  ]
+ },
+ "&swarhk;": {
+  "characters": "\u2926",
+  "codepoints": [
+   10534
+  ]
+ },
+ "&swarr;": {
+  "characters": "\u2199",
+  "codepoints": [
+   8601
+  ]
+ },
+ "&swarrow;": {
+  "characters": "\u2199",
+  "codepoints": [
+   8601
+  ]
+ },
+ "&swnwar;": {
+  "characters": "\u292a",
+  "codepoints": [
+   10538
+  ]
+ },
+ "&szlig": {
+  "characters": "\u00df",
+  "codepoints": [
+   223
+  ]
+ },
+ "&szlig;": {
+  "characters": "\u00df",
+  "codepoints": [
+   223
+  ]
+ },
+ "&target;": {
+  "characters": "\u2316",
+  "codepoints": [
+   8982
+  ]
+ },
+ "&tau;": {
+  "characters": "\u03c4",
+  "codepoints": [
+   964
+  ]
+ },
+ "&tbrk;": {
+  "characters": "\u23b4",
+  "codepoints": [
+   9140
+  ]
+ },
+ "&tcaron;": {
+  "characters": "\u0165",
+  "codepoints": [
+   357
+  ]
+ },
+ "&tcedil;": {
+  "characters": "\u0163",
+  "codepoints": [
+   355
+  ]
+ },
+ "&tcy;": {
+  "characters": "\u0442",
+  "codepoints": [
+   1090
+  ]
+ },
+ "&tdot;": {
+  "characters": "\u20db",
+  "codepoints": [
+   8411
+  ]
+ },
+ "&telrec;": {
+  "characters": "\u2315",
+  "codepoints": [
+   8981
+  ]
+ },
+ "&tfr;": {
+  "characters": "\ud835\udd31",
+  "codepoints": [
+   120113
+  ]
+ },
+ "&there4;": {
+  "characters": "\u2234",
+  "codepoints": [
+   8756
+  ]
+ },
+ "&therefore;": {
+  "characters": "\u2234",
+  "codepoints": [
+   8756
+  ]
+ },
+ "&theta;": {
+  "characters": "\u03b8",
+  "codepoints": [
+   952
+  ]
+ },
+ "&thetasym;": {
+  "characters": "\u03d1",
+  "codepoints": [
+   977
+  ]
+ },
+ "&thetav;": {
+  "characters": "\u03d1",
+  "codepoints": [
+   977
+  ]
+ },
+ "&thickapprox;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&thicksim;": {
+  "characters": "\u223c",
+  "codepoints": [
+   8764
+  ]
+ },
+ "&thinsp;": {
+  "characters": "\u2009",
+  "codepoints": [
+   8201
+  ]
+ },
+ "&thkap;": {
+  "characters": "\u2248",
+  "codepoints": [
+   8776
+  ]
+ },
+ "&thksim;": {
+  "characters": "\u223c",
+  "codepoints": [
+   8764
+  ]
+ },
+ "&thorn": {
+  "characters": "\u00fe",
+  "codepoints": [
+   254
+  ]
+ },
+ "&thorn;": {
+  "characters": "\u00fe",
+  "codepoints": [
+   254
+  ]
+ },
+ "&tilde;": {
+  "characters": "\u02dc",
+  "codepoints": [
+   732
+  ]
+ },
+ "&times": {
+  "characters": "\u00d7",
+  "codepoints": [
+   215
+  ]
+ },
+ "&times;": {
+  "characters": "\u00d7",
+  "codepoints": [
+   215
+  ]
+ },
+ "&timesb;": {
+  "characters": "\u22a0",
+  "codepoints": [
+   8864
+  ]
+ },
+ "&timesbar;": {
+  "characters": "\u2a31",
+  "codepoints": [
+   10801
+  ]
+ },
+ "&timesd;": {
+  "characters": "\u2a30",
+  "codepoints": [
+   10800
+  ]
+ },
+ "&tint;": {
+  "characters": "\u222d",
+  "codepoints": [
+   8749
+  ]
+ },
+ "&toea;": {
+  "characters": "\u2928",
+  "codepoints": [
+   10536
+  ]
+ },
+ "&top;": {
+  "characters": "\u22a4",
+  "codepoints": [
+   8868
+  ]
+ },
+ "&topbot;": {
+  "characters": "\u2336",
+  "codepoints": [
+   9014
+  ]
+ },
+ "&topcir;": {
+  "characters": "\u2af1",
+  "codepoints": [
+   10993
+  ]
+ },
+ "&topf;": {
+  "characters": "\ud835\udd65",
+  "codepoints": [
+   120165
+  ]
+ },
+ "&topfork;": {
+  "characters": "\u2ada",
+  "codepoints": [
+   10970
+  ]
+ },
+ "&tosa;": {
+  "characters": "\u2929",
+  "codepoints": [
+   10537
+  ]
+ },
+ "&tprime;": {
+  "characters": "\u2034",
+  "codepoints": [
+   8244
+  ]
+ },
+ "&trade;": {
+  "characters": "\u2122",
+  "codepoints": [
+   8482
+  ]
+ },
+ "&triangle;": {
+  "characters": "\u25b5",
+  "codepoints": [
+   9653
+  ]
+ },
+ "&triangledown;": {
+  "characters": "\u25bf",
+  "codepoints": [
+   9663
+  ]
+ },
+ "&triangleleft;": {
+  "characters": "\u25c3",
+  "codepoints": [
+   9667
+  ]
+ },
+ "&trianglelefteq;": {
+  "characters": "\u22b4",
+  "codepoints": [
+   8884
+  ]
+ },
+ "&triangleq;": {
+  "characters": "\u225c",
+  "codepoints": [
+   8796
+  ]
+ },
+ "&triangleright;": {
+  "characters": "\u25b9",
+  "codepoints": [
+   9657
+  ]
+ },
+ "&trianglerighteq;": {
+  "characters": "\u22b5",
+  "codepoints": [
+   8885
+  ]
+ },
+ "&tridot;": {
+  "characters": "\u25ec",
+  "codepoints": [
+   9708
+  ]
+ },
+ "&trie;": {
+  "characters": "\u225c",
+  "codepoints": [
+   8796
+  ]
+ },
+ "&triminus;": {
+  "characters": "\u2a3a",
+  "codepoints": [
+   10810
+  ]
+ },
+ "&triplus;": {
+  "characters": "\u2a39",
+  "codepoints": [
+   10809
+  ]
+ },
+ "&trisb;": {
+  "characters": "\u29cd",
+  "codepoints": [
+   10701
+  ]
+ },
+ "&tritime;": {
+  "characters": "\u2a3b",
+  "codepoints": [
+   10811
+  ]
+ },
+ "&trpezium;": {
+  "characters": "\u23e2",
+  "codepoints": [
+   9186
+  ]
+ },
+ "&tscr;": {
+  "characters": "\ud835\udcc9",
+  "codepoints": [
+   120009
+  ]
+ },
+ "&tscy;": {
+  "characters": "\u0446",
+  "codepoints": [
+   1094
+  ]
+ },
+ "&tshcy;": {
+  "characters": "\u045b",
+  "codepoints": [
+   1115
+  ]
+ },
+ "&tstrok;": {
+  "characters": "\u0167",
+  "codepoints": [
+   359
+  ]
+ },
+ "&twixt;": {
+  "characters": "\u226c",
+  "codepoints": [
+   8812
+  ]
+ },
+ "&twoheadleftarrow;": {
+  "characters": "\u219e",
+  "codepoints": [
+   8606
+  ]
+ },
+ "&twoheadrightarrow;": {
+  "characters": "\u21a0",
+  "codepoints": [
+   8608
+  ]
+ },
+ "&uArr;": {
+  "characters": "\u21d1",
+  "codepoints": [
+   8657
+  ]
+ },
+ "&uHar;": {
+  "characters": "\u2963",
+  "codepoints": [
+   10595
+  ]
+ },
+ "&uacute": {
+  "characters": "\u00fa",
+  "codepoints": [
+   250
+  ]
+ },
+ "&uacute;": {
+  "characters": "\u00fa",
+  "codepoints": [
+   250
+  ]
+ },
+ "&uarr;": {
+  "characters": "\u2191",
+  "codepoints": [
+   8593
+  ]
+ },
+ "&ubrcy;": {
+  "characters": "\u045e",
+  "codepoints": [
+   1118
+  ]
+ },
+ "&ubreve;": {
+  "characters": "\u016d",
+  "codepoints": [
+   365
+  ]
+ },
+ "&ucirc": {
+  "characters": "\u00fb",
+  "codepoints": [
+   251
+  ]
+ },
+ "&ucirc;": {
+  "characters": "\u00fb",
+  "codepoints": [
+   251
+  ]
+ },
+ "&ucy;": {
+  "characters": "\u0443",
+  "codepoints": [
+   1091
+  ]
+ },
+ "&udarr;": {
+  "characters": "\u21c5",
+  "codepoints": [
+   8645
+  ]
+ },
+ "&udblac;": {
+  "characters": "\u0171",
+  "codepoints": [
+   369
+  ]
+ },
+ "&udhar;": {
+  "characters": "\u296e",
+  "codepoints": [
+   10606
+  ]
+ },
+ "&ufisht;": {
+  "characters": "\u297e",
+  "codepoints": [
+   10622
+  ]
+ },
+ "&ufr;": {
+  "characters": "\ud835\udd32",
+  "codepoints": [
+   120114
+  ]
+ },
+ "&ugrave": {
+  "characters": "\u00f9",
+  "codepoints": [
+   249
+  ]
+ },
+ "&ugrave;": {
+  "characters": "\u00f9",
+  "codepoints": [
+   249
+  ]
+ },
+ "&uharl;": {
+  "characters": "\u21bf",
+  "codepoints": [
+   8639
+  ]
+ },
+ "&uharr;": {
+  "characters": "\u21be",
+  "codepoints": [
+   8638
+  ]
+ },
+ "&uhblk;": {
+  "characters": "\u2580",
+  "codepoints": [
+   9600
+  ]
+ },
+ "&ulcorn;": {
+  "characters": "\u231c",
+  "codepoints": [
+   8988
+  ]
+ },
+ "&ulcorner;": {
+  "characters": "\u231c",
+  "codepoints": [
+   8988
+  ]
+ },
+ "&ulcrop;": {
+  "characters": "\u230f",
+  "codepoints": [
+   8975
+  ]
+ },
+ "&ultri;": {
+  "characters": "\u25f8",
+  "codepoints": [
+   9720
+  ]
+ },
+ "&umacr;": {
+  "characters": "\u016b",
+  "codepoints": [
+   363
+  ]
+ },
+ "&uml": {
+  "characters": "\u00a8",
+  "codepoints": [
+   168
+  ]
+ },
+ "&uml;": {
+  "characters": "\u00a8",
+  "codepoints": [
+   168
+  ]
+ },
+ "&uogon;": {
+  "characters": "\u0173",
+  "codepoints": [
+   371
+  ]
+ },
+ "&uopf;": {
+  "characters": "\ud835\udd66",
+  "codepoints": [
+   120166
+  ]
+ },
+ "&uparrow;": {
+  "characters": "\u2191",
+  "codepoints": [
+   8593
+  ]
+ },
+ "&updownarrow;": {
+  "characters": "\u2195",
+  "codepoints": [
+   8597
+  ]
+ },
+ "&upharpoonleft;": {
+  "characters": "\u21bf",
+  "codepoints": [
+   8639
+  ]
+ },
+ "&upharpoonright;": {
+  "characters": "\u21be",
+  "codepoints": [
+   8638
+  ]
+ },
+ "&uplus;": {
+  "characters": "\u228e",
+  "codepoints": [
+   8846
+  ]
+ },
+ "&upsi;": {
+  "characters": "\u03c5",
+  "codepoints": [
+   965
+  ]
+ },
+ "&upsih;": {
+  "characters": "\u03d2",
+  "codepoints": [
+   978
+  ]
+ },
+ "&upsilon;": {
+  "characters": "\u03c5",
+  "codepoints": [
+   965
+  ]
+ },
+ "&upuparrows;": {
+  "characters": "\u21c8",
+  "codepoints": [
+   8648
+  ]
+ },
+ "&urcorn;": {
+  "characters": "\u231d",
+  "codepoints": [
+   8989
+  ]
+ },
+ "&urcorner;": {
+  "characters": "\u231d",
+  "codepoints": [
+   8989
+  ]
+ },
+ "&urcrop;": {
+  "characters": "\u230e",
+  "codepoints": [
+   8974
+  ]
+ },
+ "&uring;": {
+  "characters": "\u016f",
+  "codepoints": [
+   367
+  ]
+ },
+ "&urtri;": {
+  "characters": "\u25f9",
+  "codepoints": [
+   9721
+  ]
+ },
+ "&uscr;": {
+  "characters": "\ud835\udcca",
+  "codepoints": [
+   120010
+  ]
+ },
+ "&utdot;": {
+  "characters": "\u22f0",
+  "codepoints": [
+   8944
+  ]
+ },
+ "&utilde;": {
+  "characters": "\u0169",
+  "codepoints": [
+   361
+  ]
+ },
+ "&utri;": {
+  "characters": "\u25b5",
+  "codepoints": [
+   9653
+  ]
+ },
+ "&utrif;": {
+  "characters": "\u25b4",
+  "codepoints": [
+   9652
+  ]
+ },
+ "&uuarr;": {
+  "characters": "\u21c8",
+  "codepoints": [
+   8648
+  ]
+ },
+ "&uuml": {
+  "characters": "\u00fc",
+  "codepoints": [
+   252
+  ]
+ },
+ "&uuml;": {
+  "characters": "\u00fc",
+  "codepoints": [
+   252
+  ]
+ },
+ "&uwangle;": {
+  "characters": "\u29a7",
+  "codepoints": [
+   10663
+  ]
+ },
+ "&vArr;": {
+  "characters": "\u21d5",
+  "codepoints": [
+   8661
+  ]
+ },
+ "&vBar;": {
+  "characters": "\u2ae8",
+  "codepoints": [
+   10984
+  ]
+ },
+ "&vBarv;": {
+  "characters": "\u2ae9",
+  "codepoints": [
+   10985
+  ]
+ },
+ "&vDash;": {
+  "characters": "\u22a8",
+  "codepoints": [
+   8872
+  ]
+ },
+ "&vangrt;": {
+  "characters": "\u299c",
+  "codepoints": [
+   10652
+  ]
+ },
+ "&varepsilon;": {
+  "characters": "\u03f5",
+  "codepoints": [
+   1013
+  ]
+ },
+ "&varkappa;": {
+  "characters": "\u03f0",
+  "codepoints": [
+   1008
+  ]
+ },
+ "&varnothing;": {
+  "characters": "\u2205",
+  "codepoints": [
+   8709
+  ]
+ },
+ "&varphi;": {
+  "characters": "\u03d5",
+  "codepoints": [
+   981
+  ]
+ },
+ "&varpi;": {
+  "characters": "\u03d6",
+  "codepoints": [
+   982
+  ]
+ },
+ "&varpropto;": {
+  "characters": "\u221d",
+  "codepoints": [
+   8733
+  ]
+ },
+ "&varr;": {
+  "characters": "\u2195",
+  "codepoints": [
+   8597
+  ]
+ },
+ "&varrho;": {
+  "characters": "\u03f1",
+  "codepoints": [
+   1009
+  ]
+ },
+ "&varsigma;": {
+  "characters": "\u03c2",
+  "codepoints": [
+   962
+  ]
+ },
+ "&varsubsetneq;": {
+  "characters": "\u228a\ufe00",
+  "codepoints": [
+   8842,
+   65024
+  ]
+ },
+ "&varsubsetneqq;": {
+  "characters": "\u2acb\ufe00",
+  "codepoints": [
+   10955,
+   65024
+  ]
+ },
+ "&varsupsetneq;": {
+  "characters": "\u228b\ufe00",
+  "codepoints": [
+   8843,
+   65024
+  ]
+ },
+ "&varsupsetneqq;": {
+  "characters": "\u2acc\ufe00",
+  "codepoints": [
+   10956,
+   65024
+  ]
+ },
+ "&vartheta;": {
+  "characters": "\u03d1",
+  "codepoints": [
+   977
+  ]
+ },
+ "&vartriangleleft;": {
+  "characters": "\u22b2",
+  "codepoints": [
+   8882
+  ]
+ },
+ "&vartriangleright;": {
+  "characters": "\u22b3",
+  "codepoints": [
+   8883
+  ]
+ },
+ "&vcy;": {
+  "characters": "\u0432",
+  "codepoints": [
+   1074
+  ]
+ },
+ "&vdash;": {
+  "characters": "\u22a2",
+  "codepoints": [
+   8866
+  ]
+ },
+ "&vee;": {
+  "characters": "\u2228",
+  "codepoints": [
+   8744
+  ]
+ },
+ "&veebar;": {
+  "characters": "\u22bb",
+  "codepoints": [
+   8891
+  ]
+ },
+ "&veeeq;": {
+  "characters": "\u225a",
+  "codepoints": [
+   8794
+  ]
+ },
+ "&vellip;": {
+  "characters": "\u22ee",
+  "codepoints": [
+   8942
+  ]
+ },
+ "&verbar;": {
+  "characters": "|",
+  "codepoints": [
+   124
+  ]
+ },
+ "&vert;": {
+  "characters": "|",
+  "codepoints": [
+   124
+  ]
+ },
+ "&vfr;": {
+  "characters": "\ud835\udd33",
+  "codepoints": [
+   120115
+  ]
+ },
+ "&vltri;": {
+  "characters": "\u22b2",
+  "codepoints": [
+   8882
+  ]
+ },
+ "&vnsub;": {
+  "characters": "\u2282\u20d2",
+  "codepoints": [
+   8834,
+   8402
+  ]
+ },
+ "&vnsup;": {
+  "characters": "\u2283\u20d2",
+  "codepoints": [
+   8835,
+   8402
+  ]
+ },
+ "&vopf;": {
+  "characters": "\ud835\udd67",
+  "codepoints": [
+   120167
+  ]
+ },
+ "&vprop;": {
+  "characters": "\u221d",
+  "codepoints": [
+   8733
+  ]
+ },
+ "&vrtri;": {
+  "characters": "\u22b3",
+  "codepoints": [
+   8883
+  ]
+ },
+ "&vscr;": {
+  "characters": "\ud835\udccb",
+  "codepoints": [
+   120011
+  ]
+ },
+ "&vsubnE;": {
+  "characters": "\u2acb\ufe00",
+  "codepoints": [
+   10955,
+   65024
+  ]
+ },
+ "&vsubne;": {
+  "characters": "\u228a\ufe00",
+  "codepoints": [
+   8842,
+   65024
+  ]
+ },
+ "&vsupnE;": {
+  "characters": "\u2acc\ufe00",
+  "codepoints": [
+   10956,
+   65024
+  ]
+ },
+ "&vsupne;": {
+  "characters": "\u228b\ufe00",
+  "codepoints": [
+   8843,
+   65024
+  ]
+ },
+ "&vzigzag;": {
+  "characters": "\u299a",
+  "codepoints": [
+   10650
+  ]
+ },
+ "&wcirc;": {
+  "characters": "\u0175",
+  "codepoints": [
+   373
+  ]
+ },
+ "&wedbar;": {
+  "characters": "\u2a5f",
+  "codepoints": [
+   10847
+  ]
+ },
+ "&wedge;": {
+  "characters": "\u2227",
+  "codepoints": [
+   8743
+  ]
+ },
+ "&wedgeq;": {
+  "characters": "\u2259",
+  "codepoints": [
+   8793
+  ]
+ },
+ "&weierp;": {
+  "characters": "\u2118",
+  "codepoints": [
+   8472
+  ]
+ },
+ "&wfr;": {
+  "characters": "\ud835\udd34",
+  "codepoints": [
+   120116
+  ]
+ },
+ "&wopf;": {
+  "characters": "\ud835\udd68",
+  "codepoints": [
+   120168
+  ]
+ },
+ "&wp;": {
+  "characters": "\u2118",
+  "codepoints": [
+   8472
+  ]
+ },
+ "&wr;": {
+  "characters": "\u2240",
+  "codepoints": [
+   8768
+  ]
+ },
+ "&wreath;": {
+  "characters": "\u2240",
+  "codepoints": [
+   8768
+  ]
+ },
+ "&wscr;": {
+  "characters": "\ud835\udccc",
+  "codepoints": [
+   120012
+  ]
+ },
+ "&xcap;": {
+  "characters": "\u22c2",
+  "codepoints": [
+   8898
+  ]
+ },
+ "&xcirc;": {
+  "characters": "\u25ef",
+  "codepoints": [
+   9711
+  ]
+ },
+ "&xcup;": {
+  "characters": "\u22c3",
+  "codepoints": [
+   8899
+  ]
+ },
+ "&xdtri;": {
+  "characters": "\u25bd",
+  "codepoints": [
+   9661
+  ]
+ },
+ "&xfr;": {
+  "characters": "\ud835\udd35",
+  "codepoints": [
+   120117
+  ]
+ },
+ "&xhArr;": {
+  "characters": "\u27fa",
+  "codepoints": [
+   10234
+  ]
+ },
+ "&xharr;": {
+  "characters": "\u27f7",
+  "codepoints": [
+   10231
+  ]
+ },
+ "&xi;": {
+  "characters": "\u03be",
+  "codepoints": [
+   958
+  ]
+ },
+ "&xlArr;": {
+  "characters": "\u27f8",
+  "codepoints": [
+   10232
+  ]
+ },
+ "&xlarr;": {
+  "characters": "\u27f5",
+  "codepoints": [
+   10229
+  ]
+ },
+ "&xmap;": {
+  "characters": "\u27fc",
+  "codepoints": [
+   10236
+  ]
+ },
+ "&xnis;": {
+  "characters": "\u22fb",
+  "codepoints": [
+   8955
+  ]
+ },
+ "&xodot;": {
+  "characters": "\u2a00",
+  "codepoints": [
+   10752
+  ]
+ },
+ "&xopf;": {
+  "characters": "\ud835\udd69",
+  "codepoints": [
+   120169
+  ]
+ },
+ "&xoplus;": {
+  "characters": "\u2a01",
+  "codepoints": [
+   10753
+  ]
+ },
+ "&xotime;": {
+  "characters": "\u2a02",
+  "codepoints": [
+   10754
+  ]
+ },
+ "&xrArr;": {
+  "characters": "\u27f9",
+  "codepoints": [
+   10233
+  ]
+ },
+ "&xrarr;": {
+  "characters": "\u27f6",
+  "codepoints": [
+   10230
+  ]
+ },
+ "&xscr;": {
+  "characters": "\ud835\udccd",
+  "codepoints": [
+   120013
+  ]
+ },
+ "&xsqcup;": {
+  "characters": "\u2a06",
+  "codepoints": [
+   10758
+  ]
+ },
+ "&xuplus;": {
+  "characters": "\u2a04",
+  "codepoints": [
+   10756
+  ]
+ },
+ "&xutri;": {
+  "characters": "\u25b3",
+  "codepoints": [
+   9651
+  ]
+ },
+ "&xvee;": {
+  "characters": "\u22c1",
+  "codepoints": [
+   8897
+  ]
+ },
+ "&xwedge;": {
+  "characters": "\u22c0",
+  "codepoints": [
+   8896
+  ]
+ },
+ "&yacute": {
+  "characters": "\u00fd",
+  "codepoints": [
+   253
+  ]
+ },
+ "&yacute;": {
+  "characters": "\u00fd",
+  "codepoints": [
+   253
+  ]
+ },
+ "&yacy;": {
+  "characters": "\u044f",
+  "codepoints": [
+   1103
+  ]
+ },
+ "&ycirc;": {
+  "characters": "\u0177",
+  "codepoints": [
+   375
+  ]
+ },
+ "&ycy;": {
+  "characters": "\u044b",
+  "codepoints": [
+   1099
+  ]
+ },
+ "&yen": {
+  "characters": "\u00a5",
+  "codepoints": [
+   165
+  ]
+ },
+ "&yen;": {
+  "characters": "\u00a5",
+  "codepoints": [
+   165
+  ]
+ },
+ "&yfr;": {
+  "characters": "\ud835\udd36",
+  "codepoints": [
+   120118
+  ]
+ },
+ "&yicy;": {
+  "characters": "\u0457",
+  "codepoints": [
+   1111
+  ]
+ },
+ "&yopf;": {
+  "characters": "\ud835\udd6a",
+  "codepoints": [
+   120170
+  ]
+ },
+ "&yscr;": {
+  "characters": "\ud835\udcce",
+  "codepoints": [
+   120014
+  ]
+ },
+ "&yucy;": {
+  "characters": "\u044e",
+  "codepoints": [
+   1102
+  ]
+ },
+ "&yuml": {
+  "characters": "\u00ff",
+  "codepoints": [
+   255
+  ]
+ },
+ "&yuml;": {
+  "characters": "\u00ff",
+  "codepoints": [
+   255
+  ]
+ },
+ "&zacute;": {
+  "characters": "\u017a",
+  "codepoints": [
+   378
+  ]
+ },
+ "&zcaron;": {
+  "characters": "\u017e",
+  "codepoints": [
+   382
+  ]
+ },
+ "&zcy;": {
+  "characters": "\u0437",
+  "codepoints": [
+   1079
+  ]
+ },
+ "&zdot;": {
+  "characters": "\u017c",
+  "codepoints": [
+   380
+  ]
+ },
+ "&zeetrf;": {
+  "characters": "\u2128",
+  "codepoints": [
+   8488
+  ]
+ },
+ "&zeta;": {
+  "characters": "\u03b6",
+  "codepoints": [
+   950
+  ]
+ },
+ "&zfr;": {
+  "characters": "\ud835\udd37",
+  "codepoints": [
+   120119
+  ]
+ },
+ "&zhcy;": {
+  "characters": "\u0436",
+  "codepoints": [
+   1078
+  ]
+ },
+ "&zigrarr;": {
+  "characters": "\u21dd",
+  "codepoints": [
+   8669
+  ]
+ },
+ "&zopf;": {
+  "characters": "\ud835\udd6b",
+  "codepoints": [
+   120171
+  ]
+ },
+ "&zscr;": {
+  "characters": "\ud835\udccf",
+  "codepoints": [
+   120015
+  ]
+ },
+ "&zwj;": {
+  "characters": "\u200d",
+  "codepoints": [
+   8205
+  ]
+ },
+ "&zwnj;": {
+  "characters": "\u200c",
+  "codepoints": [
+   8204
+  ]
+ }
+}

@@ -117,6 +117,11 @@ static int ar__scratch_byte(ar_html_tok *t, char c)
     return 1;
 }
 
+static ar_u32 ar__utf8_len(ar_u32 cp)
+{
+    return cp < 0x80u ? 1u : (cp < 0x800u ? 2u : (cp < 0x10000u ? 3u : 4u));
+}
+
 /*
  * A code point as UTF-8, which is what the rest of areole reads.
  *
@@ -127,7 +132,7 @@ static int ar__scratch_byte(ar_html_tok *t, char c)
  */
 static int ar__scratch_cp(ar_html_tok *t, ar_u32 cp)
 {
-    ar_u32 need = cp < 0x80u ? 1u : (cp < 0x800u ? 2u : (cp < 0x10000u ? 3u : 4u));
+    ar_u32 need = ar__utf8_len(cp);
 
     if (!t->scratch || t->scratch_used + need > t->scratch_cap)
     {
@@ -258,57 +263,86 @@ static int ar__reference(ar_html_tok *t, int in_attribute)
         return 1;
     }
 
-    /* Named character reference state. */
+    /*
+     * Named character reference state, §13.2.5.72.
+     *
+     * "Consume the maximum number of characters possible, where the consumed
+     * characters are one of the identifiers in the first column of the named
+     * character references table." A longest match, not a lookup -- the table
+     * carries both `not` and `notin;`, so where the match ends is a fact about
+     * the table and cannot be guessed by reading to the first non-alphanumeric.
+     */
     {
-        const char *name = p;
-        ar_u32      n = 0;
-        ar_u32      cp;
+        ar_u32 cps[2];
+        ar_i32 n_cp = 0;
+        ar_u32 used = ar_html_entity_match(p, (ar_u32)(t->end - p), cps, &n_cp);
+        ar_u32 need;
+        ar_i32 k;
 
-        while (p < t->end && (ar__h_alpha(*p) || ar__h_digit(*p)))
-        {
-            ++p;
-            ++n;
-        }
-        if (n == 0)
-        {
-            return 0; /* a bare `&`, which is not an error */
-        }
-        if (p < t->end && *p == ';')
-        {
-            ++p;
-            ++n; /* the semicolon is part of the name in the table */
-        }
-        else if (in_attribute)
+        if (used == 0)
         {
             /*
-             * In an attribute, a reference without a semicolon followed by `=`
-             * or an alphanumeric is *not* a reference. That rule exists for
-             * one reason and it is a good one: `?cite=1&copy=2` would
-             * otherwise put a copyright sign in the middle of a query string,
-             * and a decade of URLs depend on it not doing that.
+             * Not a reference. A bare `&` is extremely common and is not an
+             * error; `&` followed by something that looks like a name is the
+             * specification's unknown-named-character-reference and is
+             * counted. Either way the bytes stay as the text that spells them,
+             * which is what a browser does.
              */
-            if (p < t->end && (*p == '=' || ar__h_alpha(*p) || ar__h_digit(*p)))
+            if (p < t->end && (ar__h_alpha(*p) || ar__h_digit(*p)))
             {
-                return 0;
+                t->errors++;
+            }
+            return 0;
+        }
+
+        if (p[used - 1] != ';')
+        {
+            /* missing-semicolon-after-character-reference. Recovered from,
+               because a hundred and six of these are in the table precisely
+               because pages are full of them. */
+            t->errors++;
+
+            /*
+             * And in an attribute it is not a reference at all when what
+             * follows is `=` or alphanumeric. That rule exists for one reason
+             * and it is a good one: `?cite=1&copy=2` would otherwise put a
+             * copyright sign in the middle of a query string, and a decade of
+             * URLs depend on it not doing that.
+             */
+            if (in_attribute)
+            {
+                const char *after = p + used;
+
+                if (after < t->end && (*after == '=' || ar__h_alpha(*after) || ar__h_digit(*after)))
+                {
+                    return 0;
+                }
             }
         }
 
-        cp = ar_html_entity(name, n);
-        if (cp == 0)
+        /* Both code points or neither: a pair is one character to the reader
+           -- `&NotEqualTilde;` is a relation with a slash through it -- and
+           half of one is a relation that means something else. */
+        need = 0;
+        for (k = 0; k < n_cp; ++k)
         {
-            /* Not a reference this table knows. Left as the literal text that
-               spells it, which is what a browser does for an unrecognised one
-               -- and what this one also does for the 1,978 the table does not
-               have yet. ar_html_entity.c names that gap. */
-            t->errors++;
-            return 0;
+            need += ar__utf8_len(cps[k]);
         }
-        if (!ar__scratch_cp(t, cp))
+        if (!t->scratch || t->scratch_used + need > t->scratch_cap)
         {
+            t->scratch_full = 1;
             t->p = save;
             return 0;
         }
-        t->p = p;
+        for (k = 0; k < n_cp; ++k)
+        {
+            if (!ar__scratch_cp(t, cps[k]))
+            {
+                t->p = save;
+                return 0;
+            }
+        }
+        t->p = p + used;
         return 1;
     }
 }
