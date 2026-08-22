@@ -160,7 +160,8 @@ static ar_i32 ar__node(ar__tree *t, ar_dom_kind kind)
     return d->node_count++;
 }
 
-static void ar__detach(ar__tree *t, ar_i32 i);
+static void   ar__detach(ar__tree *t, ar_i32 i);
+static ar_i32 ar__content_of(const ar__tree *t, ar_i32 node);
 
 /*
  * Would putting `child` under `parent` make a loop?
@@ -408,9 +409,38 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
     {
         ar_i32 k;
 
-        if (ar__is(t, t->open[i], tag))
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML && ar__is(t, t->open[i], tag))
         {
             return 1;
+        }
+
+        /*
+         * An integration point is a wall for scope as well as for insertion.
+         *
+         * `<p><svg><desc><p>` is two paragraphs nested, not two siblings: the
+         * inner `<p>` asks whether a `p` is in button scope, and the walk stops
+         * at the `<desc>` before it can find the outer one. Without this the
+         * outer paragraph is closed and the inner one ends up outside the SVG
+         * entirely, which is a visibly different document.
+         */
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_MATHML)
+        {
+            if (ar__is(t, t->open[i], "mi") || ar__is(t, t->open[i], "mo") ||
+                ar__is(t, t->open[i], "mn") || ar__is(t, t->open[i], "ms") ||
+                ar__is(t, t->open[i], "mtext") || ar__is(t, t->open[i], "annotation-xml"))
+            {
+                return 0;
+            }
+            continue;
+        }
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_SVG)
+        {
+            if (ar__is(t, t->open[i], "foreignObject") || ar__is(t, t->open[i], "desc") ||
+                ar__is(t, t->open[i], "title"))
+            {
+                return 0;
+            }
+            continue;
         }
         if (button_scope && ar__is(t, t->open[i], "button"))
         {
@@ -548,6 +578,8 @@ static void ar__insert_node_into(ar__tree *t, ar_i32 node, int foster, ar_i32 ta
     ar_i32 parent =
         foster ? ar__insertion_point(t, target, &before) : (target >= 0 ? target : ar__current(t));
 
+    parent = ar__content_of(t, parent);
+
     if (before >= 0)
     {
         parent = t->doc->nodes[before].parent;
@@ -675,7 +707,8 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
 static void ar__insert_text(ar__tree *t, ar_span s, int foster)
 {
     ar_i32 before = -1;
-    ar_i32 parent = foster ? ar__insertion_point(t, -1, &before) : ar__current(t);
+    ar_i32 parent =
+        ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
     ar_i32 node;
 
     if (s.n == 0)
@@ -720,6 +753,88 @@ static void ar__insert_text(ar__tree *t, ar_span s, int foster)
     }
 }
 
+/*
+ * Where a child of `node` actually goes.
+ *
+ * For everything except a `<template>` this is `node` itself. A template owns
+ * a content fragment and everything written inside the template belongs to
+ * that instead -- which is what makes the contents inert, and what every
+ * serialisation of a template shows as a `content` line between the element
+ * and its children.
+ */
+static ar_i32 ar__content_of(const ar__tree *t, ar_i32 node)
+{
+    if (node >= 0 && t->doc->nodes[node].kind == AR_DOM_ELEMENT &&
+        t->doc->nodes[node].ns == AR_NS_HTML && ar__is(t, node, "template"))
+    {
+        ar_i32 c = t->doc->nodes[node].first_child;
+
+        if (c >= 0 && t->doc->nodes[c].kind == AR_DOM_FRAGMENT)
+        {
+            return c;
+        }
+    }
+    return node;
+}
+
+/*
+ * The special category, §13.2.4.2.
+ *
+ * The whole list, not the handful an algorithm happened to need. Two places
+ * ask this question and they are the two that decide what a stray end tag can
+ * reach: the adoption agency looks for the topmost special element below a
+ * formatting element, and "any other end tag" stops walking at the first one.
+ *
+ * The second is what makes `</div>` inside `<p>` harmless instead of
+ * destructive -- the walk hits the `p`, which is special, and gives up. A walk
+ * that does not check simply keeps going and closes the div, taking everything
+ * between with it.
+ *
+ * The last three entries are foreign, and they are why `<svg><foreignObject>
+ * <p></div>` puts the text in the paragraph: an integration point is a wall.
+ */
+static int ar__is_special(const ar__tree *t, ar_i32 node)
+{
+    static const char *const HTML_SPECIAL[] = {
+        "address", "applet",     "area",     "article",    "aside",     "base",     "basefont",
+        "bgsound", "blockquote", "body",     "br",         "button",    "caption",  "center",
+        "col",     "colgroup",   "dd",       "details",    "dir",       "div",      "dl",
+        "dt",      "embed",      "fieldset", "figcaption", "figure",    "footer",   "form",
+        "frame",   "frameset",   "h1",       "h2",         "h3",        "h4",       "h5",
+        "h6",      "head",       "header",   "hgroup",     "hr",        "html",     "iframe",
+        "img",     "input",      "keygen",   "li",         "link",      "listing",  "main",
+        "marquee", "menu",       "meta",     "nav",        "noembed",   "noframes", "noscript",
+        "object",  "ol",         "p",        "param",      "plaintext", "pre",      "script",
+        "search",  "section",    "select",   "source",     "style",     "summary",  "table",
+        "tbody",   "td",         "template", "textarea",   "tfoot",     "th",       "thead",
+        "title",   "tr",         "track",    "ul",         "wbr",       "xmp",      0};
+    ar_i32 i;
+
+    if (node < 0 || t->doc->nodes[node].kind != AR_DOM_ELEMENT)
+    {
+        return 0;
+    }
+    if (t->doc->nodes[node].ns == AR_NS_MATHML)
+    {
+        return ar__is(t, node, "mi") || ar__is(t, node, "mo") || ar__is(t, node, "mn") ||
+               ar__is(t, node, "ms") || ar__is(t, node, "mtext") ||
+               ar__is(t, node, "annotation-xml");
+    }
+    if (t->doc->nodes[node].ns == AR_NS_SVG)
+    {
+        return ar__is(t, node, "foreignObject") || ar__is(t, node, "desc") ||
+               ar__is(t, node, "title");
+    }
+    for (i = 0; HTML_SPECIAL[i]; ++i)
+    {
+        if (ar__is(t, node, HTML_SPECIAL[i]))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
 {
     ar_i32 node = ar__node(t, AR_DOM_ELEMENT);
@@ -749,6 +864,18 @@ static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
 
     ar__insert_node(t, node, foster);
     ar__push(t, node);
+
+    /* A template is given its content fragment the moment it exists, so that
+       ar__content_of has something to find on the very next token. */
+    if (ar_span_is(tok->name, "template"))
+    {
+        ar_i32 frag = ar__node(t, AR_DOM_FRAGMENT);
+
+        if (frag >= 0)
+        {
+            ar__append(t, node, frag);
+        }
+    }
     return node;
 }
 
@@ -952,21 +1079,13 @@ static int ar__adoption(ar__tree *t, const char *tag)
         /* Step 4.6: the furthest block -- the topmost *special* element below
            the formatting element on the stack. */
         {
-            static const char *const SPECIAL[] = {
-                "address", "article", "aside",  "blockquote", "center", "details", "dir",
-                "div",     "dl",      "dt",     "fieldset",   "figure", "footer",  "form",
-                "h1",      "h2",      "h3",     "h4",         "h5",     "h6",      "header",
-                "hr",      "li",      "main",   "nav",        "ol",     "p",       "pre",
-                "section", "summary", "table",  "td",         "th",     "tr",      "ul",
-                "button",  "marquee", "object", "applet",     0};
-
             for (i = stack_index + 1; i < t->open_n && furthest < 0; ++i)
             {
                 ar_i32 k;
 
-                for (k = 0; SPECIAL[k]; ++k)
+                for (k = 0; k < 1; ++k)
                 {
-                    if (ar__is(t, t->open[i], SPECIAL[k]))
+                    if (ar__is_special(t, t->open[i]))
                     {
                         furthest = t->open[i];
                         break;
@@ -1386,7 +1505,9 @@ static ar_i32 ar__insert_implied(ar__tree *t, const char *tag)
     return ar__insert_element(t, &fake, 0);
 }
 
-static void ar__process(ar__tree *t, const ar_token *tok);
+static void   ar__process(ar__tree *t, const ar_token *tok);
+static void   ar__process_mode(ar__tree *t, const ar_token *tok);
+static ar_i32 ar__insert_foreign(ar__tree *t, const ar_token *tok, ar_ns ns, int foster);
 
 /* `</p>` with no open paragraph still produces one, which is what the
    specification says and is how `</p>` alone in a body makes an empty
@@ -1687,6 +1808,27 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             t->mode = M_TEXT;
             return;
         }
+        /*
+         * `<svg>` and `<math>` are the two doors into foreign content, and
+         * they are the only ones: nothing else in an HTML document changes
+         * namespace. Everything after them is decided by where it sits, not by
+         * what it says -- see ar__use_insertion_mode.
+         */
+        if (ar_span_is(tok->name, "svg") || ar_span_is(tok->name, "math"))
+        {
+            ar_ns  ns = ar_span_is(tok->name, "svg") ? AR_NS_SVG : AR_NS_MATHML;
+            ar_i32 node;
+
+            ar__reconstruct(t);
+            /* Foster parented like any other in-body insertion: a <math> in
+               a table goes before the table, not inside it. */
+            node = ar__insert_foreign(t, tok, ns, 1);
+            if (node >= 0 && tok->self_closing)
+            {
+                ar__pop(t);
+            }
+            return;
+        }
         if (ar__closes_p(tok->name))
         {
             ar__close_p(t);
@@ -1747,11 +1889,54 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
     }
 
     /*
+     * An end tag for a block element, §13.2.6.4.7.
+     *
+     * `</div>`, `</section>`, `</blockquote>` and the rest of the list have a
+     * rule of their own, and it is not the same as the general walk below: it
+     * generates implied end tags first, so `<div><p>x</div>` closes the
+     * paragraph on the way out instead of tripping over it.
+     *
+     * These had been going through the general walk, which worked only because
+     * that walk did not stop at special elements. Once it did -- which the
+     * specification requires, and which is what keeps a stray `</div>` inside
+     * a paragraph from closing the div and everything between -- thirty
+     * conformance cases turned red at once and said so.
+     */
+    if (ar__closes_p(tok->name) && !ar_span_is(tok->name, "p") && !ar_span_is(tok->name, "form") &&
+        !ar_span_is(tok->name, "table") && !ar_span_is(tok->name, "hr"))
+    {
+        char   name[32];
+        ar_u32 n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32 k;
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+
+        if (!ar__in_scope(t, name, 0))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__implied_end_tags(t, 0);
+        if (!ar__span_eq(t->doc->nodes[ar__current(t)].name, tok->name))
+        {
+            t->doc->errors++;
+        }
+        ar__pop_until(t, name);
+        return;
+    }
+
+    /*
      * "Any other end tag", §13.2.6.4.7.
      *
-     * Walk the stack for an element with this name and close through to it.
-     * An end tag naming nothing that is open is dropped, which is what makes a
-     * stray `</span>` harmless rather than destructive.
+     * Walk the stack for an element with this name and close through to it --
+     * but stop at the first element in the special category, which is what
+     * makes a stray `</div>` inside a paragraph harmless instead of
+     * destructive. Without that stop the walk keeps going, finds the div, and
+     * closes everything between.
      */
     {
         ar_i32 i;
@@ -1762,13 +1947,19 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             {
                 continue;
             }
-            if (ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
+            if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML &&
+                ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
             {
                 while (t->open_n > i + 1)
                 {
                     ar__pop(t);
                 }
                 ar__pop(t);
+                return;
+            }
+            if (ar__is_special(t, t->open[i]))
+            {
+                t->doc->errors++;
                 return;
             }
         }
@@ -2151,7 +2342,568 @@ static int ar__early_end_tag_ignored(const ar_token *tok)
            !ar_span_is(tok->name, "html") && !ar_span_is(tok->name, "br");
 }
 
+/* ------------------------------------------------------------------------
+ * Foreign content, §13.2.6.5
+ *
+ * SVG and MathML inside HTML, which is not a second parser but a set of
+ * exceptions to the first one. Four things make it awkward and all four are
+ * here:
+ *
+ *   1. Names are case-sensitive there and case-insensitive here. The tokenizer
+ *      lowercases every tag and attribute name, correctly, and then SVG needs
+ *      `foreignObject` and `clipPath` and `attributeName` back. So there are
+ *      tables, and they are the specification's own tables.
+ *
+ *   2. Attributes can have a namespace. `xlink:href` is `href` in the XLink
+ *      namespace and is not the same attribute as `href`.
+ *
+ *   3. Integration points. Inside `<foreignObject>` or `<mtext>` the HTML
+ *      rules resume, which is how `<svg><foreignObject><div>` works, and the
+ *      test for it has to be asked before every token.
+ *
+ *   4. Breakout. A `<p>` or a `<table>` inside `<svg>` does not become an SVG
+ *      element -- it pops the whole foreign subtree and reprocesses as HTML.
+ *      Authors write it constantly, mostly by forgetting to close something.
+ * ------------------------------------------------------------------------ */
+
+/* The SVG tag names whose lowercase form is not their real form, §13.2.6.5. */
+static const char *const AR__SVG_TAGS[] = {"altglyph",
+                                           "altGlyph",
+                                           "altglyphdef",
+                                           "altGlyphDef",
+                                           "altglyphitem",
+                                           "altGlyphItem",
+                                           "animatecolor",
+                                           "animateColor",
+                                           "animatemotion",
+                                           "animateMotion",
+                                           "animatetransform",
+                                           "animateTransform",
+                                           "clippath",
+                                           "clipPath",
+                                           "feblend",
+                                           "feBlend",
+                                           "fecolormatrix",
+                                           "feColorMatrix",
+                                           "fecomponenttransfer",
+                                           "feComponentTransfer",
+                                           "fecomposite",
+                                           "feComposite",
+                                           "feconvolvematrix",
+                                           "feConvolveMatrix",
+                                           "fediffuselighting",
+                                           "feDiffuseLighting",
+                                           "fedisplacementmap",
+                                           "feDisplacementMap",
+                                           "fedistantlight",
+                                           "feDistantLight",
+                                           "fedropshadow",
+                                           "feDropShadow",
+                                           "feflood",
+                                           "feFlood",
+                                           "fefunca",
+                                           "feFuncA",
+                                           "fefuncb",
+                                           "feFuncB",
+                                           "fefuncg",
+                                           "feFuncG",
+                                           "fefuncr",
+                                           "feFuncR",
+                                           "fegaussianblur",
+                                           "feGaussianBlur",
+                                           "feimage",
+                                           "feImage",
+                                           "femerge",
+                                           "feMerge",
+                                           "femergenode",
+                                           "feMergeNode",
+                                           "femorphology",
+                                           "feMorphology",
+                                           "feoffset",
+                                           "feOffset",
+                                           "fepointlight",
+                                           "fePointLight",
+                                           "fespecularlighting",
+                                           "feSpecularLighting",
+                                           "fespotlight",
+                                           "feSpotLight",
+                                           "fetile",
+                                           "feTile",
+                                           "feturbulence",
+                                           "feTurbulence",
+                                           "foreignobject",
+                                           "foreignObject",
+                                           "glyphref",
+                                           "glyphRef",
+                                           "lineargradient",
+                                           "linearGradient",
+                                           "radialgradient",
+                                           "radialGradient",
+                                           "textpath",
+                                           "textPath",
+                                           0};
+
+/* SVG attribute names, same idea. */
+static const char *const AR__SVG_ATTRS[] = {"attributename",
+                                            "attributeName",
+                                            "attributetype",
+                                            "attributeType",
+                                            "basefrequency",
+                                            "baseFrequency",
+                                            "baseprofile",
+                                            "baseProfile",
+                                            "calcmode",
+                                            "calcMode",
+                                            "clippathunits",
+                                            "clipPathUnits",
+                                            "diffuseconstant",
+                                            "diffuseConstant",
+                                            "edgemode",
+                                            "edgeMode",
+                                            "filterunits",
+                                            "filterUnits",
+                                            "glyphref",
+                                            "glyphRef",
+                                            "gradienttransform",
+                                            "gradientTransform",
+                                            "gradientunits",
+                                            "gradientUnits",
+                                            "kernelmatrix",
+                                            "kernelMatrix",
+                                            "kernelunitlength",
+                                            "kernelUnitLength",
+                                            "keypoints",
+                                            "keyPoints",
+                                            "keysplines",
+                                            "keySplines",
+                                            "keytimes",
+                                            "keyTimes",
+                                            "lengthadjust",
+                                            "lengthAdjust",
+                                            "limitingconeangle",
+                                            "limitingConeAngle",
+                                            "markerheight",
+                                            "markerHeight",
+                                            "markerunits",
+                                            "markerUnits",
+                                            "markerwidth",
+                                            "markerWidth",
+                                            "maskcontentunits",
+                                            "maskContentUnits",
+                                            "maskunits",
+                                            "maskUnits",
+                                            "numoctaves",
+                                            "numOctaves",
+                                            "pathlength",
+                                            "pathLength",
+                                            "patterncontentunits",
+                                            "patternContentUnits",
+                                            "patterntransform",
+                                            "patternTransform",
+                                            "patternunits",
+                                            "patternUnits",
+                                            "pointsatx",
+                                            "pointsAtX",
+                                            "pointsaty",
+                                            "pointsAtY",
+                                            "pointsatz",
+                                            "pointsAtZ",
+                                            "preservealpha",
+                                            "preserveAlpha",
+                                            "preserveaspectratio",
+                                            "preserveAspectRatio",
+                                            "primitiveunits",
+                                            "primitiveUnits",
+                                            "refx",
+                                            "refX",
+                                            "refy",
+                                            "refY",
+                                            "repeatcount",
+                                            "repeatCount",
+                                            "repeatdur",
+                                            "repeatDur",
+                                            "requiredextensions",
+                                            "requiredExtensions",
+                                            "requiredfeatures",
+                                            "requiredFeatures",
+                                            "specularconstant",
+                                            "specularConstant",
+                                            "specularexponent",
+                                            "specularExponent",
+                                            "spreadmethod",
+                                            "spreadMethod",
+                                            "startoffset",
+                                            "startOffset",
+                                            "stddeviation",
+                                            "stdDeviation",
+                                            "stitchtiles",
+                                            "stitchTiles",
+                                            "surfacescale",
+                                            "surfaceScale",
+                                            "systemlanguage",
+                                            "systemLanguage",
+                                            "tablevalues",
+                                            "tableValues",
+                                            "targetx",
+                                            "targetX",
+                                            "targety",
+                                            "targetY",
+                                            "textlength",
+                                            "textLength",
+                                            "viewbox",
+                                            "viewBox",
+                                            "viewtarget",
+                                            "viewTarget",
+                                            "xchannelselector",
+                                            "xChannelSelector",
+                                            "ychannelselector",
+                                            "yChannelSelector",
+                                            "zoomandpan",
+                                            "zoomAndPan",
+                                            0};
+
+/* MathML has one, and it is the one nobody remembers. */
+static const char *const AR__MATH_ATTRS[] = {"definitionurl", "definitionURL", 0};
+
+/* The attributes written with a colon, and the namespace each lands in. */
+static const struct
+{
+    const char *written;
+    const char *local;
+    int         ns;
+} AR__FOREIGN_ATTRS[] = {
+    {"xlink:actuate", "actuate", AR_ATTR_NS_XLINK}, {"xlink:arcrole", "arcrole", AR_ATTR_NS_XLINK},
+    {"xlink:href", "href", AR_ATTR_NS_XLINK},       {"xlink:role", "role", AR_ATTR_NS_XLINK},
+    {"xlink:show", "show", AR_ATTR_NS_XLINK},       {"xlink:title", "title", AR_ATTR_NS_XLINK},
+    {"xlink:type", "type", AR_ATTR_NS_XLINK},       {"xml:lang", "lang", AR_ATTR_NS_XML},
+    {"xml:space", "space", AR_ATTR_NS_XML},         {"xmlns", "xmlns", AR_ATTR_NS_XMLNS},
+    {"xmlns:xlink", "xlink", AR_ATTR_NS_XMLNS},     {0, 0, 0}};
+
+/* A lowercase name to its real spelling, or the name unchanged. The tables are
+   pairs, so this walks two at a time. */
+static ar_span ar__fix_case(const char *const *table, ar_span name)
+{
+    ar_i32 i;
+
+    for (i = 0; table[i]; i += 2)
+    {
+        if (ar_span_is(name, table[i]))
+        {
+            ar_span out;
+
+            out.p = table[i + 1];
+            out.n = (ar_u32)strlen(table[i + 1]);
+            return out;
+        }
+    }
+    return name;
+}
+
+static int ar__is_html(const ar__tree *t, ar_i32 node)
+{
+    return node < 0 || t->doc->nodes[node].ns == AR_NS_HTML;
+}
+
+/*
+ * A MathML text integration point: `<mi>`, `<mo>`, `<mn>`, `<ms>`, `<mtext>`.
+ * Inside one, HTML content is HTML again -- which is the whole reason MathML
+ * can carry a sentence.
+ */
+static int ar__math_text_point(const ar__tree *t, ar_i32 node)
+{
+    if (node < 0 || t->doc->nodes[node].ns != AR_NS_MATHML)
+    {
+        return 0;
+    }
+    return ar__is(t, node, "mi") || ar__is(t, node, "mo") || ar__is(t, node, "mn") ||
+           ar__is(t, node, "ms") || ar__is(t, node, "mtext");
+}
+
+/* An `annotation-xml` whose `encoding` says its contents are HTML. */
+static int ar__annotation_html(const ar__tree *t, ar_i32 node)
+{
+    ar_i32 k;
+
+    if (node < 0 || t->doc->nodes[node].ns != AR_NS_MATHML || !ar__is(t, node, "annotation-xml"))
+    {
+        return 0;
+    }
+    for (k = 0; k < t->doc->nodes[node].attr_count; ++k)
+    {
+        const ar_attr *a = &t->doc->attrs[t->doc->nodes[node].attr_first + k];
+
+        if (ar_span_is(a->name, "encoding") &&
+            (ar_span_is(a->value, "text/html") || ar_span_is(a->value, "application/xhtml+xml")))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int ar__html_point(const ar__tree *t, ar_i32 node)
+{
+    if (node < 0)
+    {
+        return 0;
+    }
+    if (t->doc->nodes[node].ns == AR_NS_SVG)
+    {
+        return ar__is(t, node, "foreignObject") || ar__is(t, node, "desc") ||
+               ar__is(t, node, "title");
+    }
+    return ar__annotation_html(t, node);
+}
+
+/*
+ * Whether this token is handled by the insertion mode or by the foreign
+ * content rules, §13.2.6.
+ *
+ * Asked before every token, which is why it is written as one expression
+ * rather than a walk: the answer for an ordinary document is the first line.
+ */
+static int ar__use_insertion_mode(const ar__tree *t, const ar_token *tok)
+{
+    ar_i32 cur = ar__current(t);
+
+    if (t->open_n <= 1 || ar__is_html(t, cur) || tok->kind == AR_TOK_EOF)
+    {
+        return 1;
+    }
+    if (ar__math_text_point(t, cur))
+    {
+        if (tok->kind == AR_TOK_TEXT)
+        {
+            return 1;
+        }
+        if (tok->kind == AR_TOK_START && !ar_span_is(tok->name, "mglyph") &&
+            !ar_span_is(tok->name, "malignmark"))
+        {
+            return 1;
+        }
+    }
+    if (t->doc->nodes[cur].ns == AR_NS_MATHML && ar__is(t, cur, "annotation-xml") &&
+        tok->kind == AR_TOK_START && ar_span_is(tok->name, "svg"))
+    {
+        return 1;
+    }
+    if (ar__html_point(t, cur) && (tok->kind == AR_TOK_START || tok->kind == AR_TOK_TEXT))
+    {
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * Insert a foreign element: adjust its name, adjust its attributes, and put it
+ * in the namespace it belongs to.
+ */
+static ar_i32 ar__insert_foreign(ar__tree *t, const ar_token *tok, ar_ns ns, int foster)
+{
+    ar_i32 node = ar__node(t, AR_DOM_ELEMENT);
+    ar_i32 k;
+
+    if (node < 0)
+    {
+        return -1;
+    }
+    t->doc->nodes[node].ns = ns;
+    t->doc->nodes[node].name =
+        ar__keep(t, ns == AR_NS_SVG ? ar__fix_case(AR__SVG_TAGS, tok->name) : tok->name);
+
+    if (tok->attr_count > 0 && t->doc->attr_count + tok->attr_count <= t->doc->attr_cap)
+    {
+        t->doc->nodes[node].attr_first = t->doc->attr_count;
+        t->doc->nodes[node].attr_count = tok->attr_count;
+        for (k = 0; k < tok->attr_count; ++k)
+        {
+            ar_span name = tok->attrs[k].name;
+            int     ans = AR_ATTR_NS_NONE;
+            ar_i32  j;
+
+            for (j = 0; AR__FOREIGN_ATTRS[j].written; ++j)
+            {
+                if (ar_span_is(name, AR__FOREIGN_ATTRS[j].written))
+                {
+                    name.p = AR__FOREIGN_ATTRS[j].local;
+                    name.n = (ar_u32)strlen(AR__FOREIGN_ATTRS[j].local);
+                    ans = AR__FOREIGN_ATTRS[j].ns;
+                    break;
+                }
+            }
+            if (ans == AR_ATTR_NS_NONE)
+            {
+                name = ns == AR_NS_SVG ? ar__fix_case(AR__SVG_ATTRS, name)
+                                       : ar__fix_case(AR__MATH_ATTRS, name);
+            }
+            t->doc->attrs[t->doc->attr_count].name = ar__keep(t, name);
+            t->doc->attrs[t->doc->attr_count].value = ar__keep(t, tok->attrs[k].value);
+            t->doc->attrs[t->doc->attr_count].ns = (ar_attr_ns)ans;
+            ++t->doc->attr_count;
+        }
+    }
+    else if (tok->attr_count > 0)
+    {
+        t->doc->overflowed = 1;
+    }
+
+    ar__insert_node(t, node, foster);
+    ar__push(t, node);
+    return node;
+}
+
+/*
+ * The HTML start tags that break out of foreign content, §13.2.6.5.
+ *
+ * Not an arbitrary list: it is the block-level and formatting elements an
+ * author is likely to leave open. A `<p>` inside `<svg>` almost always means
+ * the `</svg>` is missing, and the specification's answer is to believe the
+ * `<p>` and pop the SVG subtree rather than make an SVG element called p.
+ */
+static int ar__breaks_out(const ar__tree *t, const ar_token *tok)
+{
+    static const char *const OUT[] = {
+        "b",      "big",  "blockquote", "body",  "br",   "center", "code",    "dd",   "div",
+        "dl",     "dt",   "em",         "embed", "h1",   "h2",     "h3",      "h4",   "h5",
+        "h6",     "head", "hr",         "i",     "img",  "li",     "listing", "menu", "meta",
+        "nobr",   "ol",   "p",          "pre",   "ruby", "s",      "small",   "span", "strong",
+        "strike", "sub",  "sup",        "table", "tt",   "u",      "ul",      "var",  0};
+    ar_i32 i;
+
+    (void)t; /* the list is a property of the tag, not of the stack */
+
+    for (i = 0; OUT[i]; ++i)
+    {
+        if (ar_span_is(tok->name, OUT[i]))
+        {
+            return 1;
+        }
+    }
+    /* And `<font>`, but only when it carries one of the three attributes that
+       make it a presentational HTML font tag rather than an SVG one. */
+    if (ar_span_is(tok->name, "font"))
+    {
+        for (i = 0; i < tok->attr_count; ++i)
+        {
+            if (ar_span_is(tok->attrs[i].name, "color") || ar_span_is(tok->attrs[i].name, "face") ||
+                ar_span_is(tok->attrs[i].name, "size"))
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static void ar__foreign(ar__tree *t, const ar_token *tok)
+{
+    ar_i32 cur = ar__current(t);
+    ar_ns  ns = cur >= 0 ? t->doc->nodes[cur].ns : AR_NS_HTML;
+
+    switch (tok->kind)
+    {
+    case AR_TOK_TEXT:
+        ar__insert_text(t, tok->text, 0);
+        if (!ar__all_space(tok->text))
+        {
+            t->frameset_ok = 0;
+        }
+        return;
+
+    case AR_TOK_COMMENT:
+        ar__comment_node(t, tok, -1);
+        return;
+
+    case AR_TOK_DOCTYPE:
+        t->doc->errors++;
+        return;
+
+    case AR_TOK_START:
+        if (ar__breaks_out(t, tok))
+        {
+            t->doc->errors++;
+            while (t->open_n > 1 && !ar__is_html(t, ar__current(t)) &&
+                   !ar__math_text_point(t, ar__current(t)) && !ar__html_point(t, ar__current(t)))
+            {
+                ar__pop(t);
+            }
+            ar__process(t, tok);
+            return;
+        }
+        {
+            ar_i32 node = ar__insert_foreign(t, tok, ns, 0);
+
+            if (node >= 0 && tok->self_closing)
+            {
+                /* In foreign content a self-closing tag really does close. */
+                ar__pop(t);
+            }
+        }
+        return;
+
+    case AR_TOK_END:
+        /*
+         * §13.2.6.5's end tag loop. Walk down the stack looking for a match on
+         * the name, case-insensitively for the current node and by exact name
+         * below it; pop through it if found. Reaching an HTML element means
+         * the tag belongs to the insertion mode instead.
+         */
+        {
+            ar_i32 i = t->open_n - 1;
+
+            if (i < 1)
+            {
+                return;
+            }
+            if (!ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
+            {
+                t->doc->errors++;
+            }
+            for (;;)
+            {
+                if (ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
+                {
+                    while (t->open_n > i)
+                    {
+                        ar__pop(t);
+                    }
+                    return;
+                }
+                --i;
+                if (i < 1)
+                {
+                    return;
+                }
+                if (ar__is_html(t, t->open[i]))
+                {
+                    ar__process_mode(t, tok);
+                    return;
+                }
+            }
+        }
+
+    default:
+        return;
+    }
+}
+
+/*
+ * Every token goes through here, and the only question is which set of rules
+ * it belongs to: the insertion mode, or the foreign content rules.
+ */
 static void ar__process(ar__tree *t, const ar_token *tok)
+{
+    if (ar__use_insertion_mode(t, tok))
+    {
+        ar__process_mode(t, tok);
+    }
+    else
+    {
+        ar__foreign(t, tok);
+    }
+}
+
+static void ar__process_mode(ar__tree *t, const ar_token *tok)
 {
     switch (t->mode)
     {

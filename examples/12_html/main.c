@@ -221,7 +221,43 @@ static const struct
     {"address-closes-p", "<p>a<address>b"},
     {"nested-forms", "<form><form><p>a"},
     {"option-closes-option", "<option>a<option>b"},
-    {"h1-closes-h2", "<h1>a<h2>b"}};
+    {"h1-closes-h2", "<h1>a<h2>b"},
+
+    /* ------------------------------------ svg, math, and template content -- */
+    /*
+     * Foreign content is decided by *where* an element sits, not by what it
+     * says, so these check the four things that get that wrong: the case
+     * corrections SVG needs back after the tokenizer lowercased them, the
+     * integration points where HTML resumes, the breakout list that pops the
+     * whole subtree when an HTML block element appears, and the self-closing
+     * tag that really does close.
+     *
+     * A template's contents are a separate fragment in the tree. The browser
+     * twin reads them through `el.content`, which is why the shape function
+     * walks through the fragment without printing it -- same tree, and the two
+     * sides state it differently.
+     */
+    {"svg-basic", "<svg><circle/></svg>"},
+    {"svg-case-fixed", "<svg><foreignobject><div>x</div></foreignobject></svg>"},
+    {"svg-nested-html", "<div><svg><foreignObject><p>a</p></foreignObject></svg></div>"},
+    {"svg-breakout-p", "<svg><p>a"},
+    {"svg-breakout-table", "<svg><g><table><tr><td>x"},
+    {"svg-self-closing", "<svg><g/><g/></svg>after"},
+    {"svg-in-table", "<table><svg><g></g></svg><tr><td>y</table>"},
+    {"svg-title-is-not-html", "<svg><title>a<b>c</b></title></svg>"},
+    {"svg-desc-integration", "<p><svg><desc><p>x"},
+    {"math-basic", "<math><mi>x</mi></math>"},
+    {"math-text-integration", "<math><mtext><b>bold</b></mtext></math>"},
+    {"math-breakout", "<math><mi>a<p>b"},
+    {"math-annotation-html",
+     "<math><annotation-xml encoding=\"text/html\"><p>x</p></annotation-xml></math>"},
+    {"math-annotation-svg", "<math><annotation-xml><svg><g></g></svg></annotation-xml></math>"},
+    {"svg-then-html", "<svg></svg><p>after"},
+    {"math-then-html", "<math></math><p>after"},
+    {"svg-unclosed", "<div><svg><g>x</div>y"},
+    {"nested-svg-math", "<svg><foreignObject><math><mi>i</mi></math></foreignObject></svg>"},
+    {"template-content-nested", "<template><div><template><p>x</p></template></div></template>"},
+    {"template-text", "<template>plain text</template>"}};
 
 #define CASE_COUNT ((ar_i32)(sizeof CASES / sizeof CASES[0]))
 
@@ -241,6 +277,25 @@ static void shape(ar_i32 i, ar_u32 *used)
     if (g_doc.nodes[i].kind == AR_DOM_COMMENT)
     {
         g_shape[(*used)++] = '!';
+        return;
+    }
+    /*
+     * A template's content fragment is transparent here.
+     *
+     * The browser twin reads a template through `el.content`, which hands back
+     * the fragment's children directly, so the two sides agree on the shape
+     * only if this walks through the fragment without printing it. The
+     * html5lib serialisation in tests/ar_html5lib.c does print it, because
+     * that format shows it -- same tree, two conventions.
+     */
+    if (g_doc.nodes[i].kind == AR_DOM_FRAGMENT)
+    {
+        ar_i32 k;
+
+        for (k = g_doc.nodes[i].first_child; k >= 0; k = g_doc.nodes[k].next_sibling)
+        {
+            shape(k, used);
+        }
         return;
     }
     if (g_doc.nodes[i].kind != AR_DOM_ELEMENT)
@@ -369,7 +424,11 @@ static int run_html(void)
     printf("     the same question. Without it every template case disagrees for a\n");
     printf("     reason that is a model difference rather than a bug. */\n");
     printf("  const kids0 = el.content ? el.content.childNodes : el.childNodes;\n");
-    printf("  let s = el.nodeName.toLowerCase();\n");
+    /* localName, not nodeName.toLowerCase(): an SVG element's name is
+       case-sensitive and `foreignObject` keeping its capital F is exactly what
+       the corpus is checking. Lowercasing it here would make the two sides
+       agree by destroying the difference. */
+    printf("  let s = el.localName;\n");
     printf("  const kids = [];\n");
     printf("  for (const c of kids0) {\n");
     printf("    const t = shape(c);\n");

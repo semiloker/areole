@@ -1277,6 +1277,17 @@ static void serialise(const ar_doc *d, ar_i32 i, ar_i32 depth)
     case AR_DOM_ELEMENT:
         tree_indent(depth);
         tree_puts("<");
+        /* html5lib prefixes a foreign element with its namespace and a space:
+           `<svg svg>`, `<math math>`. An HTML element gets no prefix, which is
+           why the common case prints nothing here. */
+        if (n->ns == AR_NS_SVG)
+        {
+            tree_puts("svg ");
+        }
+        else if (n->ns == AR_NS_MATHML)
+        {
+            tree_puts("math ");
+        }
         tree_span(n->name);
         tree_puts(">\n");
         if (n->attr_count > 0)
@@ -1316,10 +1327,24 @@ static void serialise(const ar_doc *d, ar_i32 i, ar_i32 depth)
             }
             for (k = 0; k < m; ++k)
             {
+                const ar_attr *a = &d->attrs[order[k]];
+
                 tree_indent(depth + 1);
-                tree_span(d->attrs[order[k]].name);
+                if (a->ns == AR_ATTR_NS_XLINK)
+                {
+                    tree_puts("xlink ");
+                }
+                else if (a->ns == AR_ATTR_NS_XML)
+                {
+                    tree_puts("xml ");
+                }
+                else if (a->ns == AR_ATTR_NS_XMLNS)
+                {
+                    tree_puts("xmlns ");
+                }
+                tree_span(a->name);
                 tree_puts("=\"");
-                tree_span(d->attrs[order[k]].value);
+                tree_span(a->value);
                 tree_puts("\"\n");
             }
         }
@@ -1330,6 +1355,13 @@ static void serialise(const ar_doc *d, ar_i32 i, ar_i32 depth)
         tree_puts("\"");
         tree_span(n->text);
         tree_puts("\"\n");
+        break;
+
+    case AR_DOM_FRAGMENT:
+        /* html5lib prints the word, unadorned, and indents the contents under
+           it -- which is why this counts as a level. */
+        tree_indent(depth);
+        tree_puts("content\n");
         break;
 
     case AR_DOM_COMMENT:

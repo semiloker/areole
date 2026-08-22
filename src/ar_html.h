@@ -63,14 +63,22 @@ typedef enum ar_tok_kind
 /*
  * How many attributes one tag may carry.
  *
- * ponytail: a fixed array on the token. Real markup does not reach sixteen on
- * one element -- the largest in the HTML specification's own examples is
- * eleven -- and the seventeenth is dropped with `attrs_dropped` set rather
- * than overrunning. The upgrade is an arena span, and it is worth doing when
- * something real hits the cap; the counter is there so that is a fact rather
- * than a guess.
+ * ponytail: a fixed array on the token. It was sixteen, on the reasoning that
+ * real markup does not reach it -- the largest in the HTML specification's own
+ * examples is eleven -- and the seventeenth was dropped with `attrs_dropped`
+ * set rather than overrunning.
+ *
+ * Something real hit it. html5lib's tests11.dat puts every SVG attribute whose
+ * name needs case-correcting on one element, sixty of them, to check the
+ * adjustment table in one go. That is a synthetic document, but the counter
+ * existed so the cap could be raised on a fact rather than a guess, and this
+ * is the fact.
+ *
+ * Sixty-four costs two kilobytes on one `ar_token`, which is a local in
+ * ar_html_parse and nowhere else. The upgrade to an arena span is still the
+ * right answer if anything ever reaches sixty-four.
  */
-#define AR_HTML_MAX_ATTRS 16
+#define AR_HTML_MAX_ATTRS 64
 
 typedef struct ar_token
 {

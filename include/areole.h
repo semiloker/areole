@@ -1015,11 +1015,54 @@ typedef struct ar_span
     ar_u32      n;
 } ar_span;
 
+/*
+ * The namespace an attribute is in.
+ *
+ * Only three exist in HTML, and all three arrive the same way: an attribute
+ * written with a colon inside foreign content. `xlink:href` on an SVG element
+ * is the `href` attribute in the XLink namespace, and it is not the same
+ * attribute as a plain `href` -- which matters because that is how an SVG
+ * `<a>` carries its destination.
+ *
+ * Nothing outside foreign content ever has one, so this is zero on every
+ * attribute in an ordinary document.
+ */
+typedef enum ar_attr_ns
+{
+    AR_ATTR_NS_NONE = 0,
+    AR_ATTR_NS_XLINK,
+    AR_ATTR_NS_XML,
+    AR_ATTR_NS_XMLNS
+} ar_attr_ns;
+
 typedef struct ar_attr
 {
     ar_span name;
     ar_span value;
+
+    /* AR_ATTR_NS_NONE for everything an HTML document contains. */
+    ar_attr_ns ns;
 } ar_attr;
+
+/*
+ * The namespace an element is in.
+ *
+ * HTML has exactly three and the parser decides which by where the element
+ * appeared, not by anything the author wrote: everything inside `<svg>` is in
+ * the SVG namespace until the subtree ends, and `<math>` likewise. There is no
+ * `xmlns` handling -- an `xmlns` attribute in HTML is an ordinary attribute
+ * that changes nothing.
+ *
+ * It is not cosmetic. `<title>` in HTML is raw text and `<title>` in SVG is an
+ * ordinary element that may contain markup; `<a>` in SVG takes its destination
+ * from `xlink:href`. The namespace is what tells them apart.
+ */
+typedef enum ar_ns
+{
+    AR_NS_HTML = 0,
+    AR_NS_SVG,
+    AR_NS_MATHML
+} ar_ns;
 
 typedef enum ar_dom_kind
 {
@@ -1027,7 +1070,20 @@ typedef enum ar_dom_kind
     AR_DOM_ELEMENT,
     AR_DOM_TEXT,
     AR_DOM_COMMENT,
-    AR_DOM_DOCTYPE
+    AR_DOM_DOCTYPE,
+
+    /*
+     * A `<template>` element's contents.
+     *
+     * Every template gets exactly one of these as its only child, and
+     * everything written inside the template goes under it rather than under
+     * the element. That is not bookkeeping: it is what makes a template inert.
+     * Its contents are parsed but are not in the document, so an `<img>` in a
+     * template does not load and a `<script>` in one does not run.
+     *
+     * Nothing else in HTML produces one.
+     */
+    AR_DOM_FRAGMENT
 } ar_dom_kind;
 
 /*
@@ -1056,6 +1112,7 @@ typedef enum ar_quirks
 typedef struct ar_dom_node
 {
     ar_dom_kind kind;
+    ar_ns       ns; /* AR_NS_HTML unless this is inside <svg> or <math> */
 
     ar_span name; /* element tag name, or the doctype's name */
     ar_span text; /* text data, or a comment's body */
