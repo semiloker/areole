@@ -59,6 +59,23 @@ areole_set_warnings(ar_test)
 
 add_test(NAME ar_test COMMAND ar_test)
 
+# --- the fuzzer ---------------------------------------------------------------
+# HTML is the one input this library takes that somebody else wrote, so the
+# parser gets a gate rather than an exercise. Links against the plain library:
+# the point is to fuzz what ships, not an instrumented variant of it.
+#
+# ctest runs a short one, because a suite that takes a minute stops being run.
+# Two hundred thousand iterations is about a second and is enough to catch "it
+# no longer terminates" and "it no longer builds". The acceptance criterion is
+# fifty million, which .github/workflows/fuzz.yml runs nightly across five
+# seeds, and which anyone can run here with `ar_fuzz --iters 5e7`.
+add_executable(ar_fuzz tests/ar_fuzz.c)
+target_include_directories(ar_fuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_fuzz PRIVATE areole)
+areole_set_warnings(ar_fuzz)
+
+add_test(NAME ar_fuzz_short COMMAND ar_fuzz --iters 200000)
+
 # --- platform backend ---------------------------------------------------------
 # Its own target because <windows.h> uses nameless unions and __int64 and will
 # not compile with language extensions disabled. The core keeps the strict

@@ -112,6 +112,58 @@ static const struct
     {"table-thead-tfoot", "<table><thead><tr><td>h<tbody><tr><td>b</table>"},
     {"table-caption", "<table><caption>c</caption><tr><td>a</table>"},
     {"table-in-table", "<table><tr><td><table><tr><td>inner</table></table>"},
+
+    /* ------------------- foster parenting meets the adoption agency -- */
+    /*
+     * The gap the corpus had: it held foster-parenting cases, and it held
+     * adoption-agency cases, and nothing where the agency's own step 4.14 has
+     * to foster parent. That step relocates a node into the common ancestor
+     * and has to be told where -- the specification calls it the override
+     * target -- and without it the destination was worked out again from the
+     * current node, which by then is the node being moved.
+     *
+     * `<table><em><p>x</em` came out with the paragraph missing from the tree
+     * altogether, at every document size. ar_fuzz found it; these keep it
+     * found.
+     */
+    {"foster-agency-p", "<table><em><p>x</em"},
+    {"foster-p-into-em", "<table><em><p>x"},
+    {"foster-text-into-em", "<table><em>y"},
+    {"foster-b-into-em", "<table><em><b>z"},
+    {"foster-agency-moves-p", "<table><b><p>x</b>"},
+    {"foster-agency-moves-div", "<table><em><div>x</em>"},
+    {"agency-em-wraps-table", "<em><table><p>x</em>"},
+    {"foster-agency-closed", "<table><em><p>x</p></em>"},
+    {"agency-without-a-table", "<div><em><p>x</em>"},
+
+    /* ------------------------------------------- a tag that never ended -- */
+    /*
+     * §13.2.5.10 and the eight states after it all say the same thing about
+     * end of file: emit an end-of-file token. Not the tag -- the tag is
+     * dropped, attributes and all.
+     *
+     * Emitting it instead looks harmless and is not. `<table><em><p>x</em`
+     * ends in an unterminated end tag, and taking it seriously runs the
+     * adoption agency: the paragraph is relocated out of the emphasis and a
+     * clone of the emphasis appears inside it. One case in this corpus
+     * disagreed with the browser and every neighbouring case agreed, which is
+     * what said the fault was in the tokenizer and not in the agency.
+     */
+    {"eof-in-start-tag", "<p>a<div"},
+    {"eof-in-end-tag", "<b>x</b"},
+    {"eof-in-tag-name", "<p>a<sec"},
+    {"eof-before-attr", "<div id"},
+    {"eof-in-attr-name", "<div clas"},
+    {"eof-in-attr-value", "<div class=\"a"},
+    {"eof-in-attr-value-unquoted", "<div class=a"},
+    {"eof-after-solidus", "<br/"},
+    {"eof-in-agency-end-tag", "<b><p>x</b"},
+    {"foster-agency-b-td", "<table><b><td><i></b>"},
+    {"foster-agency-anchor", "<table><a><tr><td><a>x</a>"},
+    {"foster-agency-b-outside", "<b><table><p></b><tr><td>"},
+    {"foster-agency-caption", "<table><caption><b><p></b></caption>"},
+    {"foster-agency-tbody", "<table><tbody><em><tr><td><p></em>"},
+    {"foster-agency-nested", "<b><i><table><p></b></i>"},
     {"td-orphan", "<td>orphan"},
     {"tr-orphan", "<tr><td>orphan"},
 
