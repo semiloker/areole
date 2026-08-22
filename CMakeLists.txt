@@ -70,6 +70,17 @@ areole_set_warnings(ar_public)
 
 add_test(NAME ar_public COMMAND ar_public)
 
+# --- the html5lib conformance suites ------------------------------------------
+# Reads third_party/html5lib as it ships. Needs src/ because it drives the
+# tokenizer directly, which is not public and is not going to be.
+#
+# Not an add_test: it takes seconds rather than milliseconds and its output is a
+# report rather than a verdict. CI runs it as its own step.
+add_executable(ar_html5lib tests/ar_html5lib.c)
+target_include_directories(ar_html5lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_html5lib PRIVATE areole)
+areole_set_warnings(ar_html5lib)
+
 # --- the fuzzer ---------------------------------------------------------------
 # HTML is the one input this library takes that somebody else wrote, so the
 # parser gets a gate rather than an exercise. Links against the plain library:

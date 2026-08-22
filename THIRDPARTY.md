@@ -85,3 +85,28 @@ criterion that fails on a runner without it.
 The generator does not alter a code point. It re-emits the table as a names
 blob with offsets beside it, because the obvious `{const char *, ar_u32}` array
 is 51 KB against a budget of 30.
+
+## The html5lib conformance suites
+
+`third_party/html5lib/`
+
+- Authors: the html5lib contributors, and the web-platform-tests contributors
+- License: **MIT** (see `third_party/html5lib/LICENSE.html5lib-tests`)
+- Sources:
+  - tokenizer: https://github.com/html5lib/html5lib-tests
+  - tree construction: https://github.com/web-platform-tests/wpt, under
+    `html/syntax/parsing/resources/`
+
+Two suites in two repositories, because the tree construction tests moved. The
+html5lib-tests README is now one sentence saying so.
+
+Vendored, and `tests/ar_html5lib.c` reads them exactly as they ship rather than
+a converted form -- two copies of the same tests would eventually disagree, and
+the day they do the gate means nothing. Refresh with:
+
+```sh
+python tools/fetch_html5lib.py
+```
+
+Test data only. Nothing here is linked into areole, and no shipping build
+contains any of it.
