@@ -389,9 +389,43 @@ toolkit breaks that circle.
 - **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid ✅
 - **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment ✅
 - **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
-- **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
+- **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet 🚧
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
+
+### 0.9.0, in progress
+
+The parser is real and it is public. `ar_html_parse_into` builds a document, `ar_dom_build` walks
+it into the box tree through the same calls a hand-written interface makes, and everything after
+that is the engine the other releases built.
+
+Where it stands against the conformance suites, which are vendored and run offline:
+
+| | |
+| --- | --- |
+| html5lib tokenizer | **6,970 of 6,970 — 100%**, a CI gate |
+| html5lib tree construction | **1,100 of 1,726 — 63.7%**, reported and not yet gated |
+| Named character references | all **2,231**, generated from the standard's own JSON and checked against it |
+| Browser tree corpus | **126 of 126** documents agree with Edge exactly |
+| Fuzzing | **50 million** iterations, five seeds, no crash, no hang, no overrun |
+| Parse throughput | **48.5 MB/s** on this laptop, against a 30 MB/s floor |
+
+What is missing is named rather than implied: `innerHTML` fragment parsing, CDATA sections, and a
+real stack of template insertion modes. That work is 0.9.3.
+
+```c
+/* Reading a document. The input is not copied and must outlive the document. */
+ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
+ar_doc *d;
+
+ar_ua_stylesheet(c);              /* the default style for every element */
+d = ar_html_parse_into(c, bytes, len);
+ar_doc_stylesheets(c, d);         /* every <style> in the document, in cascade order */
+
+ar_frame_begin(c, &input);
+ar_dom_build(c, d);               /* the document into the box tree */
+ar_frame_end(c, &surface);
+```
 
 ## Building
 
