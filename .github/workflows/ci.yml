@@ -159,6 +159,19 @@ jobs:
       - name: Document self-check
         run: ./build/example_document.exe --selftest
 
+      # The sample document is a file as well as a string, so it can be opened
+      # in a browser beside the window the example draws -- which is the only
+      # way to look at "it reads HTML" and see whether it is true. Generated
+      # from the same bytes the self-check parses, so the two cannot drift.
+      - name: The document twin is up to date
+        run: |
+          ./build/example_document.exe --html > /tmp/document.html
+          diff -u examples/13_document/document.html /tmp/document.html
+
+      # And it parses back from disk, which is the path a real caller takes.
+      - name: The document parses from a file
+        run: ./build/example_document.exe examples/13_document/document.html --selftest
+
       # The HTML tree corpus. Unlike the layout corpora this one needs no
       # window at all -- its output is a tree per case -- so the dump runs
       # here and only the browser half is local.
