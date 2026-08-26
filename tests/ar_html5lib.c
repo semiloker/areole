@@ -689,11 +689,9 @@ static const struct
 {
     const char   *name;
     ar_html_state state;
-} STATES[] = {{"Data state", AR_HTML_DATA},
-              {"PLAINTEXT state", AR_HTML_PLAINTEXT},
-              {"RCDATA state", AR_HTML_RCDATA},
-              {"RAWTEXT state", AR_HTML_RAWTEXT},
-              {"Script data state", AR_HTML_SCRIPT}};
+} STATES[] = {{"Data state", AR_HTML_DATA},          {"PLAINTEXT state", AR_HTML_PLAINTEXT},
+              {"RCDATA state", AR_HTML_RCDATA},      {"RAWTEXT state", AR_HTML_RAWTEXT},
+              {"Script data state", AR_HTML_SCRIPT}, {"CDATA section state", AR_HTML_CDATA}};
 
 #define STATE_COUNT ((int)(sizeof STATES / sizeof STATES[0]))
 
@@ -1124,9 +1122,9 @@ static void run_tokenizer_file(const char *path, const char *label)
                             }
                             if (i == STATE_COUNT)
                             {
-                                /* CDATA section state, which needs foreign
-                                   content, which needs 0.13.0. Counted as
-                                   skipped rather than quietly passed. */
+                                /* A state this runner has never seen.
+                                   Counted as skipped rather than quietly
+                                   passed. */
                                 unsupported = 1;
                             }
                             (void)j_eat(&j, ',');
@@ -1362,6 +1360,15 @@ static void serialise(const ar_doc *d, ar_i32 i, ar_i32 depth)
            it -- which is why this counts as a level. */
         tree_indent(depth);
         tree_puts("content\n");
+        break;
+
+    case AR_DOM_PI:
+        tree_indent(depth);
+        tree_puts("<?");
+        tree_span(n->name);
+        tree_puts(" ");
+        tree_span(n->text);
+        tree_puts("?>\n");
         break;
 
     case AR_DOM_COMMENT:

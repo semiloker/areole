@@ -672,10 +672,20 @@ static ar_span ar__text_store(ar__tree *t, ar_span s)
         t->doc->overflowed = 1;
         return out;
     }
-    memcpy(t->doc->text + t->doc->text_used, s.p, s.n);
-    out.p = t->doc->text + t->doc->text_used;
-    out.n = s.n;
-    t->doc->text_used += s.n;
+    {
+        ar_u32 i;
+
+        out.p = t->doc->text + t->doc->text_used;
+        for (i = 0; i < s.n; ++i)
+        {
+            if (s.p[i] != 0)
+            {
+                t->doc->text[t->doc->text_used + out.n] = s.p[i];
+                ++out.n;
+            }
+        }
+        t->doc->text_used += out.n;
+    }
     t->doc->text[t->doc->text_used++] = 0;
     return out;
 }
@@ -697,11 +707,51 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
         return 0;
     }
     --t->doc->text_used; /* drop the terminator; a new one goes after */
-    memcpy(t->doc->text + t->doc->text_used, s.p, s.n);
-    t->doc->text_used += s.n;
+    {
+        ar_u32 i;
+        ar_u32 wrote = 0;
+
+        for (i = 0; i < s.n; ++i)
+        {
+            if (s.p[i] != 0)
+            {
+                t->doc->text[t->doc->text_used + wrote] = s.p[i];
+                ++wrote;
+            }
+        }
+        t->doc->text_used += wrote;
+        t->doc->nodes[node].text.n += wrote;
+    }
     t->doc->text[t->doc->text_used++] = 0;
-    t->doc->nodes[node].text.n += s.n;
     return 1;
+}
+
+/*
+ * How many bytes of this run are not NUL.
+ *
+ * Every HTML insertion mode says the same thing about a U+0000 character
+ * token: parse error, ignore the token. Not replace -- *ignore*. The
+ * replacement character belongs to the tokenizer's other states and to foreign
+ * content; in the tree builder a NUL simply does not become text.
+ *
+ * The data state keeps a NUL, correctly, so it arrives here and has to be
+ * dropped here. Inserting it instead put a byte in the document that no
+ * browser has, and a run that is *only* NULs has to insert nothing at all
+ * rather than an empty text node.
+ */
+static ar_u32 ar__non_nul(ar_span s)
+{
+    ar_u32 i;
+    ar_u32 n = 0;
+
+    for (i = 0; i < s.n; ++i)
+    {
+        if (s.p[i] != 0)
+        {
+            ++n;
+        }
+    }
+    return n;
 }
 
 static void ar__insert_text(ar__tree *t, ar_span s, int foster)
@@ -711,7 +761,7 @@ static void ar__insert_text(ar__tree *t, ar_span s, int foster)
         ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
     ar_i32 node;
 
-    if (s.n == 0)
+    if (s.n == 0 || ar__non_nul(s) == 0)
     {
         return;
     }
@@ -1479,16 +1529,71 @@ static int ar__all_space(ar_span s)
     return 1;
 }
 
+/*
+ * A comment, or a processing instruction.
+ *
+ * A processing instruction arrives as a comment token carrying a target in
+ * `name`, and it is handled here rather than in a branch of its own for a
+ * reason that is not laziness: the specification inserts one in exactly the
+ * places it inserts a comment, and every insertion mode already routes comment
+ * tokens through this function. A separate token kind would mean the same
+ * twelve `== AR_TOK_COMMENT` tests, each written twice.
+ *
+ * A comment never carries a name, so the two cannot be confused.
+ */
 static void ar__comment_node(ar__tree *t, const ar_token *tok, ar_i32 parent)
 {
-    ar_i32 node = ar__node(t, AR_DOM_COMMENT);
+    ar_i32 node = ar__node(t, tok->name.n ? AR_DOM_PI : AR_DOM_COMMENT);
 
     if (node < 0)
     {
         return;
     }
+    if (tok->name.n)
+    {
+        /*
+         * Split the comment text into the target and the data.
+         *
+         * The token carries `?target data` whole, because that is what the
+         * tokenizer layer is required to emit. The data begins after the `?`
+         * and the target, skips any whitespace, and loses one `?` immediately
+         * before the `>` that ended it -- so `<?good?>` has empty data and
+         * `<?hey   there?>` has `there`.
+         *
+         * The offset is exact: a target is a valid XML name, so it contains no
+         * carriage return and no NUL and the preprocessing that produced this
+         * text cannot have changed its length.
+         */
+        ar_span data = tok->text;
+        ar_u32  skip = 1u + tok->name.n;
+
+        t->doc->nodes[node].name = ar__keep(t, tok->name);
+
+        if (data.n >= skip)
+        {
+            data.p += skip;
+            data.n -= skip;
+        }
+        else
+        {
+            data.n = 0;
+        }
+        while (data.n && (data.p[0] == ' ' || data.p[0] == '\t' || data.p[0] == '\n' ||
+                          data.p[0] == '\f' || data.p[0] == '\r'))
+        {
+            ++data.p;
+            --data.n;
+        }
+        if (data.n && data.p[data.n - 1] == '?')
+        {
+            --data.n;
+        }
+        t->doc->nodes[node].text = ar__keep(t, data);
+        ar__append(t, ar__content_of(t, parent >= 0 ? parent : ar__current(t)), node);
+        return;
+    }
     t->doc->nodes[node].text = ar__keep(t, tok->text);
-    ar__append(t, parent >= 0 ? parent : ar__current(t), node);
+    ar__append(t, ar__content_of(t, parent >= 0 ? parent : ar__current(t)), node);
 }
 
 /* An element the document needs but the author did not write. `<html>`,
@@ -3333,6 +3438,10 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
     {
         const char *before = tk.p;
 
+        /* The tokenizer needs to know whether `<![CDATA[` opens a section or
+           is a bogus comment, and only the stack can say. */
+        tk.in_foreign = t.open_n > 1 && !ar__is_html(&t, ar__current(&t));
+
         if (!ar_html_next(&tk, &tok))
         {
             break;
@@ -3366,7 +3475,19 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
      * An empty file is still `html(head body)` in every browser, and areole
      * returned nothing at all until the tree corpus asked.
      */
-    if (t.mode < M_IN_BODY && t.mode != M_IN_FRAMESET)
+    /*
+     * The condition is "unless this document has a frameset", not "unless the
+     * insertion mode is early".
+     *
+     * It used to read `t.mode < M_IN_BODY`, which is true for the modes that
+     * come before `in body` in the enumeration and false for every one after
+     * it -- including M_TEXT, which is where a document ending in an
+     * unterminated `<script>` or `<title>` stops. Those documents came out
+     * with no body at all, which is a hundred and forty-one conformance
+     * cases and every truncated file on the web.
+     *
+     * A frameset document genuinely has no body; nothing else is exempt.
+     */
     {
         if (ar_dom_root(doc) < 0)
         {
@@ -3377,7 +3498,8 @@ int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_
             t.head = ar__insert_implied(&t, "head");
             ar__pop(&t);
         }
-        if (ar_dom_child_element(doc, ar_dom_root(doc), "body") < 0)
+        if (ar_dom_child_element(doc, ar_dom_root(doc), "frameset") < 0 &&
+            ar_dom_child_element(doc, ar_dom_root(doc), "body") < 0)
         {
             /*
              * Back to the html element first.

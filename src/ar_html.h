@@ -117,10 +117,19 @@ typedef struct ar_token
 typedef enum ar_html_state
 {
     AR_HTML_DATA = 0,
-    AR_HTML_RCDATA,   /* title, textarea: entities yes, tags no */
-    AR_HTML_RAWTEXT,  /* style, xmp, iframe, noembed: neither */
-    AR_HTML_SCRIPT,   /* script: rawtext with the escaped states */
-    AR_HTML_PLAINTEXT /* everything to the end of the file, literally */
+    AR_HTML_RCDATA,    /* title, textarea: entities yes, tags no */
+    AR_HTML_RAWTEXT,   /* style, xmp, iframe, noembed: neither */
+    AR_HTML_SCRIPT,    /* script: rawtext with the escaped states */
+    AR_HTML_PLAINTEXT, /* everything to the end of the file, literally */
+
+    /*
+     * Inside `<![CDATA[ ... ]]>`, which exists only in foreign content.
+     *
+     * Everything to the `]]>` is character data -- `<` and `&` included, which
+     * is the point: it is how SVG and MathML carry markup-shaped text. Outside
+     * foreign content `<![CDATA[` is a bogus comment and always has been.
+     */
+    AR_HTML_CDATA
 } ar_html_state;
 
 typedef struct ar_html_tok
@@ -145,6 +154,20 @@ typedef struct ar_html_tok
      */
     char   last_start[32];
     ar_u32 last_start_n;
+
+    /*
+     * Whether the tree builder is currently inside foreign content.
+     *
+     * The tokenizer cannot know this and the specification does not ask it to:
+     * the markup declaration open state says "if the adjusted current node is
+     * not an element in the HTML namespace", which is the tree builder's
+     * business. So the tree builder sets it before each token, exactly as it
+     * sets `state` for RCDATA and RAWTEXT, and for the same reason.
+     *
+     * It decides one thing: whether `<![CDATA[` opens a CDATA section or is a
+     * bogus comment.
+     */
+    int in_foreign;
 
     /* Parse errors are counted, never fatal. The specification defines a
        recovery for every one of them, and a tokenizer that stops is a
