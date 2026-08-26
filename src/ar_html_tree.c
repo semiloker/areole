@@ -92,6 +92,22 @@ typedef struct ar__tree
      */
     const char *ctx;
     ar_ns       ctx_ns;
+
+    /*
+     * How deep the current token is in reprocessing.
+     *
+     * A mode that cannot handle a token switches mode and reprocesses it, and
+     * two modes can hand the same token back and forth forever. It has
+     * happened twice: foreign content and the insertion-mode dispatcher in a
+     * fragment, and `after head` routing head content to `in head` for a tag
+     * `in head` did not know.
+     *
+     * Neither was catchable by the tokenizer-progress backstop in
+     * ar_html_parse, because no token is consumed and that check never runs --
+     * the loop is inside processing *one* token. This is the net for that
+     * shape, and it costs one increment.
+     */
+    ar_i32 depth;
 } ar__tree;
 
 enum
@@ -541,6 +557,23 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
  * context element is not a node. The tree came back empty.
  */
 static int ar__on_stack_named(const ar__tree *t, const char *tag);
+
+/* Take one element off the stack wherever it is, which is what the head
+   element needs when it is pushed back temporarily. */
+static void ar__pop_index(ar__tree *t, ar_i32 node)
+{
+    ar_i32 i;
+    ar_i32 w = 0;
+
+    for (i = 0; i < t->open_n; ++i)
+    {
+        if (t->open[i] != node)
+        {
+            t->open[w++] = t->open[i];
+        }
+    }
+    t->open_n = w;
+}
 
 static void ar__pop_until(ar__tree *t, const char *tag)
 {
@@ -1683,10 +1716,14 @@ static ar_quirks ar__quirks_for(const ar_token *tok)
 /* The elements that never have children and never close. */
 static int ar__is_void(ar_span name)
 {
-    static const char *const VOID_TAGS[] = {"area",  "base",   "br",    "col",  "embed",
-                                            "hr",    "img",    "input", "link", "meta",
-                                            "param", "source", "track", "wbr",  0};
-    ar_i32                   i;
+    /* `basefont`, `bgsound` and `keygen` are void too. They are obsolete
+       rather than absent, and `in head` reaches them: a tag it does not know
+       is popped back to `after head`, which routes head content here again,
+       which is a loop. */
+    static const char *const VOID_TAGS[] = {
+        "area",  "base",   "basefont", "bgsound", "br",    "col",    "embed", "hr",  "img",
+        "input", "keygen", "link",     "meta",    "param", "source", "track", "wbr", 0};
+    ar_i32 i;
 
     for (i = 0; VOID_TAGS[i]; ++i)
     {
@@ -3600,8 +3637,19 @@ static void ar__foreign(ar__tree *t, const ar_token *tok)
  * Every token goes through here, and the only question is which set of rules
  * it belongs to: the insertion mode, or the foreign content rules.
  */
+#define AR_HTML_REPROCESS 64
+
 static void ar__process(ar__tree *t, const ar_token *tok)
 {
+    if (t->depth >= AR_HTML_REPROCESS)
+    {
+        /* Sixty-four is far past anything the specification asks for -- the
+           longest real chain is a handful of modes -- so reaching it means a
+           cycle, and dropping the token ends it without ending the parse. */
+        t->doc->errors++;
+        return;
+    }
+    ++t->depth;
     if (ar__use_insertion_mode(t, tok))
     {
         ar__process_mode(t, tok);
@@ -3610,9 +3658,33 @@ static void ar__process(ar__tree *t, const ar_token *tok)
     {
         ar__foreign(t, tok);
     }
+    --t->depth;
 }
 
+/*
+ * The same net as ar__process, in the shape this function can take.
+ *
+ * Several modes call ar__process_mode directly rather than going through
+ * ar__process, and a cycle between two of *those* is what hung `after head`
+ * against `in head`. The switch below has nearly two hundred returns, so a
+ * counter cannot live inside it -- it lives in a wrapper, and the switch is
+ * what the wrapper calls.
+ */
+static void ar__process_switch(ar__tree *t, const ar_token *tok);
+
 static void ar__process_mode(ar__tree *t, const ar_token *tok)
+{
+    if (t->depth >= AR_HTML_REPROCESS)
+    {
+        t->doc->errors++;
+        return;
+    }
+    ++t->depth;
+    ar__process_switch(t, tok);
+    --t->depth;
+}
+
+static void ar__process_switch(ar__tree *t, const ar_token *tok)
 {
     /*
      * A character token that is nothing but NULs is ignored outright, and
@@ -3752,8 +3824,16 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
                 ar__pop(t);
                 return;
             }
+            /*
+             * `noframes` belongs here too, as raw text, and leaving it out was
+             * not merely a missing element: `after head` routes head content
+             * back to these rules, and a tag these rules do not know is popped
+             * straight back to `after head` -- which routed it here again.
+             * That is an infinite loop, and `<noframes>` after a closed head
+             * was all it took.
+             */
             if (ar_span_is(tok->name, "title") || ar_span_is(tok->name, "style") ||
-                ar_span_is(tok->name, "script"))
+                ar_span_is(tok->name, "noframes") || ar_span_is(tok->name, "script"))
             {
                 ar__insert_element(t, tok, 0);
                 t->tok->state =
@@ -3832,6 +3912,39 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_FRAMESET;
             return;
         }
+        /*
+         * Head content after the head has closed still goes *in* the head.
+         *
+         * `<head></head><title>X</title>` puts the title inside the head, and
+         * the specification is explicit about the mechanism: push the head
+         * element back onto the stack, run the `in head` rules, then take it
+         * off again. Without that the title opened a body and landed in it,
+         * which is a visibly different document.
+         */
+        if (tok->kind == AR_TOK_START && t->head >= 0)
+        {
+            static const char *const HEAD_CONTENT[] = {"base",     "basefont", "bgsound", "link",
+                                                       "meta",     "noframes", "script",  "style",
+                                                       "template", "title",    0};
+
+            if (ar__name_in(tok->name, HEAD_CONTENT))
+            {
+                t->doc->errors++;
+                ar__push(t, t->head);
+                t->mode = M_IN_HEAD;
+                ar__process_mode(t, tok);
+                /* The head comes back off unless the token opened something
+                   inside it, in which case the mode it switched to owns the
+                   stack now. */
+                if (t->mode == M_IN_HEAD)
+                {
+                    ar__pop_index(t, t->head);
+                    t->mode = M_AFTER_HEAD;
+                }
+                return;
+            }
+        }
+
         ar__insert_implied(t, "body");
         t->mode = M_IN_BODY;
         ar__process(t, tok);
