@@ -114,7 +114,18 @@ enum
     M_AFTER_AFTER_BODY,
     M_IN_HEAD_NOSCRIPT,
     M_IN_TEMPLATE,
-    M_IN_FRAMESET
+    M_IN_FRAMESET,
+
+    /*
+     * After the outermost `</frameset>`.
+     *
+     * A mode of its own because a frameset document is not finished when its
+     * frameset closes: whitespace and comments after it belong to the html
+     * element, and `<noframes>` is still allowed. Without it all of that was
+     * a parse error and dropped -- twenty conformance cases whose whole point
+     * is that the text survives.
+     */
+    M_AFTER_FRAMESET
 };
 
 /* ------------------------------------------------------------------------
@@ -708,9 +719,80 @@ static void ar__insert_node(ar__tree *t, ar_i32 node, int foster)
  * This is the one place areole copies a document's bytes, and it is bounded by
  * the text the document actually contains.
  */
-static ar_span ar__text_store(ar__tree *t, ar_span s)
+/*
+ * How a NUL in a run of text is treated, and it is a property of *where* the
+ * text is rather than of the text.
+ *
+ * Every HTML insertion mode ignores it. Foreign content replaces it with
+ * U+FFFD -- §13.2.6.5 says so in one line, and it is the only place the two
+ * differ. Passing the rule down rather than keeping a flag on the tree, so a
+ * reader of ar__text_store can see which answer it is giving.
+ */
+#define AR__NUL_DROP    0
+#define AR__NUL_REPLACE 1
+
+/* memchr rather than a loop: this is asked of every run of text in every
+   document, and the answer is no for almost all of them. */
+static int ar__has_nul(ar_span s)
+{
+    return s.n != 0 && memchr(s.p, 0, s.n) != 0;
+}
+
+/* What `s` becomes once the NULs in it are dealt with. */
+static ar_u32 ar__stored_len(ar_span s, int rule)
+{
+    ar_u32 i;
+    ar_u32 n = 0;
+
+    if (!ar__has_nul(s))
+    {
+        return s.n;
+    }
+    for (i = 0; i < s.n; ++i)
+    {
+        if (s.p[i] != 0)
+        {
+            ++n;
+        }
+        else if (rule == AR__NUL_REPLACE)
+        {
+            n += 3u; /* U+FFFD is three bytes of UTF-8 */
+        }
+    }
+    return n;
+}
+
+/* The bytes, into `out`. Returns how many were written. */
+static ar_u32 ar__store_bytes(char *out, ar_span s, int rule)
+{
+    ar_u32 i;
+    ar_u32 n = 0;
+
+    if (!ar__has_nul(s))
+    {
+        memcpy(out, s.p, s.n);
+        return s.n;
+    }
+    for (i = 0; i < s.n; ++i)
+    {
+        if (s.p[i] != 0)
+        {
+            out[n++] = s.p[i];
+        }
+        else if (rule == AR__NUL_REPLACE)
+        {
+            out[n++] = (char)0xEF;
+            out[n++] = (char)0xBF;
+            out[n++] = (char)0xBD;
+        }
+    }
+    return n;
+}
+
+static ar_span ar__text_store(ar__tree *t, ar_span s, int rule)
 {
     ar_span out;
+    ar_u32  need;
 
     out.p = 0;
     out.n = 0;
@@ -718,25 +800,15 @@ static ar_span ar__text_store(ar__tree *t, ar_span s)
     {
         return out;
     }
-    if (t->doc->text_used + s.n + 1u > t->doc->text_cap)
+    need = ar__stored_len(s, rule);
+    if (t->doc->text_used + need + 1u > t->doc->text_cap)
     {
         t->doc->overflowed = 1;
         return out;
     }
-    {
-        ar_u32 i;
-
-        out.p = t->doc->text + t->doc->text_used;
-        for (i = 0; i < s.n; ++i)
-        {
-            if (s.p[i] != 0)
-            {
-                t->doc->text[t->doc->text_used + out.n] = s.p[i];
-                ++out.n;
-            }
-        }
-        t->doc->text_used += out.n;
-    }
+    out.p = t->doc->text + t->doc->text_used;
+    out.n = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
+    t->doc->text_used += out.n;
     t->doc->text[t->doc->text_used++] = 0;
     return out;
 }
@@ -744,7 +816,7 @@ static ar_span ar__text_store(ar__tree *t, ar_span s)
 /* Extend the last text node in place, overwriting its terminator. Only
    possible when it is the most recent thing in the buffer, which is the
    ordinary case for a run split by a character reference. */
-static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
+static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s, int rule)
 {
     ar_span old = t->doc->nodes[node].text;
 
@@ -752,24 +824,15 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s)
     {
         return 0;
     }
-    if (t->doc->text_used + s.n > t->doc->text_cap)
+    if (t->doc->text_used + ar__stored_len(s, rule) > t->doc->text_cap)
     {
         t->doc->overflowed = 1;
         return 0;
     }
     --t->doc->text_used; /* drop the terminator; a new one goes after */
     {
-        ar_u32 i;
-        ar_u32 wrote = 0;
+        ar_u32 wrote = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
 
-        for (i = 0; i < s.n; ++i)
-        {
-            if (s.p[i] != 0)
-            {
-                t->doc->text[t->doc->text_used + wrote] = s.p[i];
-                ++wrote;
-            }
-        }
         t->doc->text_used += wrote;
         t->doc->nodes[node].text.n += wrote;
     }
@@ -805,14 +868,14 @@ static ar_u32 ar__non_nul(ar_span s)
     return n;
 }
 
-static void ar__insert_text(ar__tree *t, ar_span s, int foster)
+static void ar__insert_text_ex(ar__tree *t, ar_span s, int foster, int rule)
 {
     ar_i32 before = -1;
     ar_i32 parent =
         ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
     ar_i32 node;
 
-    if (s.n == 0 || ar__non_nul(s) == 0)
+    if (s.n == 0 || (rule == AR__NUL_DROP && ar__non_nul(s) == 0))
     {
         return;
     }
@@ -827,12 +890,13 @@ static void ar__insert_text(ar__tree *t, ar_span s, int foster)
     {
         ar_i32 last = t->doc->nodes[parent].last_child;
 
-        if (last >= 0 && t->doc->nodes[last].kind == AR_DOM_TEXT && ar__text_extend(t, last, s))
+        if (last >= 0 && t->doc->nodes[last].kind == AR_DOM_TEXT &&
+            ar__text_extend(t, last, s, rule))
         {
             return;
         }
     }
-    s = ar__text_store(t, s);
+    s = ar__text_store(t, s, rule);
     if (s.n == 0)
     {
         return;
@@ -1649,6 +1713,15 @@ static int ar__closes_p(ar_span name)
     return ar__name_in(name, BLOCKS);
 }
 
+/*
+ * Whitespace, counting a NUL as though it were not there.
+ *
+ * The specification ignores a U+0000 character token first and asks about
+ * the rest afterwards, so `<html> \0 <frameset>` is whitespace between the
+ * tags -- and whitespace in `before head` is ignored, which is what lets the
+ * frameset be honoured. Treating the NUL as content opened a body instead,
+ * and the frameset then had nowhere to go.
+ */
 static int ar__all_space(ar_span s)
 {
     ar_u32 i;
@@ -1657,12 +1730,23 @@ static int ar__all_space(ar_span s)
     {
         char c = s.p[i];
 
+        if (c == 0)
+        {
+            continue; /* ignored first, and the rest is asked about after */
+        }
         if (c != ' ' && c != '\t' && c != '\n' && c != '\f' && c != '\r')
         {
             return 0;
         }
     }
     return 1;
+}
+
+/* Every HTML insertion mode ignores a NUL; only foreign content replaces it,
+   and only ar__foreign says so. */
+static void ar__insert_text(ar__tree *t, ar_span s, int foster)
+{
+    ar__insert_text_ex(t, s, foster, AR__NUL_DROP);
 }
 
 /*
@@ -2246,7 +2330,21 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar_span_is(tok->name, "title"))
         {
             ar__insert_element(t, tok, 0);
-            t->tok->state = ar_span_is(tok->name, "title") ? AR_HTML_RCDATA : AR_HTML_RAWTEXT;
+            /*
+             * A script is script data, not raw text.
+             *
+             * The two look interchangeable -- neither reads tags, both end at
+             * their own end tag -- and they are not: script data has the
+             * escaped and double-escaped states, which exist so that
+             * `<script><!--<script </script>` does not end the element at the
+             * inner tag. Tokenizing a script as RAWTEXT skips all of that,
+             * and the escape tracking in ar_html_token.c never ran once
+             * because nothing ever put the tokenizer in the state it keys on.
+             */
+            t->tok->state =
+                ar_span_is(tok->name, "script")
+                    ? AR_HTML_SCRIPT
+                    : (ar_span_is(tok->name, "title") ? AR_HTML_RCDATA : AR_HTML_RAWTEXT);
             t->original_mode = t->mode;
             t->mode = M_TEXT;
             return;
@@ -3307,7 +3405,10 @@ static void ar__foreign(ar__tree *t, const ar_token *tok)
     switch (tok->kind)
     {
     case AR_TOK_TEXT:
-        ar__insert_text(t, tok->text, 0);
+        /* §13.2.6.5: a U+0000 here is the replacement character, not nothing.
+           `<svg>\0filler` is three characters and a word, and the CDATA
+           section that carries one says the same. */
+        ar__insert_text_ex(t, tok->text, 0, AR__NUL_REPLACE);
         if (!ar__all_space(tok->text))
         {
             t->frameset_ok = 0;
@@ -3421,6 +3522,25 @@ static void ar__process(ar__tree *t, const ar_token *tok)
 
 static void ar__process_mode(ar__tree *t, const ar_token *tok)
 {
+    /*
+     * A character token that is nothing but NULs is ignored outright, and
+     * that means the *token*, not just its text.
+     *
+     * Dropping the bytes at insertion time was not enough: the token still
+     * reached the insertion mode, and in `before head` or `after head`
+     * anything that is not whitespace opens a body. So
+     * `<html>\0<frameset>` got a body and the frameset had nowhere to go --
+     * the NUL was invisible in the tree and decided its shape.
+     *
+     * Only here, not in ar__foreign: foreign content turns a NUL into U+FFFD
+     * rather than ignoring it.
+     */
+    if (tok->kind == AR_TOK_TEXT && tok->text.n && ar__non_nul(tok->text) == 0)
+    {
+        t->doc->errors++;
+        return;
+    }
+
     switch (t->mode)
     {
     case M_INITIAL:
@@ -3544,7 +3664,10 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
                 ar_span_is(tok->name, "script"))
             {
                 ar__insert_element(t, tok, 0);
-                t->tok->state = ar_span_is(tok->name, "title") ? AR_HTML_RCDATA : AR_HTML_RAWTEXT;
+                t->tok->state =
+                    ar_span_is(tok->name, "script")
+                        ? AR_HTML_SCRIPT
+                        : (ar_span_is(tok->name, "title") ? AR_HTML_RCDATA : AR_HTML_RAWTEXT);
                 t->original_mode = M_IN_HEAD;
                 t->mode = M_TEXT;
                 return;
@@ -3804,6 +3927,19 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
             {
                 ar__pop(t);
             }
+            /* The outermost one closes the frameset document. A nested one
+               leaves an enclosing frameset behind and changes nothing. */
+            if (!ar__is(t, ar__current(t), "frameset"))
+            {
+                t->mode = M_AFTER_FRAMESET;
+            }
+            return;
+        }
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
+        {
+            t->mode = M_IN_HEAD;
+            ar__process_mode(t, tok);
+            t->mode = M_IN_FRAMESET;
             return;
         }
         if (tok->kind == AR_TOK_COMMENT)
@@ -3816,6 +3952,59 @@ static void ar__process_mode(ar__tree *t, const ar_token *tok)
         {
             t->doc->errors++;
         }
+        return;
+
+    case M_AFTER_FRAMESET:
+        if (tok->kind == AR_TOK_COMMENT)
+        {
+            ar__comment_node(t, tok, -1);
+            return;
+        }
+        if (tok->kind == AR_TOK_TEXT)
+        {
+            /*
+             * The leading whitespace is kept and the rest is a parse error.
+             *
+             * The specification emits one character token per character, so it
+             * can insert the newline in `</frameset>
+foo` and drop the word.
+             * This tokenizer coalesces runs, which is right everywhere else and
+             * means the split has to happen here -- dropping the whole run
+             * loses whitespace that every browser shows in the tree.
+             */
+            ar_span head = tok->text;
+            ar_u32  i = 0;
+
+            while (i < head.n && (head.p[i] == ' ' || head.p[i] == '\t' || head.p[i] == '\n' ||
+                                  head.p[i] == '\f' || head.p[i] == '\r' || head.p[i] == 0))
+            {
+                ++i;
+            }
+            head.n = i;
+            if (head.n)
+            {
+                ar__insert_text(t, head, 0);
+            }
+            if (i < tok->text.n)
+            {
+                t->doc->errors++;
+            }
+            return;
+        }
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
+        {
+            t->mode = M_IN_HEAD;
+            ar__process_mode(t, tok);
+            t->mode = M_AFTER_FRAMESET;
+            return;
+        }
+        if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "html"))
+        {
+            /* `after after frameset` differs only in where a comment goes, and
+               areole puts one on the html element either way. */
+            return;
+        }
+        t->doc->errors++;
         return;
 
     case M_AFTER_BODY:
