@@ -417,6 +417,8 @@ Where it stands against the conformance suites, which are vendored and run offli
 | Named character references | all **2,231**, generated from the standard's own JSON and checked against it |
 | Browser tree corpus | **126 of 126** documents agree with Edge exactly |
 | Fuzzing | **50 million** iterations, five seeds, no crash, no hang, no overrun |
+| Encoding sniffing | **50 documents**, the specification's prescan, not a search for the word |
+| Quirks mode | **34 doctypes**, agreeing with Edge on every one |
 | Parse throughput | **44.5 MB/s** on this laptop, against a 30 MB/s floor |
 
 What is missing is named rather than implied: `innerHTML` fragment parsing, and a real stack of
