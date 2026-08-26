@@ -162,6 +162,11 @@ if(WIN32)
     # The HTML tree corpus needs no window: its subject is a tree per case, not
     # where boxes land. src/ is on the path because ar_html.h is not public API
     # yet, the same reason ar_bench and the tour have it.
+    # 0.9.0's demonstration: it reads HTML and declares no boxes at all.
+    add_executable(example_document examples/13_document/main.c)
+    target_link_libraries(example_document PRIVATE areole_win32)
+    areole_set_warnings(example_document)
+
     add_executable(example_html examples/12_html/main.c)
     target_link_libraries(example_html PRIVATE areole)
     areole_set_warnings(example_html)

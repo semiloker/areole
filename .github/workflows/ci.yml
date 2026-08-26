@@ -151,6 +151,14 @@ jobs:
           ./build/example_grid.exe --html > /tmp/grid.html
           diff -u examples/11_grid/grid.html /tmp/grid.html
 
+      # 0.9.0's demonstration: a document read from HTML, styled, laid out and
+      # painted, with nothing declared by hand. It asserts what it claims --
+      # the document parsed whole, the boxes carry text, the block layout
+      # actually ran, and two identical frames are identical -- rather than
+      # that it drew something.
+      - name: Document self-check
+        run: ./build/example_document.exe --selftest
+
       # The HTML tree corpus. Unlike the layout corpora this one needs no
       # window at all -- its output is a tree per case -- so the dump runs
       # here and only the browser half is local.

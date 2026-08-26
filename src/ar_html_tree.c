@@ -334,6 +334,55 @@ static ar_i32 ar__current(const ar__tree *t)
     return t->open_n > 0 ? t->open[t->open_n - 1] : -1;
 }
 
+static int ar__h_lower_c(int c)
+{
+    return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
+
+/*
+ * Is this name one of a list of literals?
+ *
+ * The screen on the first byte is the whole point. `ar_span_is` walks both
+ * strings, so a thirty-four entry list costs thirty-four walks, and these
+ * lists are asked about every tag in the document -- `ar__closes_p` for every
+ * start tag *and*, since the block end tags got their own rule, every end tag
+ * as well.
+ *
+ * Comparing one folded byte first rejects nineteen entries in twenty before
+ * anything is walked. Measured, not assumed: the foreign content release cost
+ * the parse 26%, an alternating build said so, and this is where it went.
+ */
+static int ar__node_name_in(const ar__tree *t, ar_i32 node, const char *const *list);
+
+static int ar__name_in(ar_span name, const char *const *list)
+{
+    int    first;
+    ar_i32 i;
+
+    if (name.n == 0)
+    {
+        return 0;
+    }
+    first = ar__h_lower_c((unsigned char)name.p[0]);
+    for (i = 0; list[i]; ++i)
+    {
+        if (list[i][0] == first && ar_span_is(name, list[i]))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int ar__node_name_in(const ar__tree *t, ar_i32 node, const char *const *list)
+{
+    if (node < 0 || t->doc->nodes[node].kind != AR_DOM_ELEMENT)
+    {
+        return 0;
+    }
+    return ar__name_in(t->doc->nodes[node].name, list);
+}
+
 /* Two spans, case-insensitively. ar_span_is compares against a literal; this
    is the same question when both sides came out of the document. */
 static int ar__span_eq(ar_span a, ar_span b)
@@ -404,12 +453,13 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
     static const char *const STOP[] = {"applet", "caption", "html",   "table", "td",
                                        "th",     "marquee", "object", 0};
     ar_i32                   i;
+    int                      tag0 = ar__h_lower_c((unsigned char)tag[0]);
 
     for (i = t->open_n - 1; i >= 1; --i)
     {
-        ar_i32 k;
-
-        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML && ar__is(t, t->open[i], tag))
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML && t->doc->nodes[t->open[i]].name.n &&
+            ar__h_lower_c((unsigned char)t->doc->nodes[t->open[i]].name.p[0]) == tag0 &&
+            ar__is(t, t->open[i], tag))
         {
             return 1;
         }
@@ -446,12 +496,9 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
         {
             return 0;
         }
-        for (k = 0; STOP[k]; ++k)
+        if (ar__node_name_in(t, t->open[i], STOP))
         {
-            if (ar__is(t, t->open[i], STOP[k]))
-            {
-                return 0;
-            }
+            return 0;
         }
     }
     return 0;
@@ -482,26 +529,18 @@ static void ar__implied_end_tags(ar__tree *t, const char *except)
 {
     static const char *const IMPLIED[] = {"dd", "dt", "li", "optgroup", "option", "p",
                                           "rb", "rp", "rt", "rtc",      0};
-    int                      changed = 1;
 
-    while (changed)
+    for (;;)
     {
-        ar_i32 k;
-
-        changed = 0;
         if (except && ar__is(t, ar__current(t), except))
         {
             return;
         }
-        for (k = 0; IMPLIED[k]; ++k)
+        if (!ar__node_name_in(t, ar__current(t), IMPLIED))
         {
-            if (ar__is(t, ar__current(t), IMPLIED[k]))
-            {
-                ar__pop(t);
-                changed = 1;
-                break;
-            }
+            return;
         }
+        ar__pop(t);
     }
 }
 
@@ -814,8 +853,12 @@ static void ar__insert_text(ar__tree *t, ar_span s, int foster)
  */
 static ar_i32 ar__content_of(const ar__tree *t, ar_i32 node)
 {
+    /* The first-byte screen again: this runs on every insertion in every
+       document, and almost none of them is a template. */
     if (node >= 0 && t->doc->nodes[node].kind == AR_DOM_ELEMENT &&
-        t->doc->nodes[node].ns == AR_NS_HTML && ar__is(t, node, "template"))
+        t->doc->nodes[node].ns == AR_NS_HTML && t->doc->nodes[node].name.n == 8 &&
+        ar__h_lower_c((unsigned char)t->doc->nodes[node].name.p[0]) == 't' &&
+        ar__is(t, node, "template"))
     {
         ar_i32 c = t->doc->nodes[node].first_child;
 
@@ -858,7 +901,6 @@ static int ar__is_special(const ar__tree *t, ar_i32 node)
         "search",  "section",    "select",   "source",     "style",     "summary",  "table",
         "tbody",   "td",         "template", "textarea",   "tfoot",     "th",       "thead",
         "title",   "tr",         "track",    "ul",         "wbr",       "xmp",      0};
-    ar_i32 i;
 
     if (node < 0 || t->doc->nodes[node].kind != AR_DOM_ELEMENT)
     {
@@ -875,14 +917,7 @@ static int ar__is_special(const ar__tree *t, ar_i32 node)
         return ar__is(t, node, "foreignObject") || ar__is(t, node, "desc") ||
                ar__is(t, node, "title");
     }
-    for (i = 0; HTML_SPECIAL[i]; ++i)
-    {
-        if (ar__is(t, node, HTML_SPECIAL[i]))
-        {
-            return 1;
-        }
-    }
-    return 0;
+    return ar__name_in(t->doc->nodes[node].name, HTML_SPECIAL);
 }
 
 static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
@@ -1501,16 +1536,7 @@ static int ar__closes_p(ar_span name)
         "form",    "h1",      "h2",      "h3",         "h4",         "h5",      "h6",
         "header",  "hgroup",  "hr",      "main",       "menu",       "nav",     "ol",
         "p",       "pre",     "section", "summary",    "table",      "ul",      0};
-    ar_i32 i;
-
-    for (i = 0; BLOCKS[i]; ++i)
-    {
-        if (ar_span_is(name, BLOCKS[i]))
-        {
-            return 1;
-        }
-    }
-    return 0;
+    return ar__name_in(name, BLOCKS);
 }
 
 static int ar__all_space(ar_span s)
@@ -2877,12 +2903,9 @@ static int ar__breaks_out(const ar__tree *t, const ar_token *tok)
 
     (void)t; /* the list is a property of the tag, not of the stack */
 
-    for (i = 0; OUT[i]; ++i)
+    if (ar__name_in(tok->name, OUT))
     {
-        if (ar_span_is(tok->name, OUT[i]))
-        {
-            return 1;
-        }
+        return 1;
     }
     /* And `<font>`, but only when it carries one of the three attributes that
        make it a presentational HTML font tag rather than an SVG one. */
