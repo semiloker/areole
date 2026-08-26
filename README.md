@@ -417,7 +417,7 @@ Where it stands against the conformance suites, which are vendored and run offli
 | Named character references | all **2,231**, generated from the standard's own JSON and checked against it |
 | Browser tree corpus | **126 of 126** documents agree with Edge exactly |
 | Fuzzing | **50 million** iterations, five seeds, no crash, no hang, no overrun |
-| Parse throughput | **48.5 MB/s** on this laptop, against a 30 MB/s floor |
+| Parse throughput | **44.5 MB/s** on this laptop, against a 30 MB/s floor |
 
 What is missing is named rather than implied: `innerHTML` fragment parsing, and a real stack of
 template insertion modes. That work is 0.9.3.
@@ -435,6 +435,9 @@ ar_frame_begin(c, &input);
 ar_dom_build(c, d);               /* the document into the box tree */
 ar_frame_end(c, &surface);
 ```
+
+`examples/13_document` is exactly that in a window, and is the only example in
+the tree that declares no boxes at all.
 
 ## Building
 
