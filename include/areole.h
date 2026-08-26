@@ -1220,6 +1220,27 @@ ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
 int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
 
 /*
+ * Parse a *fragment*, the way `innerHTML` does.
+ *
+ * `context` is the element the markup is being parsed as if it were inside --
+ * `"td"`, `"select"`, `"title"` -- and `context_ns` its namespace. The result
+ * is the children of the document's root element: `ar_dom_root(doc)` is a
+ * synthetic `<html>` that is not part of the answer, and everything under it
+ * is.
+ *
+ * The context changes almost everything. `<td>x` parsed with a `tr` context
+ * is a cell; with a `div` context the tag is dropped and only the text
+ * survives. `a<b>` inside a `title` is text including the angle brackets,
+ * because a title is RCDATA. The same bytes are a different document
+ * depending on where they were going.
+ *
+ * Same storage rules as ar_html_parse, and the same return: non-zero if the
+ * whole fragment was built.
+ */
+int ar_html_parse_fragment(ar_doc *doc, const char *bytes, ar_u32 len, const char *context,
+                           ar_ns context_ns, char *scratch, ar_u32 scratch_cap);
+
+/*
  * The document into the box tree.
  *
  * Call it between ar_frame_begin and ar_frame_end, exactly where the

@@ -1415,6 +1415,28 @@ static void serialise_document(const ar_doc *d)
     g_tree[g_tree_n] = 0;
 }
 
+/*
+ * A fragment's answer is the children of the synthetic root, which is not
+ * part of it. The root sits at depth 0 and its children at depth 1, so this
+ * walks them directly and prints them at 0 -- the same tree, minus a node the
+ * caller never asked for.
+ */
+static void serialise_fragment(const ar_doc *d)
+{
+    ar_i32 root = ar_dom_root(d);
+    ar_i32 c;
+
+    g_tree_n = 0;
+    if (root >= 0)
+    {
+        for (c = d->nodes[root].first_child; c >= 0; c = d->nodes[c].next_sibling)
+        {
+            serialise(d, c, 0);
+        }
+    }
+    g_tree[g_tree_n] = 0;
+}
+
 /* A line, without its terminator. Returns where the next line begins. */
 static const char *line_of(const char *p, const char *end, const char **b, const char **e)
 {
@@ -1509,6 +1531,10 @@ static void run_tree_file(const char *path, const char *label)
         ar_u32      want_n = 0;
         int         fragment = 0;
         int         script_on = 0;
+        char        ctx[64];
+        ar_ns       ctx_ns = AR_NS_HTML;
+
+        ctx[0] = 0;
 
         p = line_of(p, end, &b, &e);
         if (!line_is(b, e, "#data"))
@@ -1559,7 +1585,34 @@ static void run_tree_file(const char *path, const char *label)
             }
             if (line_is(b, e, "#document-fragment"))
             {
+                /* The next line names the context element, either as a bare
+                   HTML name or as `svg path` / `math mi`. */
+                const char *cb;
+                const char *ce;
+
                 fragment = 1;
+                p = line_of(p, end, &cb, &ce);
+                ctx_ns = AR_NS_HTML;
+                if (ce - cb > 4 && memcmp(cb, "svg ", 4) == 0)
+                {
+                    ctx_ns = AR_NS_SVG;
+                    cb += 4;
+                }
+                else if (ce - cb > 5 && memcmp(cb, "math ", 5) == 0)
+                {
+                    ctx_ns = AR_NS_MATHML;
+                    cb += 5;
+                }
+                {
+                    ar_u32 k = 0;
+
+                    while (cb + k < ce && k + 1u < sizeof ctx)
+                    {
+                        ctx[k] = cb[k];
+                        ++k;
+                    }
+                    ctx[k] = 0;
+                }
             }
             else if (line_is(b, e, "#script-on"))
             {
@@ -1601,20 +1654,12 @@ static void run_tree_file(const char *path, const char *label)
             }
         }
 
-        if (fragment || script_on)
+        if (script_on)
         {
-            /* innerHTML needs a fragment parsing algorithm, which needs a
-               context element; scripting is a permanent no. Skipped and
-               counted, never quietly passed. */
+            /* Scripting is a permanent no. Skipped and counted, never quietly
+               passed. */
             ++g_skip;
-            if (fragment)
-            {
-                ++g_cause_fragment;
-            }
-            else
-            {
-                ++g_cause_script;
-            }
+            ++g_cause_script;
             continue;
         }
 
@@ -1625,8 +1670,16 @@ static void run_tree_file(const char *path, const char *label)
         g_doc.attr_cap = DOC_ATTRS;
         g_doc.text = g_text;
         g_doc.text_cap = DOC_TEXT;
-        ar_html_parse(&g_doc, data, data_n, g_scratch, SCRATCH_CAP);
-        serialise_document(&g_doc);
+        if (fragment)
+        {
+            ar_html_parse_fragment(&g_doc, data, data_n, ctx, ctx_ns, g_scratch, SCRATCH_CAP);
+            serialise_fragment(&g_doc);
+        }
+        else
+        {
+            ar_html_parse(&g_doc, data, data_n, g_scratch, SCRATCH_CAP);
+            serialise_document(&g_doc);
+        }
 
         ++g_run;
         if (g_tree_n == want_n && memcmp(g_tree, want, want_n) == 0)
