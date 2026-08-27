@@ -14580,6 +14580,52 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_an_html_attribute_is_in_no_namespace(void)
+{
+    /*
+     * Every field of an attribute is written, not just the two that carry its
+     * text.
+     *
+     * areole never clears the attribute table -- the caller owns it, and
+     * clearing it would be a memset of the caller's budget on every parse for
+     * the benefit of fields the parser is supposed to fill. So a slot holds
+     * whatever the last document to reach it left there, and an unwritten
+     * field is not "zero", it is "the previous document's".
+     *
+     * `ar__insert_foreign` set `ns` and `ar__insert_element` did not, so an
+     * ordinary attribute on an ordinary element inherited a namespace from a
+     * document parsed before it. That made the html5lib score depend on run
+     * order: 1643 for the whole suite in one process, 1647 summed from one
+     * process per file, and no way to tell which number was true.
+     *
+     * The xlink document first, because the bug needs a slot to poison and
+     * this is the parse that poisons it.
+     */
+    ar_doc *d = ar__parse("<!DOCTYPE html><math xlink:href=foo></math>");
+    ar_i32  i;
+    int     saw_xlink = 0;
+    int     leaked = 0;
+
+    for (i = 0; i < d->attr_count; ++i)
+    {
+        if (d->attrs[i].ns == AR_ATTR_NS_XLINK)
+        {
+            saw_xlink = 1;
+        }
+    }
+    CHECK(saw_xlink, "html: xlink:href on a MathML element is in the xlink namespace");
+
+    d = ar__parse("<!DOCTYPE html><p title=x class=y><foo bar=baz>");
+    for (i = 0; i < d->attr_count; ++i)
+    {
+        if (d->attrs[i].ns != AR_ATTR_NS_NONE)
+        {
+            leaked = 1;
+        }
+    }
+    CHECK(!leaked, "html: an HTML attribute is in no namespace, whatever the last parse left");
+}
+
 static ar_doc *ar__parse_capped(const char *src, ar_i32 node_cap)
 {
     memset(&g_doc, 0, sizeof g_doc);
@@ -15337,6 +15383,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_an_html_attribute_is_in_no_namespace();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;

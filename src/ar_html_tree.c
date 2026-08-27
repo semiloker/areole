@@ -1067,6 +1067,20 @@ static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
         {
             t->doc->attrs[t->doc->attr_count].name = ar__keep(t, tok->attrs[k].name);
             t->doc->attrs[t->doc->attr_count].value = ar__keep(t, tok->attrs[k].value);
+
+            /*
+             * An HTML attribute is in no namespace, and saying so is not
+             * redundant: the caller owns the attribute table and areole never
+             * clears it, so a slot holds whatever the last document to use it
+             * left there. ar__insert_foreign sets `ns`; this path did not, so
+             * an ordinary attribute on an ordinary element inherited the
+             * xlink or xml namespace from a document parsed before it.
+             *
+             * It made the conformance score depend on run order --
+             * `<foo bar="baz">` passed in a fresh process and failed after
+             * tests9.dat's `<math xlink:href=foo>` had used slot 1.
+             */
+            t->doc->attrs[t->doc->attr_count].ns = AR_ATTR_NS_NONE;
             ++t->doc->attr_count;
         }
     }
