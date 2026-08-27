@@ -222,6 +222,20 @@ static const struct
     {"listing-eats-one-newline", "<listing>\n</listing>"},
     {"textarea-eats-one-newline", "<textarea>\n</textarea>"},
     {"pre-keeps-a-later-newline", "<pre>x\n</pre>"},
+
+    /* `in head noscript`, where an end tag and *the* end tag differ: `</p>`
+       is ignored and keeps the noscript open, `</br>` closes it and becomes a
+       <br> in a body. */
+    {"noscript-style", "<head><noscript><style>x</style></noscript>"},
+    {"noscript-stray-end-tag", "<head><noscript></p><!--c--></noscript>"},
+    {"noscript-br-end-tag", "<head><noscript></br><!--c--></noscript>"},
+    {"noscript-p-closes-it", "<head><noscript><p>x</noscript>"},
+    {"br-end-tag-is-a-br", "<p>a</br>b"},
+
+    /* A second <html> or <body> is not a second element; its attributes are
+       merged onto the first, and the first value wins. */
+    {"second-body-merges", "<body class=a><body id=b>x"},
+    {"second-html-merges", "<html lang=en><head></head><html dir=ltr>"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},

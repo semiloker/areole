@@ -1113,6 +1113,79 @@ static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
 /* ------------------------------------------------------------------------
  * The list of active formatting elements
  * ------------------------------------------------------------------------ */
+/*
+ * Merge a second `<html>` or `<body>`'s attributes onto the first, §13.2.6.4.7.
+ *
+ * The elements are not created twice -- a document has one html element and one
+ * body element -- but the attributes on the duplicate tag are not discarded:
+ * every name the first element does not already carry is added to it. So
+ * `<body class=a><body id=b>` is one body with both, and the first value wins
+ * on a clash.
+ *
+ * A node's attributes are a contiguous run in one table, so growing a run that
+ * is not the last one would overwrite its neighbour. The run is copied to the
+ * end of the table first and the old copy abandoned. That leaks table entries,
+ * and deliberately: this happens only on a duplicate `<html>` or `<body>`,
+ * which is at most twice in a document, and an arena has nothing to free into.
+ */
+static void ar__merge_attrs(ar__tree *t, ar_i32 node, const ar_token *tok)
+{
+    ar_doc *d = t->doc;
+    ar_i32  k;
+    ar_i32  added = 0;
+
+    if (node < 0)
+    {
+        return;
+    }
+    for (k = 0; k < tok->attr_count; ++k)
+    {
+        ar_i32 j;
+        int    have = 0;
+
+        for (j = 0; j < d->nodes[node].attr_count; ++j)
+        {
+            if (ar__span_eq(d->attrs[d->nodes[node].attr_first + j].name, tok->attrs[k].name))
+            {
+                have = 1;
+                break;
+            }
+        }
+        if (have)
+        {
+            continue;
+        }
+        if (!added)
+        {
+            /* Relocate the run, once, before the first addition. */
+            ar_i32 n = d->nodes[node].attr_count;
+
+            if (d->attr_count + n + (tok->attr_count - k) > d->attr_cap)
+            {
+                d->overflowed = 1;
+                return;
+            }
+            for (j = 0; j < n; ++j)
+            {
+                d->attrs[d->attr_count + j] = d->attrs[d->nodes[node].attr_first + j];
+            }
+            d->nodes[node].attr_first = d->attr_count;
+            d->attr_count += n;
+            added = 1;
+        }
+        if (d->attr_count >= d->attr_cap)
+        {
+            d->overflowed = 1;
+            return;
+        }
+        d->attrs[d->attr_count].name = ar__keep(t, tok->attrs[k].name);
+        d->attrs[d->attr_count].value = ar__keep(t, tok->attrs[k].value);
+        d->attrs[d->attr_count].ns = AR_ATTR_NS_NONE;
+        ++d->attr_count;
+        ++d->nodes[node].attr_count;
+    }
+}
+
 static void ar__fmt_push(ar__tree *t, ar_i32 node)
 {
     if (t->fmt_n >= AR_HTML_FMT)
@@ -2206,11 +2279,24 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
 
     if (tok->kind == AR_TOK_START)
     {
-        if (ar_span_is(tok->name, "html") || ar_span_is(tok->name, "body"))
+        if (ar_span_is(tok->name, "html"))
         {
-            /* Attributes on a second <html> or <body> are merged onto the
-               first; areole keeps the first and counts the error. */
             t->doc->errors++;
+            if (!ar__on_stack_named(t, "template"))
+            {
+                ar__merge_attrs(t, ar_dom_root(t->doc), tok);
+            }
+            return;
+        }
+        if (ar_span_is(tok->name, "body"))
+        {
+            t->doc->errors++;
+            if (t->open_n >= 3 && ar__is(t, t->open[2], "body") &&
+                !ar__on_stack_named(t, "template"))
+            {
+                t->frameset_ok = 0;
+                ar__merge_attrs(t, t->open[2], tok);
+            }
             return;
         }
         if (ar_span_is(tok->name, "head"))
@@ -2608,6 +2694,31 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
     }
 
     /* End tags. */
+
+    /*
+     * `</br>` is a `<br>`, §13.2.6.4.7, with its attributes thrown away.
+     *
+     * Not a curiosity: authors write it, and the specification says so in
+     * those words -- "drop the attributes from the token, and act as described
+     * in the next entry", which is the `<br>` start tag. Without it the tag
+     * reached the general end-tag walk, found no `br` on the stack, stopped at
+     * the first special element and did nothing at all.
+     */
+    if (ar_span_is(tok->name, "br"))
+    {
+        ar_token fixed;
+
+        t->doc->errors++;
+        memset(&fixed, 0, sizeof fixed);
+        fixed.kind = AR_TOK_START;
+        fixed.name = tok->name;
+        ar__reconstruct(t);
+        ar__insert_element(t, &fixed, 1);
+        ar__pop(t);
+        t->frameset_ok = 0;
+        return;
+    }
+
     if (ar_span_is(tok->name, "body") || ar_span_is(tok->name, "html"))
     {
         t->mode = M_AFTER_BODY;
@@ -4149,6 +4260,14 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
             t->doc->errors++;
             return;
         }
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "html"))
+        {
+            /* A second `<html>` is `in body`'s business wherever it appears,
+               and it is not "anything else" -- treating it as such popped the
+               noscript and put everything after it in the body. */
+            ar__in_body(t, tok);
+            return;
+        }
         if (tok->kind == AR_TOK_COMMENT || (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text)))
         {
             t->mode = M_IN_HEAD;
@@ -4165,10 +4284,42 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
             {
                 t->mode = M_IN_HEAD;
                 ar__process_mode(t, tok);
-                t->mode = M_IN_HEAD_NOSCRIPT;
+
+                /*
+                 * `<style>` and `<noframes>` are raw text, so `in head` left
+                 * the mode as `text` and put the mode to come back to in
+                 * `original_mode`. Restoring the mode unconditionally
+                 * overwrote that, the raw text never reached `text` mode, and
+                 * `<noscript><style>XXX</style>` put XXX in the body and grew
+                 * a second body inside the head on the way.
+                 */
+                if (t->mode == M_TEXT)
+                {
+                    t->original_mode = M_IN_HEAD_NOSCRIPT;
+                }
+                else
+                {
+                    t->mode = M_IN_HEAD_NOSCRIPT;
+                }
                 return;
             }
         }
+        /*
+         * Any other end tag is ignored, and `</br>` is the exception that
+         * falls through to "anything else" below.
+         *
+         * The difference is visible in one token: `<noscript></p><!--c-->`
+         * keeps the noscript open and puts the comment inside it, while
+         * `<noscript></br><!--c-->` closes the noscript, opens a body, and
+         * puts a `<br>` and the comment in it. Treating every end tag as
+         * "anything else" got the second right and the first wrong.
+         */
+        if (tok->kind == AR_TOK_END && !ar_span_is(tok->name, "br"))
+        {
+            t->doc->errors++;
+            return;
+        }
+
         /* Anything else closes it and is reprocessed, which is what puts the
            paragraph in the body rather than inside the noscript. */
         t->doc->errors++;
