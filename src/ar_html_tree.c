@@ -81,6 +81,10 @@ typedef struct ar__tree
 
     int frameset_ok;
 
+    /* Set by `<pre>`, `<listing>` and `<textarea>`; consumed by the very next
+       token in the parse loop, which is where "the next token" is. */
+    int drop_lf;
+
     /*
      * Fragment parsing: the element this markup is being parsed as if it were
      * inside. Null for an ordinary document.
@@ -2261,6 +2265,11 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
         if (ar__clears_frameset(tok))
         {
             t->frameset_ok = 0;
+        }
+        if (ar_span_is(tok->name, "pre") || ar_span_is(tok->name, "listing") ||
+            ar_span_is(tok->name, "textarea"))
+        {
+            t->drop_lf = 1;
         }
         if (ar_span_is(tok->name, "table"))
         {
@@ -4539,6 +4548,39 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
         {
             break;
         }
+
+        /*
+         * `<pre>`, `<listing>` and `<textarea>` swallow one newline of their
+         * own, §13.2.6.4.7.
+         *
+         * The rule is about *the next token* -- "if the next token is a U+000A
+         * LINE FEED character token, ignore it" -- so it is consumed here,
+         * where the next token is, rather than in the insertion mode. Putting
+         * it in `in body` would have missed `<textarea>` entirely, whose
+         * content arrives in `text` mode.
+         *
+         * The flag is cleared by whatever token comes next whether or not it
+         * begins with a newline, because the specification only ever looks at
+         * one.
+         *
+         * A line feed and nothing else. The tokenizer has already turned a
+         * carriage return into one -- §13.2.3.5 is applied where characters
+         * are produced, in ar__clean and the data state's own loop -- so
+         * `<pre>\rA` arrives here as `\nA` and needs no second rule. And a
+         * `&#x000D;` must *not* be caught: a reference is decoded after the
+         * input stream is preprocessed, so it is a real carriage return in
+         * the tree and stays one.
+         */
+        if (t.drop_lf)
+        {
+            t.drop_lf = 0;
+            if (tok.kind == AR_TOK_TEXT && tok.text.n && tok.text.p[0] == '\n')
+            {
+                ++tok.text.p;
+                --tok.text.n;
+            }
+        }
+
         ar__process(&t, &tok);
 
         /* Note where `before` is taken: across the whole cycle, not across
