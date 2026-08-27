@@ -191,6 +191,16 @@ static const struct
     /* ------------------------------------------------------- the ragged -- */
     {"stray-end-tags", "</p></div></b><p>a"},
     {"bogus-pi", "<?php echo 1; ?><p>a"},
+
+    /* A processing instruction is a node and a comment is a node, and which
+       one you get is decided by the target. These four are the boundary: a
+       reserved prefix, two characters an XML name allows and a target does
+       not, and a construct the file ends inside. */
+    {"pi-target-is-a-node", "<p>a<?something good?>b"},
+    {"pi-xml-is-reserved", "<p>a<?xml version=1.0?>b"},
+    {"pi-dotted-target", "<p>a<?data.v1?>b"},
+    {"pi-colon-target", "<p>a<?ns:tag?>b"},
+    {"pi-unterminated", "<p>a<?start data"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
@@ -315,14 +325,47 @@ static void shape(ar_i32 i, ar_u32 *used)
     {
         return;
     }
-    g_shape[(*used)++] = '(';
-    for (c = g_doc.nodes[i].first_child; c >= 0; c = g_doc.nodes[c].next_sibling)
     {
-        if (c != g_doc.nodes[i].first_child && *used + 1 < sizeof g_shape)
+        /*
+         * A child that prints nothing takes its separator with it, and if no
+         * child prints anything the parentheses go too.
+         *
+         * The browser twin builds a list and joins it -- `if (t) kids.push(t)`
+         * -- so a node it renders as the empty string leaves no trace at all.
+         * This side writes straight into the buffer, so it has to take the
+         * separator back afterwards to ask the same question.
+         *
+         * Nothing exercised it until a processing instruction stood between
+         * two text nodes: every other silent node is a doctype, which is only
+         * ever a child of the document, and the shape starts at the html
+         * element. `<p>a<?something?>b` came out `p(#  #)` here and `p(# #)`
+         * in the browser.
+         */
+        ar_u32 open;
+
+        g_shape[(*used)++] = '(';
+        open = *used;
+        for (c = g_doc.nodes[i].first_child; c >= 0; c = g_doc.nodes[c].next_sibling)
         {
-            g_shape[(*used)++] = ' ';
+            ar_u32 mark = *used;
+            ar_u32 pre;
+
+            if (*used > open && *used + 1 < sizeof g_shape)
+            {
+                g_shape[(*used)++] = ' ';
+            }
+            pre = *used;
+            shape(c, used);
+            if (*used == pre)
+            {
+                *used = mark;
+            }
         }
-        shape(c, used);
+        if (*used == open)
+        {
+            --(*used); /* the `(` as well */
+            return;
+        }
     }
     if (*used + 1 < sizeof g_shape)
     {

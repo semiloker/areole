@@ -99,6 +99,22 @@ typedef struct ar_token
 
     int self_closing;
 
+    /*
+     * A `<?` construct that ran to the end of the file without its `>`.
+     *
+     * The comment is still emitted, because the tokenizer suite says so: `<?A`
+     * at the end of a file is `Comment <!--?A-->`, and the bogus comment state
+     * emits on EOF exactly as it is written. The tree construction suite says
+     * `<body><?start` leaves no node at all. Both are right about their own
+     * layer, the same way a processing instruction is a comment token here and
+     * a node of its own in the tree -- so the token carries the fact and the
+     * tree builder is where it is dropped.
+     *
+     * Not set for `<? `, which is a bogus comment rather than a target that
+     * never finished, and which the tree suite keeps.
+     */
+    int unterminated;
+
     /* The doctype quirks flags, which decide the box model for the whole
        document. A doctype that is missing, malformed, or one of the legacy
        strings forces quirks, and quirks is not a curiosity: it changes the box
