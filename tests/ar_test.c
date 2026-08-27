@@ -14590,6 +14590,64 @@ static void test_the_stack_is_cleared_back_to_a_table_context(void)
     CHECK(wrong == 0, "html: a table part clears the stack back to the table first");
 }
 
+static void test_the_table_modes_need_a_table_to_act_on(void)
+{
+    /*
+     * Two things, and the fragment cases are what made both visible.
+     *
+     * `in column group` was in the enum, was switched to, and had no case in
+     * the dispatcher at all -- so everything inside a `<colgroup>` fell
+     * through to whatever the default was. A stray `<col>` now gets a group
+     * the way a stray `<td>` gets a row, and text inside a group is fostered
+     * out instead of lost.
+     *
+     * And every table mode's "close what is open and reprocess" needs
+     * something open to close. In a fragment the context element is *not*
+     * pushed -- there is a synthetic html root and nothing else -- so
+     * `<tr><td>` against a `tr` context has no row on the stack, and the
+     * specification's "in table scope" guard is what turns the `<tr>` into a
+     * dropped token rather than a second row. Without it the pop loops ate the
+     * synthetic root and the document came out empty.
+     *
+     * `ar__in_table`'s own `</table>` was the subtle one: `ar__pop_until` was
+     * already a no-op with no table on the stack, so the *tree* was right and
+     * the *mode* was not. It went to `in body`, and the `<tr>` after
+     * `</table>` in a `table` fragment was then a table part with no table and
+     * was dropped.
+     *
+     * Expectations from html5lib's tables01.dat, tests6.dat and
+     * tests_innerHTML_1.dat.
+     */
+    static const char *const CASES[] = {"<table><col><col></table>",
+                                        "html(head body(table(colgroup(col col))))",
+                                        "<table><colgroup>foo</table>",
+                                        "html(head body(# table(colgroup)))",
+                                        "<table><colgroup><col><tr><td>x</table>",
+                                        "html(head body(table(colgroup(col) tbody(tr(td(#))))))",
+                                        "<table><caption>c<td>x</table>",
+                                        "html(head body(table(caption(#) tbody(tr(td(#))))))",
+                                        "<table><input type=hidden></table>",
+                                        "html(head body(table(input)))",
+                                        "<table><input type=text></table>",
+                                        "html(head body(input table))",
+                                        0,
+                                        0};
+    ar_i32                   i;
+    ar_i32                   wrong = 0;
+
+    for (i = 0; CASES[i]; i += 2)
+    {
+        const char *got = ar__tree_shape(CASES[i]);
+
+        if (strcmp(got, CASES[i + 1]) != 0)
+        {
+            printf("      %s\n        want %s\n        got  %s\n", CASES[i], CASES[i + 1], got);
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0, "html: a column group is a mode, and a table part needs a table");
+}
+
 static void test_quirks_mode_changes_the_tree_not_only_the_layout(void)
 {
     /*
@@ -15808,6 +15866,7 @@ int main(void)
     test_quirks_matches_a_browser();
     test_a_tag_that_never_ended_is_dropped();
     test_the_stack_is_cleared_back_to_a_table_context();
+    test_the_table_modes_need_a_table_to_act_on();
     test_quirks_mode_changes_the_tree_not_only_the_layout();
     test_in_head_noscript_has_rules_of_its_own();
     test_a_second_html_or_body_merges_its_attributes();

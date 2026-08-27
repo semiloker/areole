@@ -560,6 +560,41 @@ static int ar__in_scope(const ar__tree *t, const char *tag, int button_scope)
  * against a `table` context has no table on the stack at all, because the
  * context element is not a node. The tree came back empty.
  */
+/*
+ * "In table scope", §13.2.4.2, which stops at three elements rather than
+ * eight.
+ *
+ * It exists so that a table part with no table around it is ignored instead of
+ * closing something it does not belong to. The fragment cases are where it
+ * shows: parsing `<tbody><a>` against a `tbody` context, there is no tbody on
+ * the stack -- the context element is not pushed, only a synthetic html root
+ * -- so the `<tbody>` is dropped and the `<a>` is all that is left. Without
+ * the guard the pop loop ate the synthetic root and the document had nowhere
+ * to put anything.
+ */
+static int ar__in_table_scope(const ar__tree *t, const char *const *tags)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        if (t->doc->nodes[t->open[i]].ns != AR_NS_HTML)
+        {
+            continue;
+        }
+        if (ar__node_name_in(t, t->open[i], tags))
+        {
+            return 1;
+        }
+        if (ar__is(t, t->open[i], "html") || ar__is(t, t->open[i], "table") ||
+            ar__is(t, t->open[i], "template"))
+        {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static int ar__on_stack_named(const ar__tree *t, const char *tag);
 
 /* Take one element off the stack wherever it is, which is what the head
@@ -3038,23 +3073,61 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_TEMPLATE;
             return;
         }
-        if (ar_span_is(tok->name, "colgroup") || ar_span_is(tok->name, "col"))
+        if (ar_span_is(tok->name, "colgroup"))
         {
             ar__clear_to_table(t);
             ar__insert_element(t, tok, 0);
-            if (ar_span_is(tok->name, "col"))
-            {
-                ar__pop(t);
-            }
+            t->mode = M_IN_COLUMN_GROUP;
+            return;
+        }
+        if (ar_span_is(tok->name, "col"))
+        {
+            /* A `<col>` with no `<colgroup>` around it gets one, the same way
+               a `<td>` gets a tbody and a row. The column then belongs to a
+               group in the tree, which is what the table layout expects and
+               what `<table><col>` produces in every browser. */
+            ar__clear_to_table(t);
+            ar__insert_implied(t, "colgroup");
+            t->mode = M_IN_COLUMN_GROUP;
+            ar__process(t, tok);
+            return;
+        }
+
+        /*
+         * `<input type=hidden>` is the one element a table does not foster out.
+         *
+         * It draws nothing, so relocating it before the table would be pure
+         * damage to the document order for no visible gain -- and the
+         * specification says so explicitly rather than leaving it to the
+         * general rule. Five conformance cases, all of them writing the type
+         * in a different case, which is the actual point being made.
+         */
+        if (ar_span_is(tok->name, "input") && !ar__clears_frameset(tok))
+        {
+            t->doc->errors++;
+            ar__insert_element(t, tok, 0);
+            ar__pop(t);
             return;
         }
         if (ar_span_is(tok->name, "table"))
         {
-            /* A table inside a table closes the first, which is the recovery
-               for the single most common malformed table on the web. */
+            /*
+             * A table inside a table closes the first, which is the recovery
+             * for the single most common malformed table on the web -- but
+             * only if there is a first. Parsing `<table><tr>` against a
+             * `table` context there is no table element on the stack at all,
+             * so the tag is dropped and the row gets its implied tbody; the
+             * unconditional version built a second table inside the fragment.
+             */
+            static const char *const TABLE[] = {"table", 0};
+
             t->doc->errors++;
+            if (!ar__in_table_scope(t, TABLE))
+            {
+                return;
+            }
             ar__pop_until(t, "table");
-            t->mode = M_IN_BODY;
+            ar__reset_mode(t);
             ar__process(t, tok);
             return;
         }
@@ -3071,8 +3144,23 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
 
         if (ar_span_is(tok->name, "table"))
         {
+            /*
+             * Ignored when there is no table to close, and the mode is left
+             * alone -- which is the part that mattered. `ar__pop_until` was
+             * already a no-op here, so the tree was right and the *mode* was
+             * not: it went to `in body`, and the `<tr>` after `</table>` in a
+             * `table` fragment was then a table part with no table and was
+             * dropped. The document came out empty.
+             */
+            static const char *const TABLE[] = {"table", 0};
+
+            if (!ar__in_table_scope(t, TABLE))
+            {
+                t->doc->errors++;
+                return;
+            }
             ar__pop_until(t, "table");
-            t->mode = M_IN_BODY;
+            ar__reset_mode(t);
             return;
         }
         for (i = 0; STRUCTURAL[i]; ++i)
@@ -3102,6 +3190,89 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
     }
 }
 
+/*
+ * `in column group`, §13.2.6.4.12.
+ *
+ * A mode of six lines that had none at all: `M_IN_COLUMN_GROUP` was in the
+ * enum, was switched to, and had no case in the dispatcher -- so everything
+ * inside a `<colgroup>` fell through to whatever the default was.
+ * `<table><colgroup>foo` lost the text and `<table><col foo=bar>` lost the
+ * attribute and the group.
+ *
+ * The shape is the same as every other table mode: a short list of things that
+ * belong here, and anything else closes the group and is reprocessed one level
+ * out. The closing is the part worth stating -- a `<colgroup>` has no end tag
+ * in practice, so almost every real document leaves through "anything else".
+ */
+static void ar__in_column_group(ar__tree *t, const ar_token *tok)
+{
+    if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
+    {
+        ar__insert_text(t, tok->text, 0);
+        return;
+    }
+    if (tok->kind == AR_TOK_COMMENT)
+    {
+        ar__comment_node(t, tok, -1);
+        return;
+    }
+    if (tok->kind == AR_TOK_DOCTYPE)
+    {
+        t->doc->errors++;
+        return;
+    }
+    if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "html"))
+    {
+        ar__in_body(t, tok);
+        return;
+    }
+    if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "col"))
+    {
+        ar__insert_element(t, tok, 0);
+        ar__pop(t);
+        return;
+    }
+    if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "colgroup"))
+    {
+        if (!ar__is(t, ar__current(t), "colgroup"))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__pop(t);
+        t->mode = M_IN_TABLE;
+        return;
+    }
+    if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "col"))
+    {
+        t->doc->errors++;
+        return;
+    }
+    if (ar_span_is(tok->name, "template"))
+    {
+        t->mode = M_IN_TEMPLATE;
+        ar__process_mode(t, tok);
+        return;
+    }
+    if (tok->kind == AR_TOK_EOF)
+    {
+        ar__in_body(t, tok);
+        return;
+    }
+
+    /* Anything else closes the group -- unless there is no group to close,
+       in which case the token is dropped rather than escaping into the
+       table, which is what a fragment parsed against `colgroup` needs. */
+    if (!ar__is(t, ar__current(t), "colgroup"))
+    {
+        t->doc->errors++;
+        return;
+    }
+    ar__pop(t);
+    t->mode = M_IN_TABLE;
+    ar__process(t, tok);
+}
+
 static void ar__in_table_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "tr"))
@@ -3122,12 +3293,18 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
     }
     if (tok->kind == AR_TOK_START &&
         (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
-         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption")))
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption") ||
+         ar_span_is(tok->name, "col") || ar_span_is(tok->name, "colgroup")))
     {
-        while (t->open_n > 1 && !ar__is(t, ar__current(t), "table"))
+        static const char *const BODY[] = {"tbody", "thead", "tfoot", 0};
+
+        if (!ar__in_table_scope(t, BODY))
         {
-            ar__pop(t);
+            t->doc->errors++;
+            return;
         }
+        ar__clear_to_table_body(t);
+        ar__pop(t);
         t->mode = M_IN_TABLE;
         ar__process(t, tok);
         return;
@@ -3142,8 +3319,17 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
     }
     if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "table"))
     {
+        /* A `</table>` with no table on the stack is dropped rather than
+           popping the fragment root out from under the document. */
+        static const char *const TABLE[] = {"table", 0};
+
+        if (!ar__in_table_scope(t, TABLE))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__pop_until(t, "table");
-        t->mode = M_IN_BODY;
+        ar__reset_mode(t);
         return;
     }
     ar__in_table(t, tok);
@@ -3159,35 +3345,75 @@ static void ar__in_row(ar__tree *t, const ar_token *tok)
         t->mode = M_IN_CELL;
         return;
     }
+    /*
+     * `<tr>` and `</tr>` both need a row to act on, and in a fragment parsed
+     * against a `tr` context there is not one -- the context element is not
+     * pushed, only a synthetic html root. So both are dropped and a following
+     * `<td>` is the whole document, which is what `innerHTML` on a row does.
+     * Without the guard `<tr><td>` grew a second row inside the fragment.
+     */
     if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "tr"))
     {
-        ar__pop_until(t, "tr");
+        static const char *const TR[] = {"tr", 0};
+
+        if (!ar__in_table_scope(t, TR))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__clear_to_table_row(t);
+        ar__pop(t);
         t->mode = M_IN_TABLE_BODY;
         return;
     }
     if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "tr"))
     {
-        ar__pop_until(t, "tr");
-        ar__insert_element(t, tok, 0);
+        static const char *const TR[] = {"tr", 0};
+
+        if (!ar__in_table_scope(t, TR))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__clear_to_table_row(t);
+        ar__pop(t);
+        t->mode = M_IN_TABLE_BODY;
+        ar__process(t, tok);
         return;
     }
-    /* A row group opening inside a row closes the row and its group. */
+    /* A row group opening inside a row closes the row, and the group it lands
+       in is decided one level out rather than here. */
     if (tok->kind == AR_TOK_START &&
         (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
-         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption")))
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "caption") ||
+         ar_span_is(tok->name, "col") || ar_span_is(tok->name, "colgroup")))
     {
-        while (t->open_n > 1 && !ar__is(t, ar__current(t), "table"))
+        static const char *const TR[] = {"tr", 0};
+
+        if (!ar__in_table_scope(t, TR))
         {
-            ar__pop(t);
+            t->doc->errors++;
+            return;
         }
-        t->mode = M_IN_TABLE;
+        ar__clear_to_table_row(t);
+        ar__pop(t);
+        t->mode = M_IN_TABLE_BODY;
         ar__process(t, tok);
         return;
     }
     if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "table"))
     {
+        /* A `</table>` with no table on the stack is dropped rather than
+           popping the fragment root out from under the document. */
+        static const char *const TABLE[] = {"table", 0};
+
+        if (!ar__in_table_scope(t, TABLE))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__pop_until(t, "table");
-        t->mode = M_IN_BODY;
+        ar__reset_mode(t);
         return;
     }
     ar__in_table(t, tok);
@@ -3247,12 +3473,52 @@ static void ar__in_cell(ar__tree *t, const ar_token *tok)
 
 static void ar__in_caption(ar__tree *t, const ar_token *tok)
 {
+    /*
+     * A caption has no end tag in practice. It is closed by the next table
+     * part, or by `</table>`, and everything else is body content -- which is
+     * why this mode is four lines of its own and then `in body`.
+     *
+     * `<table><caption><td>` had been leaving the caption open, so the cell
+     * and the implied row and body were built *inside* it and the table came
+     * out with one caption and no rows.
+     */
+    static const char *const CLOSERS[] = {"caption", "col", "colgroup", "tbody", "td",
+                                          "tfoot",   "th",  "thead",    "tr",    0};
+    static const char *const CAPTION[] = {"caption", 0};
+    int                      closes = 0;
+
     if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "caption"))
     {
+        closes = 1;
+    }
+    else if (tok->kind == AR_TOK_START && ar__name_in(tok->name, CLOSERS))
+    {
+        closes = 2;
+    }
+    else if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "table"))
+    {
+        closes = 2;
+    }
+
+    if (closes)
+    {
+        if (!ar__in_table_scope(t, CAPTION))
+        {
+            t->doc->errors++; /* fragment case: no caption to close */
+            return;
+        }
         ar__implied_end_tags(t, 0);
+        if (!ar__is(t, ar__current(t), "caption"))
+        {
+            t->doc->errors++;
+        }
         ar__pop_until(t, "caption");
         ar__fmt_clear_to_marker(t);
         t->mode = M_IN_TABLE;
+        if (closes == 2)
+        {
+            ar__process(t, tok); /* the token that closed it still has to land */
+        }
         return;
     }
     ar__in_body(t, tok);
@@ -4245,6 +4511,9 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
 
     case M_IN_TABLE:
         ar__in_table(t, tok);
+        return;
+    case M_IN_COLUMN_GROUP:
+        ar__in_column_group(t, tok);
         return;
     case M_IN_TABLE_BODY:
         ar__in_table_body(t, tok);
