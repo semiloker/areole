@@ -201,6 +201,17 @@ static const struct
     {"pi-dotted-target", "<p>a<?data.v1?>b"},
     {"pi-colon-target", "<p>a<?ns:tag?>b"},
     {"pi-unterminated", "<p>a<?start data"},
+
+    /* A frameset after the body has opened throws the body away, and the
+       frameset-ok flag is what stops it. `<div>` does not put the flag out
+       and `<br>` does, so these two documents differ in everything. */
+    {"frameset-after-div", "<div><frameset>"},
+    {"frameset-after-text", "<div>x<frameset>"},
+    {"frameset-after-br", "<br><frameset>"},
+    {"frameset-after-param", "<param><frameset>"},
+    {"frameset-after-body-tag", "<body><frameset>"},
+    {"frameset-after-hidden-input", "<input type=hidden><frameset>"},
+    {"br-is-not-head-content", "<br><p>a"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
