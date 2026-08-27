@@ -253,6 +253,18 @@ static const struct
     {"caption-closed-by-a-row", "<table><caption>c<tr><td>x</table>"},
     {"hidden-input-stays-in-a-table", "<table><input type=hidden></table>"},
     {"shown-input-is-fostered", "<table><input type=text></table>"},
+
+    /* A select is an insertion mode of its own now, and since the parser
+       relaxation it holds ordinary content -- so what it drops is a short
+       list rather than everything. */
+    {"select-hr-separates", "<select><option>a<hr><option>b</select>"},
+    {"select-optgroup-hr", "<select><optgroup><option>a<hr></select>"},
+    {"select-holds-a-div", "<select><div>d</div><option>a</select>"},
+    {"select-closed-by-input", "<select><option>a<input>x"},
+    {"select-closed-by-select", "<select><option>a<select><option>b"},
+    {"select-in-a-cell", "<table><tr><td><select><option>a<tr><td>b</table>"},
+    {"select-fostered-out", "<table><select><option>a</select></table>"},
+    {"select-keeps-formatting", "<select><div><i></div><option>o"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
