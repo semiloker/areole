@@ -1910,6 +1910,11 @@ static int ar__closes_p(ar_span name)
  * frameset be honoured. Treating the NUL as content opened a body instead,
  * and the frameset then had nowhere to go.
  */
+static int ar__space_char(char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+}
+
 static int ar__all_space(ar_span s)
 {
     ar_u32 i;
@@ -1922,7 +1927,7 @@ static int ar__all_space(ar_span s)
         {
             continue; /* ignored first, and the rest is asked about after */
         }
-        if (c != ' ' && c != '\t' && c != '\n' && c != '\f' && c != '\r')
+        if (!ar__space_char(c))
         {
             return 0;
         }
@@ -2359,7 +2364,21 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "table"))
         {
-            ar__close_p(t);
+            /*
+             * A `<table>` closes an open paragraph -- unless the document is
+             * in quirks mode, where it does not, and `<p><table>` puts the
+             * table *inside* the paragraph.
+             *
+             * The condition is written into the specification's own rule for
+             * this one tag, and it is the only place quirks mode changes tree
+             * construction rather than layout. A document with no doctype is
+             * in quirks mode, so this is not a legacy corner: it is what
+             * happens to any page that forgot the first line.
+             */
+            if (t->doc->quirks != AR_QUIRKS_YES)
+            {
+                ar__close_p(t);
+            }
             ar__insert_element(t, tok, 0);
             t->mode = M_IN_TABLE;
             return;
@@ -4730,6 +4749,37 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
                 ++tok.text.p;
                 --tok.text.n;
             }
+        }
+
+        /*
+         * Whitespace before the document starts is dropped one character at a
+         * time, and areole's tokens are whole runs.
+         *
+         * `initial`, `before html` and `before head` all say "a character
+         * token that is whitespace: ignore the token" and then hand anything
+         * else to the next mode. The specification's tokens are one character
+         * each, so a run of `\n]>` is three tokens and the newline is gone
+         * before the `]` opens a body. Here it is one token, and testing the
+         * whole run for whitespace answers no -- so the newline went into the
+         * body with the rest.
+         *
+         * Trimming here rather than in the modes because all three want it and
+         * the run then flows through the reprocessing chain already trimmed.
+         * The mode read is the one before the token is processed, which is the
+         * right one: these three modes can only be left *because* of the
+         * non-whitespace part of this very run.
+         */
+        if (tok.kind == AR_TOK_TEXT &&
+            (t.mode == M_INITIAL || t.mode == M_BEFORE_HTML || t.mode == M_BEFORE_HEAD))
+        {
+            while (tok.text.n && ar__space_char(tok.text.p[0]))
+            {
+                ++tok.text.p;
+                --tok.text.n;
+            }
+            /* An empty run is left to fall through rather than skipped, so the
+               loop's no-progress backstop still runs on every cycle. Every
+               mode treats it as whitespace and ignores it. */
         }
 
         ar__process(&t, &tok);

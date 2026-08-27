@@ -236,6 +236,12 @@ static const struct
        merged onto the first, and the first value wins. */
     {"second-body-merges", "<body class=a><body id=b>x"},
     {"second-html-merges", "<html lang=en><head></head><html dir=ltr>"},
+
+    /* Quirks mode is the only place a doctype changes the *tree*: without one,
+       a table does not close an open paragraph and nests inside it. */
+    {"quirks-table-nests-in-p", "<p>a<table><tr><td>b</table>"},
+    {"standards-table-closes-p", "<!DOCTYPE html><p>a<table><tr><td>b</table>"},
+    {"space-before-the-document", " \n x"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},
