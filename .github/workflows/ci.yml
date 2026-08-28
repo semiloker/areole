@@ -209,6 +209,14 @@ jobs:
       - name: html5lib tree construction
         run: ./build/ar_html5lib.exe --tree --quiet
 
+      # The HTML subsystem's binary budget, measured rather than typed. The
+      # figures in the release document were hand-transcribed and were 12 KB
+      # wrong by the time anyone looked -- the same failure as a benchmark
+      # baseline that never checked it covered its scenes. A budget nothing
+      # measures is a wish.
+      - name: The HTML parser fits its budget
+        run: python tools/check_size.py --check
+
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest
