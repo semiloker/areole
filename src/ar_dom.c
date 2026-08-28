@@ -154,7 +154,89 @@ static int ar__ignorable(ar_span s)
     return 1;
 }
 
-static void ar__walk(ar_ctx *c, const ar_doc *d, ar_i32 node)
+static int ar__space(char ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f';
+}
+
+/*
+ * `white-space: normal`, which is what every element in an HTML document has
+ * until a stylesheet says otherwise: a run of whitespace is one space, and a
+ * newline is whitespace rather than a line break.
+ *
+ * This is the front end's job rather than the tokenizer's. The tree has to
+ * keep the bytes exactly -- html5lib compares text node by node and would fail
+ * 1,884 cases the moment a newline went missing -- so the collapsing happens
+ * here, on the way into a box, where CSS says it happens.
+ *
+ * Without it a document is a good deal taller than the browser renders it,
+ * because markup is *written* with newlines: `<td>exact` followed by a newline
+ * and the next row's indentation is one line of text in a browser and was two
+ * here. On the interface example that made every table row 62 pixels where
+ * Edge draws 39.
+ *
+ * Collapsed *in place*, in the document's own text buffer, because `ar_text`
+ * keeps the pointer it is given rather than copying: a shared scratch buffer
+ * would leave every span on the page pointing at whatever was collapsed last,
+ * which is exactly what the first attempt did. Collapsing only ever shortens,
+ * so it fits where it stands, and it is idempotent -- which it has to be,
+ * since `ar_dom_build` runs every frame.
+ *
+ * That is why the document is not const here. Call `ar_doc_stylesheets`
+ * before this, not after, which is the order both examples already use.
+ */
+static void ar__collapse(ar_doc *d, ar_span *text)
+{
+    char  *src;
+    ar_u32 n = 0;
+    ar_u32 i = 0;
+
+    /*
+     * Only text the tree builder copied into the document's own buffer, which
+     * is every text node -- but the check is here rather than assumed, because
+     * a span that still points into the caller's bytes must not be written to.
+     * The offset is taken from `d->text`, which is not const, so no cast
+     * throws away a qualifier the compiler is right to defend.
+     */
+    if (!text->p || !d->text || text->p < d->text || text->p >= d->text + d->text_cap)
+    {
+        return;
+    }
+    src = d->text + (text->p - d->text);
+
+    while (src[i])
+    {
+        if (ar__space(src[i]))
+        {
+            while (src[i] && ar__space(src[i]))
+            {
+                ++i;
+            }
+            /*
+             * Not trimmed at either end, and that is deliberate: the space
+             * between `<b>bold</b>` and `<i>italic</i>` is its own text node,
+             * and trimming it runs the two words together. A trailing space at
+             * the end of a line costs nothing anybody can see.
+             */
+            src[n++] = ' ';
+            continue;
+        }
+        src[n++] = src[i++];
+    }
+    src[n] = 0;
+    text->n = n;
+}
+
+/* The elements whose contents keep their whitespace. `white-space` is not a
+   property here yet, so the list is by name -- which is what the user-agent
+   stylesheet would say if it could. */
+static int ar__preformatted(ar_span name)
+{
+    return ar_span_is(name, "pre") || ar_span_is(name, "textarea") || ar_span_is(name, "listing") ||
+           ar_span_is(name, "xmp") || ar_span_is(name, "plaintext");
+}
+
+static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
     ar_i32 child;
@@ -171,6 +253,10 @@ static void ar__walk(ar_ctx *c, const ar_doc *d, ar_i32 node)
             /* The text is NUL-terminated in the document's own buffer, which
                is why ar_html_tree.c stores it there rather than leaving it a
                span of the input. */
+            if (!pre)
+            {
+                ar__collapse(d, &d->nodes[node].text);
+            }
             ar_text(c, "span", d->nodes[node].text.p);
         }
         return;
@@ -180,22 +266,27 @@ static void ar__walk(ar_ctx *c, const ar_doc *d, ar_i32 node)
         return; /* comments and the doctype generate no box */
     }
 
+    if (ar__preformatted(d->nodes[node].name))
+    {
+        pre = 1;
+    }
+
     ar__selector(d, node, sel);
     ar_begin(c, sel);
     for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {
-        ar__walk(c, d, child);
+        ar__walk(c, d, child, pre);
     }
     ar_end(c);
 }
 
-void ar_dom_build(ar_ctx *c, const ar_doc *d)
+void ar_dom_build(ar_ctx *c, ar_doc *d)
 {
     if (!c || !d)
     {
         return;
     }
-    ar__walk(c, d, ar_dom_root(d));
+    ar__walk(c, d, ar_dom_root(d), 0);
 }
 
 /*

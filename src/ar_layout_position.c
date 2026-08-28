@@ -450,7 +450,21 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layo
  */
 /* The children, through the child links. */
 /*
- * One box, and the fragments it was cut into.
+ * One box, and the fragments it was cut into. **The only way to move a box.**
+ *
+ * Seven places translate a rectangle after layout -- out-of-flow placement,
+ * `position-try`'s flip, `relative`, `sticky`, scrolling, a table cell's
+ * vertical alignment and the overflow anchor. Every one has to move the
+ * fragments too, and four of them did not. The scrolling one is the one a user
+ * meets first: the boxes scroll and the text stays exactly where it was.
+ *
+ * So there is one function and the others call it. A sixth place that needs to
+ * move a box calls this rather than touching `rect`.
+ *
+ * The deeper fix is to store a fragment's rectangle relative to its node and
+ * add the origin when it is read, so moving the node moves them by
+ * construction -- no list to keep in step. That changes what `ar_node_frag`
+ * returns and what the painter adds, so it is a release of its own.
  *
  * A split inline is painted from its fragments' own rectangles rather than
  * from `rect`, and those are absolute -- so moving the box without moving
@@ -463,14 +477,18 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layo
  * no corpus could see it, because compare_layout.py excludes boxes sized by
  * their own text from its verdict and that is exactly what a fragment is.
  */
-static void ar__shift_node(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
+void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
     ar_i32 k;
 
+    if (!dx && !dy)
+    {
+        return;
+    }
     nodes[i].rect.x += dx;
     nodes[i].rect.y += dy;
 
-    if (!env || !env->frags || nodes[i].frag_count <= 0)
+    if (!frags || nodes[i].frag_count <= 0)
     {
         return;
     }
@@ -478,12 +496,18 @@ static void ar__shift_node(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 
     {
         ar_i32 f = nodes[i].frag_first + k;
 
-        if (f >= 0 && f < env->frag_used)
+        if (f >= 0 && f < frag_n)
         {
-            env->frags[f].rect.x += dx;
-            env->frags[f].rect.y += dy;
+            frags[f].rect.x += dx;
+            frags[f].rect.y += dy;
         }
     }
+}
+
+/* The env form, for the callers inside layout that carry one. */
+static void ar__shift_node(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
+{
+    ar_shift_node(nodes, env ? env->frags : 0, env ? env->frag_used : 0, i, dx, dy);
 }
 
 static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)

@@ -312,6 +312,29 @@ struct ar_ctx
     int    hot_changed;
 
     /*
+     * The hot box's ancestors, by key, innermost first -- and the whole reason
+     * `:hover` works on a document at all.
+     *
+     * CSS says an element matches `:hover` while the pointer is over it *or
+     * over a descendant of it*, and the hit test finds exactly one box: the
+     * topmost. For a hand-declared tree those are usually the same box, which
+     * is why this was never missed. For a parsed document they never are:
+     * `ar_dom_build` gives every element's text a child of its own, so the
+     * box under the cursor is always that child and the element carrying the
+     * `:hover` rule is always its parent. Hovering anything in an HTML page
+     * did nothing whatsoever.
+     *
+     * Keys rather than indices because state is resolved in `ar_begin`, while
+     * the tree is still being built, and this frame's indices do not exist
+     * yet. The chain is a path from a box to the root, so it is at most as
+     * long as the tree is deep and usually about eight.
+     */
+    ar_u32 hot_chain[AR_MAX_DEPTH];
+    ar_i32 hot_chain_n;
+    ar_u32 active_chain[AR_MAX_DEPTH];
+    ar_i32 active_chain_n;
+
+    /*
      * A scroll that the surface has not caught up with yet, so the next frame
      * can move those pixels instead of painting them again.
      *
@@ -703,7 +726,7 @@ int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 availab
    Does nothing when there is no ratio, or when both axes were stated. */
 void ar_apply_ratio(ar_node *n, int w_definite);
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
-void ar_table_align_cell(ar_node *nodes, ar_i32 i);
+void ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n);
 int  ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
@@ -741,6 +764,14 @@ void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
 
 /* Flips an anchored box to the anchor's other side when it left the viewport.
    After placement, because it is a reaction to where the box ended up. */
+/*
+ * Move one box and the fragments it was cut into. The only way to move a box:
+ * a split inline is painted from its fragments' own rectangles, so touching
+ * `rect` alone moves everything that reads a rectangle and nothing that is
+ * drawn.
+ */
+void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy);
+
 void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);

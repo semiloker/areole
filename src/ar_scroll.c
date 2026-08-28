@@ -438,8 +438,10 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             }
             if (at == i)
             {
-                nodes[j].rect.y -= dy;
-                nodes[j].rect.x -= dx;
+                /* The fragments come too. Without them the boxes scroll and
+                   the text stays exactly where it was, which is the first
+                   thing anybody notices about a scroll container. */
+                ar_shift_node(nodes, env->frags, env->frag_used, j, -dx, -dy);
             }
         }
     }

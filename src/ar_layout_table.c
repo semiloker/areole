@@ -1825,14 +1825,14 @@ int ar_box_paints(const ar_node *n)
    rather than the node array, so a cell costs its own subtree and not the
    whole tree after it -- which on a ten-thousand-row table is the difference
    between linear and not. */
-static void ar__shift_kids(ar_node *nodes, ar_i32 i, ar_i32 dy)
+static void ar__shift_kids(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dy)
 {
     ar_i32 c;
 
     for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        nodes[c].rect.y += dy;
-        ar__shift_kids(nodes, c, dy);
+        ar_shift_node(nodes, frags, frag_n, c, 0, dy);
+        ar__shift_kids(nodes, frags, frag_n, c, dy);
     }
 }
 
@@ -1851,7 +1851,7 @@ static void ar__shift_kids(ar_node *nodes, ar_i32 i, ar_i32 dy)
  * answers are identical, which is most tables. Named here so its absence is a
  * decision.
  */
-void ar_table_align_cell(ar_node *nodes, ar_i32 i)
+void ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n)
 {
     ar_node *n = &nodes[i];
     ar_i32   va = n->style.v[AR_P_VERTICAL_ALIGN];
@@ -1875,7 +1875,7 @@ void ar_table_align_cell(ar_node *nodes, ar_i32 i)
     {
         return;
     }
-    ar__shift_kids(nodes, i, va == AR_VALIGN_MIDDLE ? slack / 2 : slack);
+    ar__shift_kids(nodes, frags, frag_n, i, va == AR_VALIGN_MIDDLE ? slack / 2 : slack);
 }
 
 /*

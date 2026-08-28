@@ -560,6 +560,8 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
  * stretched by align-items has already been told how tall to be, and text that
  * does not fit that is the caller's decision to make.
  */
+static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
 {
     /*
@@ -639,6 +641,60 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     {
         ar_apply_ratio(n, 0);
         return;
+    }
+
+    /*
+     * A block whose children are a run of inline boxes: lay the run out at the
+     * width just settled and take the height that came to.
+     *
+     * The text branch below covers a box that carries its own text, which is
+     * every box a hand-written interface declares. A parsed document has none
+     * of them: `ar_dom_build` gives every element's text a child of its own,
+     * so a `<p>` is a block with one inline child and its height is entirely
+     * its child's.
+     *
+     * The consequence was that a paragraph that wrapped never told the block
+     * below it how tall it had become. `<p>` wrapping to two lines was stacked
+     * as one, and its next sibling was placed twenty pixels down and drew over
+     * it. Nothing in the repository showed it: every corpus either states its
+     * heights or is one line wide enough not to wrap, and `compare_layout.py`
+     * excludes boxes sized by their own text from its verdict.
+     *
+     * Bounded on purpose. It runs the block placement, which is what already
+     * knows how to break a run into lines -- but only when *every* child is
+     * inline-level, so the placement it runs cannot reach another block and
+     * recurse. Each such box is placed at most twice: once here for its
+     * height, once in the forward sweep for its position.
+     *
+     * What is still wrong, named rather than discovered: a block whose
+     * children are *blocks* reports its intrinsic height to its siblings, so
+     * `<div><p>two lines</p></div>` still misplaces whatever follows the div.
+     * Fixing that means heights sweeping upward after widths sweep down --
+     * a third pass, and a release of its own.
+     */
+    if (nodes && n->first_child >= 0 && ar_is_block(n) &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env->wrap)
+    {
+        ar_i32 c;
+        int    all_inline = 1;
+
+        for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+        {
+            if (nodes[c].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+            {
+                continue;
+            }
+            if (!ar_is_inline_level(&nodes[c]))
+            {
+                all_inline = 0;
+                break;
+            }
+        }
+        if (all_inline)
+        {
+            ar__place_block(nodes, (ar_i32)(n - nodes), env);
+            return;
+        }
     }
 
     if (!env->wrap || !n->text)
@@ -1079,7 +1135,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             {
                 /* After, not before: where the contents go depends on how tall
                    they turned out, and that is what the block pass works out. */
-                ar_table_align_cell(nodes, i);
+                ar_table_align_cell(nodes, i, env->frags, env->frag_used);
             }
             continue;
         }

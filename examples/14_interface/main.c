@@ -6,6 +6,7 @@
  *     example_interface page.html       a file from disk
  *     example_interface --selftest      what CI runs: parse, lay out, check
  *     example_interface --dump          one line per box, for a comparison
+ *     example_interface --labels        the same boxes keyed on their text
  *     example_interface --ppm out.ppm   the frame as an image, no window needed
  *     example_interface --html          write the page out
  *
@@ -39,10 +40,43 @@
  *     first user-agent stylesheet written for this engine had lists of
  *     eighteen and twenty-four, both silently discarded, and the page laid
  *     out as flex because the rules that said otherwise had vanished.
+ *   - Heading margins are stated rather than inherited. areole's user-agent
+ *     sheet gives an `h4` a fixed 21px where CSS says `1.33em`, so an 11px
+ *     heading is six pixels out per margin and a sidebar with four of them
+ *     had drifted twenty-five by the bottom. Relative units are 0.4.1's.
  *
- * That last one is why `--selftest` asserts `ar_stylesheet_errors() == 0`
- * before it asserts anything about the layout. A stylesheet that fails does
- * not crash; it quietly stops.
+ * That third one is why `--selftest` asserts `ar_stylesheet_rules_refused()`
+ * is zero before it asserts anything about the layout. It deliberately does
+ * *not* assert `ar_stylesheet_errors()` is zero: a declaration naming a
+ * property areole has not implemented is dropped and its rule still applies,
+ * which is what CSS says to do and what lets `font-family` sit in the sheet
+ * here so a browser opening `page.html` uses the same face this does. One
+ * number is a warning, the other is a failure.
+ *
+ * ------------------------------------------------------------------------
+ * It is checked against a browser, and against a user
+ *
+ * `--selftest` drives the wheel and the cursor, not just the layout. That is
+ * not thoroughness, it is a repair: the first version of this file checked a
+ * page that never changes and ended with "two identical frames are identical"
+ * -- a check that passes *because* nothing moved. It shipped with a scroll
+ * container that did not scroll and navigation that did not light up, and
+ * every check was green.
+ *
+ * `--labels` prints each box keyed on the text it carries, which is the one
+ * name a browser and areole can both produce, so the two geometries can be
+ * lined up. Against Edge on the same file: 26 of 65 boxes agree exactly and
+ * the rest are within a few pixels, all of it accounted for --
+ *
+ *   - the table's automatic column widths differ by up to eleven pixels,
+ *     which is the table debt the roadmap already names;
+ *   - everything below the cards sits four pixels lower, which is line box
+ *     rounding;
+ *   - and a headless browser's viewport is twenty-four pixels narrower than
+ *     the window it was given, which is neither engine's doing.
+ *
+ * No difference left is a layout bug. That sentence is worth more than the
+ * page is.
  *
  * ------------------------------------------------------------------------
  * What the layout is actually exercising
@@ -62,7 +96,7 @@
  *   :nth-child       0.4.0   the table striping
  *
  * The card deck is the one worth looking at twice. The three bodies are
- * different lengths, and the three footers sit on the same line anyway --
+ * different heights, and the three footers sit on the same line anyway --
  * that is `grid-template-rows: subgrid`, and it is the layout problem card
  * decks have had on the web for twenty years.
  *
@@ -127,7 +161,8 @@ static const char *const PAGE[] = {
     /* The ground. `body` has an 8px margin from the user-agent stylesheet and
        a full-bleed header needs it gone. */
     "  html, body { background: #f4f2ee; color: #14161a; }\n"
-    "  body { margin: 0px; font-size: 15px; box-sizing: border-box; }\n"
+    "  body { margin: 0px; font-size: 15px; box-sizing: border-box;\n"
+    "         font-family: \"Segoe UI\", system-ui, sans-serif; }\n"
     "  .rule { height: 1px; background: #e2ded7; }\n",
 
     /* The header bar. */
@@ -155,7 +190,13 @@ static const char *const PAGE[] = {
     "           grid-template-rows: 833px; height: 833px; }\n"
     "  .side { background: #ffffff; padding: 22px 16px;\n"
     "          display: flex; flex-direction: column; gap: 3px; }\n"
-    "  .side h4 { font-size: 11px; color: #9c968c; padding: 8px 10px 4px; }\n",
+    /* The margin is stated rather than inherited from the user-agent sheet,
+       and it has to be: areole's heading margins are fixed pixels where CSS
+       says `1.33em`, so an 11px `h4` gets 21px of margin here and about 15 in
+       a browser. Six pixels per margin, and by the fourth heading the sidebar
+       had drifted twenty-five. Relative units are 0.4.1's. */
+    "  .side h4 { font-size: 11px; color: #9c968c; margin: 0px;\n"
+    "             padding: 22px 10px 4px; }\n",
 
     "  .side a { display: block; padding: 8px 10px; color: #4a4740; }\n"
     "  .side a:hover { background: #f4f2ee; color: #14161a; }\n"
@@ -404,11 +445,37 @@ static int load_face(ar_ctx *c)
     return 0;
 }
 
-static void frame(ar_ctx *c, const ar_doc *d, const ar_input *in, ar_surface *surface)
+static void frame(ar_ctx *c, ar_doc *d, const ar_input *in, ar_surface *surface)
 {
     ar_frame_begin(c, in);
     ar_dom_build(c, d);
     ar_frame_end(c, surface);
+}
+
+/* What is actually on the screen inside a rectangle. Cheap and sufficient: two
+   different fills sum differently, and that is the whole question. */
+static ar_u32 ar__sum(const ar_u32 *pixels, ar_rect r)
+{
+    ar_u32 total = 0;
+    ar_i32 y;
+
+    for (y = r.y; y < r.y + r.h; ++y)
+    {
+        ar_i32 x;
+
+        if (y < 0 || y >= WIN_H)
+        {
+            continue;
+        }
+        for (x = r.x; x < r.x + r.w; ++x)
+        {
+            if (x >= 0 && x < WIN_W)
+            {
+                total += pixels[y * WIN_W + x];
+            }
+        }
+    }
+    return total;
 }
 
 /* The first box whose text is exactly `want`, or -1. The inspection API has no
@@ -444,6 +511,7 @@ static int selftest(ar_ctx *c, ar_doc *d)
     memset(&in, 0, sizeof in);
     in.mouse_x = -1;
     in.mouse_y = -1;
+    in.mouse_inside = 1;
 
     frame(c, d, &in, &surface);
     boxes = ar_node_count(c);
@@ -463,15 +531,16 @@ static int selftest(ar_ctx *c, ar_doc *d)
      * hex triple -- and the page still lays out, just wrongly. Nothing else
      * below would necessarily notice.
      */
-    if (ar_stylesheet_errors(c) != 0)
+    if (ar_stylesheet_rules_refused(c) != 0)
     {
-        printf("FAIL  %lu stylesheet rules were refused; the page is not the one written\n",
-               (unsigned long)ar_stylesheet_errors(c));
+        printf("FAIL  %lu rules refused whole; the page is not the one written\n",
+               (unsigned long)ar_stylesheet_rules_refused(c));
         ++bad;
     }
     else
     {
-        printf("ok    the stylesheet parsed with no rule refused\n");
+        printf("ok    no rule refused; %lu declarations dropped, which CSS allows\n",
+               (unsigned long)ar_stylesheet_errors(c));
     }
 
     if (boxes < 80)
@@ -614,6 +683,148 @@ static int selftest(ar_ctx *c, ar_doc *d)
         }
     }
 
+    /*
+     * The wheel moves the content, and the *text* moves with it.
+     *
+     * This is here because its absence shipped a broken example. The checks
+     * above are all about a page that never changes, and the one below --
+     * "two identical frames are identical" -- passes precisely *because*
+     * nothing moved. Between them they cannot see a scroll container that does
+     * not scroll, and that is the first thing anyone does to a page.
+     *
+     * The text is checked separately from the box because those were two
+     * different answers: a split inline is painted from its fragments' own
+     * rectangles, and scrolling moved the boxes and left the fragments behind.
+     * Every rectangle in the inspection API said the page had scrolled and the
+     * window showed text standing still.
+     */
+    {
+        ar_i32  probe = box_with_text(c, "CORPORA");
+        ar_rect before, after;
+        ar_rect fbefore, fafter;
+        ar_i32  nfrag;
+
+        if (probe < 0)
+        {
+            printf("FAIL  could not find a box to scroll\n");
+            ++bad;
+        }
+        else
+        {
+            before = ar_node_rect(c, probe);
+            nfrag = ar_node_frag_count(c, probe);
+            fbefore = nfrag > 0 ? ar_node_frag(c, probe, 0, 0, 0) : before;
+
+            /* Over the content column. A notch goes to the innermost scroll
+               container *under the cursor*, so a wheel event with the mouse
+               off-screen scrolls nothing -- which is correct, and was the
+               first thing this check got wrong about itself. */
+            ar_frame_presented(c);
+            in.mouse_x = 700;
+            in.mouse_y = 400;
+            frame(c, d, &in, &surface);
+
+            /*
+             * The notch, and then a frame to see it in.
+             *
+             * A wheel event lands on the *next* frame: the box under the
+             * cursor is not known until the frame is laid out, so the notch
+             * moves the stored offset and the frame after it is the one that
+             * shows the new position. Reading the rectangle straight after the
+             * wheel frame reads the old one, which is how this check first
+             * reported a scroll container that scrolls perfectly well.
+             */
+            ar_frame_presented(c);
+            in.wheel = -3; /* three notches down the page */
+            frame(c, d, &in, &surface);
+            in.wheel = 0;
+
+            ar_frame_presented(c);
+            frame(c, d, &in, &surface);
+
+            after = ar_node_rect(c, probe);
+            fafter = nfrag > 0 ? ar_node_frag(c, probe, 0, 0, 0) : after;
+
+            if (after.y >= before.y)
+            {
+                printf("FAIL  the wheel did not scroll the content: y %ld then %ld\n",
+                       (long)before.y, (long)after.y);
+                ++bad;
+            }
+            else if (fafter.y - fbefore.y != after.y - before.y)
+            {
+                printf("FAIL  the boxes scrolled and the text did not: box %ld, text %ld\n",
+                       (long)(after.y - before.y), (long)(fafter.y - fbefore.y));
+                ++bad;
+            }
+            else
+            {
+                printf("ok    the wheel scrolled the content %ld px, text included\n",
+                       (long)(before.y - after.y));
+            }
+
+            /* Back to the top, so the frames below are the frames above. */
+            ar_frame_presented(c);
+            in.wheel = 20;
+            frame(c, d, &in, &surface);
+            in.wheel = 0;
+            ar_frame_presented(c);
+            frame(c, d, &in, &surface);
+        }
+    }
+
+    /*
+     * The cursor over a navigation item lights it up.
+     *
+     * `:hover` is resolved from the previous frame -- the box under the cursor
+     * is not known until the frame is laid out -- so this drives two frames
+     * and asks the second one. A page whose hover rules were dropped by the
+     * stylesheet, or whose hit testing found the wrong box, looks exactly like
+     * a page with no hover at all: nothing happens, and nothing says why.
+     */
+    {
+        ar_i32 item = box_with_text(c, "Benchmarks");
+
+        if (item < 0)
+        {
+            printf("FAIL  could not find a navigation item\n");
+            ++bad;
+        }
+        else
+        {
+            ar_rect r = ar_node_rect(c, item);
+            ar_u32  plain, lit;
+
+            /* The pixels, not the style, because the pixels are the claim. A
+               hover rule that resolves and never reaches the surface is the
+               same bug to whoever is looking at the window. */
+            plain = ar__sum(pixels, r);
+
+            ar_frame_presented(c);
+            in.mouse_x = r.x + r.w / 2;
+            in.mouse_y = r.y + r.h / 2;
+            frame(c, d, &in, &surface);
+            ar_frame_presented(c);
+            frame(c, d, &in, &surface);
+
+            lit = ar__sum(pixels, r);
+            in.mouse_x = -1;
+            in.mouse_y = -1;
+
+            if (plain == lit)
+            {
+                printf("FAIL  hovering a navigation item changed nothing\n");
+                ++bad;
+            }
+            else
+            {
+                printf("ok    hovering a navigation item restyles it\n");
+            }
+            ar_frame_presented(c);
+            frame(c, d, &in, &surface);
+        }
+    }
+
     /* Two identical frames are identical. */
     {
         ar_u32 before = 0;
@@ -703,6 +914,52 @@ static void ppm(ar_ctx *c, ar_doc *d, const char *path)
     fclose(out);
 }
 
+/*
+ * The same frame, keyed on the text each box carries.
+ *
+ * `--dump` prints indices, which a browser has no equivalent of. The one thing
+ * both sides can agree to name a box by is its own text, so this prints that
+ * and `tools/` can line the two up. It is how the geometry on this page was
+ * compared against Edge's, and it is the only reason the differences that
+ * remain are known to be the font rather than the layout.
+ */
+static void labels(ar_ctx *c, ar_doc *d)
+{
+    ar_surface    surface;
+    ar_input      in;
+    static ar_u32 pixels[WIN_W * WIN_H];
+    ar_i32        i;
+
+    memset(&surface, 0, sizeof surface);
+    surface.pixels = pixels;
+    surface.w = WIN_W;
+    surface.h = WIN_H;
+    surface.stride = WIN_W;
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    frame(c, d, &in, &surface);
+
+    for (i = 0; i < ar_node_count(c); ++i)
+    {
+        const char *t = ar_node_text(c, i);
+        ar_rect     r;
+        ar_i32      parent;
+
+        if (!t || !t[0])
+        {
+            continue;
+        }
+        /* The box the browser would report is the *element*, and areole's text
+           lives in a child span -- so the rectangle printed is the parent's,
+           which is what `getBoundingClientRect` returns on the other side. */
+        parent = ar_node_parent(c, i);
+        r = ar_node_rect(c, parent >= 0 ? parent : i);
+        printf("%s\t%ld\t%ld\t%ld\t%ld\n", t, (long)r.x, (long)r.y, (long)r.w, (long)r.h);
+    }
+}
+
 static void dump(ar_ctx *c, ar_doc *d)
 {
     ar_surface    surface;
@@ -739,6 +996,7 @@ int main(int argc, char **argv)
     const char *path = 0;
     int         want_selftest = 0;
     int         want_dump = 0;
+    int         want_labels = 0;
     int         want_html = 0;
     const char *ppm_path = 0;
     int         k;
@@ -752,6 +1010,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[k], "--dump") == 0)
         {
             want_dump = 1;
+        }
+        else if (strcmp(argv[k], "--labels") == 0)
+        {
+            want_labels = 1;
         }
         else if (strcmp(argv[k], "--html") == 0)
         {
@@ -812,6 +1074,11 @@ int main(int argc, char **argv)
     if (want_dump)
     {
         dump(c, d);
+        return 0;
+    }
+    if (want_labels)
+    {
+        labels(c, d);
         return 0;
     }
     if (ppm_path)
