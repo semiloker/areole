@@ -172,6 +172,22 @@ jobs:
       - name: The document parses from a file
         run: ./build/example_document.exe examples/13_document/document.html --selftest
 
+      # Example 14: the same four calls, but an interface rather than a
+      # document -- a grid shell, a subgrid card deck, a table and a badge.
+      # Its first check is that the stylesheet parsed with no rule refused,
+      # because a rule areole cannot take is dropped whole and silently and
+      # the page still lays out, just wrongly.
+      - name: Interface self-check
+        run: ./build/example_interface.exe --selftest
+
+      - name: The interface twin is up to date
+        run: |
+          ./build/example_interface.exe --html > /tmp/page.html
+          diff -u examples/14_interface/page.html /tmp/page.html
+
+      - name: The interface parses from a file
+        run: ./build/example_interface.exe examples/14_interface/page.html --selftest
+
       # The HTML tree corpus. Unlike the layout corpora this one needs no
       # window at all -- its output is a tree per case -- so the dump runs
       # here and only the browser half is local.
