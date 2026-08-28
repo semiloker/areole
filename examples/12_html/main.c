@@ -265,6 +265,19 @@ static const struct
     {"select-in-a-cell", "<table><tr><td><select><option>a<tr><td>b</table>"},
     {"select-fostered-out", "<table><select><option>a</select></table>"},
     {"select-keeps-formatting", "<select><div><i></div><option>o"},
+
+    /* `</br>` and `</p>` are the only two end tags that break out of foreign
+       content, and they break out the way a start tag does. */
+    {"svg-broken-by-p-end", "<svg></p><foo>"},
+    {"svg-broken-by-br-end", "<svg></br><foo>"},
+    {"math-broken-by-p-end", "<math></p><foo>"},
+
+    /* A frameset document keeps the whitespace between its frames and drops
+       the words, and after `</html>` a comment belongs to the document. */
+    {"frameset-keeps-spaces", "<frameset> te st"},
+    {"frameset-noframes-text", "<frameset></frameset><noframes>abc"},
+    {"frameset-comment-after-html", "<frameset></frameset></html><!--c-->"},
+    {"space-after-body-stays", "<body>x</body>\n   <!--c-->"},
     {"empty-end-tag", "a</>b"},
     {"lone-lt", "a < b"},
     {"after-body", "<body><p>a</body>trailing"},

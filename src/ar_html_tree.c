@@ -147,7 +147,16 @@ enum
      * a parse error and dropped -- twenty conformance cases whose whole point
      * is that the text survives.
      */
-    M_AFTER_FRAMESET
+    M_AFTER_FRAMESET,
+
+    /*
+     * After `</html>` in a frameset document.
+     *
+     * It differs from `after frameset` in one thing only -- a comment goes on
+     * the *document*, beside the html element rather than inside it -- and
+     * that one thing is four conformance cases.
+     */
+    M_AFTER_AFTER_FRAMESET
 };
 
 /* ------------------------------------------------------------------------
@@ -2346,6 +2355,81 @@ static void ar__reset_mode(ar__tree *t)
     t->mode = M_IN_BODY;
 }
 
+/*
+ * Run a token through `in head` and come back.
+ *
+ * Four modes route head content here -- `in head noscript`, `in select`,
+ * `in frameset` and `after frameset` -- and all four got the same thing wrong
+ * the same way. `<style>`, `<script>`, `<noframes>` and `<title>` are raw
+ * text, so `in head` leaves the insertion mode as `text` and records in
+ * `original_mode` where to come back to. Restoring the mode over that loses
+ * the element's contents: `<noscript><style>x</style>` put the x in the body,
+ * `<select><script>` lost the script and the select with it, and
+ * `<frameset></frameset><noframes>abc` produced an empty noframes.
+ *
+ * So there is one helper rather than four copies of the mistake.
+ */
+/*
+ * Keep the whitespace in a run and count everything else as an error.
+ *
+ * `in frameset` and `after frameset` both say "a character token that is
+ * whitespace: insert the character" and "anything else: parse error". The
+ * specification emits one character token per character, so it inserts the
+ * spaces in `<frameset> te st` and drops the letters between them -- the
+ * frameset ends up with two spaces in it and no words.
+ *
+ * This tokenizer coalesces runs, which is right everywhere else, so the run
+ * has to be sieved here. Each whitespace stretch is inserted on its own and
+ * they join into one text node, because ar__insert_text appends to the
+ * previous one when it is still the last thing in the text arena.
+ *
+ * Truncating at the first non-whitespace character is the version that looks
+ * right and is not: it keeps the leading space of ` te st` and loses the one
+ * in the middle.
+ */
+static void ar__keep_only_space(ar__tree *t, const ar_token *tok)
+{
+    ar_u32 i = 0;
+
+    while (i < tok->text.n)
+    {
+        ar_u32 begin = i;
+
+        while (i < tok->text.n && (ar__space_char(tok->text.p[i]) || tok->text.p[i] == 0))
+        {
+            ++i;
+        }
+        if (i > begin)
+        {
+            ar_span run;
+
+            run.p = tok->text.p + begin;
+            run.n = i - begin;
+            ar__insert_text(t, run, 0);
+            continue;
+        }
+        while (i < tok->text.n && !ar__space_char(tok->text.p[i]) && tok->text.p[i] != 0)
+        {
+            ++i;
+        }
+        t->doc->errors++;
+    }
+}
+
+static void ar__via_head(ar__tree *t, const ar_token *tok, int back)
+{
+    t->mode = M_IN_HEAD;
+    ar__process_mode(t, tok);
+    if (t->mode == M_TEXT)
+    {
+        t->original_mode = back;
+    }
+    else if (t->mode == M_IN_HEAD)
+    {
+        t->mode = back;
+    }
+}
+
 static void ar__in_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_TEXT)
@@ -3365,22 +3449,7 @@ static void ar__in_select(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "script") || ar_span_is(tok->name, "template"))
         {
-            ar_i32 back = t->mode;
-
-            t->mode = M_IN_HEAD;
-            ar__process_mode(t, tok);
-            /* A script is raw text, so `in head` left the mode as
-               `text` and recorded where to return. Restoring the mode
-               over that loses the script's contents and the select
-               with them -- the same trap as `in head noscript`. */
-            if (t->mode == M_TEXT)
-            {
-                t->original_mode = back;
-            }
-            else if (t->mode == M_IN_HEAD)
-            {
-                t->mode = back;
-            }
+            ar__via_head(t, tok, t->mode);
             return;
         }
         ar__in_body(t, tok);
@@ -3425,22 +3494,7 @@ static void ar__in_select(ar__tree *t, const ar_token *tok)
         }
         if (ar_span_is(tok->name, "template"))
         {
-            ar_i32 back = t->mode;
-
-            t->mode = M_IN_HEAD;
-            ar__process_mode(t, tok);
-            /* A script is raw text, so `in head` left the mode as
-               `text` and recorded where to return. Restoring the mode
-               over that loses the script's contents and the select
-               with them -- the same trap as `in head noscript`. */
-            if (t->mode == M_TEXT)
-            {
-                t->original_mode = back;
-            }
-            else if (t->mode == M_IN_HEAD)
-            {
-                t->mode = back;
-            }
+            ar__via_head(t, tok, t->mode);
             return;
         }
         ar__in_body(t, tok);
@@ -4436,6 +4490,32 @@ static void ar__foreign(ar__tree *t, const ar_token *tok)
 
     case AR_TOK_END:
         /*
+         * `</br>` and `</p>` break out, §13.2.6.5, and they are the only two
+         * end tags that do.
+         *
+         * Both are HTML tags an author writes without thinking, and both get
+         * the start tag treatment: pop until the current node is an HTML
+         * element or an integration point, then reprocess in HTML content. So
+         * `<svg></p><foo>` is three siblings -- the svg, a paragraph, and an
+         * unknown element -- rather than everything swallowed by the svg.
+         *
+         * The general end-tag loop below cannot produce that. It stops at the
+         * first HTML element *below* the foreign one and processes the token
+         * there, leaving the svg open, so the paragraph landed inside it.
+         */
+        if (ar_span_is(tok->name, "br") || ar_span_is(tok->name, "p"))
+        {
+            t->doc->errors++;
+            while (t->open_n > 1 && !ar__is_html(t, ar__current(t)) &&
+                   !ar__math_text_point(t, ar__current(t)) && !ar__html_point(t, ar__current(t)))
+            {
+                ar__pop(t);
+            }
+            ar__process_mode(t, tok);
+            return;
+        }
+
+        /*
          * §13.2.6.5's end tag loop. Walk down the stack looking for a match on
          * the name, case-insensitively for the current node and by exact name
          * below it; pop through it if found. Reaching an HTML element means
@@ -4918,25 +4998,7 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
 
             if (ar__name_in(tok->name, ALLOWED))
             {
-                t->mode = M_IN_HEAD;
-                ar__process_mode(t, tok);
-
-                /*
-                 * `<style>` and `<noframes>` are raw text, so `in head` left
-                 * the mode as `text` and put the mode to come back to in
-                 * `original_mode`. Restoring the mode unconditionally
-                 * overwrote that, the raw text never reached `text` mode, and
-                 * `<noscript><style>XXX</style>` put XXX in the body and grew
-                 * a second body inside the head on the way.
-                 */
-                if (t->mode == M_TEXT)
-                {
-                    t->original_mode = M_IN_HEAD_NOSCRIPT;
-                }
-                else
-                {
-                    t->mode = M_IN_HEAD_NOSCRIPT;
-                }
+                ar__via_head(t, tok, M_IN_HEAD_NOSCRIPT);
                 return;
             }
         }
@@ -5079,9 +5141,7 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
         {
-            t->mode = M_IN_HEAD;
-            ar__process_mode(t, tok);
-            t->mode = M_IN_FRAMESET;
+            ar__via_head(t, tok, M_IN_FRAMESET);
             return;
         }
         if (tok->kind == AR_TOK_COMMENT)
@@ -5089,11 +5149,14 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
             ar__comment_node(t, tok, -1);
             return;
         }
-        /* A frameset document has no body and nothing else belongs in it. */
-        if (!(tok->kind == AR_TOK_TEXT && ar__all_space(tok->text)))
+        /* A frameset document has no body and nothing else belongs in it --
+           but the whitespace between its frames is still in the tree. */
+        if (tok->kind == AR_TOK_TEXT)
         {
-            t->doc->errors++;
+            ar__keep_only_space(t, tok);
+            return;
         }
+        t->doc->errors++;
         return;
 
     case M_AFTER_FRAMESET:
@@ -5104,46 +5167,40 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_TEXT)
         {
-            /*
-             * The leading whitespace is kept and the rest is a parse error.
-             *
-             * The specification emits one character token per character, so it
-             * can insert the newline in `</frameset>
-foo` and drop the word.
-             * This tokenizer coalesces runs, which is right everywhere else and
-             * means the split has to happen here -- dropping the whole run
-             * loses whitespace that every browser shows in the tree.
-             */
-            ar_span head = tok->text;
-            ar_u32  i = 0;
-
-            while (i < head.n && (head.p[i] == ' ' || head.p[i] == '\t' || head.p[i] == '\n' ||
-                                  head.p[i] == '\f' || head.p[i] == '\r' || head.p[i] == 0))
-            {
-                ++i;
-            }
-            head.n = i;
-            if (head.n)
-            {
-                ar__insert_text(t, head, 0);
-            }
-            if (i < tok->text.n)
-            {
-                t->doc->errors++;
-            }
+            ar__keep_only_space(t, tok);
             return;
         }
         if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
         {
-            t->mode = M_IN_HEAD;
-            ar__process_mode(t, tok);
-            t->mode = M_AFTER_FRAMESET;
+            ar__via_head(t, tok, M_AFTER_FRAMESET);
             return;
         }
         if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "html"))
         {
-            /* `after after frameset` differs only in where a comment goes, and
-               areole puts one on the html element either way. */
+            /* `after after frameset` differs only in where a comment goes: on
+               the *document*, beside the html element rather than inside it.
+               Putting it on the html element either way was one node out of
+               place in four conformance cases. */
+            t->mode = M_AFTER_AFTER_FRAMESET;
+            return;
+        }
+        t->doc->errors++;
+        return;
+
+    case M_AFTER_AFTER_FRAMESET:
+        if (tok->kind == AR_TOK_COMMENT)
+        {
+            ar__comment_node(t, tok, 0);
+            return;
+        }
+        if (tok->kind == AR_TOK_TEXT)
+        {
+            ar__keep_only_space(t, tok);
+            return;
+        }
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
+        {
+            ar__via_head(t, tok, M_AFTER_AFTER_FRAMESET);
             return;
         }
         t->doc->errors++;
@@ -5157,6 +5214,11 @@ foo` and drop the word.
         }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
         {
+            /* Whitespace after `</body>` goes back *into* the body rather than
+               being dropped: `</body>
+   <!--c-->` leaves the newline and the
+               indent in the tree, which is what every browser shows. */
+            ar__in_body(t, tok);
             return;
         }
         if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "html"))
@@ -5179,6 +5241,7 @@ foo` and drop the word.
         }
         if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
         {
+            ar__in_body(t, tok);
             return;
         }
         t->doc->errors++;
