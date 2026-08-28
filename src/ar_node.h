@@ -701,7 +701,7 @@ int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 availab
 
 /* Give a box the axis it did not state, from the one it did and its ratio.
    Does nothing when there is no ratio, or when both axes were stated. */
-void ar_apply_ratio(ar_node *n);
+void ar_apply_ratio(ar_node *n, int w_definite);
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
 void ar_table_align_cell(ar_node *nodes, ar_i32 i);
 int  ar_is_table_cell(const ar_node *n);
@@ -741,13 +741,13 @@ void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
 
 /* Flips an anchored box to the anchor's other side when it left the viewport.
    After placement, because it is a reaction to where the box ended up. */
-void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport);
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
-void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
+void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 int  ar_is_sticky(const ar_node *n);
-void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport);
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 /* ------------------------------------------------------------------------
  * Floats -- ar_layout_float.c

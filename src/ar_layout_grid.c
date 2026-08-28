@@ -623,6 +623,18 @@ static ar_i32 ar__item_contribution(const ar_node *n, ar_i32 axis, int minimum)
     v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
     prop = ar_axis_size_prop(axis);
 
+    /*
+     * A ratio is a contribution too, and on the row axis it is often the only
+     * one there is: a tile with `aspect-ratio: 3 / 2` and nothing in it has no
+     * content height at all. `rect.h` holds what the ratio came to, worked out
+     * above once the column pass had settled the width.
+     */
+    if (axis == 1 && n->style.v[AR_P_ASPECT_RATIO] > 0 &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->rect.h > v)
+    {
+        v = n->rect.h;
+    }
+
     if (n->style.unit[prop] == AR_UNIT_PX)
     {
         ar_i32 stated = ar_used_size(n, axis, n->style.v[prop]);
@@ -1292,6 +1304,18 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
         {
             it->rect.w = it->min_w;
         }
+        /*
+         * The width is definite now, so the ratio can settle the height -- and
+         * it has to happen here, before the rows are solved, because an auto
+         * row sizes itself from what its items contribute and a ratio is the
+         * only contribution an empty tile has.
+         *
+         * `ar_apply_ratio` is told the width is definite. It normally fires
+         * only when the author stated exactly one axis, and a grid item states
+         * neither: its width came from the track. That is still a *definite*
+         * size in CSS's sense, which is the word the rule is written in.
+         */
+        ar_apply_ratio(it, 1);
         ar_wrap_height(nodes, it, 1, 0, env);
     }
 
@@ -1374,7 +1398,7 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
          */
         if (am != AR_ALIGN_STRETCH)
         {
-            ar_apply_ratio(it);
+            ar_apply_ratio(it, 1);
         }
 
         it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
