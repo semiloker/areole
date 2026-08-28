@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.0-dev"
+#define AR_VERSION_STRING "0.9.0"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
