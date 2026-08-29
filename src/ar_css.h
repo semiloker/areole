@@ -75,6 +75,25 @@ typedef enum ar_prop
 
     AR_P_FONT_SIZE,
 
+    /*
+     * `line-height`, which is the distance between baselines and not the
+     * height of anything you can see.
+     *
+     * `normal` is the keyword and the initial value, and it means the face's
+     * own ascent + descent + line gap -- exactly what every line box in this
+     * engine was before the property existed, so a document that does not
+     * mention it lays out to the same pixel.
+     *
+     * A unitless number is the form authors actually write, and it is a
+     * multiplier of `font-size` rather than a length, which is why it
+     * inherits usefully: `body { line-height: 1.5 }` gives a 32px heading a
+     * 48px line and a 16px paragraph a 24px one. A length inherits as the
+     * length and gives both 24. That difference is the whole reason CSS has
+     * the unitless form, so it is carried as AR_UNIT_NUMBER in thousandths,
+     * the same convention the flex factors use.
+     */
+    AR_P_LINE_HEIGHT,
+
     /* AR_P_OVERFLOW is the block axis, which is the one that existed when
        there was only one: the scroll range has always been vertical. The
        shorthand `overflow` sets both, and ar_overflow_x/ar_overflow_y apply the

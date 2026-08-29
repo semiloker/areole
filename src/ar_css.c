@@ -211,6 +211,8 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
+    s->v[AR_P_LINE_HEIGHT] = 0;
+    s->unit[AR_P_LINE_HEIGHT] = AR_UNIT_KEYWORD; /* `normal` */
 
     /*
      * The offsets default to `auto`, not to zero.
@@ -400,6 +402,7 @@ int ar_prop_inherits(ar_i32 prop)
     {
     case AR_P_COLOR:
     case AR_P_FONT_SIZE:
+    case AR_P_LINE_HEIGHT:
     /* `visibility` inherits, and that is what makes `collapse` on a row worth
        writing: the row goes and every cell in it goes too, without any of them
        being named. A cell can say `visibility: visible` to come back, which is
@@ -425,8 +428,8 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR, AR_P_FONT_SIZE, AR_P_VISIBILITY, AR_P_EMPTY_CELLS,
-                                      AR_P_CAPTION_SIDE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,      AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
+                                      AR_P_VISIBILITY, AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -728,6 +731,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
+                                          {"line-height", AR_P_LINE_HEIGHT},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
@@ -991,6 +995,10 @@ static const ar__kw AR_KEYWORDS[] = {
     {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
 
     {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
+    /* `line-height: normal` -- the initial value, and the one that keeps the
+       face's own arithmetic. Zero, because the property is a length or a
+       multiplier everywhere else and neither can be zero. */
+    {"normal", AR_P_LINE_HEIGHT, 0},
     {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
 
     {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
@@ -1488,6 +1496,26 @@ static ar_i32 ar__parse_track_list(ar__scan *z, ar_sheet *sheet)
     return header;
 }
 
+/*
+ * Whether the number just read is followed by a unit.
+ *
+ * Only `line-height` needs to ask -- every other property that accepts a bare
+ * number accepts nothing else -- but the question is about the syntax rather
+ * than the property, so it lives here with the scanner.
+ */
+static int ar__number_has_unit(const ar__scan *z)
+{
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+    if (*z->p == '%')
+    {
+        return 1;
+    }
+    return z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x';
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -1622,7 +1650,20 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
                 }
             }
 
-            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK)
+            /*
+             * `line-height` joins the flex factors, but only when the number
+             * is bare.
+             *
+             * A flex factor has no units and never did, so those two can take
+             * this branch on sight. `line-height` takes both forms, and they
+             * mean different things -- `1.5` is a multiplier of the font size
+             * and `1.5px` is a length -- so the unit has to be looked at
+             * first. Taking it on sight turned `line-height: 40px` into a
+             * multiplier of forty thousand, which clamped to 32767 and gave a
+             * sixteen-pixel paragraph a five-hundred-pixel line.
+             */
+            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK ||
+                (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
             {
                 out.v = sign * (n * 1000 + milli);
                 out.ok = 1;

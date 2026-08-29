@@ -13905,6 +13905,68 @@ static void ar__render_html(ar_surface *s, const char *src, const char *author)
     ar_frame_end(g_ui, s);
 }
 
+static void test_line_height_is_a_length_or_a_multiplier(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    ar_i32     normal_h;
+
+    /*
+     * `line-height` in its three forms, and the one that matters is which of
+     * them a bare number is.
+     *
+     * `1.5` is a multiplier of the font size and `1.5px` is a length, and they
+     * are different declarations -- which is the entire reason CSS has the
+     * unitless form: it inherits as a ratio, so `body { line-height: 1.5 }`
+     * gives a 32px heading a 48px line and a 16px paragraph a 24px one, where
+     * a length would give both the same. Taking the number branch on sight,
+     * before looking for a unit, turned `line-height: 40px` into a multiplier
+     * of forty thousand; it clamped to 32,767 and gave a sixteen-pixel
+     * paragraph a five-hundred-pixel line.
+     *
+     * Against Edge on the same markup: 40 and 32, exactly. `normal` is the
+     * face's own ascent, descent and line gap and is deliberately left alone,
+     * so it differs between engines and is checked here only as "not the
+     * others".
+     */
+    ar__ui_reset("#root { display:block; font-size:16px; }"
+                 ".w { display:block; width:500px; }"
+                 ".p { display:block; }"
+                 ".px { display:block; line-height:40px; }"
+                 ".mu { display:block; line-height:2; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+
+    ar_begin(g_ui, "div.p"); /* 2: normal */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.px"); /* 4: a length */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mu"); /* 6: a multiplier */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    normal_h = ar__box(2).h;
+
+    CHECK(ar__box(4).h == 40, "line-height: a length is the line box, exactly");
+    CHECK(ar__box(6).h == 32, "line-height: and a bare number multiplies the font size");
+    CHECK(normal_h != 40 && normal_h > 0,
+          "line-height: `normal` is still the face's own metrics and was not disturbed");
+
+    /* The boxes stack on the heights they were given, which is the thing a
+       wrong line height actually breaks. */
+    CHECK(ar__box(4).y == ar__box(2).y + normal_h,
+          "line-height: and the next block starts where the last one ended");
+    CHECK(ar__box(6).y == ar__box(4).y + 40, "line-height: including after the tall one");
+}
+
 static void test_the_ua_stylesheet_parses(void)
 {
     /* Every part of it, and none may have a syntax error -- a UA sheet with a
@@ -16952,6 +17014,7 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_line_height_is_a_length_or_a_multiplier();
     test_the_ua_stylesheet_parses();
     test_a_stylesheet_that_outgrows_its_table_says_so();
     test_the_ua_stylesheet_fits_the_table_every_caller_gets();

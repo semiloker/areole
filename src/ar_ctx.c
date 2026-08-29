@@ -1214,18 +1214,72 @@ static ar_i32 ar__round_px(ar_i32 v)
     return (v + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
 }
 
+/*
+ * What `line-height` asks the line box to be, or zero for `normal`.
+ *
+ * `em` is the font size the multiplier is against: the ppem on the outline
+ * path, and the cell height on the bitmap one, which is the same quantity for
+ * a face whose glyphs fill their cell.
+ */
+static ar_i32 ar__asked_line_height(const ar_node *n, ar_i32 em)
+{
+    if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_PX)
+    {
+        return n->style.v[AR_P_LINE_HEIGHT] > 0 ? n->style.v[AR_P_LINE_HEIGHT] : 1;
+    }
+    if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
+    {
+        ar_i32 h = (em * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000;
+
+        return h > 0 ? h : 1;
+    }
+    return 0; /* `normal` */
+}
+
+/*
+ * Half-leading: the difference between the line box and the text is split
+ * evenly above and below, which is what puts the baseline where CSS says.
+ *
+ * Applied only when a line height was actually asked for. `normal` deliberately
+ * keeps the face's own arithmetic untouched -- ascent for the baseline, ascent
+ * plus descent plus gap for the box -- because that is what every line box in
+ * this engine already was, and CSS lets a user agent choose `normal` from the
+ * font's metrics however it likes. Centring `normal` too would move every line
+ * in every document by half a line gap for no reason anybody asked for.
+ */
+static void ar__apply_line_height(ar_node *n, ar_i32 asked, ar_i32 asc, ar_i32 desc)
+{
+    if (asked <= 0)
+    {
+        return;
+    }
+    n->text_h = asked;
+    n->line_h = asked;
+    n->ascent = asc + (asked - (asc + desc)) / 2;
+    if (n->ascent < 0)
+    {
+        n->ascent = 0;
+    }
+}
+
 static void ar__text_metrics(ar_ctx *c, ar_node *n)
 {
     if (!c->have_face)
     {
-        n->text_h = ar_text_height(n->scale);
+        ar_i32 cell = ar_text_height(n->scale);
+        ar_i32 asked = ar__asked_line_height(n, cell);
+
+        n->text_h = cell;
         n->line_h = ar_text_line_height(n->scale);
         /* The bitmap face draws from the top rather than from a baseline, and
             painting still does. But a line box needs a baseline to align
             against, and for a face with no descender the baseline is the
             bottom of the cell. Painting reads n->ascent only on the outline
             path, so this is free there and correct here. */
-        n->ascent = ar_text_height(n->scale);
+        n->ascent = cell;
+        /* No descender to speak of, so the whole cell is above the baseline
+           and the leading is shared around it. */
+        ar__apply_line_height(n, asked, cell, 0);
         return;
     }
     {
@@ -1243,14 +1297,17 @@ static void ar__text_metrics(ar_ctx *c, ar_node *n)
          * baseline and the line box disagreeing by a fraction, and the
          * disagreement accumulates down a paragraph.
          */
+        ar_i32 desc = ar__round_px(-ar_face_scale(f, f->descender, ppem));
+
         n->ascent = ar__round_px(ar_face_scale(f, f->ascender, ppem));
-        n->text_h = n->ascent + ar__round_px(-ar_face_scale(f, f->descender, ppem)) +
-                    ar__round_px(ar_face_scale(f, f->line_gap, ppem));
+        n->text_h = n->ascent + desc + ar__round_px(ar_face_scale(f, f->line_gap, ppem));
         if (n->text_h < 1)
         {
             n->text_h = 1;
         }
         n->line_h = n->text_h;
+
+        ar__apply_line_height(n, ar__asked_line_height(n, ppem), n->ascent, desc);
     }
 }
 
