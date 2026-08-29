@@ -538,15 +538,19 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `08_anchor` | anchor positioning and the flip | **168 / 168** |
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `15_real` | ten documents saved from the web | by eye, 9 / 10 |
-| `09_table` | tables: anonymous boxes, collapse, spans | 608 / 624 |
+| `09_table` | tables: anonymous boxes, collapse, spans | 616 / 624 |
 
-The table corpus is the honest exception and is not gated: **16 of its 624 boxes still land
+The table corpus is the honest exception and is not gated: **8 of its 624 boxes still land
 somewhere a browser does not**, down from 208. Three model errors in the collapsed border
-account for most of the 192 that went, and all three are the same sentence -- a border belongs
-to the edges the box actually has. The fourth is the other half of it: a line *between* two
-columns is already inside them, so neither column needs extra room for it. The fifth says the
-same thing down the other axis -- the rows of a collapsed table tile, each one's box beginning
-exactly where the one above it ends. A table's outer border belongs *inside* its box; a middle column's
+account for most of the 200 that went, and all three are the same sentence -- a border belongs
+to the edges the box actually has. The fourth says it down the other axis: the rows of a
+collapsed table tile, each one's box beginning exactly where the one above it ends. The fifth
+is about rounding, and is the same on both axes -- a box's two half-lines are one number,
+rounded once, not two numbers rounded apart.
+
+The eight that are left are half-pixels. A browser lays these tables out in fractions and
+reports a cell as 119 wide whose right-hand neighbour begins at 120.0; this engine has no
+fraction to keep and no way to be both. A table's outer border belongs *inside* its box; a middle column's
 border is not the table's side edge; a row group's border is its own top and bottom, not a line
 between every pair of its rows.
 

@@ -7589,7 +7589,7 @@ static void test_a_collapsed_table_is_its_lines_and_its_rows(void)
           "collapse: and the group is the grid, without the table's outer halves");
 }
 
-static void test_a_collapsed_line_lives_inside_the_columns_it_separates(void)
+static void test_a_cells_two_half_lines_are_one_number(void)
 {
     ar_surface s = ar__ui_surface(500, 400);
     ar_i32     a, b;
@@ -7597,18 +7597,18 @@ static void test_a_collapsed_line_lives_inside_the_columns_it_separates(void)
     /*
      * Two columns holding the same thing, in a table with room to spare.
      *
-     * The columns partition the table's width, and a collapsed grid line
-     * straddles the boundary between two of them -- so the line is already
-     * *inside* the columns it separates. It is not something either of them
-     * needs extra room for, and adding half of it to each made every column
-     * claim to want more than the space it occupies.
+     * A cell's box has to hold half of the line at each of its two ends, and
+     * that is *one* number -- half of the sum -- not two numbers rounded
+     * apart. Here the row's 7px border is the line at each outer edge and
+     * there is nothing between the columns, so each cell's two halves are
+     * seven and nothing: four, both times.
      *
-     * That was worse than it sounds, because the surplus a roomy table hands
-     * out is shared in proportion to what the columns claim to want. One pixel
-     * of difference between two borders came out as **four** pixels of
-     * difference between two column widths, and the wider the table the worse
-     * it got: `col-row-alone` in the corpus is two identical cells and a 3px
-     * row border, and it was 118 and 122 where a browser gives 120 and 120.
+     * Rounded apart they are three and four, and that pixel does not stay a
+     * pixel. The surplus a roomy table hands out is shared in proportion to
+     * what the columns claim to want, so a claim that is one bigger comes back
+     * several bigger: `col-row-alone` in the corpus is two identical cells and
+     * a 3px row border, and rounding its halves apart made it 118 and 122
+     * where a browser gives 120 and 120.
      *
      * Equality is the check, not a tolerance. Identical content in a table
      * with room to spare gets identical columns whatever the borders around
@@ -7641,6 +7641,95 @@ static void test_a_collapsed_line_lives_inside_the_columns_it_separates(void)
 
     CHECK(a + b == 300, "table: the two columns partition the width they were given");
     CHECK(a == b, "table: and identical content gets identical columns, borders regardless");
+}
+
+static void test_the_columns_hold_every_pixel_of_every_line(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * A table with no width of its own is as wide as it needs to be, and what
+     * it needs is both cells and all three lines.
+     *
+     * Two 44px cells, a 5px border on the left column and a 1px border on the
+     * right: the outer line on the left is 5, the line between them is 5
+     * (the wider of the two borders that meet there), the outer line on the
+     * right is 1. 99 across, and every one of those eleven border pixels is
+     * somewhere exactly once -- eight of them inside the columns, as each
+     * cell's two halves, and three outside them in the table's own box.
+     *
+     * That is the sum the two half-lines are for. With the columns claiming
+     * only their content the table came out 91 and the borders drew over the
+     * cells beside them.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:44px; height:10px; }"
+                 ".a { border:5px #b03030; }"
+                 ".b { border:1px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");   /* 1 */
+    ar_begin(g_ui, "div.r");   /* 2 */
+    ar_begin(g_ui, "div.c.a"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.b"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 44 + 44 + 5 + 5 + 1,
+          "table: a shrunk collapsed table holds both its cells and all three lines");
+    CHECK(ar__box(4).x - ar__box(3).x == ar__box(3).w,
+          "table: and the second column starts where the first one ends");
+}
+
+static void test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * The same table, given 240 to fill.
+     *
+     * Each column wants its 44 and its half-lines: 49 for the left one and 47
+     * for the right, 96 between them, so there are 144 pixels of surplus to
+     * hand out in proportion. The left column's share is 49 * 144 / 96, which
+     * is 73.5 exactly, and the columns come out 123 and 117.
+     *
+     * Truncating that share puts them at 122 and 118 -- a whole pixel wrong in
+     * both directions, from half a pixel of arithmetic. The last column takes
+     * whatever is left rather than its own quotient, so the two still fill the
+     * 240 exactly whichever way the rounding goes; rounding only decides where
+     * the boundary between them falls, and a browser puts it at 125.5.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:240px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:44px; height:10px; }"
+                 ".a { border:5px #b03030; }"
+                 ".b { border:1px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");   /* 1 */
+    ar_begin(g_ui, "div.r");   /* 2 */
+    ar_begin(g_ui, "div.c.a"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.b"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).w + ar__box(4).w == 240,
+          "table: the columns fill the width they were given, to the pixel");
+    CHECK(ar__box(3).w == 123 && ar__box(4).w == 117,
+          "table: and a half-pixel share rounds up, not away");
 }
 
 static void test_a_collapsed_line_is_drawn_once(void)
@@ -17139,7 +17228,9 @@ int main(void)
     test_a_middle_columns_border_is_not_the_tables_edge();
     test_a_row_groups_border_is_its_own_two_edges();
     test_a_collapsed_table_is_its_lines_and_its_rows();
-    test_a_collapsed_line_lives_inside_the_columns_it_separates();
+    test_a_cells_two_half_lines_are_one_number();
+    test_the_columns_hold_every_pixel_of_every_line();
+    test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
