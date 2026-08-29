@@ -1286,6 +1286,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     /* Where the grid itself begins and ends, which is not where the table
        does: a caption is a table-level box above or below every column. */
     ar_i32 grid_top = 0, grid_bot = 0;
+    ar_i32 last_far = 0;
 
     ncol = ar__grid(nodes, table, col, vline);
 
@@ -1484,6 +1485,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         ar_i32 nxt = ar__next_row(nodes, table, row);
         ar_i32 mine = 0, hl = 0, hb = 0;
+        ar_i32 top, bot, band;
         int    closed;
 
         /* `rowspan: 9` on the second row of a two-row table covers the rows
@@ -1531,12 +1533,25 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 hl = t->style.v[AR_P_BORDER_WIDTH];
             }
-            /* The near half of the first line is inside the table, exactly as
-               the near half of the leading vertical line is -- the two axes are
-               the same rule and used to disagree, which put every collapsed
-               table's first row a pixel too high. */
-            y += prev_row < 0 ? ar__half_near(hl) : hl;
+            /*
+             * Only the first row opens the grid.
+             *
+             * The near half of the first line is outside the rows and inside
+             * the table, exactly as the near half of the leading vertical line
+             * is -- the two axes are the same rule and used to disagree, which
+             * put every collapsed table's first row a pixel too high.
+             *
+             * After that `y` is already where the next row's box starts,
+             * because the rows tile: a row's box ends where the one below it
+             * begins, and the line between them is inside both. Adding the
+             * whole line here as well made the second row overlap the first by
+             * the top line's far half, which is what left every table with a
+             * wide outer border and thin cells two pixels short.
+             */
+            y += prev_row < 0 ? ar__half_near(hl) : 0;
         }
+        top = ar__half_far(hl);
+        bot = ar__half_near(hb);
 
         for (; c >= 0; c = nodes[c].next_sibling)
         {
@@ -1674,7 +1689,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     rh = share;
                 }
                 col[at].span_node = c;
-                col[at].span_y = y - ar__half_far(hl);
+                col[at].span_y = y;
                 col[at].span_h = h;
                 col[at].span_rows = rs;
             }
@@ -1696,7 +1711,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         {
             if ((col[k].span_left == 1 || last) && col[k].span_node >= 0)
             {
-                ar_i32 covered = (y + rh) - col[k].span_y;
+                ar_i32 covered = (y + top + rh + bot) - col[k].span_y;
 
                 if (covered < col[k].span_h)
                 {
@@ -1705,11 +1720,23 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             }
         }
 
+        /*
+         * The band is the row's two halves rounded *together*.
+         *
+         * `top + bot` is where the next row starts, and it has to be, because
+         * the rows tile. The box the row reports is a different sum: the two
+         * halves of one row belong to one box, and a box is a whole number of
+         * pixels once, not twice. A 1px line above and a 4px line below is
+         * half of five, which is three -- not zero and two.
+         *
+         * The difference is a pixel and only when the line above is odd and
+         * the one below is even, and it is the pixel by which a row overlaps
+         * the row beneath it. A browser reports the same overlap.
+         */
+        band = rh + ar__half_near(hl + hb);
+
         if (assign)
         {
-            ar_i32 top = ar__half_far(hl);
-            ar_i32 bot = ar__half_near(hb);
-
             /* A row's box spans its cells, not the table -- so in the
                separate model it starts one border-spacing in and is two
                narrower, which is where a browser puts it. */
@@ -1720,7 +1747,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                with the same rectangle. In the separate model the lines are not
                shared and the band is the row itself. */
             nodes[row].rect.y = t->rect.y + y;
-            nodes[row].rect.h = rh + top + bot;
+            nodes[row].rect.h = band;
 
             c = nodes[row].first_child;
             for (; c >= 0; c = nodes[c].next_sibling)
@@ -1748,7 +1775,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                    so writing the row's height over it here would undo that. */
                 if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1)
                 {
-                    nodes[c].rect.h = closed ? 0 : rh + top + bot;
+                    nodes[c].rect.h = closed ? 0 : band;
                 }
             }
         }
@@ -1762,38 +1789,36 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 if (assign)
                 {
-                    /* The band's bottom, plus this row's share of the line
-                       under it -- the span started half a line above its own
-                       first band, so both ends have to be paid for. */
-                    ar_i32 sb = ar__half_near(hb);
-
-                    nodes[col[k].span_node].rect.h = (y + rh + sb) - col[k].span_y;
-                    nodes[col[k].span_node].edge[2] = (ar_u8)sb;
+                    /* From the top of the band it opened in to the bottom
+                       of this one -- the same two edges every other cell in
+                       this row gets, over more rows. */
+                    nodes[col[k].span_node].rect.h = (y + top + rh + bot) - col[k].span_y;
+                    nodes[col[k].span_node].edge[2] = (ar_u8)bot;
                 }
                 col[k].span_node = -1;
             }
         }
-        y += rh + spacing;
         if (collapse)
         {
+            /* A row advances by its own box, so the next one starts exactly
+               where this one ended and the line between them is inside both.
+               `rect.h` is this same sum, and the two have to stay the same
+               sum: when they drifted apart the rows overlapped. */
+            y += top + rh + bot;
             prev_bot = mine;
             prev_row = row;
             if (last)
             {
-                /*
-                 * Nothing follows to open the last line, so the table closes
-                 * it here -- and it has to close the whole thing.
-                 *
-                 * Every other row is closed by the next one adding `hl`, the
-                 * full line, at the top of the loop. The last has no next, so
-                 * it pays the rest of its own band (the near half of the line
-                 * above it, which `hl` would have covered) and then the entire
-                 * bottom line: its near half is inside the band and its far
-                 * half is the table's own outer edge. `half_far(hl) + hb` is
-                 * those three halves.
-                 */
-                y += ar__half_far(hl) + hb;
+                /* Nothing follows to close the bottom line. Its near half is
+                   inside the last row's band already; its far half is the
+                   table's own outer edge. */
+                last_far = ar__half_far(hb);
+                y += last_far;
             }
+        }
+        else
+        {
+            y += rh + spacing;
         }
         row = nxt;
     }
@@ -1940,6 +1965,8 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 for (; r >= 0; r = nodes[r].next_sibling)
                 {
+                    ar_i32 end;
+
                     if (!ar__is_row(&nodes[r]))
                     {
                         continue;
@@ -1948,9 +1975,26 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     {
                         top = nodes[r].rect.y;
                     }
-                    if (!any || nodes[r].rect.y + nodes[r].rect.h > bot)
+                    /*
+                     * Where the next row starts is where this one ends.
+                     *
+                     * A collapsed row's box can reach a pixel past that, into
+                     * the row below, because the band rounds its two halves
+                     * together and the tiling adds them apart. That pixel is
+                     * the row's and not the group's: a group that took the
+                     * union of its rows' boxes inherited it and came out a
+                     * pixel taller than the grid it holds.
+                     */
+                    end = nodes[r].rect.y + nodes[r].rect.h;
+                    if (collapse)
                     {
-                        bot = nodes[r].rect.y + nodes[r].rect.h;
+                        ar_i32 nx = ar__next_row(nodes, table, r);
+
+                        end = nx >= 0 ? nodes[nx].rect.y : t->rect.y + grid_bot - last_far;
+                    }
+                    if (!any || end > bot)
+                    {
+                        bot = end;
                     }
                     any = 1;
                 }
