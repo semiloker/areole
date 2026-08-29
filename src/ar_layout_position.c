@@ -504,20 +504,20 @@ void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i
     }
 }
 
-/* The env form, for the callers inside layout that carry one. */
-static void ar__shift_node(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
-{
-    ar_shift_node(nodes, env ? env->frags : 0, env ? env->frag_used : 0, i, dx, dy);
-}
-
+/*
+ * Everything under a box, but not the box.
+ *
+ * An out-of-flow box is resolved by writing its rectangle outright rather than
+ * by moving it, so its children are brought across separately -- the one place
+ * where the box and its subtree part company.
+ */
 static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
     ar_i32 c;
 
     for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        ar__shift_node(nodes, env, c, dx, dy);
-        ar__shift_kids_pos(nodes, env, c, dx, dy);
+        ar_shift_subtree(nodes, env ? env->frags : 0, env ? env->frag_used : 0, c, dx, dy);
     }
 }
 
@@ -530,15 +530,30 @@ static void ar__shift_kids_pos(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_
  * boxes on a page were a header or two -- and 0.7.1 freezes a *column*, which
  * is one sticky box per row. Ten thousand rows against fifty thousand nodes is
  * the quadratic nobody asked for.
+ *
+ * Public because block flow moves settled subtrees now too, and there is one
+ * of these rather than two on purpose: a second walk is a second place to
+ * forget the fragments.
  */
-static void ar__shift_subtree(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
+void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
+    ar_i32 c;
+
     if (!dx && !dy)
     {
         return;
     }
-    ar__shift_node(nodes, env, i, dx, dy);
-    ar__shift_kids_pos(nodes, env, i, dx, dy);
+    ar_shift_node(nodes, frags, frag_n, i, dx, dy);
+    for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        ar_shift_subtree(nodes, frags, frag_n, c, dx, dy);
+    }
+}
+
+/* The env form, for the callers inside positioning that carry one. */
+static void ar__shift_subtree(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_i32 dx, ar_i32 dy)
+{
+    ar_shift_subtree(nodes, env ? env->frags : 0, env ? env->frag_used : 0, i, dx, dy);
 }
 
 /* The box a sticky element is pinned inside: its nearest scrolling ancestor,

@@ -678,13 +678,12 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      * ask lays the tree out once and every later ask is a clamp, so a box is
      * placed exactly twice and the whole thing is linear.
      *
-     * The measurement rewinds `frag_used` afterwards. A placement appends the
-     * fragments a split inline is painted from, and measuring is a placement;
-     * without the rewind every wrapped box would spend its fragments twice
-     * against a budget fixed at init, and running out does not fail loudly --
-     * `ar__emit` returns nothing and the box quietly stops being split. The
-     * nodes below still point at those slots, which is harmless because the
-     * forward sweep re-places every one of them and rewrites both.
+     * The fragments this writes are kept, not rewound. Measuring *is* a
+     * placement and appends the fragments a split inline is painted from, and
+     * since the forward sweep now skips what was settled here, these are the
+     * only ones the box will ever have. They were briefly discarded on the way
+     * to this -- correct while every box was placed a second time, and a box
+     * with no rectangles at all the moment it was not.
      *
      * The guards mirror the branch in ar__place_block that decides an
      * automatic height, because that branch is what writes the memo: a table
@@ -701,12 +700,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
                                  AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
             return;
         }
-        {
-            ar_i32 mark = env->frag_used;
-
-            ar__place_block(nodes, (ar_i32)(n - nodes), env);
-            env->frag_used = mark;
-        }
+        ar__place_block(nodes, (ar_i32)(n - nodes), env);
         return;
     }
 
@@ -846,10 +840,46 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
                          &su->floats, su->top + y, su->env);
 }
 
+/*
+ * Move a child to where the stack decided it goes, taking its subtree along.
+ *
+ * A box whose height was settled by the measure pass has already had its whole
+ * subtree laid out, at whatever origin it happened to hold at the time -- so
+ * from here on it may be *moved* but never re-placed, and moving it means
+ * moving everything under it. `was` is where it stood before the caller
+ * assigned its new position; this puts it back and shifts the lot.
+ *
+ * The memo doing double duty is what keeps this honest. Anything that changes
+ * the box's width after it was measured -- a formatting context narrowing
+ * beside a float, a float shrinking to fit -- makes `measured_w` stop matching
+ * on its own, and then this does nothing and the forward sweep places the box
+ * again the old way. No path has to remember to say so.
+ */
+static void ar__settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was)
+{
+    ar_node *ch = &nodes[i];
+    ar_i32   dx, dy;
+
+    if (ch->first_child < 0 || ch->measured_w != ch->rect.w)
+    {
+        return;
+    }
+    dx = ch->rect.x - was.x;
+    dy = ch->rect.y - was.y;
+    if (!dx && !dy)
+    {
+        return;
+    }
+    ch->rect.x = was.x;
+    ch->rect.y = was.y;
+    ar_shift_subtree(nodes, env ? env->frags : 0, env ? env->frag_used : 0, i, dx, dy);
+}
+
 static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
 {
     ar__stack_ud *su = (ar__stack_ud *)ud;
     ar_node      *ch = &su->nodes[index];
+    ar_rect       was = ch->rect;
 
     /* -1 is a float: sized here, because a float shrinks to fit rather than
        filling the container the way an in-flow block child does, and then
@@ -858,6 +888,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
     {
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
+        ar__settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -869,6 +900,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ch->rect.x = su->left;
         ch->rect.y = su->top + y;
+        ar__settle_at(su->nodes, su->env, index, was);
         return;
     }
 
@@ -903,6 +935,8 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
             ch->rect.w = avail < 0 ? 0 : avail;
         }
     }
+
+    ar__settle_at(su->nodes, su->env, index, was);
 }
 
 static ar_i32 ar__clear_to(void *ud, ar_i32 y, ar_i32 which)
@@ -958,6 +992,8 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         ar_node *ch = &nodes[c];
         ar_i32   ml = ch->style.v[AR_P_MARGIN_LEFT];
         ar_i32   mr = ch->style.v[AR_P_MARGIN_RIGHT];
+        ar_rect  was = ch->rect;
+        ar_i32   prev_mw = ch->measured_w;
 
         if (ar__hidden(ch))
         {
@@ -1038,6 +1074,23 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
         ar_wrap_height(nodes, ch, 1, 0, env);
+
+        /*
+         * If that was answered from the memo rather than by laying the subtree
+         * out again, the subtree is still standing at the old x and has to be
+         * brought across. The test is the width the memo was recorded at
+         * *before* this loop touched anything: matching it means ar_wrap_height
+         * took the cheap path, and not matching it means ar_wrap_height placed
+         * the subtree afresh at the x just assigned, where it already belongs.
+         */
+        if (ch->first_child >= 0 && prev_mw == ch->rect.w)
+        {
+            ar_rect at = ch->rect;
+
+            at.x = was.x;
+            at.y = ch->rect.y;
+            ar__settle_at(nodes, env, c, at);
+        }
     }
 
     /* The stack, by the same walk the measure pass used. */
@@ -1167,6 +1220,28 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
         }
         if (ar_is_block(n))
         {
+            /*
+             * Placed once, not twice.
+             *
+             * The measure pass laid this subtree out to answer its parent's
+             * question about its height, and the stack that asked has since
+             * moved it -- and everything under it -- to where it belongs. There
+             * is nothing left for a second placement to decide, and doing it
+             * anyway was the whole cost of the height sweep: `float_gallery`
+             * spent 71% more time in layout, every microsecond of it arriving
+             * at the answer it already had.
+             *
+             * The memo is the whole test, and it fails safe. It is cleared for
+             * every box at the top of the measure sweep, it is written only by
+             * the branch that settles an automatic height, and it stops
+             * matching by itself the moment anything alters the width it was
+             * recorded at -- so a box this does not fully describe is placed
+             * the old way rather than skipped.
+             */
+            if (n->measured_w == n->rect.w)
+            {
+                continue;
+            }
             ar__place_block(nodes, i, env);
             continue;
         }

@@ -30,15 +30,15 @@ says nothing directly about any other; `ar_require` is what converts between the
 
 | | |
 | --- | --- |
-| median spread between epochs | **2.2%** |
-| worst | 43.5% |
-| scenes within 4% | 36 of 52 |
+| median spread between epochs | **1.7%** |
+| worst | 80.8% |
+| scenes within 4% | 37 of 52 |
 
 An epoch is a complete pass over every scene, so a scene is measured again only
 after the whole rest of the list has run. That approximates a second invocation
 of the tool, which is the variance a regression gate actually has to tolerate.
 
-This machine can support a gate at roughly 4% on most scenes.
+This machine can support a gate at roughly 3% on most scenes.
 
 ## Scenes
 
@@ -46,12 +46,12 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `clear_cached` | 48.5 µs | 95.1 µs | 111.3 µs | 0.2% | 0.101 | - | - |
-| `clear_uncached` | 3575.1 µs | 4483.7 µs | 5604.8 µs | 10.1% | 0.213 | - | - |
-| `fill_opaque` | 316.7 µs | 562.9 µs | 785.1 µs | 6.7% | 0.155 | - | - |
-| `fill_blend` | 1994.4 µs | 3134.4 µs | 3752.2 µs | 5.9% | 0.974 | - | - |
-| `offscreen_90pc` | 24.8 µs | 49.0 µs | 476.2 µs | 2.8% | 0.195 | - | - |
-| `hairlines` | 23.3 µs | 26.2 µs | 33.7 µs | 39.5% | 0.118 | - | - |
+| `clear_cached` | 48.4 µs | 63.6 µs | 169.6 µs | 0.0% | 0.101 | - | - |
+| `clear_uncached` | 3332.4 µs | 4356.1 µs | 4738.4 µs | 3.9% | 0.199 | - | - |
+| `fill_opaque` | 290.8 µs | 417.6 µs | 666.4 µs | 17.6% | 0.142 | - | - |
+| `fill_blend` | 1924.0 µs | 2569.5 µs | 3448.7 µs | 4.0% | 0.940 | - | - |
+| `offscreen_90pc` | 35.4 µs | 42.5 µs | 72.4 µs | 66.7% | 0.279 | - | - |
+| `hairlines` | 23.0 µs | 33.8 µs | 59.7 µs | 69.6% | 0.117 | - | - |
 
 - `clear_cached` — opaque span fill into a surface small enough to stay in cache
 - `clear_uncached` — the same fill against main memory rather than cache; the honest fill rate
@@ -64,11 +64,11 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `latin_paragraph` | 82.8 µs | 136.4 µs | 378.5 µs | 2.2% | - | 50.7 | - |
-| `latin_paragraph_2x` | 243.5 µs | 320.5 µs | 431.4 µs | 3.4% | - | 149.2 | - |
-| `many_short_labels` | 100.0 µs | 123.5 µs | 169.2 µs | 0.8% | - | 55.6 | - |
-| `text_clipped` | 45.4 µs | 49.9 µs | 56.8 µs | 0.4% | - | 222.6 | - |
-| `text_measure` | 199.1 µs | 305.6 µs | 376.4 µs | 0.1% | - | - | - |
+| `latin_paragraph` | 86.4 µs | 156.7 µs | 166.1 µs | 12.8% | - | 52.9 | - |
+| `latin_paragraph_2x` | 243.5 µs | 395.6 µs | 553.9 µs | 14.5% | - | 149.2 | - |
+| `many_short_labels` | 100.2 µs | 121.9 µs | 196.1 µs | 48.7% | - | 55.7 | - |
+| `text_clipped` | 45.3 µs | 60.9 µs | 74.4 µs | 0.0% | - | 222.1 | - |
+| `text_measure` | 199.5 µs | 357.1 µs | 524.1 µs | 31.8% | - | - | - |
 
 - `latin_paragraph` — glyph blitting at scale 1: the per-bit-test cost
 - `latin_paragraph_2x` — the same text at scale 2: four times the pixels
@@ -80,29 +80,29 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | fill px | glyph px | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
-| `flat_100` | 52.6 µs | 94.7 µs | 118.1 µs | 4.8% | 0 | 0 | - | - | 487.0 |
-| `flat_1k` | 541.2 µs | 903.3 µs | 1166.6 µs | 1.5% | 0 | 0 | - | - | 508.6 |
-| `flat_8k` | 5473.1 µs | 8080.2 µs | 10309.3 µs | 8.3% | 0 | 0 | - | - | 643.8 |
-| `deep_60` | 36.2 µs | 56.6 µs | 86.0 µs | 0.3% | 0 | 0 | - | - | 583.9 |
-| `mixed_tree` | 744.3 µs | 1196.5 µs | 1852.6 µs | 0.6% | 0 | 0 | - | - | 502.6 |
-| `block_1k` | 535.7 µs | 862.4 µs | 1146.0 µs | 8.9% | 0 | 0 | - | - | 535.2 |
-| `inline_wrap` | 642.3 µs | 1092.6 µs | 1669.8 µs | 0.9% | 0 | 0 | - | - | 2665.2 |
-| `float_gallery` | 582.1 µs | 922.0 µs | 1304.6 µs | 1.0% | 0 | 0 | - | - | 1451.6 |
-| `scroll_container` | 1038.8 µs | 1661.1 µs | 2520.8 µs | 1.5% | 20236 | 103 | 41.150 | - | 1728.5 |
-| `sticky_20` | 132.2 µs | 275.2 µs | 331.2 µs | 14.3% | 167356 | 0 | 0.763 | - | 1308.9 |
-| `sticky_20_off` | 134.1 µs | 185.2 µs | 224.6 µs | 2.7% | 29992 | 0 | 3.726 | - | 1327.7 |
-| `top_layer` | 23.1 µs | 25.3 µs | 31.1 µs | 0.4% | 0 | 0 | - | - | 462.0 |
-| `top_layer_off` | 23.2 µs | 25.7 µs | 32.6 µs | 0.0% | 0 | 0 | - | - | 464.0 |
-| `anchored_20` | 30.9 µs | 31.2 µs | 55.0 µs | 0.3% | 0 | 0 | - | - | 506.6 |
-| `anchored_20_off` | 30.4 µs | 47.1 µs | 66.3 µs | 1.0% | 0 | 0 | - | - | 498.4 |
-| `table_auto_100` | 312.7 µs | 464.5 µs | 716.5 µs | 3.5% | 0 | 0 | - | - | 622.9 |
-| `table_auto_1k` | 3702.4 µs | 5069.5 µs | 6035.8 µs | 6.8% | 0 | 0 | - | - | 740.2 |
-| `table_auto_10k` | 70672.2 µs | 80620.2 µs | 82959.1 µs | 8.4% | 0 | 0 | - | - | 1413.4 |
-| `table_fixed_1k` | 3499.5 µs | 4959.1 µs | 5493.6 µs | 11.4% | 0 | 0 | - | - | 699.6 |
-| `flex_500` | 238.3 µs | 379.3 µs | 444.8 µs | 1.0% | 0 | 0 | - | - | 474.7 |
-| `flex_500_wrap` | 276.2 µs | 445.8 µs | 752.9 µs | 5.4% | 0 | 0 | - | - | 550.2 |
-| `grid_20x20` | 236.6 µs | 378.1 µs | 699.4 µs | 3.6% | 0 | 0 | - | - | 588.6 |
-| `grid_40x40` | 894.0 µs | 1614.0 µs | 1926.8 µs | 1.6% | 0 | 0 | - | - | 558.0 |
+| `flat_100` | 52.6 µs | 87.2 µs | 102.1 µs | 0.2% | 0 | 0 | - | - | 487.0 |
+| `flat_1k` | 533.7 µs | 811.3 µs | 920.8 µs | 1.2% | 0 | 0 | - | - | 501.6 |
+| `flat_8k` | 5298.4 µs | 7083.5 µs | 8130.8 µs | 4.9% | 0 | 0 | - | - | 623.3 |
+| `deep_60` | 36.2 µs | 57.0 µs | 148.7 µs | 0.0% | 0 | 0 | - | - | 583.9 |
+| `mixed_tree` | 745.2 µs | 1342.0 µs | 1619.4 µs | 12.4% | 0 | 0 | - | - | 503.2 |
+| `block_1k` | 511.2 µs | 674.5 µs | 927.6 µs | 0.5% | 0 | 0 | - | - | 510.7 |
+| `inline_wrap` | 441.0 µs | 704.4 µs | 1036.4 µs | 1.4% | 0 | 0 | - | - | 1829.9 |
+| `float_gallery` | 430.3 µs | 672.1 µs | 912.7 µs | 2.0% | 0 | 0 | - | - | 1073.1 |
+| `scroll_container` | 1019.2 µs | 1630.4 µs | 1976.6 µs | 1.0% | 20236 | 103 | 40.373 | - | 1695.8 |
+| `sticky_20` | 131.3 µs | 272.2 µs | 492.5 µs | 9.6% | 167356 | 0 | 0.757 | - | 1300.0 |
+| `sticky_20_off` | 132.3 µs | 171.9 µs | 312.3 µs | 2.3% | 29992 | 0 | 3.676 | - | 1309.9 |
+| `top_layer` | 25.3 µs | 25.3 µs | 31.2 µs | 0.4% | 0 | 0 | - | - | 506.0 |
+| `top_layer_off` | 25.5 µs | 37.7 µs | 154.2 µs | 0.0% | 0 | 0 | - | - | 510.0 |
+| `anchored_20` | 31.0 µs | 35.5 µs | 52.7 µs | 0.3% | 0 | 0 | - | - | 508.2 |
+| `anchored_20_off` | 30.4 µs | 54.7 µs | 91.6 µs | 0.3% | 0 | 0 | - | - | 498.4 |
+| `table_auto_100` | 303.5 µs | 447.0 µs | 923.2 µs | 0.8% | 0 | 0 | - | - | 604.6 |
+| `table_auto_1k` | 3550.8 µs | 4961.1 µs | 5228.3 µs | 1.9% | 0 | 0 | - | - | 709.9 |
+| `table_auto_10k` | 64691.7 µs | 73357.0 µs | 78772.9 µs | 0.3% | 0 | 0 | - | - | 1293.8 |
+| `table_fixed_1k` | 3447.8 µs | 4695.4 µs | 5295.5 µs | 3.0% | 0 | 0 | - | - | 689.3 |
+| `flex_500` | 239.2 µs | 351.5 µs | 506.4 µs | 0.9% | 0 | 0 | - | - | 476.5 |
+| `flex_500_wrap` | 271.9 µs | 405.7 µs | 539.8 µs | 1.8% | 0 | 0 | - | - | 541.6 |
+| `grid_20x20` | 242.0 µs | 423.7 µs | 799.7 µs | 0.7% | 0 | 0 | - | - | 602.0 |
+| `grid_40x40` | 912.1 µs | 1345.9 µs | 2055.1 µs | 2.8% | 0 | 0 | - | - | 569.4 |
 
 - `flat_100` — 100 boxes, shallow: the fixed cost of a frame
 - `flat_1k` — 1000 boxes, shallow
@@ -132,11 +132,11 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `rules_10` | 261.4 µs | 435.9 µs | 508.7 µs | 0.8% | - | - | 490.4 |
-| `rules_100` | 264.3 µs | 402.6 µs | 551.7 µs | 4.8% | - | - | 495.9 |
-| `rules_250` | 262.7 µs | 336.9 µs | 784.5 µs | 1.4% | - | - | 492.9 |
-| `state_churn` | 277.1 µs | 454.5 µs | 639.5 µs | 6.6% | - | - | 519.9 |
-| `identical_siblings` | 501.4 µs | 805.4 µs | 967.4 µs | 0.8% | - | - | 500.9 |
+| `rules_10` | 263.4 µs | 395.7 µs | 546.6 µs | 1.2% | - | - | 494.2 |
+| `rules_100` | 271.3 µs | 462.7 µs | 589.0 µs | 3.7% | - | - | 509.0 |
+| `rules_250` | 264.3 µs | 429.7 µs | 576.0 µs | 0.9% | - | - | 495.9 |
+| `state_churn` | 274.3 µs | 354.1 µs | 428.9 µs | 2.6% | - | - | 514.6 |
+| `identical_siblings` | 499.6 µs | 895.6 µs | 1253.9 µs | 1.0% | - | - | 499.1 |
 
 - `rules_10` — 500 boxes against a 13 rule sheet
 - `rules_100` — the same boxes against 103 rules: the curve, not a point
@@ -148,9 +148,9 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | fill px | glyph px | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
-| `dashboard` | 29.6 µs | 43.0 µs | 49.0 µs | 7.1% | 2815 | 61 | 10.517 | - | 604.1 |
-| `table_1k_rows` | 5391.2 µs | 7148.6 µs | 8488.7 µs | 3.2% | 29227 | 0 | 184.462 | - | 898.4 |
-| `scroll_10k` | 311.3 µs | 483.3 µs | 665.8 µs | 2.5% | 273922 | 22251 | 1.137 | 246.5 | 2572.7 |
+| `dashboard` | 29.6 µs | 42.2 µs | 44.5 µs | 4.0% | 2815 | 61 | 10.517 | - | 604.1 |
+| `table_1k_rows` | 5292.5 µs | 7300.0 µs | 8978.0 µs | 1.1% | 29227 | 0 | 181.085 | - | 881.9 |
+| `scroll_10k` | 310.4 µs | 579.9 µs | 1025.1 µs | 3.7% | 273922 | 22251 | 1.133 | 245.8 | 2565.3 |
 
 - `dashboard` — the shipped example: rail, nav, six cards, drifting cursor
 - `table_1k_rows` — 1000 rows of 5 cells: 6000 boxes, most of them off screen
@@ -160,11 +160,11 @@ This machine can support a gate at roughly 4% on most scenes.
 
 | scene | p50 | p95 | p99 | spread | ns/px | ns/glyph | ns/node |
 | --- | --: | --: | --: | --: | --: | --: | --: |
-| `overdraw_10x` | 497.2 µs | 656.5 µs | 899.0 µs | 2.7% | 0.104 | - | - |
-| `tiny_boxes_10k` | 199.1 µs | 315.1 µs | 575.7 µs | 1.7% | 2.212 | - | - |
-| `opposite_corners` | 0.1 µs | 0.1 µs | 0.1 µs | 0.0% | - | - | - |
-| `corners_tree` | 3.8 µs | 3.9 µs | 3.9 µs | 0.0% | - | - | - |
-| `arena_churn` | 1484.0 µs | 2933.4 µs | 3352.4 µs | 3.6% | 3.093 | - | 446.4 |
+| `overdraw_10x` | 497.4 µs | 618.4 µs | 831.8 µs | 1.7% | 0.104 | - | - |
+| `tiny_boxes_10k` | 206.4 µs | 481.6 µs | 713.2 µs | 11.2% | 2.293 | - | - |
+| `opposite_corners` | 0.1 µs | 0.2 µs | 0.2 µs | 0.0% | - | - | - |
+| `corners_tree` | 3.8 µs | 3.8 µs | 3.9 µs | 0.0% | - | - | - |
+| `arena_churn` | 1540.7 µs | 2887.8 µs | 4746.6 µs | 6.7% | 3.211 | - | 463.5 |
 
 - `overdraw_10x` — ten full-surface fills: pure bandwidth, no cleverness helps
 - `tiny_boxes_10k` — 10000 three pixel fills: all overhead, no pixels
@@ -176,29 +176,29 @@ This machine can support a gate at roughly 4% on most scenes.
 
 **The rasterizer is bandwidth bound, not compute bound.** `clear_cached` and
 `clear_uncached` run identical code. The first fills at 0.101 ns per pixel, the
-second at 0.213, a factor of 2.1, purely because one surface fits in cache and
+second at 0.199, a factor of 2.0, purely because one surface fits in cache and
 the other does not. The target hardware can never satisfy the first condition,
 so the uncached figure is the one that transfers.
 
-**Blending costs 6.3 times opaque filling** — 0.974 against 0.155 ns per pixel. It
+**Blending costs 6.6 times opaque filling** — 0.940 against 0.142 ns per pixel. It
 reads, blends and writes where opaque only writes, and does four multiplies per
 pixel. That ratio is the measured case for SIMD in 0.15.0.
 
 **The bitmap glyph blitter pays partly per pixel and partly per bit.** At scale 2 it
-draws four times the pixels for 2.94 times the money — 149 against 51 ns per
+draws four times the pixels for 2.82 times the money — 149 against 53 ns per
 glyph. Four is what a blitter paying per pixel written would cost and one is what
 the original per-set-pixel path did cost, so the distance between them is the
 finding. These two scenes measure the built-in 8x8 face, which is what
 `ar_draw_text` uses when no font is loaded; 0.2.0's outline path is measured
 separately under **Outline text** below.
 
-**Style resolution no longer grows with rule count.** 261.4, 264.3 and 262.7 µs for 13,
+**Style resolution no longer grows with rule count.** 263.4, 271.3 and 264.3 µs for 13,
 103 and 253 rules over the same 500 boxes: 0% apart across 19 times the
 rules, inside the 2% these were measured in. The resolved-style cache did
 that — matching is keyed on `(tag, class, id, state)` and a repeat is a lookup
 rather than a scan.
 
-**What it did not fix is the per-box cost.** Style is 193 ns a box on a 13 rule sheet
+**What it did not fix is the per-box cost.** Style is 195 ns a box on a 13 rule sheet
 and 195 ns a box on a 253 rule sheet, and 192 ns a box across the thousand
 identically-classed boxes of `identical_siblings` — the case where every box
 after the first is a cache hit. A hit still copies the whole resolved `ar_style`
@@ -220,8 +220,8 @@ presented. The region move is what moves them without painting them, and
 of pixels "touched" is asking about `fill_px`; `dirty_ratio` cannot go below
 the container for a scroll and never will.
 
-It bought the painting and not the frame. Style is 323 µs and layout 479 µs against
-a raster of 231, so the frame is owned by the two passes that still run over every
+It bought the painting and not the frame. Style is 325 µs and layout 475 µs against
+a raster of 216, so the frame is owned by the two passes that still run over every
 box in the tree whatever the surface does — 601 of them here, 98% of which are
 clipped out before a pixel is drawn. The next scroll win is incremental layout,
 not painting.
