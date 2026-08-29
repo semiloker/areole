@@ -121,6 +121,43 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     {
         return 0;
     }
+    /*
+     * A box with an aspect ratio has a height, even though it did not state
+     * one -- its width did, on its behalf. Reading `height: auto` as "no
+     * height" here collapsed every ratio box to nothing, which is the whole
+     * point of the property undone by a test written before it existed.
+     */
+    if (n->style.v[AR_P_ASPECT_RATIO] > 0)
+    {
+        return 0;
+    }
+    /*
+     * A formatting context grows to hold its own floats, so one with a float
+     * in it has a height and does not collapse through -- which is the whole
+     * difference between `overflow: hidden` on a box of floats and the fifteen
+     * years of `clearfix` that existed because a plain block does collapse.
+     *
+     * The loop below is looking for in-flow content and a float is not in
+     * flow, so without this a box whose only child is a float answered "no
+     * content, no height" and the stack flattened it to nothing.
+     *
+     * It was invisible while every block was placed twice: the stack zeroed
+     * the height and the forward sweep's second placement worked it out again
+     * from the float list, arriving at the right answer through a box that had
+     * been declared empty on the way. Placing each box once took the second
+     * chance away and the test for it went red immediately.
+     */
+    if (ar_establishes_bfc(n))
+    {
+        for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+        {
+            if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && ar_is_floated(&nodes[c]))
+            {
+                return 0;
+            }
+        }
+    }
+
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
         if (nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_floated(&nodes[c]) &&

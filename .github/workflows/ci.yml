@@ -20,6 +20,7 @@ jobs:
   strict-c89:
     name: strict C89 (core only)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +61,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -83,9 +85,20 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      # The suite. It had never run here: every release was gated on the greps,
+      # the compile, clang-format, cppcheck and the examples' own --selftest,
+      # and the twelve hundred checks in ar_test were run by hand by whoever
+      # remembered. A gate that is green because nobody pulled the lever is the
+      # same failure as a baseline that never checked it covered the scenes.
+      #
+      # ctest also carries ar_bench_selftest and the short fuzz run.
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
   build-mingw:
     name: windows / mingw-w64
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         shell: msys2 {0}
@@ -104,6 +117,9 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
       # Every page of the tour, declared against a real surface with no window.
       # A page that leaves the tree unbalanced or overruns the box budget fails
       # here rather than when somebody clicks on it.
@@ -120,11 +136,116 @@ jobs:
       # The margin-collapsing corpus. It only prints rectangles here; the
       # browser comparison needs Chromium and runs locally.
       - name: Block corpus renders
-        run: ./build/example_block.exe > /dev/null
+        run: ./build/example_block.exe --dump > /dev/null
+
+      # The flex, grid and subgrid corpus. Like the block one it only renders
+      # here; the browser half needs Chromium and runs locally. It is gated at
+      # all because a corpus that stops building is a corpus nobody runs.
+      - name: Grid corpus renders
+        run: ./build/example_grid.exe --dump > /dev/null
+
+      # And its twin is generated, so it cannot drift from the C side unless
+      # somebody forgets to regenerate. This says so.
+      - name: The grid twin is up to date
+        run: |
+          ./build/example_grid.exe --html > /tmp/grid.html
+          diff -u examples/11_grid/grid.html /tmp/grid.html
+
+      # 0.9.0's demonstration: a document read from HTML, styled, laid out and
+      # painted, with nothing declared by hand. It asserts what it claims --
+      # the document parsed whole, the boxes carry text, the block layout
+      # actually ran, and two identical frames are identical -- rather than
+      # that it drew something.
+      - name: Document self-check
+        run: ./build/example_document.exe --selftest
+
+      # The sample document is a file as well as a string, so it can be opened
+      # in a browser beside the window the example draws -- which is the only
+      # way to look at "it reads HTML" and see whether it is true. Generated
+      # from the same bytes the self-check parses, so the two cannot drift.
+      - name: The document twin is up to date
+        run: |
+          ./build/example_document.exe --html > /tmp/document.html
+          diff -u examples/13_document/document.html /tmp/document.html
+
+      # And it parses back from disk, which is the path a real caller takes.
+      - name: The document parses from a file
+        run: ./build/example_document.exe examples/13_document/document.html --selftest
+
+      # Example 14: the same four calls, but an interface rather than a
+      # document -- a grid shell, a subgrid card deck, a table and a badge.
+      # Its first check is that the stylesheet parsed with no rule refused,
+      # because a rule areole cannot take is dropped whole and silently and
+      # the page still lays out, just wrongly.
+      - name: Interface self-check
+        run: ./build/example_interface.exe --selftest
+
+      - name: The interface twin is up to date
+        run: |
+          ./build/example_interface.exe --html > /tmp/page.html
+          diff -u examples/14_interface/page.html /tmp/page.html
+
+      - name: The interface parses from a file
+        run: ./build/example_interface.exe examples/14_interface/page.html --selftest
+
+      # Ten documents saved from the web, which is 0.9.0 acceptance criterion
+      # 9. Not a pixel gate -- the criterion is assessed by eye and says so.
+      # What this catches is the thing an eye cannot be asked about on every
+      # commit: a parse or a layout that crashes, hangs, or silently truncates
+      # on markup nobody wrote for this engine. `--selftest` fails if any of
+      # the ten overflows its budget or produces no boxes.
+      - name: The real-document corpus
+        run: ./build/example_real.exe --selftest
+
+      # The HTML tree corpus. Unlike the layout corpora this one needs no
+      # window at all -- its output is a tree per case -- so the dump runs
+      # here and only the browser half is local.
+      - name: HTML tree corpus dumps
+        run: ./build/example_html.exe --dump > /dev/null
+
+      - name: The HTML twin is up to date
+        run: |
+          ./build/example_html.exe --html > /tmp/cases.html
+          diff -u examples/12_html/cases.html /tmp/cases.html
+
+      # 0.9.0 acceptance criterion 3: the full named character reference table
+      # round-trips against the specification's own JSON. It regenerates
+      # src/ar_html_entity.c from the vendored tools/entities.json and compares,
+      # so a hand edit to either fails here.
+      #
+      # Offline on purpose. entities.json is vendored, so this needs no network
+      # and cannot change underneath a release because a URL did.
+      - name: The entity table round-trips
+        run: python tools/gen_entities.py --check
+
+      # 0.9.0 acceptance criterion 1: the html5lib tokenizer suite at 100%.
+      # Not 98, not "almost" -- the tokenizer is finite and fully specified.
+      # ar_html5lib exits non-zero if either suite is under its gate.
+      - name: html5lib tokenizer suite
+        run: ./build/ar_html5lib.exe --tokenizer --quiet
+
+      # 0.9.0 acceptance criterion 2: the html5lib tree construction suite at
+      # 98%. Met -- 1,884 of 1,922, with the 8 scripting cases skipped and
+      # counted, never quietly passed -- so this is a gate rather than a
+      # report. It spent the whole release as `|| true` with a comment saying
+      # it would become real the day the number arrived; this is that day.
+      #
+      # ar_html5lib exits non-zero under the gate, so no `|| true`.
+      - name: html5lib tree construction
+        run: ./build/ar_html5lib.exe --tree --quiet
+
+      # The HTML subsystem's binary budget, measured rather than typed. The
+      # figures in the release document were hand-transcribed and were 12 KB
+      # wrong by the time anyone looked -- the same failure as a benchmark
+      # baseline that never checked it covered its scenes. A budget nothing
+      # measures is a wish.
+      - name: The HTML parser fits its budget
+        run: python tools/check_size.py --check
 
   tidy:
     name: format and static analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -146,10 +267,20 @@ jobs:
           find $dirs \( -name '*.c' -o -name '*.h' \) -print0 |
             xargs -0 -r clang-format --dry-run --Werror
 
+      # `style` is deliberately not enabled, and the reason is not squeamishness.
+      # It found one defect and thirty-eight non-findings, and one of its checks
+      # cannot ever pass here: "the scope of the variable can be reduced" is a
+      # restatement of C89 wanting declarations at the top of a block, which is
+      # invariant 3. A gate that cannot go green is a gate nobody reads, and
+      # this one had been red since it was written -- which is how a null
+      # dereference in ar_break_next survived inside it.
+      #
+      # warning, performance and portability all stay. That null dereference was
+      # a `warning`, so the category that mattered is the one kept.
       - name: cppcheck
         run: |
           cppcheck --quiet --error-exitcode=1 --std=c89 --inline-suppr \
-                   --enable=warning,style,performance,portability \
+                   --enable=warning,performance,portability \
                    --suppress=missingIncludeSystem \
                    --suppress=unusedFunction \
                    --suppress=checkersReport \

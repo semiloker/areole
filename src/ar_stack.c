@@ -119,6 +119,20 @@ typedef struct ar__walk
     ar_i32   used;
 } ar__walk;
 
+/*
+ * Is this box in the top layer?
+ *
+ * The root is never in it however it is styled: it is the layer everything
+ * else is on top of, and putting it above itself would be a loop with no
+ * meaning.
+ */
+int ar_in_top_layer(const ar_node *n)
+{
+    /* Both values are in it. `modal` differs from `auto` only in making
+       everything outside it inert; where it paints is the same question. */
+    return n->parent >= 0 && n->style.v[AR_P_OVERLAY] != AR_OVERLAY_NONE;
+}
+
 static void ar__push(ar__walk *w, ar_i32 i)
 {
     if (w->used < w->cap)
@@ -147,6 +161,14 @@ static void ar__bucket_walk(ar__walk *w, ar_i32 root, ar_i32 at, ar_i32 want, ar
         ar_i32   bucket;
 
         if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+
+        /* In the top layer: emitted by the second pass in ar_stack_order, on
+           top of everything this one produces. Skipped rather than descended
+           into, so it is not also painted where the flow would have put it. */
+        if (ar_in_top_layer(ch))
         {
             continue;
         }
@@ -277,6 +299,7 @@ static void ar__context(ar__walk *w, ar_i32 root)
 ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap)
 {
     ar__walk w;
+    ar_i32   i;
 
     if (count <= 0 || !order || cap <= 0)
     {
@@ -289,5 +312,27 @@ ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap)
     w.used = 0;
 
     ar__context(&w, 0);
+
+    /*
+     * The top layer, on top of all of it.
+     *
+     * A second short list rather than a very large z-index, which is the whole
+     * point of the concept: a z-index cannot lift a box out of its stacking
+     * context, so a modal inside anything positioned could always be covered
+     * by that thing's siblings. This is also why the bound on z-index was
+     * removed rather than raised -- the escape hatch was never going to work.
+     *
+     * Tree order, so a box opened later covers one opened earlier, which is
+     * what a stack of dialogs means. Each is emitted exactly once: the walk
+     * above skipped them, so nothing is painted twice and `order` stays one
+     * slot per box.
+     */
+    for (i = 0; i < count; ++i)
+    {
+        if (ar_in_top_layer(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            ar__context(&w, i);
+        }
+    }
     return w.used;
 }

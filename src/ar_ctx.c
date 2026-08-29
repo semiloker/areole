@@ -24,7 +24,8 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 1 : -1];
 
 typedef char ar__mem_fixed_holds[(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) +
-                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) + 1024 <=
+                                      AR_STYLE_CACHE * sizeof(ar_cache_entry) +
+                                      AR_TRACK_POOL * sizeof(ar_track) + 1024 <=
                                   AR_MEM_FIXED)
                                      ? 1
                                      : -1];
@@ -175,14 +176,39 @@ static ar_u32 ar__round_pow2(ar_u32 v)
     return p;
 }
 
-ar_ctx *ar_init(void *mem, ar_u32 size)
+/*
+ * The rule table is the caller's to size, and this is why.
+ *
+ * An ar_rule is 588 bytes -- most of it an ar_style, because a rule carries a
+ * full set of property slots to hold the two or three it actually states. So
+ * 256 rules is 150 KB of the 192 KB AR_MEM_FIXED promises, and doubling the
+ * count would nearly double the floor every application pays, including the
+ * ones whose stylesheet is eleven rules.
+ *
+ * The floor stays where it is and the caller asks for more, which is exactly
+ * what AR_MEM already does for boxes: size the block with AR_MEM_RULES and
+ * hand the same number here.
+ *
+ * A browser user-agent stylesheet is around 400 rules, so 0.9.1 is the first
+ * caller that needs this -- and it needs it rather than a bigger constant,
+ * because a document viewer wanting 400 rules and an embedded panel wanting 11
+ * should not be charged the same 235 KB.
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
 {
     ar_arena a;
     ar_ctx  *c;
     ar_rule *rules;
-    ar_u32   boxes, slots;
+    ar_u32   boxes, slots, extra;
 
-    if (!mem || size < AR_MEM_FIXED)
+    /* Below the floor there is not room for the fixed structures at all, and
+       above it every extra rule is the caller's own arithmetic. */
+    if (max_rules < AR_MAX_RULES)
+    {
+        max_rules = AR_MAX_RULES;
+    }
+    extra = (max_rules - AR_MAX_RULES) * (ar_u32)sizeof(ar_rule) + doc_bytes;
+    if (!mem || size < AR_MEM_FIXED + extra)
     {
         return 0;
     }
@@ -197,12 +223,12 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     memset(c, 0, sizeof *c);
     c->arena = a; /* from here on the arena lives inside the thing it allocated */
 
-    rules = (ar_rule *)ar_arena_persist(&c->arena, AR_MAX_RULES * (ar_u32)sizeof(ar_rule));
+    rules = (ar_rule *)ar_arena_persist(&c->arena, max_rules * (ar_u32)sizeof(ar_rule));
     if (!rules)
     {
         return 0;
     }
-    ar_sheet_init(&c->sheet, rules, AR_MAX_RULES);
+    ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
 
     {
         ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
@@ -214,7 +240,29 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
         ar_sheet_set_cache(&c->sheet, cache, AR_STYLE_CACHE);
     }
 
-    boxes = (size - AR_MEM_FIXED) / AR_BYTES_PER_BOX;
+    {
+        /* The pool every grid template in every stylesheet is parsed into.
+           Persistent, because a track list is read every frame and parsed
+           once; bounded, because nothing here allocates twice. */
+        ar_track *tracks =
+            (ar_track *)ar_arena_persist(&c->arena, AR_TRACK_POOL * (ar_u32)sizeof(ar_track));
+        if (!tracks)
+        {
+            return 0;
+        }
+        ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
+    }
+
+    /*
+     * The box budget is what is left after everything the caller asked for on
+     * top of the floor -- a larger rule table, and a document.
+     *
+     * Subtracting them is the whole point. AR_MEM_RULES and AR_MEM_DOC add
+     * those bytes to the block, so counting them as boxes here would promise a
+     * budget the frame region cannot deliver, and the caller would find out as
+     * an overflow in the middle of a frame rather than as a refusal at init.
+     */
+    boxes = (size - AR_MEM_FIXED - extra) / AR_BYTES_PER_BOX;
     if (boxes < 32u)
     {
         boxes = 32u;
@@ -231,9 +279,15 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     c->slot_cap = (ar_i32)slots;
 
     c->box_budget = (ar_i32)boxes;
+    c->doc_budget = doc_bytes;
     c->frame = 1; /* zero means an unused slot, so frames start at one */
     ar_perf_reset(&c->perf);
     return c;
+}
+
+ar_ctx *ar_init(void *mem, ar_u32 size)
+{
+    return ar_init_ex(mem, size, AR_MAX_RULES, 0);
 }
 
 static ar_u32 ar__now(ar_ctx *c)
@@ -252,11 +306,20 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void))
 void ar_stylesheet(ar_ctx *c, const char *css)
 {
     ar_sheet_parse(&c->sheet, css);
+
+    /* Asked once here rather than once per box. Everything tables cost an
+       interface that has none is this flag being zero. */
+    ar_sheet_note_tables(&c->sheet);
 }
 
 ar_u32 ar_stylesheet_errors(const ar_ctx *c)
 {
     return c->sheet.errors;
+}
+
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
+{
+    return c ? c->sheet.rules_refused : 0;
 }
 
 /* ------------------------------------------------------------------------
@@ -510,6 +573,333 @@ int ar_needs_redraw(const ar_ctx *c)
     return c->hot_changed || c->scrolled;
 }
 
+void ar_set_safe_area(ar_ctx *c, ar_i32 top, ar_i32 right, ar_i32 bottom, ar_i32 left)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->env.v[AR_ENV_SAFE_TOP] = top;
+    c->env.v[AR_ENV_SAFE_RIGHT] = right;
+    c->env.v[AR_ENV_SAFE_BOTTOM] = bottom;
+    c->env.v[AR_ENV_SAFE_LEFT] = left;
+    c->env.known[AR_ENV_SAFE_TOP] = 1;
+    c->env.known[AR_ENV_SAFE_RIGHT] = 1;
+    c->env.known[AR_ENV_SAFE_BOTTOM] = 1;
+    c->env.known[AR_ENV_SAFE_LEFT] = 1;
+}
+
+void ar_set_titlebar_area(ar_ctx *c, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->env.v[AR_ENV_TITLEBAR_X] = x;
+    c->env.v[AR_ENV_TITLEBAR_Y] = y;
+    c->env.v[AR_ENV_TITLEBAR_W] = w;
+    c->env.v[AR_ENV_TITLEBAR_H] = h;
+    c->env.known[AR_ENV_TITLEBAR_X] = 1;
+    c->env.known[AR_ENV_TITLEBAR_Y] = 1;
+    c->env.known[AR_ENV_TITLEBAR_W] = 1;
+    c->env.known[AR_ENV_TITLEBAR_H] = 1;
+}
+
+void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
+{
+    if (c)
+    {
+        c->env.fit_cover = (ar_u8)(cover ? 1 : 0);
+    }
+}
+
+/*
+ * Sticky boxes that cannot ever stick.
+ *
+ * A sticky box is pinned inside its nearest scroll container. CSS counts
+ * `overflow: hidden` as one -- it clips, and it can be scrolled
+ * programmatically even though nothing offers the user a way to -- so a sticky
+ * box inside one is pinned to a scrollport that never moves, and never sticks.
+ *
+ * That is correct, and it is the single most reported non-bug in every engine,
+ * because the author sees a header that will not stick and a stylesheet with
+ * nothing wrong in it. Saying so is cheaper than being asked.
+ *
+ * The walk stops at the first clipping ancestor, which is the one that decides:
+ * a scrolling ancestor further out is not this box's scrollport and cannot
+ * rescue it.
+ */
+/*
+ * Which boxes the pointer is not allowed to reach.
+ *
+ * Two sources, and the second is the interesting one. A box can say `inert`
+ * about itself and its subtree; and a modal in the top layer makes everything
+ * *outside* it inert, which is what stops a click landing on the page behind a
+ * dialog. That second rule depends on a box that may be declared after the one
+ * being asked about, so it cannot be answered while the tree is being built --
+ * the same shape as :last-child, and settled the same way, in a pass once the
+ * tree is closed.
+ *
+ * The topmost modal wins when there are several, because a stack of dialogs is
+ * a stack: the one opened last is the one you are talking to. Tree order is
+ * open order, so that is the last one found.
+ *
+ * Written into `state` after the styles are resolved, so nothing can select on
+ * it and the style cache never sees it. That is deliberate: `:inert` is not a
+ * selector areole parses, and putting a post-resolution value into the cache
+ * key's word is only safe because nothing reads it back.
+ */
+/* Defined further down, beside the other tree walks. Declared here because
+   inertness is settled long before that point in the file. */
+static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root);
+
+static void ar__mark_inert(ar_ctx *c)
+{
+    ar_i32 modal = -1;
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].style.v[AR_P_OVERLAY] == AR_OVERLAY_MODAL &&
+            c->nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            modal = i;
+        }
+    }
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   at;
+        int      inert = 0;
+
+        if (modal >= 0 && !ar__is_within(c, i, modal))
+        {
+            inert = 1;
+        }
+        for (at = i; at >= 0 && !inert; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_INERT] == AR_INERT_AUTO)
+            {
+                inert = 1;
+            }
+        }
+        if (inert)
+        {
+            n->state = (ar_u16)(n->state | AR_STATE_INERT);
+        }
+    }
+}
+
+/*
+ * Which boxes belong to a table whose borders are collapsed.
+ *
+ * Written before layout rather than after it, unlike inertness, because the
+ * whole geometry of a collapsed table depends on the answer: the cells sit
+ * half a grid line closer together, the table's own border is folded into the
+ * outer lines and stops being drawn, and the intrinsic widths must not count
+ * a border that no longer belongs to the cell.
+ *
+ * The alternative was threading a flag through five helpers and three passes.
+ * A bit on the box says the same thing once, and every one of them can read
+ * it -- including the paint pass, which is on the other side of layout and has
+ * no table in scope at all.
+ *
+ * The walk is short: it only runs for table boxes, and a cell is two or three
+ * levels beneath its table. A stylesheet with no table in it never runs it.
+ */
+static void ar__mark_collapsed(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (!c->sheet.has_collapse)
+    {
+        return;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   d = n->style.v[AR_P_DISPLAY];
+        ar_i32   at;
+
+        /* A caption is deliberately not in this list. It is a table-level box
+           that is in no row and no column, so no grid line runs through it and
+           its own border is its own. */
+        if (d != AR_DISPLAY_TABLE && d != AR_DISPLAY_TABLE_ROW && d != AR_DISPLAY_TABLE_ROW_GROUP &&
+            d != AR_DISPLAY_TABLE_HEADER_GROUP && d != AR_DISPLAY_TABLE_FOOTER_GROUP &&
+            d != AR_DISPLAY_TABLE_CELL)
+        {
+            continue;
+        }
+        for (at = i; at >= 0; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE)
+            {
+                if (c->nodes[at].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
+                {
+                    n->state = (ar_u16)(n->state | AR_STATE_COLLAPSED);
+                }
+                break;
+            }
+        }
+    }
+}
+
+/*
+ * `display: contents`: the box generates none, and its children become its
+ * parent's.
+ *
+ * Done by splicing, before layout, rather than by teaching every child walk to
+ * see through it -- and the splice is safe in a way that is worth stating,
+ * because it looks like the kind of thing that would break everything.
+ *
+ * Pre-order survives. A contents box's children already sit at higher indices
+ * than the box, which sits higher than its parent, so re-parenting them moves
+ * nobody in the array and the invariant five passes rely on still holds. Keys
+ * survive too: they were assigned when the tree was built and nothing here
+ * assigns one.
+ *
+ * The specification's exceptions are not here, and cannot be.
+ *
+ * CSS excepts replaced elements, form controls and table parts -- and every
+ * one of those is an *element*, not a display value. A box that says
+ * `display: contents` has no other display for this pass to look at: by the
+ * time it runs, the box's display is `contents` and nothing records that it
+ * would otherwise have been a row. The exception needs a tag name, and there
+ * are no tag names until the parser lands at 0.9.0.
+ *
+ * That is a real gap and not a small one -- `display: contents` on a `<tr>` is
+ * specified to do nothing and here it removes the row. It is written down
+ * rather than half-implemented, because a check against a display value would
+ * look like the exception without being it.
+ */
+static void ar__splice_contents(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = c->node_count - 1; i >= 1; --i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   parent = n->parent;
+        ar_i32   first = n->first_child;
+        ar_i32   last = n->last_child;
+        ar_i32   ch;
+
+        if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_CONTENTS || parent < 0)
+        {
+            continue;
+        }
+
+        if (first < 0)
+        {
+            /* Nothing to promote, so the box simply draws nothing. Left in the
+               tree with an empty rect rather than unlinked, because unlinking
+               it would renumber its siblings' child indices and those are what
+               `:nth-child` and the corpora both read. */
+            n->rect = ar_rect_make(0, 0, 0, 0);
+            continue;
+        }
+
+        for (ch = first; ch >= 0; ch = c->nodes[ch].next_sibling)
+        {
+            c->nodes[ch].parent = parent;
+        }
+
+        /* Stitch the run in where the box was. */
+        c->nodes[first].prev_sibling = n->prev_sibling;
+        c->nodes[last].next_sibling = n->next_sibling;
+        if (n->prev_sibling >= 0)
+        {
+            c->nodes[n->prev_sibling].next_sibling = first;
+        }
+        else
+        {
+            c->nodes[parent].first_child = first;
+        }
+        if (n->next_sibling >= 0)
+        {
+            c->nodes[n->next_sibling].prev_sibling = last;
+        }
+        else
+        {
+            c->nodes[parent].last_child = last;
+        }
+        c->nodes[parent].child_count = (ar_i32)(c->nodes[parent].child_count - 1 + n->child_count);
+
+        n->first_child = -1;
+        n->last_child = -1;
+        n->child_count = 0;
+        n->next_sibling = -1;
+        n->prev_sibling = -1;
+        n->parent = -1;
+        n->rect = ar_rect_make(0, 0, 0, 0);
+    }
+}
+
+static void ar__diagnose(ar_ctx *c)
+{
+    ar_i32 i;
+
+    c->diag_count = 0;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_i32 at;
+
+        if (!ar_is_sticky(&c->nodes[i]) || c->nodes[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+
+        for (at = c->nodes[i].parent; at >= 0; at = c->nodes[at].parent)
+        {
+            if (!ar_clips(&c->nodes[at]))
+            {
+                continue;
+            }
+            if (!ar_is_scroll_container(&c->nodes[at]) && c->diag_count < AR_DIAG_MAX)
+            {
+                c->diag[c->diag_count].code = AR_DIAG_STICKY_NEVER_STICKS;
+                c->diag[c->diag_count].node = i;
+                ++c->diag_count;
+            }
+            break;
+        }
+    }
+}
+
+ar_i32 ar_diag_count(const ar_ctx *c)
+{
+    return c ? c->diag_count : 0;
+}
+
+ar_i32 ar_diag_at(const ar_ctx *c, ar_i32 i, ar_i32 *out_node)
+{
+    if (!c || i < 0 || i >= c->diag_count)
+    {
+        if (out_node)
+        {
+            *out_node = -1;
+        }
+        return 0;
+    }
+    if (out_node)
+    {
+        *out_node = c->diag[i].node;
+    }
+    return c->diag[i].code;
+}
+
+const char *ar_diag_text(ar_i32 code)
+{
+    if (code == AR_DIAG_STICKY_NEVER_STICKS)
+    {
+        return "position:sticky inside an overflow:hidden ancestor never sticks: "
+               "that ancestor is its scrollport and it does not scroll";
+    }
+    return "";
+}
+
 ar_perf *ar_perf_of(ar_ctx *c)
 {
     return &c->perf;
@@ -618,6 +1008,25 @@ static int ar__sel_walk(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, a
     {
         to = c->nodes[from].prev_sibling;
     }
+
+    /*
+     * Anonymous boxes are invisible to a combinator.
+     *
+     * `tr > td` has to keep matching when the row between them is one areole
+     * generated, or fixing up malformed markup would silently break the very
+     * stylesheet written against that markup -- the author would see a table
+     * appear and its styling vanish, with nothing to point at. So the step is
+     * taken again for as long as it lands on a box nobody declared.
+     *
+     * The same loop serves both directions: a generated row is skipped over
+     * going up, and a generated cell is skipped over going sideways.
+     */
+    while (to >= 0 && (c->nodes[to].state & AR_STATE_ANON))
+    {
+        to = (comb == AR_COMB_CHILD || comb == AR_COMB_DESCENDANT) ? c->nodes[to].parent
+                                                                   : c->nodes[to].prev_sibling;
+    }
+
     if (to < 0)
     {
         return 0;
@@ -647,6 +1056,37 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
        A stylesheet without combinators skips this entirely. */
     ar_sheet_resolve_contextual(&c->sheet, i, n->sel_tag, &n->sel_class, n->sel_id, n->state,
                                 ar__sel_walk, c, &n->style);
+
+    /*
+     * env(), after the cache for exactly the reason inheritance is.
+     *
+     * A resolved style may only depend on the cache key -- tag, class, id and
+     * state -- and an env() value depends on none of them. It depends on what
+     * the backend last said about the display, which can change while the
+     * stylesheet does not. Resolving it here, on the copy the cache handed
+     * back, keeps the cached entry free of it; the alternative was to clear
+     * the whole cache whenever an inset moved, which would have made a
+     * fullscreen toggle cost a full restyle.
+     *
+     * The loop is over the properties this box actually stated. A sheet with
+     * no env() in it walks that set once and finds nothing.
+     */
+    {
+        ar_i32 p;
+
+        for (p = 0; p < AR_P_COUNT; ++p)
+        {
+            ar_u8 u = n->style.unit[p];
+
+            if (u >= AR_UNIT_ENV_FIRST && u <= AR_UNIT_ENV_LAST)
+            {
+                ar_i32 slot = (ar_i32)u - AR_UNIT_ENV_FIRST;
+
+                ar_style_put(&n->style, p, ar_env_value(&c->env, slot, ar_style_get(&n->style, p)));
+                n->style.unit[p] = AR_UNIT_PX;
+            }
+        }
+    }
 
     /* Inheritance, after the cache rather than inside it. The cache holds what
        the selectors produced, which does not depend on where a box sits; the
@@ -1060,7 +1500,7 @@ static void ar__scroll_moved(ar_ctx *c, ar_u32 key, ar_i32 dy)
 ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
 {
     ar_slot *slot;
-    ar_i32   was;
+    ar_i32   was, want;
 
     if (!c || i < 0 || i >= c->node_count || !ar_is_scroll_container(&c->nodes[i]))
     {
@@ -1072,10 +1512,122 @@ ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y)
         return 0;
     }
     was = slot->scroll;
-    slot->scroll = (ar_scroll_pos)ar_scroll_clamp(&c->nodes[i], y);
+    want = ar_scroll_clamp(&c->nodes[i], y);
+
+    /*
+     * And then snapping settles it, exactly as it settles a notch.
+     *
+     * CSS applies scroll snapping after any scrolling operation, not only the
+     * ones a hand drove: a mandatory container is required to be resting on a
+     * snap point, however it got there. A browser re-snaps when a script
+     * assigns scrollTop, and this call is the same thing.
+     *
+     * It did not, which made the container's resting position depend on which
+     * call moved it -- a notch landed on a slide and ar_node_scroll_to landed
+     * between two. The wheel and the keys have always agreed with each other
+     * because they settle through this same pair of lines; this is the third
+     * caller joining them.
+     *
+     * Clamped before snapping, so a candidate is never measured against a
+     * position the container could not have reached.
+     */
+    if (ar_scroll_snaps_y(&c->nodes[i]))
+    {
+        want = ar_scroll_snap(c->nodes, c->node_count, i, was, want);
+    }
+
+    slot->scroll = (ar_scroll_pos)want;
     ar__scroll_moved(c, c->nodes[i].key, slot->scroll - was);
     ar_damage_add(&c->damage, c->nodes[i].rect);
     return slot->scroll;
+}
+
+/*
+ * Scroll an ancestor until this box is inside the scrollport.
+ *
+ * The rects have already been shifted by the current offset when this is
+ * called from inside a frame, so the arithmetic is in screen coordinates and
+ * the answer is a delta rather than an absolute position -- the same reasoning
+ * ar_scroll_snap depends on.
+ */
+int ar_node_scroll_into_view(ar_ctx *c, ar_i32 i)
+{
+    ar_i32   at;
+    ar_node *n;
+    ar_i32   top, bottom, port_top, port_bottom, delta, want;
+    ar_slot *slot;
+
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    n = &c->nodes[i];
+
+    /* The nearest scrollable ancestor, not the nearest ancestor: a box inside
+       three nested divs in one scroll container is still that container's
+       business. */
+    for (at = n->parent; at >= 0; at = c->nodes[at].parent)
+    {
+        if (ar_is_scroll_container(&c->nodes[at]) && ar_scrolls_y(&c->nodes[at]))
+        {
+            break;
+        }
+    }
+    if (at < 0)
+    {
+        return 0;
+    }
+
+    slot = ar_ctx_slot(c, c->nodes[at].key);
+    if (!slot)
+    {
+        return 0;
+    }
+
+    /* scroll-margin grows the target, scroll-padding shrinks the port. */
+    top = n->rect.y - n->style.v[AR_P_SCROLL_MARGIN_TOP];
+    bottom = n->rect.y + n->rect.h + n->style.v[AR_P_SCROLL_MARGIN_BOTTOM];
+    port_top = c->nodes[at].rect.y + c->nodes[at].style.v[AR_P_SCROLL_PAD_TOP];
+    port_bottom =
+        c->nodes[at].rect.y + c->nodes[at].rect.h - c->nodes[at].style.v[AR_P_SCROLL_PAD_BOTTOM];
+
+    /*
+     * The minimum move that works, which is three cases and not two.
+     *
+     * Above the port: bring its top to the top. Below: bring its bottom to the
+     * bottom. Already inside: do nothing, because scrolling a visible thing is
+     * how a page jumps under someone who was reading it.
+     *
+     * A box taller than the port counts as above rather than below, so its top
+     * is what you end up looking at. Reading starts at the top.
+     */
+    if (top < port_top)
+    {
+        delta = top - port_top;
+    }
+    else if (bottom > port_bottom)
+    {
+        delta = bottom - port_bottom;
+        if (top - delta < port_top)
+        {
+            delta = top - port_top;
+        }
+    }
+    else
+    {
+        return 0;
+    }
+
+    want = ar_scroll_clamp(&c->nodes[at], slot->scroll + delta);
+    if (want == slot->scroll)
+    {
+        return 0;
+    }
+    ar__scroll_moved(c, c->nodes[at].key, want - slot->scroll);
+    slot->scroll = (ar_scroll_pos)want;
+    ar_damage_add(&c->damage, c->nodes[at].rect);
+    c->scrolled = 1;
+    return 1;
 }
 
 int ar_scrolled(const ar_ctx *c)
@@ -1118,6 +1670,15 @@ ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i
         *out_to = f->to;
     }
     return f->rect;
+}
+
+int ar_node_generated(const ar_ctx *c, ar_i32 i)
+{
+    if (!c || i < 0 || i >= c->node_count)
+    {
+        return 0;
+    }
+    return (c->nodes[i].state & AR_STATE_ANON) != 0;
 }
 
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
@@ -1173,6 +1734,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->mouse_inside = in ? in->mouse_inside : 0;
     c->wheel = in ? in->wheel : 0;
     c->wheel_px = in ? in->wheel_px : 0;
+    c->keys = in ? in->keys_pressed : 0;
     c->scrolled = 0;
 
     /* A press latches whichever box the cursor was over, and a release only
@@ -1181,7 +1743,18 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        toolkit does and what people expect. */
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
+        ar_i32 k;
+
         c->active = c->hot;
+
+        /* The ancestors latch with it, for the reason `:hover` has them: the
+           box under the cursor in a document is the text, and the rule that
+           says what a pressed item looks like is on its parent. */
+        c->active_chain_n = c->hot_chain_n;
+        for (k = 0; k < c->hot_chain_n; ++k)
+        {
+            c->active_chain[k] = c->hot_chain[k];
+        }
     }
     c->clicked = 0;
     if (c->mouse_released & AR_MOUSE_LEFT)
@@ -1191,6 +1764,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             c->clicked = c->active;
         }
         c->active = 0;
+        c->active_chain_n = 0;
     }
 
     /* The tree has to be contiguous to be indexed, so the whole array is
@@ -1250,6 +1824,26 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             : 0;
 }
 
+/* Is this box the hot one, or an ancestor of it? The chain is a root path, so
+   it is as long as the tree is deep and usually about eight. */
+static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (!key)
+    {
+        return 0;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        if (chain[i] == key)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------------
  * Tree building
  * ------------------------------------------------------------------------ */
@@ -1292,11 +1886,11 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     /* Hover and active come from where this box was last frame, because where
        it is this frame is not known until after layout. See ar_node.h. */
     slot = ar_ctx_slot(c, key);
-    if (key == c->hot)
+    if (ar__in_chain(c->hot_chain, c->hot_chain_n, key))
     {
         state |= AR_STATE_HOVER;
     }
-    if (key == c->active)
+    if (ar__in_chain(c->active_chain, c->active_chain_n, key))
     {
         state |= AR_STATE_ACTIVE;
     }
@@ -1338,7 +1932,15 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
        another box's text. */
     n->frag_first = 0;
     n->frag_count = 0;
+    n->measured_w = -1;
     n->rect = ar_rect_make(0, 0, 0, 0);
+    /* A node is reused frame to frame, and a collapsed edge is written only by
+       a table. Without this, a cell that was in a collapsed table one frame
+       kept its four widths into a frame where it was not in one at all. */
+    n->edge[0] = 0;
+    n->edge[1] = 0;
+    n->edge[2] = 0;
+    n->edge[3] = 0;
 
     ar__resolve(c, c->node_count - 1);
 
@@ -1376,9 +1978,255 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     return idx;
 }
 
+/* ------------------------------------------------------------------------
+ * Anonymous table boxes
+ *
+ * CSS requires the missing pieces of a malformed table to be generated: a cell
+ * with no row gets a row, a row with no table gets a table, and content sitting
+ * directly inside a table gets a cell to live in. Real markup is rarely
+ * well-formed and the algorithm has to see a rectangular grid.
+ *
+ * **Generated as the tree is declared, not afterwards**, and that is the design
+ * rather than a detail. Two invariants make the alternative impossible: a
+ * parent must sit at a lower index than its children -- ar_layout.c says so in
+ * its header and five passes rely on it -- and a box's identity is its position
+ * among its siblings, so inserting one mid-array would renumber every following
+ * sibling's key and lose its hover, its scroll offset and its repaint digest.
+ * Building the tree correctly in the first place costs neither.
+ *
+ * An anonymous box stays open after the box that caused it closes, because the
+ * next sibling usually belongs in it too: two bare cells share one row. It is
+ * closed by whichever comes first -- something arriving that cannot live in it,
+ * or the box that contains it closing.
+ * ------------------------------------------------------------------------ */
+static int ar__is_table_container(ar_i32 d)
+{
+    return d == AR_DISPLAY_TABLE || d == AR_DISPLAY_TABLE_ROW_GROUP ||
+           d == AR_DISPLAY_TABLE_HEADER_GROUP || d == AR_DISPLAY_TABLE_FOOTER_GROUP ||
+           d == AR_DISPLAY_TABLE_ROW;
+}
+
+/* Whether `disp` may sit directly inside `pd`. */
+static int ar__parent_ok(ar_i32 disp, ar_i32 pd)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return pd == AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return pd == AR_DISPLAY_TABLE_ROW_GROUP || pd == AR_DISPLAY_TABLE_HEADER_GROUP ||
+               pd == AR_DISPLAY_TABLE_FOOTER_GROUP || pd == AR_DISPLAY_TABLE;
+    case AR_DISPLAY_TABLE_COLUMN:
+        /* A column group is a column's home as much as the table is, and this
+           read only the table -- so `col` inside `colgroup`, which is how
+           almost every table that has columns at all is written, had an
+           anonymous *table* generated around it. */
+        return pd == AR_DISPLAY_TABLE || pd == AR_DISPLAY_TABLE_COLUMN_GROUP;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return pd == AR_DISPLAY_TABLE;
+    default:
+        /* Ordinary content is welcome anywhere except directly inside a table
+           box or a row, where it is a cell's worth of content with no cell. */
+        return !ar__is_table_container(pd);
+    }
+}
+
+/* The box `disp` needs immediately above it. */
+static ar_i32 ar__anon_parent_of(ar_i32 disp)
+{
+    switch (disp)
+    {
+    case AR_DISPLAY_TABLE_CELL:
+        return AR_DISPLAY_TABLE_ROW;
+    case AR_DISPLAY_TABLE_ROW:
+        return AR_DISPLAY_TABLE_ROW_GROUP;
+    case AR_DISPLAY_TABLE_ROW_GROUP:
+    case AR_DISPLAY_TABLE_HEADER_GROUP:
+    case AR_DISPLAY_TABLE_FOOTER_GROUP:
+    case AR_DISPLAY_TABLE_COLUMN:
+    case AR_DISPLAY_TABLE_COLUMN_GROUP:
+    case AR_DISPLAY_TABLE_CAPTION:
+        return AR_DISPLAY_TABLE;
+    default:
+        return AR_DISPLAY_TABLE_CELL;
+    }
+}
+
+static ar_i32 ar__open_display(const ar_ctx *c)
+{
+    if (c->depth <= 0 || c->stack[c->depth - 1] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 1]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * The display a selector would resolve to, asked before the box exists.
+ *
+ * State is taken as zero, because a box's state comes from its key and its key
+ * comes from the parent this call is trying to choose. So a rule that switches
+ * `display` to or from a table value on :hover will not regenerate the
+ * anonymous boxes around it. Named here rather than discovered later.
+ */
+static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
+{
+    ar_u32     tag = 0, id = 0;
+    ar_classes klass;
+    ar_style   st;
+
+    ar_classes_clear(&klass);
+    ar_selector_split(selector, &tag, &klass, &id);
+    ar_sheet_resolve(&c->sheet, tag, &klass, id, AR_STATE_NONE, &st);
+    return st.v[AR_P_DISPLAY];
+}
+
+static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
+{
+    ar_i32 idx = ar__push_node(c, "", 0);
+
+    if (idx < 0 || c->depth >= AR_MAX_DEPTH)
+    {
+        return -1;
+    }
+    c->nodes[idx].style.v[AR_P_DISPLAY] = (ar_i16)display;
+    c->nodes[idx].state = (ar_u16)(c->nodes[idx].state | AR_STATE_ANON);
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 1;
+    c->depth++;
+    return idx;
+}
+
+/* Closes anonymous boxes that cannot hold what is about to be declared. */
+/* The display of the box one level above the one that is open, or -1. */
+static ar_i32 ar__outer_display(const ar_ctx *c)
+{
+    if (c->depth <= 1 || c->stack[c->depth - 2] < 0)
+    {
+        return -1;
+    }
+    return c->nodes[c->stack[c->depth - 2]].style.v[AR_P_DISPLAY];
+}
+
+/*
+ * How many boxes would have to be invented to put `disp` inside `pd`.
+ *
+ * Four is the whole ladder -- cell, row, row group, table -- and the chain
+ * cycles if it is followed past that, so the count is bounded rather than
+ * trusted to terminate.
+ */
+static int ar__anon_cost(ar_i32 disp, ar_i32 pd)
+{
+    ar_i32 d = disp;
+    int    n = 0;
+
+    if (pd < 0)
+    {
+        return 99;
+    }
+    while (n <= 4)
+    {
+        if (ar__parent_ok(d, pd))
+        {
+            return n;
+        }
+        d = ar__anon_parent_of(d);
+        ++n;
+    }
+    return 99;
+}
+
+/*
+ * Close the anonymous boxes this one does not belong in.
+ *
+ * The old test was whether `disp` fits directly, which closed too much: a
+ * block written straight after a cell needs a cell of its own, and a cell
+ * belongs in the row the first cell was given -- but a block does not fit in a
+ * row, so the row was closed and a second one opened, putting two boxes that
+ * belong side by side on separate lines.
+ *
+ * The question is not whether `disp` fits here, but whether closing this box
+ * would mean inventing fewer. A row written after a bare cell fits the table
+ * directly, so the generated row closes and it becomes its sibling; a block
+ * written after a bare cell needs a cell either way, and needs a row as well
+ * if the generated one is closed, so the generated one stays open.
+ */
+static void ar__close_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    while (c->depth > 0 && c->is_anon[c->depth - 1] &&
+           ar__anon_cost(disp, ar__outer_display(c)) < ar__anon_cost(disp, ar__open_display(c)))
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
+}
+
+/*
+ * Opens whatever `disp` needs above it, outermost first.
+ *
+ * The chain is collected innermost-first and pushed in reverse, because the
+ * outer box has to exist before the one inside it can be its child. Getting
+ * that backwards puts the row inside the cell.
+ */
+static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
+{
+    ar_i32 chain[4];
+    ar_i32 n = 0, i, d = disp;
+
+    /*
+     * Never at the document root.
+     *
+     * An anonymous table pushed with nothing open would become node 0 and take
+     * AR_STATE_ROOT with it, moving `:root` off the caller's box and rooting
+     * the paint walk at a box nobody declared. A `<tr>` on its own is not a
+     * document, and refusing is better than rehoming the root.
+     */
+    if (c->depth <= 0)
+    {
+        return;
+    }
+
+    while (n < 4)
+    {
+        ar_i32 pd = ar__open_display(c);
+
+        if (pd < 0 || ar__parent_ok(d, pd))
+        {
+            break;
+        }
+        chain[n++] = ar__anon_parent_of(d);
+        d = chain[n - 1];
+    }
+
+    for (i = n - 1; i >= 0; --i)
+    {
+        if (ar__push_anon(c, chain[i]) < 0)
+        {
+            return;
+        }
+    }
+}
+
 void ar_begin(ar_ctx *c, const char *selector)
 {
-    ar_i32 idx = ar__push_node(c, selector, 0);
+    ar_i32 idx;
+
+    /* A sheet that never mentions a table cannot need an anonymous one, and
+       almost no sheet does -- so this is the entire cost of tables to an
+       interface without any. */
+    if (c->sheet.has_table)
+    {
+        ar_i32 disp = ar__peek_display(c, selector);
+
+        ar__close_anon_for(c, disp);
+        ar__open_anon_for(c, disp);
+    }
+
+    idx = ar__push_node(c, selector, 0);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -1392,14 +2240,25 @@ void ar_begin(ar_ctx *c, const char *selector)
            the matching ar_end still balances and the subtree collapses into
            its parent instead of corrupting the stack. */
         c->stack[c->depth] = c->depth > 0 ? c->stack[c->depth - 1] : -1;
+        c->is_anon[c->depth] = 0;
         c->depth++;
         return;
     }
-    c->stack[c->depth++] = idx;
+    c->stack[c->depth] = idx;
+    c->is_anon[c->depth] = 0;
+    c->depth++;
 }
 
 void ar_end(ar_ctx *c)
 {
+    /* Anonymous boxes sitting on top close with the box that contains them.
+       They are not closed by whichever box caused them, because the next
+       sibling usually belongs in the same one. */
+    while (c->depth > 0 && c->is_anon[c->depth - 1])
+    {
+        c->is_anon[c->depth - 1] = 0;
+        c->depth--;
+    }
     if (c->depth <= 0)
     {
         c->unbalanced = 1;
@@ -1579,8 +2438,18 @@ static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
     {
         ar_node *n = &c->nodes[i];
 
-        if (n->parent < 0)
+        if (n->parent < 0 || ar_in_top_layer(n))
         {
+            /*
+             * The top layer starts a fresh clip at the viewport.
+             *
+             * Without this the concept does not work at all: `clip` is a strict
+             * intersection down the parent chain with no escape, so a modal
+             * declared inside anything with `overflow: hidden` would paint
+             * above everything and be clipped to a box it has no relationship
+             * with. Painting order and clipping have to agree that it left its
+             * ancestors behind.
+             */
             n->clip = viewport;
         }
         else
@@ -1609,7 +2478,58 @@ static ar_rect ar__content_clip(const ar_node *n)
 
 /* `region` is what this pass is allowed to touch -- the damage, or one band of
    it -- and is narrower than the viewport the clips were built against. */
-static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
+/*
+ * The scrollbars, after everything else.
+ *
+ * They were painted inside the main loop, at the container's own place in
+ * paint order -- which is before its children, because a child comes later in
+ * the order by construction. So every row of a list drew straight over the bar
+ * and the bar was visible only where the content happened not to reach.
+ *
+ * An overlay bar is defined by being on top of what it overlays. It is drawn
+ * inside the container's right edge rather than taken out of its width, so
+ * unless it is painted after the contents, it is painted under them.
+ *
+ * A second pass over the same order rather than a special case inside the
+ * first: the bars are few, the loop is short, and the alternative -- painting
+ * a container's bar once its whole subtree has been walked -- means knowing
+ * where a subtree ends in paint order, which is not the same thing as where it
+ * ends in the tree.
+ */
+static void ar__paint_bars(ar_ctx *c, ar_surface *s, ar_rect region)
+{
+    ar_i32 ord;
+    ar_i32 painted = c->order ? c->order_count : c->node_count;
+
+    for (ord = 0; ord < painted; ++ord)
+    {
+        ar_i32   i = c->order ? c->order[ord] : ord;
+        ar_node *n = &c->nodes[i];
+        ar_rect  clip, track, thumb;
+        ar_color tc, hc;
+
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || !ar_scroll_bar_visible(n))
+        {
+            continue;
+        }
+
+        clip = ar_rect_intersect(n->clip, region);
+        tc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_TRACK);
+        hc = (ar_color)AR_WIDE(&n->style, AR_P_SCROLLBAR_THUMB);
+
+        /* Zero means the stylesheet said nothing, so the defaults stand. They
+           are translucent blacks rather than opaque greys, which is what lets
+           one overlay bar sit legibly on a light card and on a dark one
+           without the stylesheet choosing. A stated colour of zero is fully
+           transparent and equally invisible, so reading the two the same way
+           loses nothing. */
+        ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
+        ar_fill_rect(s, track, clip, tc ? tc : AR_RGBA(0x00, 0x00, 0x00, 0x14));
+        ar_fill_rect(s, thumb, clip, hc ? hc : AR_RGBA(0x00, 0x00, 0x00, 0x50));
+    }
+}
+
+static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
@@ -1627,32 +2547,91 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
+        /*
+         * A modal's ::backdrop, painted the moment the walk reaches the modal.
+         *
+         * Here rather than in a pass of its own because that is exactly where
+         * it belongs: under the modal, over everything else. The top layer is
+         * emitted last, so by the time this runs the whole interface beneath is
+         * already on the surface and the modal itself is one line away.
+         *
+         * The cost is stated rather than discovered: this is a full-viewport
+         * fill, 4.9 ms on the tier at 640x480. A modal's first frame is
+         * expensive and every frame after it is free, because nothing changes
+         * and damage tracking has nothing to present.
+         */
+        if (n->style.v[AR_P_OVERLAY] == AR_OVERLAY_MODAL)
+        {
+            ar_style bd;
+            ar_color fill;
+
+            ar_sheet_resolve_backdrop(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                      &bd);
+            fill = (ar_color)AR_WIDE(&bd, AR_P_BACKGROUND);
+            if (AR_ALPHA_OF(fill) != 0)
+            {
+                ar_fill_rect(s, c->last_viewport, region, fill);
+            }
+        }
+
         clip = ar_rect_intersect(n->clip, region);
 
-        bg = (ar_color)n->style.v[AR_P_BACKGROUND];
+        if (!ar_box_paints(n))
+        {
+            /* `continue` would take the fragments and the text with it, which
+               is what is wanted: this box draws nothing. Its children are
+               reached on their own turn and answer for themselves. */
+            continue;
+        }
+
+        bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0)
         {
             ar_fill_rect(s, n->rect, clip, bg);
         }
 
         bw = n->style.v[AR_P_BORDER_WIDTH];
-        border = (ar_color)n->style.v[AR_P_BORDER_COLOR];
-        if (bw > 0 && AR_ALPHA_OF(border) != 0)
+        border = (ar_color)AR_WIDE(&n->style, AR_P_BORDER_COLOR);
+        if (n->state & AR_STATE_COLLAPSED)
+        {
+            /*
+             * A collapsed grid line is one line with two neighbours, and each
+             * of them owns a share of it that the solve worked out -- so the
+             * four sides are four different widths here and none of them is
+             * this box's `border-width`. A collapsed table's own box and its
+             * rows come through with all four at zero, which is how their
+             * borders come to be drawn by the cells instead of twice.
+             */
+            if (AR_ALPHA_OF(border) != 0)
+            {
+                ar_rect r = n->rect;
+                ar_i32  t = n->edge[0], ri = n->edge[1], b = n->edge[2], l = n->edge[3];
+
+                if (t > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, t), clip, border);
+                }
+                if (b > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - b, r.w, b), clip, border);
+                }
+                if (l > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x, r.y, l, r.h), clip, border);
+                }
+                if (ri > 0)
+                {
+                    ar_fill_rect(s, ar_rect_make(r.x + r.w - ri, r.y, ri, r.h), clip, border);
+                }
+            }
+        }
+        else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
             ar_rect r = n->rect;
             ar_fill_rect(s, ar_rect_make(r.x, r.y, r.w, bw), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x, r.y + r.h - bw, r.w, bw), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x, r.y, bw, r.h), clip, border);
             ar_fill_rect(s, ar_rect_make(r.x + r.w - bw, r.y, bw, r.h), clip, border);
-        }
-
-        if (ar_scroll_bar_visible(n))
-        {
-            ar_rect track, thumb;
-
-            ar_scroll_bar(n, ar__scroll_of(c, i), &track, &thumb);
-            ar_fill_rect(s, track, clip, AR_RGBA(0x00, 0x00, 0x00, 0x14));
-            ar_fill_rect(s, thumb, clip, AR_RGBA(0x00, 0x00, 0x00, 0x50));
         }
 
         /*
@@ -1676,7 +2655,7 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
                 }
                 ar__draw_line(c, s, fclip, f->rect.x + n->style.v[AR_P_PAD_LEFT],
                               f->rect.y + n->style.v[AR_P_PAD_TOP], n, f->from, f->to,
-                              (ar_color)n->style.v[AR_P_COLOR]);
+                              (ar_color)AR_WIDE(&n->style, AR_P_COLOR));
             }
             continue;
         }
@@ -1688,7 +2667,7 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_rect  tclip = ar_rect_intersect(clip, n->rect);
             ar_i32   tx = n->rect.x + n->style.v[AR_P_PAD_LEFT];
             ar_i32   ty = n->rect.y + n->style.v[AR_P_PAD_TOP];
-            ar_color tc = (ar_color)n->style.v[AR_P_COLOR];
+            ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
 
             /* The same wrap layout used, so the lines drawn are the lines
                that were made room for. Wrapping twice per frame is the cost
@@ -1723,6 +2702,21 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
     }
 }
 
+/*
+ * Boxes, then the bars over them.
+ *
+ * A wrapper rather than two calls at each site, because the region move calls
+ * this once per rectangle and every one of them needs the bars on top. Both
+ * passes take the same region, so a pixel is still painted at most once per
+ * call -- which matters, since the default bar colours are translucent and
+ * blending one twice would darken it.
+ */
+static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
+{
+    ar__paint_boxes(c, s, region);
+    ar__paint_bars(c, s, region);
+}
+
 /* The box under the cursor, for the next frame to style. Declaration order is
    paint order, so the last box that contains the point is the one on top. */
 /*
@@ -1754,6 +2748,38 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
  * The thumb's top is (rect.h - thumb.h) * scroll / range, so a drag is that
  * read backwards. The grab offset keeps the thumb where it was picked up.
  */
+/*
+ * Can the pointer reach this box at all?
+ *
+ * Four separate walks ask a version of this -- hover, the scrollbar drag, the
+ * wheel and the keys -- and they used to ask it three different ways. One
+ * predicate so a rule added here cannot be honoured in three places out of
+ * four, which is what would have happened to inertness.
+ *
+ * The clip test is the part that was missing. The hit test asked only whether
+ * the point was inside the box's rectangle, and a box scrolled up out of its
+ * scrollport still has a rectangle -- one that overlaps whatever is above the
+ * port. Being later in paint order, it won. So a row scrolled out of a list
+ * took the cursor from the thing actually drawn there. A box painted nowhere
+ * can be reached nowhere, and `clip` is where that is already recorded.
+ */
+static int ar__reachable(const ar_node *n, ar_i32 x, ar_i32 y)
+{
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+    {
+        return 0;
+    }
+    if (n->state & AR_STATE_INERT)
+    {
+        return 0;
+    }
+    if (!ar_rect_contains(n->rect, x, y))
+    {
+        return 0;
+    }
+    return ar_rect_contains(n->clip, x, y);
+}
+
 static void ar__apply_drag(ar_ctx *c)
 {
     ar_i32 i;
@@ -1820,7 +2846,7 @@ static void ar__apply_drag(ar_ctx *c)
         {
             continue;
         }
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || ar_scroll_range(n) <= 0)
+        if (!ar__reachable(n, c->mouse_x, c->mouse_y) || ar_scroll_range(n) <= 0)
         {
             continue;
         }
@@ -1863,11 +2889,7 @@ static void ar__apply_wheel(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want;
 
-        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -1877,9 +2899,155 @@ static void ar__apply_wheel(ar_ctx *c)
             continue;
         }
         want = ar_scroll_clamp(n, slot->scroll - travel);
+
+        /* Where the notch was heading, then where snapping says it settles.
+           Clamped first so a snap candidate is never computed against a
+           position the container could not have reached anyway. */
+        if (ar_scroll_snaps_y(n))
+        {
+            want = ar_scroll_snap(c->nodes, c->node_count, at, slot->scroll, want);
+        }
+
         if (want == slot->scroll)
         {
-            continue; /* nowhere to go here; the notch chains outwards */
+            /*
+             * Nowhere to go here, so the notch chains outwards -- unless this
+             * container says it should not. That is the whole of
+             * overscroll-behavior: `contain` and `none` stop the walk at this
+             * boundary rather than offering the notch to an ancestor, which is
+             * what keeps a modal's wheel off the page behind it.
+             *
+             * The test is on the container that would have chained, not on the
+             * one that would have received it, because it is the inner box's
+             * stylesheet that gets to refuse.
+             *
+             * The wheel is the block axis, so this reads the block property.
+             * The inline one is parsed and stored and nothing consults it yet,
+             * because nothing generates an inline wheel event.
+             */
+            if (n->style.v[AR_P_OVERSCROLL] != AR_OVERSCROLL_AUTO)
+            {
+                return;
+            }
+            continue;
+        }
+        ar__scroll_moved(c, n->key, want - slot->scroll);
+        slot->scroll = (ar_scroll_pos)want;
+        ar_damage_add(&c->damage, n->rect);
+        c->scrolled = 1;
+        return;
+    }
+}
+
+/*
+ * Keys that scroll.
+ *
+ * Runs beside ar__apply_wheel and settles into the same place, so a key and a
+ * notch cannot disagree about where a container ended up.
+ *
+ * Which container? There is no focus in areole, so the honest answer is the
+ * same one the wheel would move: the innermost scrollable box under the
+ * cursor. That is a deviation from a browser, where the keyboard follows focus
+ * and the wheel follows the pointer, and it is named here rather than left to
+ * be discovered. Focus arrives with the rest of keyboard handling in 0.10.0
+ * and this becomes a one-line change when it does.
+ *
+ * A page is the viewport less an overlap, which is what every reader expects:
+ * the last line of the old page is the first line of the new one, so nothing
+ * is skipped over the fold.
+ */
+#define AR_KEY_LINE     40
+#define AR_PAGE_OVERLAP 24
+
+static ar_i32 ar__key_travel(const ar_ctx *c, const ar_node *n)
+{
+    ar_i32 page = n->rect.h - AR_PAGE_OVERLAP;
+
+    if (page < 1)
+    {
+        page = n->rect.h > 0 ? n->rect.h : 1;
+    }
+
+    if (c->keys & AR_KEY_UP)
+    {
+        return -AR_KEY_LINE;
+    }
+    if (c->keys & AR_KEY_DOWN)
+    {
+        return AR_KEY_LINE;
+    }
+    if (c->keys & AR_KEY_PAGE_UP)
+    {
+        return -page;
+    }
+    if ((c->keys & AR_KEY_PAGE_DOWN) || (c->keys & AR_KEY_SPACE))
+    {
+        return page;
+    }
+    return 0;
+}
+
+static void ar__apply_keys(ar_ctx *c)
+{
+    ar_i32 i;
+
+    if (c->keys == 0 || !c->mouse_inside || c->drag_key)
+    {
+        return;
+    }
+
+    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    {
+        ar_i32   at = c->order ? c->order[i] : i;
+        ar_node *n = &c->nodes[at];
+        ar_slot *slot;
+        ar_i32   want, travel;
+
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
+        {
+            continue;
+        }
+        slot = ar_ctx_slot(c, n->key);
+        if (!slot)
+        {
+            continue;
+        }
+
+        /* Home and End are absolute and do not snap: asking to go to the top
+           and landing on the second row would be a bug, not a nicety. */
+        if (c->keys & AR_KEY_HOME)
+        {
+            want = 0;
+        }
+        else if (c->keys & AR_KEY_END)
+        {
+            want = ar_scroll_range(n);
+        }
+        else
+        {
+            travel = ar__key_travel(c, n);
+            if (travel == 0)
+            {
+                return;
+            }
+            want = ar_scroll_clamp(n, slot->scroll + travel);
+            if (ar_scroll_snaps_y(n))
+            {
+                want = ar_scroll_snap(c->nodes, c->node_count, at, slot->scroll, want);
+            }
+        }
+
+        want = ar_scroll_clamp(n, want);
+        if (want == slot->scroll)
+        {
+            /* Same chaining rule the wheel follows, and the same property
+               decides it. A key that cannot move this container is offered
+               outward unless overscroll-behavior says otherwise. */
+            if (n->style.v[AR_P_OVERSCROLL] != AR_OVERSCROLL_AUTO)
+            {
+                return;
+            }
+            continue;
         }
         ar__scroll_moved(c, n->key, want - slot->scroll);
         slot->scroll = (ar_scroll_pos)want;
@@ -1895,6 +3063,7 @@ static void ar__update_hot(ar_ctx *c)
     ar_i32 i;
 
     c->hot = 0;
+    c->hot_index = -1;
     if (!c->mouse_inside)
     {
         return;
@@ -1913,14 +3082,31 @@ static void ar__update_hot(ar_ctx *c)
         ar_i32   at = c->order ? c->order[i] : i;
         ar_node *n = &c->nodes[at];
 
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             c->hot = n->key;
+            c->hot_index = at;
             break;
+        }
+    }
+
+    /*
+     * And its ancestors, because `:hover` matches them too.
+     *
+     * The hit test finds one box, the topmost. CSS matches `:hover` on that
+     * box *and every ancestor of it*, which for a hand-declared tree is
+     * usually the same thing and for a parsed document never is: every
+     * element's text is a child box, so the hit is always the child and the
+     * rule is always on the parent.
+     */
+    c->hot_chain_n = 0;
+    {
+        ar_i32 at = c->hot_index;
+
+        while (at >= 0 && c->hot_chain_n < AR_MAX_DEPTH)
+        {
+            c->hot_chain[c->hot_chain_n++] = c->nodes[at].key;
+            at = c->nodes[at].parent;
         }
     }
 
@@ -2006,6 +3192,171 @@ static int ar__move_is_unobstructed(const ar_ctx *c, ar_i32 container, ar_rect a
         }
     }
     return 1;
+}
+
+/* ------------------------------------------------------------------------
+ * Scroll anchoring
+ *
+ * Something above the fold grows, and everything below it slides down under a
+ * reader who did not ask for that. overflow-anchor is the fix: pick a box that
+ * is currently visible, remember where it sits, and when the next layout puts
+ * it somewhere else, move the scroll by exactly that much so it does not
+ * appear to move at all.
+ *
+ * It runs after layout, because the whole question is what layout just did,
+ * and so it has to shift the subtree itself: the rectangles are already final
+ * by then, and changing the offset without moving them would leave the frame
+ * drawn a scroll behind.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__find_key(const ar_ctx *c, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (key == 0)
+    {
+        return -1;
+    }
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].key == key)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static ar_i32 ar__port_top(const ar_node *n)
+{
+    return n->rect.y + n->style.v[AR_P_SCROLL_PAD_TOP];
+}
+
+/* Moves a container's descendants, which is what changing its offset after
+   layout has to do by hand. */
+static void ar__shift_subtree(ar_ctx *c, ar_i32 root, ar_i32 dy)
+{
+    ar_i32 j;
+
+    if (dy == 0)
+    {
+        return;
+    }
+    for (j = root + 1; j < c->node_count; ++j)
+    {
+        if (ar__is_within(c, c->nodes[j].parent, root))
+        {
+            ar_shift_node(c->nodes, c->frags, c->frag_count, j, 0, -dy);
+        }
+    }
+}
+
+/*
+ * Chooses the box to hold still: the first descendant starting at or below the
+ * top of the scrollport.
+ *
+ * The first one visible rather than the nearest to the middle, because it is
+ * the one whose movement a reader notices -- an eye sits at the top of what it
+ * can see, not the centre of it.
+ */
+static void ar__record_anchor(ar_ctx *c, ar_i32 container)
+{
+    ar_i32 top = ar__port_top(&c->nodes[container]);
+    ar_i32 j;
+
+    c->anchor_container = 0;
+    c->anchor_node = 0;
+    c->anchor_y = 0;
+
+    for (j = container + 1; j < c->node_count; ++j)
+    {
+        ar_node *ch = &c->nodes[j];
+
+        if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (!ar__is_within(c, ch->parent, container))
+        {
+            continue;
+        }
+        if (ch->rect.y >= top)
+        {
+            ar_slot *sl = ar_ctx_slot(c, c->nodes[container].key);
+
+            c->anchor_container = c->nodes[container].key;
+            c->anchor_node = ch->key;
+            c->anchor_y = ch->rect.y - top;
+            c->anchor_scroll = sl ? sl->scroll : 0;
+            return;
+        }
+    }
+}
+
+static void ar__anchor(ar_ctx *c)
+{
+    ar_i32   container, node, i;
+    ar_slot *slot;
+    ar_i32   now, delta, want;
+
+    /* Correct against what was recorded last frame, then record afresh from
+       the corrected positions. */
+    container = ar__find_key(c, c->anchor_container);
+    node = ar__find_key(c, c->anchor_node);
+
+    if (container >= 0 && node >= 0 && ar_is_scroll_container(&c->nodes[container]) &&
+        c->nodes[container].style.v[AR_P_OVERFLOW_ANCHOR] == AR_ANCHOR_AUTO)
+    {
+        slot = ar_ctx_slot(c, c->nodes[container].key);
+        now = c->nodes[node].rect.y - ar__port_top(&c->nodes[container]);
+        delta = now - c->anchor_y;
+
+        /*
+         * Only when the reader did not ask for the movement, which is decided
+         * by comparing the offset against the one the anchor was taken at. A
+         * scroll moves the anchor on purpose, and compensating for it would
+         * cancel the scroll -- the container would refuse to move at all,
+         * which is a far more visible bug than the one being fixed.
+         *
+         * c->scrolled cannot answer this and was the first attempt: it is
+         * cleared by ar_frame_begin, so by the time this pass runs on the next
+         * frame it is always zero, and the scroll it was meant to exclude has
+         * already happened. The test for the wheel caught it.
+         */
+        if (slot && delta != 0 && slot->scroll == c->anchor_scroll)
+        {
+            want = ar_scroll_clamp(&c->nodes[container], slot->scroll + delta);
+            if (want != slot->scroll)
+            {
+                ar__shift_subtree(c, container, want - slot->scroll);
+                slot->scroll = (ar_scroll_pos)want;
+                ar_damage_add(&c->damage, c->nodes[container].rect);
+            }
+        }
+    }
+
+    /* One container: the first scrollable one that is scrolled away from its
+       top, since at the top there is nothing above the fold to compensate. */
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_slot *sl;
+
+        if (!ar_is_scroll_container(&c->nodes[i]) || !ar_scrolls_y(&c->nodes[i]))
+        {
+            continue;
+        }
+        if (c->nodes[i].style.v[AR_P_OVERFLOW_ANCHOR] != AR_ANCHOR_AUTO)
+        {
+            continue;
+        }
+        sl = ar_ctx_slot(c, c->nodes[i].key);
+        if (sl && sl->scroll > 0)
+        {
+            ar__record_anchor(c, i);
+            return;
+        }
+    }
+    c->anchor_container = 0;
+    c->anchor_node = 0;
 }
 
 /*
@@ -2157,6 +3508,44 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     viewport = ar_rect_make(0, 0, s ? s->w : 0, s ? s->h : 0);
 
+    /*
+     * `viewport-fit: auto` lays out inside the safe rectangle.
+     *
+     * This is the half of the bargain env() cannot do on its own. With `auto`
+     * the layout viewport is the surface with the insets taken off, and
+     * env(safe-area-inset-*) reports zero, because the stylesheet has already
+     * been kept clear of them and telling it to avoid them again would move
+     * everything twice. With `cover` the viewport is the whole surface and the
+     * real insets are what env() hands back.
+     *
+     * One place decides both, which is what makes the pair atomic: there is no
+     * ordering of two calls that can leave the viewport inset while env() also
+     * reports the inset.
+     */
+    if (!c->env.fit_cover && c->env.known[AR_ENV_SAFE_TOP])
+    {
+        ar_i32 t = c->env.v[AR_ENV_SAFE_TOP];
+        ar_i32 r = c->env.v[AR_ENV_SAFE_RIGHT];
+        ar_i32 b = c->env.v[AR_ENV_SAFE_BOTTOM];
+        ar_i32 l = c->env.v[AR_ENV_SAFE_LEFT];
+
+        /* An inset larger than the surface would give a negative viewport,
+           which lays out as a box to the left of its own origin. Insets that
+           do not fit are taken as far as they go and no further. */
+        if (l + r > viewport.w)
+        {
+            l = viewport.w;
+            r = 0;
+        }
+        if (t + b > viewport.h)
+        {
+            t = viewport.h;
+            b = 0;
+        }
+        viewport =
+            ar_rect_make(viewport.x + l, viewport.y + t, viewport.w - l - r, viewport.h - t - b);
+    }
+
     if (c->node_count == 0)
     {
         return ar_rect_make(0, 0, 0, 0);
@@ -2165,6 +3554,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* :last-child, :only-child and :empty could not be answered while the tree
        was being built. This is the first moment they can be. */
     ar__resolve_late(c);
+    /* Before the collapse marking and before layout: everything after this
+       point walks the tree, and this is the last moment the tree changes. */
+    ar__splice_contents(c);
+    ar__mark_collapsed(c);
 
     /* Style resolution happened during tree building, between frame_begin and
        here, so closing that phase now attributes it correctly. */
@@ -2176,6 +3569,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         env.wrap = ar__wrap_cb;
         env.measure = ar__range_px;
         env.ud = c;
+        env.sheet = &c->sheet;
         env.scroll_of = ar__scroll_of;
         env.scroll_x_of = ar__scroll_x_of;
         env.frags = c->frags;
@@ -2186,6 +3580,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         c->frag_count = env.frag_used;
     }
 
+    /* Scroll anchoring, before paint order and the clips, because it can still
+       move a subtree and both of those read the final rectangles. */
+    ar__anchor(c);
+
     /* Paint order, once the rectangles are final: a stacking context's bucket
        depends on nothing layout decides, but its subtree has to be walked and
        there is no reason to walk it twice. */
@@ -2194,6 +3592,8 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Content widths, then clips: both once the rectangles are final and
        before anything asks for either. */
     ar__content_widths(c);
+    ar__mark_inert(c);
+    ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));
 
@@ -2356,6 +3756,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     ar__update_hot(c);
     ar__apply_drag(c);
     ar__apply_wheel(c);
+    ar__apply_keys(c);
 
     /* Hover resolves from the previous frame, so the frame that notices a new
        box under the cursor cannot also style it. Damaging both boxes now means

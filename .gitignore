@@ -18,3 +18,8 @@ bench/results-*.json
 
 # Planning material, not repository documentation.
 docs/roadmap/
+
+# Python leaves these beside any module it imports; tools/ is imported by
+# the odd throwaway script and they are not part of the repository.
+__pycache__/
+*.pyc

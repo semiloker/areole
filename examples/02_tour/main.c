@@ -13,7 +13,8 @@
  *   0.4.0  the cascade: inheritance, combinators, !important, structure
  *   0.5.0  block and inline: margin collapsing, floats, fragmented inlines
  *   0.6.0  position and scroll: absolute, sticky, z-index, a scrollable list
- *   0.6.1  both axes, nested containers, and a scrollbar you can drag
+ *   0.6.1  both axes, nested containers, a scrollbar you can drag, snapping,
+ *          keyboard scrolling and a styled thin bar
  *
  * Every page is declared with ar_begin and ar_text and laid out from the
  * stylesheet below. There is one coordinate in this file, for the overlay,
@@ -221,6 +222,99 @@ static const char *SHEET_SCROLL2 =
     "         padding:6px; }"
     ".inner { display:block; height:90px; overflow:scroll; background:#fdfaf3; }";
 
+/*
+ * A second sheet rather than more of the first, because C89 guarantees only
+ * 509 characters in a string literal after concatenation and the combined one
+ * came to 786. gcc says so with -Woverlength-strings under -pedantic-errors,
+ * which is the gate doing its job: a compiler with extensions on would have
+ * taken it and left the limit to be discovered on an old toolchain.
+ *
+ * A snapping list. Rows are 34 tall and a notch is 30, so a wheel that did not
+ * snap would leave one straddling the top edge on every notch -- which is what
+ * makes the snapping visible rather than asserted. `contain` stops the notch
+ * chaining to the page once the list bottoms out, and the bar is thin and
+ * coloured because it was asked to be.
+ */
+static const char *SHEET_SNAP =
+    ".snap  { display:block; height:102px; overflow:scroll; background:#fdfaf3;"
+    "         scroll-snap-type: y mandatory; overscroll-behavior: contain;"
+    "         scrollbar-width: thin; scrollbar-color: #9c8f74 #efe8d8;"
+    "         scrollbar-gutter: stable; }"
+    ".slide { display:block; height:34px; padding:0px 8px; font-size:12px;"
+    "         color:#4a453e; scroll-snap-align: start; }"
+    ".slide:nth-child(even) { background:#efe8d8; }";
+
+/*
+ * The 0.6.2 page.
+ *
+ * One scroller with a header pinned to its top and a footer pinned to its
+ * bottom, which is the pair the release completed: the same box obeys `top`
+ * and `bottom` against the same scrollport, and both clamp to the containing
+ * block rather than escaping it.
+ */
+static const char *SHEET_SAFE =
+    ".sscroll { display:block; height:120px; overflow:scroll; background:#f7f3ea; }"
+    ".shead { display:block; position:sticky; top:0px; padding:3px 8px;"
+    "         font-size:11px; color:#fdfaf3; background:#2f5d3f; }"
+    ".sfoot { display:block; position:sticky; bottom:0px; padding:3px 8px;"
+    "         font-size:11px; color:#fdfaf3; background:#7a4a2a; }";
+
+/*
+ * env(), reading two names that resolve by different routes.
+ *
+ * The titlebar rectangle was reported by this file below, so it resolves to
+ * what was reported. Nothing ever reports a safe-area inset on a desktop
+ * window, so that one falls back -- and the two boxes are the same declaration
+ * apart from the name, which is what makes the difference visible rather than
+ * asserted.
+ *
+ * A separate literal because C89 guarantees only 509 characters after
+ * concatenation, and the sheet above is most of one already.
+ */
+static const char *SHEET_ENV =
+    ".envbar { display:block; height:15px; font-size:11px; color:#4a453e;"
+    "          background:#e8dfcb; padding-left: env(titlebar-area-width, 40px); }"
+    ".envfb  { display:block; height:15px; font-size:11px; color:#4a453e;"
+    "          background:#efe8d8; padding-left: env(safe-area-inset-left, 40px); }";
+
+/*
+ * The 0.6.3 page.
+ *
+ * `.trap` clips and `.deep` asks for a z-index far beyond anything else on the
+ * page, so `.esc` is inside a box that would cut it off and behind a box that
+ * would cover it. It is in the top layer and neither happens, which is the
+ * whole claim: a z-index cannot lift a box out of the context it is in, and
+ * `overlay` is not a z-index.
+ */
+static const char *SHEET_LAYER =
+    ".trap { display:block; height:40px; overflow:hidden; background:#f0ece2;"
+    "        position:relative; }"
+    ".deep { display:block; position:absolute; top:6px; left:150px; width:120px;"
+    "        height:54px; z-index:9999; background:#c2703d; }"
+    ".esc  { display:block; position:absolute; top:22px; left:10px; width:130px;"
+    "        height:26px; padding:5px 8px; font-size:11px; color:#fdfaf3;"
+    "        background:#2f5d3f; overlay:auto; }";
+
+/*
+ * The anchored pair, and a box that says it takes no input.
+ *
+ * `.tip` names no coordinates of its own: it is placed entirely by the box it
+ * is anchored to, which is what keeps the two together when either moves.
+ */
+static const char *SHEET_ANCH =
+    ".anchorbar { display:block; height:26px; background:#e8dfcb; position:relative; }"
+    ".target { display:block; position:absolute; top:4px; left:60px; width:90px;"
+    "          height:18px; background:#7a4a2a; anchor-name: --t; }"
+    ".tip  { display:block; position:absolute; position-anchor: --t;"
+    "        top: anchor(bottom); left: anchor(center); width:110px; height:20px; }";
+
+/* Split for the 509-character limit again, which is now the fourth time this
+   file has hit it. */
+static const char *SHEET_ANCH2 =
+    ".tip  { padding:3px 6px; font-size:11px; color:#fdfaf3; background:#4a453e; }"
+    ".dead { display:block; padding:4px 8px; font-size:11px; background:#efe8d8;"
+    "        color:#8d8578; inert: auto; }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -253,6 +347,91 @@ static const char *AR_MIXED = "\xd8\xa7\xd9\x84\xd8\xb3\xd8\xb9\xd8\xb1 1250 "
 /* Latin, for the pages that are about rasterizing rather than about script */
 static const char *AR_LATIN = "Waltz, bad nymph, for quick jigs vex.";
 
+/*
+ * The 0.7.0 page.
+ *
+ * Three tables and one shape between them: the same four cells, laid out three
+ * ways. `.auto` lets the columns take what their contents want, `.fixed` gives
+ * them equal shares whatever the contents want, and `.coll` collapses the
+ * borders so the line between two cells is one line and not two.
+ *
+ * The spanning cell is written with CSS rather than an attribute. colspan and
+ * rowspan are attributes in HTML and there is no parser until 0.9.0, so a
+ * stylesheet is the only place to put one -- which is the whole reason those
+ * two properties cost per-box style bytes.
+ */
+static const char *SHEET_TABLE_A =
+    ".tbl  { display:table; width:260px; margin-bottom:8px; background:#f4f1ec; }"
+    ".fixd { table-layout:fixed; }"
+    ".coll { border-collapse:collapse; }"
+    ".trow { display:table-row; }"
+    ".cap  { display:table-caption; height:16px; font-size:11px; color:#6a6258;"
+    "        background:#e8dfcb; padding:2px 6px; }";
+
+static const char *SHEET_TABLE_B =
+    ".cell { display:table-cell; height:20px; font-size:11px; color:#3a352e;"
+    "        padding:3px 6px; background:#cfd8e3; }"
+    /* Not `.wide`: the scroll page already has one, 900 px and a block, and
+       the later rule would win on both boxes. */
+    ".cspan { colspan:2; background:#b9c8dc; }"
+    ".tall { rowspan:2; background:#c8d6c2; }"
+    ".coll .cell { border:2px #6a6258; }";
+
+/*
+ * The 0.7.1 page.
+ *
+ * One table, scrolled, with its header pinned and its first column frozen --
+ * and a second table beside it with a row and a column closed, so the two
+ * meanings of "gone" can be seen next to each other.
+ *
+ * `.rgone` and `.cgone` are the same declaration on different boxes, which is
+ * the point: `visibility: collapse` removes the track and leaves every other
+ * column exactly where it was.
+ */
+static const char *SHEET_T71_A = ".vport { display:block; width:250px; height:88px; overflow:auto;"
+                                 "         background:#faf7f0; margin-bottom:10px; }"
+                                 /* Not `.wide`: the scroll page already has one, 900 px and a
+                                    block, and this rule is written later so it would win on both.
+                                    The 0.7.0 page learned the same lesson one release ago. */
+                                 ".wtable { display:table; width:420px; }"
+                                 ".thead { display:table-header-group; position:sticky; top:0px; }"
+                                 ".froze { position:sticky; left:0px; }";
+
+static const char *SHEET_T71_B =
+    ".hcell { display:table-cell; width:105px; height:20px; font-size:11px;"
+    "         color:#3a352e; padding:2px 6px; background:#b9c8dc; }"
+    ".bcell { display:table-cell; width:105px; height:20px; font-size:11px;"
+    "         color:#3a352e; padding:2px 6px; background:#cfd8e3; }"
+    ".colgrp { display:table-column-group; }"
+    ".colbox { display:table-column; }"
+    ".rgone { visibility:collapse; }"
+    ".cgone { visibility:collapse; }";
+
+/*
+ * The 0.8.0 page.
+ *
+ * Three flex rows that only a real solver gets right, and one grid.
+ *
+ * `.f3` and `.f1` are the ratio a factor names -- three shares against one --
+ * where the old subset divided by the *number* of growers and made them equal.
+ * `.capped` is the loop: three items sharing the row, one of them stopped by a
+ * maximum, and the space it cannot take going to the other two.
+ */
+static const char *SHEET_F80_A =
+    ".fbar  { display:flex; flex-direction:row; width:420px; gap:4px;"
+    "         margin-bottom:8px; }"
+    ".fit   { height:22px; font-size:11px; color:#3a352e; padding:3px 6px;"
+    "         background:#cfd8e3; flex-basis:0px; flex-grow:1; }"
+    ".f3    { flex-grow:3; background:#b9c8dc; }"
+    ".capped { max-width:60px; background:#c8d6c2; }";
+
+static const char *SHEET_F80_B =
+    ".grid  { display:grid; width:420px; grid-template-columns: 120px 1fr 2fr;"
+    "         gap:6px; margin-bottom:8px; }"
+    ".gcell { height:24px; font-size:11px; color:#3a352e; padding:3px 6px;"
+    "         background:#cfd8e3; }"
+    ".gwide { grid-column: span 2; background:#b9c8dc; }";
+
 /* ------------------------------------------------------------------------
  * Pages
  * ------------------------------------------------------------------------ */
@@ -267,15 +446,34 @@ enum
     PAGE_FLOW,
     PAGE_POSITION,
     PAGE_SCROLL,
+    PAGE_SAFE,
+    PAGE_LAYER,
+    PAGE_TABLE,
+    PAGE_TABLE2,
+    PAGE_FLEXGRID,
+    PAGE_HTML,
     PAGE_COUNT
 };
 
 static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
-                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1"};
+                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2",
+                                           "0.6.3", "0.7.0", "0.7.1", "0.8.0", "0.9.0"};
 
-static const char *PAGE_NAME[PAGE_COUNT] = {
-    "One block, one blit", "The counters",     "Damage tracking",     "Outlines", "Scripts",
-    "The cascade",         "Block and inline", "Position and scroll", "Both axes"};
+static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
+                                            "The counters",
+                                            "Damage tracking",
+                                            "Outlines",
+                                            "Scripts",
+                                            "The cascade",
+                                            "Block and inline",
+                                            "Position and scroll",
+                                            "Scrolling",
+                                            "Sticky and safe areas",
+                                            "The top layer",
+                                            "Tables",
+                                            "Tables that behave",
+                                            "Flex and grid",
+                                            "Real HTML"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -286,7 +484,13 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Inheritance, combinators, !important, and the structural selectors.",
     "Margin collapsing, floats, line boxes and fragmented inlines.",
     "Absolute, fixed, sticky, z-index, and a list you can scroll.",
-    "overflow-x and overflow-y, nested containers, and a bar you can drag."};
+    "Both axes, snapping, a styled bar, and the arrow keys.",
+    "Pinned from either edge, and the display the backend described.",
+    "Above every stacking context, out of every clip, attached to an anchor.",
+    "A constraint solve, not a tree walk: columns, spans and collapsed lines.",
+    "A header that stays, a column that stays, and a row that is not there.",
+    "A ratio rather than a count, a maximum that redistributes, and fr.",
+    "Malformed markup, and the tree every browser agrees on."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -744,6 +948,487 @@ static void page_scroll(ar_ctx *ui, ar_i32 slide)
         ar_text(ui, "div.srow", fmt("outer row %ld", (long)(i + 1)));
     }
     ar_end(ui);
+
+    ar_text(ui, "div.h2", "Snapping, and a bar that was asked to be thin");
+    ar_text(ui, "div.dim",
+            "Rows are 34 tall and a notch is 30, so an unsnapped wheel would "
+            "leave one straddling the top edge every time. Page Up and Down, "
+            "Home and End work here too. The list says overscroll-behavior: "
+            "contain, so the notch stops at its own end rather than moving "
+            "the page.");
+    ar_begin(ui, "div.snap");
+    for (i = 0; i < 12; ++i)
+    {
+        ar_text(ui, "div.slide", fmt("slide %ld", (long)(i + 1)));
+    }
+    ar_end(ui);
+}
+
+/*
+ * 0.6.2: pinned from either edge, and what the backend said about the display.
+ *
+ * The scroller holds a sticky header and a sticky footer at once. Scroll it and
+ * both stay put while the rows pass between them; scroll to either end and the
+ * one at that end lets go, because a sticky box may not leave its containing
+ * block. That clamp is what separates sticky from fixed, and it is where the
+ * bug this release fixed was living.
+ *
+ * The two env() bars underneath are the same declaration with a different name
+ * in it. The titlebar rectangle was reported, so it resolves to 120. Nothing
+ * reports a safe-area inset on a desktop window, so that one takes its 40 px
+ * fallback. A reported zero would resolve to zero rather than to the fallback,
+ * which is the distinction the whole design turns on and is not visible here
+ * because a window has no notch to report.
+ */
+static void page_safe(ar_ctx *ui)
+{
+    ar_i32 i;
+
+    ar_text(ui, "div.h2", "Pinned from both edges at once");
+    ar_text(ui, "div.dim",
+            "The green header holds at the top and the brown footer at the "
+            "bottom, both against the same scrollport. Scroll to either end "
+            "and that one lets go: a sticky box may not leave the box it "
+            "belongs to, which is the whole difference between sticky and "
+            "fixed.");
+    ar_begin(ui, "div.sscroll");
+    ar_text(ui, "div.shead", "pinned to the top");
+    for (i = 0; i < 16; ++i)
+    {
+        ar_text(ui, "div.srow", fmt("row %ld", (long)(i + 1)));
+    }
+    ar_text(ui, "div.sfoot", "pinned to the bottom");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "env(), and whether anyone answered");
+    ar_text(ui, "div.dim",
+            "Both bars are indented by env() with a 40 px fallback. The first "
+            "asks for the titlebar width, which this program reported as 120. "
+            "The second asks for a safe-area inset, which nothing on a desktop "
+            "window reports, so it falls back. A backend answering zero would "
+            "give zero, not the fallback -- silence and zero are different "
+            "answers.");
+    ar_text(ui, "div.envbar", "titlebar-area-width, reported: indented 120");
+    ar_text(ui, "div.envfb", "safe-area-inset-left, unreported: indented 40");
+}
+
+/*
+ * 0.6.3: above everything, out of every clip, and attached to an anchor.
+ *
+ * There is no modal on this page and that is deliberate rather than an
+ * omission: a ::backdrop is a full-viewport fill, so putting one here would
+ * cover the tour's own navigation and make it inert -- correct behaviour, and
+ * a page nobody could leave. The backdrop and the inertness a modal brings are
+ * checked on the pixels in ar_test.c, where a covered viewport costs nothing.
+ *
+ * What is here is the part that can be looked at: a box that escapes both a
+ * clip and a z-index, a tooltip that names no coordinates of its own, and a
+ * strip that refuses the pointer.
+ */
+static void page_layer(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "Out of the clip, over the z-index");
+    ar_text(ui, "div.dim",
+            "The green box lives inside the grey strip, which clips, and "
+            "behind the orange one, which asks for z-index 9999. It is in the "
+            "top layer, so neither applies. A z-index cannot lift a box out of "
+            "the stacking context it is in -- that is what the top layer is "
+            "for, and why it is not simply a larger number.");
+    ar_begin(ui, "div.trap");
+    ar_begin(ui, "div.esc");
+    ar_text(ui, "div.dim", "in the top layer");
+    ar_end(ui);
+    ar_end(ui);
+    ar_begin(ui, "div.deep");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Attached to an anchor");
+    ar_text(ui, "div.dim",
+            "The dark tooltip states no coordinates. It is placed by the box "
+            "it names: its top edge at the anchor's bottom, its left edge at "
+            "the anchor's centre. Move the anchor and the tooltip goes with "
+            "it, which is the point of naming one.");
+    ar_begin(ui, "div.anchorbar");
+    ar_begin(ui, "div.target");
+    ar_end(ui);
+    ar_begin(ui, "div.tip");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A strip that takes no pointer");
+    ar_text(ui, "div.dim",
+            "The row below says inert. It is painted normally and it never "
+            "becomes hot, however far into it the cursor goes -- which is what "
+            "a modal does to everything behind it, without needing a modal.");
+    ar_text(ui, "div.dead", "inert: auto - hovering this does nothing");
+}
+
+/*
+ * 0.7.0: the first algorithm in this engine that is a solve rather than a walk.
+ *
+ * A column is as wide as its widest cell needs and a row as tall as its tallest
+ * comes to, so no cell can be placed until every cell has been looked at. The
+ * three tables below are the same four cells three ways, which is the only way
+ * to show that the width came from the contents rather than from the stylesheet.
+ */
+static void page_table(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "Automatic: the columns take what the contents want");
+    ar_text(ui, "div.dim",
+            "Nothing here states a column width. The long cell widens its own "
+            "column and the short ones stay short, which is what separates a "
+            "table from a row of boxes -- every cell in a column has a say in "
+            "how wide that column is, and none of them can be placed until all "
+            "of them have been read.");
+    ar_begin(ui, "div.tbl.auto");
+    ar_begin(ui, "div.cap");
+    ar_text(ui, "div.dim", "a caption is in no row and no column");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "a considerably longer cell");
+    ar_text(ui, "div.cell", "short");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "one");
+    ar_text(ui, "div.cell", "two");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Fixed: equal shares, whatever the contents want");
+    ar_text(ui, "div.dim",
+            "The same cells with table-layout: fixed. The columns are settled "
+            "without reading past the first row, which is the only affordable "
+            "option on a very long table and the reason the mode exists.");
+    ar_begin(ui, "div.tbl.fixd");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "a considerably longer cell");
+    ar_text(ui, "div.cell", "short");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "one");
+    ar_text(ui, "div.cell", "two");
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Spans, and one line between two cells");
+    ar_text(ui, "div.dim",
+            "The top cell covers two columns and the left one covers two rows. "
+            "Borders are collapsed, so the line between two cells is one line "
+            "as wide as the wider of the two asked for -- not two borders with "
+            "a gap. Both spans are written in CSS: they are HTML attributes, "
+            "and there is no parser until 0.9.0.");
+    ar_begin(ui, "div.tbl.coll");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell.tall", "rowspan 2");
+    ar_text(ui, "div.cell.cspan", "colspan 2");
+    ar_end(ui);
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.cell", "b");
+    ar_text(ui, "div.cell", "c");
+    ar_end(ui);
+    ar_end(ui);
+}
+
+/*
+ * 0.7.1: what a table has to do before anyone can read one.
+ *
+ * A header that scrolls away is a table you have to keep scrolling back to,
+ * and a filter that moves every column is a table you have to read twice.
+ * Both are on this page, and the second is the one worth looking at twice: the
+ * closed row's columns do not move, which is the whole reason `collapse` is
+ * not `display: none`.
+ */
+static void page_table2(ar_ctx *ui)
+{
+    ar_i32 r;
+
+    ar_text(ui, "div.h2", "A header that stays, and a column that stays");
+    ar_text(ui, "div.dim",
+            "Scroll the panel below with the wheel or drag it sideways. The "
+            "header row stays at the top and the first column stays at the "
+            "left, both by saying `position: sticky` -- the same mechanism a "
+            "sticky sidebar uses, applied to a table box. Nothing here asks "
+            "for a z-index: a sticky box is positioned, so it already paints "
+            "above the rows going under it.");
+
+    ar_begin(ui, "div.vport");
+    ar_begin(ui, "div.wtable");
+    ar_begin(ui, "div.thead");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.hcell.froze", "name");
+    ar_text(ui, "div.hcell", "opened");
+    ar_text(ui, "div.hcell", "closed");
+    ar_text(ui, "div.hcell", "owner");
+    ar_end(ui);
+    ar_end(ui);
+    for (r = 0; r < 6; ++r)
+    {
+        ar_begin(ui, "div.trow");
+        ar_text(ui, "div.bcell.froze", "row");
+        ar_text(ui, "div.bcell", "may");
+        ar_text(ui, "div.bcell", "june");
+        ar_text(ui, "div.bcell", "us");
+        ar_end(ui);
+    }
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A row and a column that are not there");
+    ar_text(ui, "div.dim",
+            "The middle row and the third column say `visibility: collapse`. "
+            "The row is gone and the rows below it have closed up; the column "
+            "is gone and the table is narrower by exactly that column. What "
+            "has not happened is the interesting part -- none of the other "
+            "columns moved. That is the whole difference from `display: none`, "
+            "and the reason a filter over a table is bearable to read.");
+
+    ar_begin(ui, "div.tbl.auto");
+    /* The column is closed on the `col` box, which is the only place CSS lets
+       it be said -- `visibility: collapse` on a cell is not a column. */
+    ar_begin(ui, "div.colgrp");
+    ar_begin(ui, "div.colbox");
+    ar_end(ui);
+    ar_begin(ui, "div.colbox");
+    ar_end(ui);
+    ar_begin(ui, "div.colbox.cgone");
+    ar_end(ui);
+    ar_end(ui);
+    for (r = 0; r < 3; ++r)
+    {
+        ar_begin(ui, r == 1 ? "div.trow.rgone" : "div.trow");
+        ar_text(ui, "div.cell", "one");
+        ar_text(ui, "div.cell", "two");
+        ar_text(ui, "div.cell", "three");
+        ar_end(ui);
+    }
+    ar_end(ui);
+}
+
+/*
+ * 0.8.0: the two things a subset could not do.
+ *
+ * A flex factor is a ratio and not a flag, and a maximum makes the whole
+ * distribution a loop rather than a division. Both are visible here: the first
+ * row is three-to-one, the second has an item that stops and gives its share
+ * back to the others.
+ */
+static void page_flexgrid(ar_ctx *ui)
+{
+    ar_text(ui, "div.h2", "A factor is a ratio");
+    ar_text(ui, "div.dim",
+            "The first box says flex-grow: 3 and the other two say 1, so it "
+            "takes three of the five shares. The subset areole shipped with "
+            "divided the leftover by the *number* of growing boxes, which made "
+            "all three the same width and read the factor as a flag.");
+    ar_begin(ui, "div.fbar");
+    ar_text(ui, "div.fit.f3", "grow 3");
+    ar_text(ui, "div.fit", "grow 1");
+    ar_text(ui, "div.fit", "grow 1");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A maximum makes it a loop");
+    ar_text(ui, "div.dim",
+            "The middle box has a max-width it reaches before its share runs "
+            "out, so it stops -- and what it could not take goes to the other "
+            "two rather than being left on the floor. One division never "
+            "revisits that, which is why the specification writes this step as "
+            "a loop and why areole now runs one.");
+    ar_begin(ui, "div.fbar");
+    ar_text(ui, "div.fit", "takes more");
+    ar_text(ui, "div.fit.capped", "capped");
+    ar_text(ui, "div.fit", "takes more");
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Two dimensions at once");
+    ar_text(ui, "div.dim",
+            "A grid of 120px, 1fr and 2fr. The first column is what it says; "
+            "the other two share what is left in the ratio they name. The "
+            "columns line up down the whole grid, which is the thing nested "
+            "flex rows cannot do -- and the wide cell spans two of them.");
+    ar_begin(ui, "div.grid");
+    ar_text(ui, "div.gcell", "120px");
+    ar_text(ui, "div.gcell", "1fr");
+    ar_text(ui, "div.gcell", "2fr");
+    ar_text(ui, "div.gcell", "a");
+    ar_text(ui, "div.gcell.gwide", "span 2");
+    ar_end(ui);
+}
+
+/*
+ * The 0.9.0 page: real markup, parsed and laid out.
+ *
+ * ------------------------------------------------------------------------
+ * Why this page shows the tree as text as well as drawing it
+ *
+ * Every other page in this tour shows a thing working. This one has to show
+ * two things, because the interesting half of an HTML parser is invisible: the
+ * markup below is malformed in four separate ways and the tree that comes out
+ * is not the one it appears to describe. Drawing the result proves it renders;
+ * printing the tree proves it recovered.
+ *
+ * ------------------------------------------------------------------------
+ * Why the user-agent stylesheet is not used here
+ *
+ * `ar_ua_stylesheet` says `div { display: block }`, and areole's own default
+ * display is flex -- so adding it would restyle every other page in this tour.
+ * That collision is the honest reason and it is worth stating: `div` means one
+ * thing to a UI library and another to a document, and a process rendering
+ * both has to keep two answers.
+ *
+ * So the rules below cover exactly the tags this document uses, and nothing
+ * this tour styles by tag. A real application calls ar_ua_stylesheet once and
+ * has no such problem.
+ */
+static const char *SHEET_HTMLDOC =
+    "html, body { display:block; }"
+    "h1 { display:block; font-size:22px; color:#20201e; }"
+    "p { display:block; margin:6px 0px; color:#3a3733; }"
+    "ul { display:block; margin:6px 0px; padding-left:22px; }"
+    ".code { background:#f4efe4; color:#6f685d; padding:8px 10px; font-size:12px; }"
+    ".docframe { display:block; background:#fdfaf3; padding:10px 12px; }";
+
+static const char *SHEET_HTMLDOC2 =
+    "li { display:block; color:#3a3733; }"
+    "b, i, span { display:inline; }"
+    "table { display:table; border-spacing:2px; }"
+    "tbody { display:table-row-group; }"
+    "tr { display:table-row; }"
+    "td { display:table-cell; padding:3px 8px; background:#f4efe4; color:#3a3733; }";
+
+/*
+ * Four kinds of malformed, in five lines.
+ *
+ *   - `<p>` with no `</p>`, twice. The second closes the first.
+ *   - `<li>` with no `</li>`. The same rule.
+ *   - a table with no `<tbody>`, which the tree gets anyway.
+ *   - `<b><i>...</b>...</i>`, which is the adoption agency's whole reason.
+ *
+ * None of these are contrived. This is what hand-written markup looks like.
+ */
+static const char *HTML_SRC = "<h1>areole</h1>\n"
+                              "<p>A paragraph that never closes\n"
+                              "<p>and <b>bold <i>crossing</b> over</i> it\n"
+                              "<ul><li>one<li>two</ul>\n"
+                              "<table><tr><td>a<td>b</table>";
+
+/* Caller storage rather than the arena, so this page cannot change the tour's
+   box budget. A real application uses ar_init_ex and ar_html_parse_into. */
+static ar_dom_node g_html_nodes[128];
+static ar_attr     g_html_attrs[32];
+static char        g_html_text[2048];
+static char        g_html_scratch[1024];
+static ar_doc      g_html_doc;
+static int         g_html_parsed = 0;
+static char        g_html_shape[512];
+
+static void html_shape(const ar_doc *d, ar_i32 i, ar_u32 *used)
+{
+    ar_i32 c;
+
+    if (i < 0 || *used + 2 >= sizeof g_html_shape)
+    {
+        return;
+    }
+    if (d->nodes[i].kind == AR_DOM_TEXT)
+    {
+        g_html_shape[(*used)++] = '#';
+        return;
+    }
+    if (d->nodes[i].kind != AR_DOM_ELEMENT)
+    {
+        return;
+    }
+    {
+        ar_u32 k;
+
+        for (k = 0; k < d->nodes[i].name.n && *used + 1 < sizeof g_html_shape; ++k)
+        {
+            g_html_shape[(*used)++] = d->nodes[i].name.p[k];
+        }
+    }
+    if (d->nodes[i].first_child < 0)
+    {
+        return;
+    }
+    g_html_shape[(*used)++] = '(';
+    for (c = d->nodes[i].first_child; c >= 0; c = d->nodes[c].next_sibling)
+    {
+        if (c != d->nodes[i].first_child && *used + 1 < sizeof g_html_shape)
+        {
+            g_html_shape[(*used)++] = ' ';
+        }
+        html_shape(d, c, used);
+    }
+    if (*used + 1 < sizeof g_html_shape)
+    {
+        g_html_shape[(*used)++] = ')';
+    }
+}
+
+/* Parsed once. Nothing about the document changes between frames, and the tour
+   redraws at whatever rate the window asks for. */
+static void html_parse_once(void)
+{
+    ar_u32 used = 0;
+
+    if (g_html_parsed)
+    {
+        return;
+    }
+    g_html_parsed = 1;
+
+    memset(&g_html_doc, 0, sizeof g_html_doc);
+    g_html_doc.nodes = g_html_nodes;
+    g_html_doc.node_cap = (ar_i32)(sizeof g_html_nodes / sizeof g_html_nodes[0]);
+    g_html_doc.attrs = g_html_attrs;
+    g_html_doc.attr_cap = (ar_i32)(sizeof g_html_attrs / sizeof g_html_attrs[0]);
+    g_html_doc.text = g_html_text;
+    g_html_doc.text_cap = (ar_u32)sizeof g_html_text;
+
+    ar_html_parse(&g_html_doc, HTML_SRC, (ar_u32)strlen(HTML_SRC), g_html_scratch,
+                  (ar_u32)sizeof g_html_scratch);
+
+    html_shape(&g_html_doc, ar_dom_root(&g_html_doc), &used);
+    g_html_shape[used] = 0;
+}
+
+static void page_html(ar_ctx *ui)
+{
+    html_parse_once();
+
+    ar_text(ui, "div.h2", "The markup");
+    ar_text(ui, "div.dim",
+            "Four kinds of malformed in five lines, and none of them contrived: "
+            "two paragraphs that never close, list items that never close, a "
+            "table with no tbody, and a bold crossing an italic. This is what "
+            "hand-written markup actually looks like.");
+    ar_text(ui, "div.code", HTML_SRC);
+
+    ar_text(ui, "div.h2", "The tree it produces");
+    ar_text(ui, "div.dim",
+            "Not the tree the markup appears to describe. The paragraphs are "
+            "siblings, the list items are siblings, a tbody nobody wrote is "
+            "there, and the italic has been split in two by the adoption "
+            "agency. Every browser produces exactly this, because they all "
+            "implement the same specification -- and so does areole.");
+    ar_text(ui, "div.code", g_html_shape);
+
+    ar_text(ui, "div.h2", "And the same document, laid out");
+    ar_text(ui, "div.dim",
+            "Through ar_dom_build, which walks the document into the box tree "
+            "using ar_begin and ar_text -- the same front end everything else "
+            "in this tour is built with. HTML is a second front end, not a "
+            "second engine.");
+    ar_begin(ui, "div.docframe");
+    ar_dom_build(ui, &g_html_doc);
+    ar_end(ui);
+
+    ar_text(ui, "div.dim",
+            fmt("%ld nodes, %lu bytes of text kept, and %lu parse errors -- because not one "
+                "of those four omissions is an error. An end tag a document may leave out is "
+                "left out legally, and the recovery is the specification rather than a repair.",
+                (long)g_html_doc.node_count, (unsigned long)g_html_doc.text_used,
+                (unsigned long)g_html_doc.errors));
 }
 
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
@@ -771,6 +1456,24 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_POSITION:
         page_position(ui, 10);
+        break;
+    case PAGE_SAFE:
+        page_safe(ui);
+        break;
+    case PAGE_LAYER:
+        page_layer(ui);
+        break;
+    case PAGE_TABLE:
+        page_table(ui);
+        break;
+    case PAGE_TABLE2:
+        page_table2(ui);
+        break;
+    case PAGE_FLEXGRID:
+        page_flexgrid(ui);
+        break;
+    case PAGE_HTML:
+        page_html(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1226,8 +1929,31 @@ static void dump_page(ar_ctx *ui, ar_surface *s, ar_i32 page, struct settings *s
         ar_rect r = ar_node_rect(ui, i);
 
         dump_path(ui, i, path);
-        printf("%s %ld %ld %ld %ld |%s\n", path, (long)r.x, (long)r.y, (long)r.w, (long)r.h,
-               ar_node_text(ui, i));
+        printf("%s %ld %ld %ld %ld |", path, (long)r.x, (long)r.y, (long)r.w, (long)r.h);
+
+        /*
+         * The text, with its newlines flattened.
+         *
+         * The dump is one line per box and the comparison tool splits on
+         * lines, so a box whose text contains a newline produces a line the
+         * tool reads as a box with a word where its x should be -- and it
+         * stops with a parse error rather than a mismatch.
+         *
+         * Latent since the format was written; the 0.9.0 page found it by
+         * being the first to show a multi-line string. A browser's
+         * getBoundingClientRect side has the same flattening applied by
+         * `norm`, so the two still agree on what the text is.
+         */
+        {
+            const char *tx = ar_node_text(ui, i);
+
+            while (tx && *tx)
+            {
+                putchar((*tx == '\n' || *tx == '\r') ? ' ' : *tx);
+                ++tx;
+            }
+        }
+        printf("\n");
     }
 }
 
@@ -1323,9 +2049,23 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_CASCADE);
     ar_stylesheet(ui, SHEET_STRUCTURE);
     ar_stylesheet(ui, SHEET_FLOW);
+    ar_stylesheet(ui, SHEET_HTMLDOC);
+    ar_stylesheet(ui, SHEET_HTMLDOC2);
     ar_stylesheet(ui, SHEET_POS);
     ar_stylesheet(ui, SHEET_POS2);
     ar_stylesheet(ui, SHEET_SCROLL2);
+    ar_stylesheet(ui, SHEET_SNAP);
+    ar_stylesheet(ui, SHEET_SAFE);
+    ar_stylesheet(ui, SHEET_ENV);
+    ar_stylesheet(ui, SHEET_LAYER);
+    ar_stylesheet(ui, SHEET_ANCH);
+    ar_stylesheet(ui, SHEET_ANCH2);
+    ar_stylesheet(ui, SHEET_TABLE_A);
+    ar_stylesheet(ui, SHEET_TABLE_B);
+    ar_stylesheet(ui, SHEET_T71_A);
+    ar_stylesheet(ui, SHEET_T71_B);
+    ar_stylesheet(ui, SHEET_F80_A);
+    ar_stylesheet(ui, SHEET_F80_B);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */
@@ -1338,6 +2078,24 @@ int main(int argc, char **argv)
         printf("stylesheet has %lu problem(s)\n", (unsigned long)ar_stylesheet_errors(ui));
         return 1;
     }
+
+    /*
+     * What this backend knows about the display, for the 0.6.2 page.
+     *
+     * The titlebar rectangle is reported, so `env(titlebar-area-*)` resolves to
+     * it. The safe-area insets deliberately are not: a windowed desktop has
+     * nothing covering its edges, and leaving them unreported is what makes the
+     * fallback path visible beside the reported one.
+     *
+     * `cover` rather than the default `auto`, and it changes nothing here. Under
+     * `auto` the layout viewport is the safe rectangle and `env(safe-area-*)`
+     * reports zero whatever the backend knows, because the stylesheet has
+     * already been kept clear of the insets -- so the page would have nothing to
+     * show. A real window's insets are zero either way, so asking for the whole
+     * display costs this tour no pixels and buys the demonstration.
+     */
+    ar_set_titlebar_area(ui, 0, 0, 120, 28);
+    ar_set_viewport_fit_cover(ui, 1);
 
     /* The font, before the first frame: a frame reserves the whole box budget
        from the other end of the arena and does not give it back until the

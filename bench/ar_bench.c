@@ -29,9 +29,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Enough for the largest tree any scene builds: table_1k_rows peaks near 6000
-   boxes and arena_churn near 4000. */
-#define BENCH_UI_BOXES 16384
+/* Enough for the largest tree any scene builds. table_1k_rows peaks near 6000
+   boxes and arena_churn near 4000; table_auto_10k is 10,000 rows of four cells
+   and needs 40,001, which is what raised this from 16,384. The scene reported
+   `overflowed` at the old figure -- a measurement of a tree that had been cut
+   off, which is worse than no measurement, and is why the counter exists. */
+#define BENCH_UI_BOXES 65536
 
 #define DEFAULT_W   800
 #define DEFAULT_H   600
@@ -88,9 +91,9 @@ typedef struct bench_result
     int    overflowed;
 } bench_result;
 
-static int    g_full_repaint = 0;
+static int         g_full_repaint = 0;
 static const char *g_font_path = 0;
-static double g_samples[BENCH_MAX_SAMPLES];
+static double      g_samples[BENCH_MAX_SAMPLES];
 
 static void die(const char *msg)
 {
@@ -647,6 +650,7 @@ int main(int argc, char **argv)
     bench_register_style();
     bench_register_realistic();
     bench_register_patho();
+    bench_register_html();
 
     for (i = 1; i < argc; ++i)
     {

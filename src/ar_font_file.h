@@ -48,7 +48,7 @@ typedef struct ar_face
        instead, which is the other half of the world. */
     ar_u32       cff;
     ar_cff_index cff_charstrings, cff_subrs, cff_gsubrs;
-    ar_u32 glyf_len, loca_len;
+    ar_u32       glyf_len, loca_len;
 
     ar_i32 units_per_em;
     ar_i32 loc_long; /* loca holds 32 bit offsets rather than 16 bit halves */

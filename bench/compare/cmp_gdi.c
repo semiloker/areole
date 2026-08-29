@@ -270,10 +270,18 @@ static void g_blend(cmp_ctx *c)
  *
  * The least fair case in the set, and the caveat says so plainly. GDI renders
  * a hinted, kerned, antialiased outline face through the system font stack;
- * areole blits an 8x8 bitmap. GDI is doing enormously more work and produces
- * enormously better output. The number is worth having anyway, because it says
- * what the ceiling costs -- and because 0.2.0 replaces areole's side with an
- * outline rasterizer and this becomes a fair fight.
+ * this case asks areole for its built-in 8x8 bitmap. GDI is doing enormously
+ * more work and produces enormously better output.
+ *
+ * That was written when areole had nothing else to offer, and it said this
+ * would become a fair fight at 0.2.0. 0.2.0 shipped -- TrueType, CFF, a
+ * scanline rasterizer, a glyph cache -- and this case was never changed to use
+ * any of it, so the row now reads 9.76x in areole's favour for a reason that
+ * has nothing to do with either engine's text quality.
+ *
+ * Making it honest is one ar_font_load away and is worth doing. Until then the
+ * number is a ceiling on glyph blitting, the caveat says so, and
+ * docs/COMPARISON.md prints the caveat beside the ratio rather than under it.
  * ------------------------------------------------------------------------ */
 static const char *const LINE =
     "The quick brown fox jumps over the lazy dog 0123456789 -- and again.";
@@ -342,11 +350,14 @@ static const cmp_case CASES[] = {
      "need. GDI is doing strictly more work here.",
      a_blend, g_blend, 0, 0},
     {"latin_paragraph", "24 lines of latin text",
-     "Not a fair fight and not meant to be: GDI renders a hinted, kerned, antialiased outline "
-     "face through the system font stack, areole blits an 8x8 bitmap. Worth reading anyway: this "
-     "case was a 1.04x tie until the blitter was rewritten to work in spans, and a bitmap blitter "
-     "tying with an outline rasterizer is how we learned it was fifteen times slower than it "
-     "should be. It becomes a fair comparison when 0.2.0 gives areole outlines.",
+     /* 508 characters after concatenation. C89 guarantees 509 and the gate
+        enforces it -- the first draft of this ran to 720 and was refused. */
+     "Not a fair fight, and since 0.2.0 unfair in areole's favour. GDI renders a hinted, kerned, "
+     "antialiased outline face through the system font stack; this case still asks areole for its "
+     "built-in 8x8 bitmap. The ratio is a ceiling on what glyph blitting costs, not a statement "
+     "about text rendering. It was a 1.04x tie once, and a bitmap blitter tying with an outline "
+     "rasterizer is how we learned areole's was fifteen times slower than it should be. Making "
+     "this row fair is one ar_font_load away, and is not done.",
      a_text, g_text, 0, 0},
     {"hairlines", "150 one-pixel-high fills", 0, a_hair, g_hair, 0, 0}};
 

@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #define AR_VERSION_MAJOR 0
-#define AR_VERSION_MINOR 6
+#define AR_VERSION_MINOR 9
 #define AR_VERSION_PATCH 0
 
 /* Names the release that has landed, bumped when the next one does -- which is
@@ -24,8 +24,26 @@ extern "C" {
    0.1.2, 0.2.0, 0.3.0 and 0.4.0, because nothing reads it except a status line
    nobody was checking. It then said 0.5.0-dev through 0.6.0 for the same
    reason. The benchmark stamps it into every published number, so a stale one
-   mislabels the measurements as well as the status line. */
-#define AR_VERSION_STRING "0.6.0-dev"
+   mislabels the measurements as well as the status line.
+
+   It then did it a third time, saying 0.6.0-dev while 0.6.1 was landing, so the
+   discipline is no longer relied on: CMakeLists.txt parses this line rather
+   than carrying its own copy, which had drifted all the way back to 0.1.0.
+   One place to edit is the only version of this that has ever held.
+
+   One place to edit is still one place somebody has to remember, and nobody
+   did: this said 0.6.1-dev through 0.6.2, 0.6.3, 0.7.0, 0.7.1, 0.8.0, 0.8.1
+   and 0.8.2 -- five releases, and further than any of the drifts above. It
+   reached bench/baseline.json and from there the machine block of the
+   generated docs/PERFORMANCE.md, so every published number in this project
+   was labelled with an engine four minor releases old.
+
+   So it is checked now rather than remembered. ar_test asserts this string
+   against the three macros above, and tools/gen_perf_doc.py --check asserts it
+   against the version stamped into the baseline -- which is the half a test
+   cannot see, because the macros and the string can be stale together and
+   agree with each other perfectly. */
+#define AR_VERSION_STRING "0.9.0"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -212,7 +230,47 @@ typedef struct ar_input
     ar_i32 wheel_px;
 
     int mouse_inside; /* the cursor is over the client area */
+
+    /*
+     * Keys pressed since the last frame, as a bitmask of AR_KEY_*.
+     *
+     * Deliberately not a keyboard. This is the set of keys that scroll, and
+     * nothing else: no text, no focus traversal, no caret, no IME, no modifier
+     * tracking. Those are 0.10.0 and starting them here is how 0.6.1 would
+     * quietly become 0.10.0.
+     *
+     * Presses rather than held state, because scrolling is an event: holding
+     * Page Down should repeat at the rate the platform repeats keys, which is
+     * a thing the platform already decides and the core has no business
+     * second-guessing. A backend that repeats sets the bit again.
+     */
+    ar_u32 keys_pressed;
 } ar_input;
+
+/*
+ * The keys that scroll.
+ *
+ * A platform-independent enum, because src/ never includes a platform header
+ * and a virtual key code is the most platform-specific thing there is. Each
+ * backend maps its own codes onto these.
+ */
+enum
+{
+    AR_KEY_UP = 1u << 0,
+    AR_KEY_DOWN = 1u << 1,
+    AR_KEY_LEFT = 1u << 2,
+    AR_KEY_RIGHT = 1u << 3,
+    AR_KEY_PAGE_UP = 1u << 4,
+    AR_KEY_PAGE_DOWN = 1u << 5,
+    AR_KEY_HOME = 1u << 6,
+    AR_KEY_END = 1u << 7,
+
+    /* Space pages down, and shift-space pages up in every browser. There is no
+       modifier tracking here, so a backend that wants the second one sets
+       AR_KEY_PAGE_UP itself -- which is the honest split: the platform knows
+       about shift and this does not. */
+    AR_KEY_SPACE = 1u << 8
+};
 
 /* ------------------------------------------------------------------------
  * Performance
@@ -341,11 +399,70 @@ typedef ar_i32 ar_scroll_pos;
    width a box's contents came to fitted in padding the node already had, so
    the whole cost is the horizontal scroll position in the slot -- which
    AR_SCROLL_COMPACT removes by halving both positions. Compact builds still
-   fit 408, so on that setting horizontal scrolling costs nothing per box. */
+   fit 408, so on that setting horizontal scrolling costs nothing per box.
+
+   416 -> 440 for the top layer and anchor positioning: `overlay`, `inert` and
+   `position-try` are a keyword each, and `anchor-name` and `position-anchor`
+   are thirty-two bits each because they hold a hash. Narrowing those two to
+   sixteen was the alternative and was refused: two anchor names colliding
+   would silently attach a popover to the wrong box, which is a worse failure
+   than a larger struct and an invisible one. Measured at 428 of 440 rather
+   than guessed, so there are twelve bytes left before this has to move again.
+
+   440 -> 456 for tables. Five properties -- table-layout, border-collapse,
+   border-spacing, colspan and rowspan -- and the sixty-fifth property, which
+   pushed the property mask from two words to three. That last one is the
+   expensive half: the mask is carried by every style, and a style is carried
+   by every box *and* every rule, so widening it cost four bytes in each of
+   two places per box. Measured at 444 of 456, so twelve bytes again.
+
+   colspan and rowspan are HTML attributes rather than CSS, and paying per-box
+   style bytes for them is a real cost of having no attributes yet. The
+   alternative was an ar_span() call writing into a side array, and the price
+   of not taking it is worth stating rather than implying: those two are the
+   sixty-fifth and sixty-sixth properties, so dropping them would have left
+   AR_P_COUNT at 64 -- exactly what two mask words hold. That is 8 bytes of
+   style per box, 8 more per rule across 256 rules, and the whole 8 KB of
+   AR_MEM_FIXED below. It was paid so that a stylesheet can set a span.
+
+   456 -> 464, for `visibility`, `caption-side` and `empty-cells` at 0.7.1.
+   Measured, not guessed: ar_node went 400 -> 408 bytes and the assertion
+   below fired at 460 against 456. Three narrow properties are six bytes of
+   value and three of unit, which alignment rounds to eight.
+
+   `visibility` is the one that had to be a property. It inherits, and that is
+   the whole of what makes `collapse` on a row useful -- the row goes and every
+   cell in it goes too, without any of them being named -- so it cannot be a
+   call into the context the way a span could have been. The other two ride
+   along in the same eight bytes: the alignment had already been paid.
+
+   464 -> 488, for the seven properties real flexbox needs at 0.8.0:
+   flex-wrap, flex-basis, flex-grow, flex-shrink, align-self, align-content
+   and order. Measured: ar_node went 408 -> 432 and the assertion below fired
+   at 484. areole shipped a flexbox *subset* -- direction, gap, justify, align
+   and a `grow` keyword that is not CSS -- and this is what the rest of it
+   costs. Anything written against real CSS uses these, so the alternative was
+   not a smaller struct, it was laying those stylesheets out wrongly.
+
+   488 -> 528 for grid at 0.8.0. Measured: ar_node went 432 -> 472 and the
+   assertion below fired at 524. Thirteen properties -- two templates, two
+   automatic track lists, the flow, four line numbers, two justifications and
+   the two halves of `gap`.
+
+   A track *list* is not among them, and that is the part worth stating: a
+   template is a list of unknown length full of functions, and a style slot is
+   sixteen bits. What the slot holds is an index into a pool on the stylesheet,
+   which is where a track list belongs anyway -- it comes from a rule and never
+   from a computation, so it is parsed once and read every frame, and nothing
+   about it is per-box. Carrying it per-box would have cost every box in the
+   interface a pointer for the sake of the handful that are grids.
+
+   The assertions in ar_ctx.c are what noticed every one of these; they are
+   there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 408u
+#define AR_BYTES_PER_BOX 520u
 #else
-#define AR_BYTES_PER_BOX 416u
+#define AR_BYTES_PER_BOX 528u
 #endif
 
 /*
@@ -358,12 +475,79 @@ typedef ar_i32 ar_scroll_pos;
  * is checked by a compile-time assertion against the real structure sizes
  * rather than trusted, which is why this was a build failure and not a
  * corruption.
+ *
+ * 160 KB -> 168 KB for tables, and by two hundred bytes. A rule is 516 bytes
+ * now, so the rule table alone is 129 KB of it; the property mask going from
+ * two words to three is what tipped it over, because a rule carries two of
+ * them -- the properties it sets and the ones it marked important. Measured at
+ * 164,040 of 172,032.
+ *
+ * 168 KB -> 176 KB for the rest of flexbox at 0.8.0, and again mostly the rule
+ * table: ar_style went 236 -> 260 bytes for seven properties, a rule went
+ * 520 -> 544, and 256 of them is 139,264. Measured: 15,120 of context, 139,264
+ * of rules, 17,664 of style cache and the 1,024 of slack the assertion carries,
+ * which is 173,072 of 180,224.
+ *
+ * 176 KB -> 192 KB for grid at 0.8.0, and for the first time not only the rule
+ * table: ar_style went 260 -> 300 bytes for thirteen properties, a rule went
+ * 544 -> 584, and 256 of them is 149,504. The track pool is the new part --
+ * 512 tracks at 8 bytes is 4 KB, and it is now inside the assertion rather
+ * than beside it, because a block that is checked and a block that is used
+ * being two different numbers is how a fixed budget stops being fixed.
+ * Measured: 15,136 of context, 149,504 of rules, 20,224 of style cache, 4,096
+ * of tracks and 1,024 of slack, which is 189,984 of 196,608.
  */
-#define AR_MEM_FIXED  163840u
+#define AR_MEM_FIXED  196608u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
+
+/* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
+   slots a rule carries; see ar_init_rules. */
+#define AR_BYTES_PER_RULE 588u
+
+/* A block with room for a larger rule table. Hand the same count to
+   ar_init_rules; a smaller one there wastes the space rather than corrupting
+   anything. */
+#define AR_MEM_RULES(boxes, rules)                                                                 \
+    (AR_MEM(boxes) + ((ar_u32)(rules) > 256u ? ((ar_u32)(rules) - 256u) * AR_BYTES_PER_RULE : 0u))
+
+/*
+ * A block with room for a parsed document as well.
+ *
+ * A document is per-parse rather than per-frame, so it lives in the persistent
+ * half of the arena and cannot come out of the box budget -- a caller that
+ * asked for two thousand boxes must still get two thousand. `bytes` is what
+ * ar_html_parse_into may spend: nodes, attributes, text and, when the document
+ * is not already UTF-8, the decoded copy of it.
+ *
+ * A page of ordinary prose needs roughly four times its own size. Ask for more
+ * than you think; the failure is clean and reported, but it is still a failure.
+ */
+#define AR_MEM_DOC(boxes, bytes) (AR_MEM(boxes) + (ar_u32)(bytes))
 
 /* Returns NULL if the block is too small to be useful. */
 ar_ctx *ar_init(void *mem, ar_u32 size);
+
+/*
+ * The same, for a caller that needs more than the defaults.
+ *
+ * `max_rules` -- an ar_rule is 588 bytes, most of it the property slots a rule
+ * carries to hold the two or three it states, so the default 256 already
+ * occupy 150 KB of the 192 KB AR_MEM_FIXED promises. Raising that constant
+ * would charge every application for a stylesheet only some of them have: a
+ * browser user-agent sheet is around 400 rules and an embedded panel is
+ * eleven. A count below the default is raised to it.
+ *
+ * `doc_bytes` -- what ar_html_parse_into may spend on a parsed document.
+ *
+ * Both come **out of the block and not out of the box budget**. Size the block
+ * with AR_MEM_RULES or AR_MEM_DOC and pass the same numbers here; asking for
+ * more than the block holds is refused at init rather than discovered as an
+ * overflow in the middle of a frame.
+ *
+ *     static unsigned char mem[AR_MEM_DOC(2000, 96 * 1024)];
+ *     ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes);
 
 /* Parses a stylesheet into the context. Call it as many times as you like at
    startup; each call appends. Never call it per frame: the whole point is that
@@ -373,6 +557,22 @@ void ar_stylesheet(ar_ctx *c, const char *css);
 /* Non-zero if the stylesheet had anything wrong with it. Parsing never aborts,
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
+
+/*
+ * How many rules were refused outright, which is the number that matters.
+ *
+ * `ar_stylesheet_errors` counts every complaint, and most of them are
+ * harmless: a declaration naming a property areole has not implemented is
+ * dropped and the rule around it still applies, which is what CSS says to do
+ * and what lets a real stylesheet full of `font-family` and `box-shadow`
+ * style everything it can.
+ *
+ * This counts the other kind: a rule areole threw away entire, so nothing it
+ * said happened. A selector list longer than AR_MAX_SEL_LIST is the way to
+ * get one, and it fails silently -- the page still lays out, just not the way
+ * it was written. Assert this is zero; the other number is information.
+ */
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c);
 
 /* ------------------------------------------------------------------------
  * Fonts
@@ -622,8 +822,9 @@ ar_i32 ar_node_scroll_range(const ar_ctx *c, ar_i32 i);
 /* The same three on the inline axis. A container scrolls sideways when
    overflow-x resolves to scroll or auto -- which includes the case where only
    overflow-y was stated, since a lone visible on the other axis becomes auto.
-   There is no horizontal scrollbar and no wheel binding yet: drive it from the
-   application, the way a keyboard or a swipe would. */
+   AR_KEY_LEFT and AR_KEY_RIGHT drive it, and so does this call. There is still
+   no horizontal scrollbar to drag and no wheel binding, because nothing here
+   generates an inline wheel event. */
 ar_i32 ar_node_scroll_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_range_x(const ar_ctx *c, ar_i32 i);
 ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);
@@ -632,9 +833,95 @@ ar_i32 ar_node_scroll_to_x(ar_ctx *c, ar_i32 i, ar_i32 x);
    or scrolling something into view. Returns where it ended up. */
 ar_i32 ar_node_scroll_to(ar_ctx *c, ar_i32 i, ar_i32 y);
 
+/*
+ * Brings a box into view by scrolling its nearest scrollable ancestor.
+ *
+ * Honours `scroll-margin` on the box and `scroll-padding` on the container, so
+ * a sticky header does not end up covering the thing that was just scrolled
+ * to -- which is the entire reason those two properties exist.
+ *
+ * Scrolls the minimum distance: a box already fully visible does not move, and
+ * one below the fold comes to the bottom rather than jumping to the top. That
+ * is what a reader expects and what "nearest" means in the CSS of the same
+ * name.
+ *
+ * Returns 1 if anything moved. Only the block axis, matching the rest of the
+ * scrolling here.
+ */
+int ar_node_scroll_into_view(ar_ctx *c, ar_i32 i);
+
 /* Whether a wheel notch moved anything this frame, so a caller whose pump
    blocks knows to ask for the frame that shows it. */
 int ar_scrolled(const ar_ctx *c);
+
+/* ------------------------------------------------------------------------
+ * The display the backend is drawing on
+ *
+ * Two things the core cannot work out for itself and will not guess: how much
+ * of the display is covered by something the window does not control, and
+ * where the titlebar sits when the backend draws its own. A stylesheet reaches
+ * them through `env()`.
+ *
+ * A backend that says nothing leaves them unknown, and every `env()` naming
+ * one takes its fallback. That is not the same as reporting zero: a windowed
+ * desktop has real insets of zero, so `env(safe-area-inset-top, 20px)` must
+ * resolve to 0 there and to 20 on a backend that has never heard of the idea.
+ * ------------------------------------------------------------------------ */
+
+/* The four safe-area insets, in pixels. Calling this at all marks them known,
+   so a backend that means "zero on every side" should call it with zeroes
+   rather than not call it. */
+void ar_set_safe_area(ar_ctx *c, ar_i32 top, ar_i32 right, ar_i32 bottom, ar_i32 left);
+
+/* Where a backend drawing its own window controls has put them. */
+void ar_set_titlebar_area(ar_ctx *c, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h);
+
+/*
+ * `viewport-fit`. Zero is `auto`, which is the initial value.
+ *
+ * With `auto` the layout viewport is the safe rectangle -- the surface with
+ * the insets already taken off -- and `env(safe-area-inset-*)` reports zero,
+ * because there is nothing left for the stylesheet to avoid. With `cover` the
+ * layout viewport is the whole surface and the real insets are reported.
+ *
+ * The two always move together. A viewport inset by the safe area *and* an
+ * env() reporting that inset would take it off twice, which is the bug this
+ * pairing exists to make impossible.
+ */
+void ar_set_viewport_fit_cover(ar_ctx *c, int cover);
+
+/* ------------------------------------------------------------------------
+ * Diagnostics
+ *
+ * Things a frame noticed that are probably not what the author meant, and are
+ * not errors: the stylesheet is valid, the layout is correct, and the result
+ * is still unlikely to be what anyone wanted.
+ *
+ * The first of them is the reason this exists. A sticky box inside an
+ * `overflow: hidden` ancestor never sticks -- that ancestor is its scrollport
+ * and it does not scroll -- which is correct behaviour and the most reported
+ * non-bug in every engine. Rather than leave people to find that out, areole
+ * says so.
+ *
+ * Refreshed every frame. Reading them is optional and costs nothing when
+ * nobody does.
+ * ------------------------------------------------------------------------ */
+enum
+{
+    AR_DIAG_STICKY_NEVER_STICKS = 1
+};
+
+#define AR_DIAG_MAX 16
+
+/* How many this frame produced. */
+ar_i32 ar_diag_count(const ar_ctx *c);
+
+/* The code of one, and through `out_node` the box it is about. Returns 0 for
+   an index nobody reported. */
+ar_i32 ar_diag_at(const ar_ctx *c, ar_i32 i, ar_i32 *out_node);
+
+/* A fixed English sentence for a code. Never null. */
+const char *ar_diag_text(ar_i32 code);
 
 ar_perf *ar_perf_of(ar_ctx *c);
 
@@ -674,6 +961,19 @@ ar_i32  ar_node_parent(const ar_ctx *c, ar_i32 i);
 /* Which child of its parent this box is, counting from zero. The root is 0. */
 ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i);
 
+/*
+ * Whether areole made this box up.
+ *
+ * A cell declared straight inside a table needs a row to live in, and the
+ * table model needs a rectangular grid before it can solve anything, so the
+ * missing boxes are generated. They are real boxes with real rectangles and
+ * they are not in the tree the caller described -- which matters to anything
+ * comparing the two, including the layout corpora: a browser's generated boxes
+ * are not elements and never appear in a walk of the DOM, so a comparison that
+ * counted areole's would disagree on every case that has one.
+ */
+int ar_node_generated(const ar_ctx *c, ar_i32 i);
+
 /* The text this box was given, or a pointer to "" if it was given none. The
    caller's own string, not a copy -- areole never copied it. */
 const char *ar_node_text(const ar_ctx *c, ar_i32 i);
@@ -691,6 +991,342 @@ ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i);
 /* One fragment's rectangle, and the byte range of the node's text on it. The
    two out parameters may be null. */
 ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i32 *out_to);
+
+/* ------------------------------------------------------------------------
+ * HTML
+ *
+ * A second front end, not a second engine. `ar_html_parse_into` builds a
+ * document and `ar_dom_build` walks it through the same `ar_begin`/`ar_text`
+ * calls a hand-written interface makes -- so style resolution, the stable keys
+ * hover and damage tracking depend on, and the pre-order invariant the layout
+ * passes require are the ones every other caller already gets.
+ *
+ * The tokenizer is not here. It is thirty states and a token struct, it is of
+ * no use to somebody who wants a document laid out, and a header is a promise:
+ * everything in this file has to keep working. `src/ar_html.h` has it for
+ * anyone who wants to drive the parser directly, and that one is not installed
+ * and not promised.
+ *
+ * ------------------------------------------------------------------------
+ * Who owns the text
+ *
+ * A span points into one of three places and never copies unless it must.
+ * Usually it points at the caller's own bytes, which is why the input has to
+ * outlive the document. Text that had a character reference in it cannot be a
+ * span of the input any more -- `&amp;` is five bytes in and one out -- so
+ * exactly those are copied into the document's own buffer. And an element the
+ * parser *implied*, the `<html>` a document without one is given, has no bytes
+ * anywhere to point at, so its name is a string literal that outlives
+ * everything.
+ *
+ * That is not an optimisation for its own sake. Ordinary prose contains almost
+ * no character references, so almost nothing is copied, and what is copied is
+ * bounded by the entities present rather than by the size of the document.
+ * ------------------------------------------------------------------------ */
+
+/* A run of bytes somewhere. Not NUL-terminated: `n` is the length. */
+typedef struct ar_span
+{
+    const char *p;
+    ar_u32      n;
+} ar_span;
+
+/*
+ * The namespace an attribute is in.
+ *
+ * Only three exist in HTML, and all three arrive the same way: an attribute
+ * written with a colon inside foreign content. `xlink:href` on an SVG element
+ * is the `href` attribute in the XLink namespace, and it is not the same
+ * attribute as a plain `href` -- which matters because that is how an SVG
+ * `<a>` carries its destination.
+ *
+ * Nothing outside foreign content ever has one, so this is zero on every
+ * attribute in an ordinary document.
+ */
+typedef enum ar_attr_ns
+{
+    AR_ATTR_NS_NONE = 0,
+    AR_ATTR_NS_XLINK,
+    AR_ATTR_NS_XML,
+    AR_ATTR_NS_XMLNS
+} ar_attr_ns;
+
+typedef struct ar_attr
+{
+    ar_span name;
+    ar_span value;
+
+    /* AR_ATTR_NS_NONE for everything an HTML document contains. */
+    ar_attr_ns ns;
+} ar_attr;
+
+/*
+ * The namespace an element is in.
+ *
+ * HTML has exactly three and the parser decides which by where the element
+ * appeared, not by anything the author wrote: everything inside `<svg>` is in
+ * the SVG namespace until the subtree ends, and `<math>` likewise. There is no
+ * `xmlns` handling -- an `xmlns` attribute in HTML is an ordinary attribute
+ * that changes nothing.
+ *
+ * It is not cosmetic. `<title>` in HTML is raw text and `<title>` in SVG is an
+ * ordinary element that may contain markup; `<a>` in SVG takes its destination
+ * from `xlink:href`. The namespace is what tells them apart.
+ */
+typedef enum ar_ns
+{
+    AR_NS_HTML = 0,
+    AR_NS_SVG,
+    AR_NS_MATHML
+} ar_ns;
+
+typedef enum ar_dom_kind
+{
+    AR_DOM_DOCUMENT = 0,
+    AR_DOM_ELEMENT,
+    AR_DOM_TEXT,
+    AR_DOM_COMMENT,
+    AR_DOM_DOCTYPE,
+
+    /*
+     * A processing instruction: `<?target data>`.
+     *
+     * `name` is the target and `text` is the data. HTML had no such node for
+     * twenty years -- `<?php ... ?>` in a file served as HTML became a comment
+     * -- and the specification changed: a `<?` followed by something that is a
+     * valid XML name now produces one of these. `<?a$>` still becomes a
+     * comment, because `a$` is not a name.
+     *
+     * Nothing renders it. It is in the tree because it is in the document.
+     */
+    AR_DOM_PI,
+
+    /*
+     * A `<template>` element's contents.
+     *
+     * Every template gets exactly one of these as its only child, and
+     * everything written inside the template goes under it rather than under
+     * the element. That is not bookkeeping: it is what makes a template inert.
+     * Its contents are parsed but are not in the document, so an `<img>` in a
+     * template does not load and a `<script>` in one does not run.
+     *
+     * Nothing else in HTML produces one.
+     */
+    AR_DOM_FRAGMENT
+} ar_dom_kind;
+
+/*
+ * The three quirks modes, selected from the doctype by the specification's own
+ * table.
+ *
+ * Not a curiosity. Quirks changes the box model to content-box-plus-padding,
+ * changes table cell inheritance and changes line height. A document with no
+ * doctype has to render the way a browser renders it or the engine is wrong
+ * about a large fraction of the web.
+ */
+typedef enum ar_quirks
+{
+    AR_QUIRKS_NO = 0,
+    AR_QUIRKS_LIMITED,
+    AR_QUIRKS_YES
+} ar_quirks;
+
+/*
+ * A node. Index-referenced rather than pointer-linked, for the reasons the box
+ * tree gives: indices survive the array moving, they halve the size of a link
+ * on a 64 bit target, and a flat array makes a walk a linear sweep.
+ *
+ * Every link is an index into `ar_doc.nodes`, or -1.
+ */
+typedef struct ar_dom_node
+{
+    ar_dom_kind kind;
+    ar_ns       ns; /* AR_NS_HTML unless this is inside <svg> or <math> */
+
+    ar_span name; /* element tag name, or the doctype's name */
+    ar_span text; /* text data, or a comment's body */
+
+    ar_i32 parent;
+    ar_i32 first_child;
+    ar_i32 last_child;
+    ar_i32 next_sibling;
+    ar_i32 prev_sibling;
+
+    ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
+    ar_i32 attr_count;
+} ar_dom_node;
+
+typedef struct ar_doc
+{
+    ar_dom_node *nodes;
+    ar_i32       node_cap;
+    ar_i32       node_count;
+
+    ar_attr *attrs;
+    ar_i32   attr_cap;
+    ar_i32   attr_count;
+
+    /* Where text that could not stay a span of the input goes. */
+    char  *text;
+    ar_u32 text_cap;
+    ar_u32 text_used;
+
+    ar_quirks quirks;
+
+    /*
+     * The doctype's public and system identifiers, or empty spans.
+     *
+     * On the document rather than on the node because a document has exactly
+     * one doctype and every node would otherwise carry thirty-two bytes it
+     * never uses. `quirks` is here for the same reason and was decided from
+     * these two.
+     *
+     * `p` is null when the identifier was absent, which is not the same as
+     * present and empty: `<!DOCTYPE html PUBLIC "">` has one and
+     * `<!DOCTYPE html>` does not.
+     */
+    ar_span doctype_public;
+    ar_span doctype_system;
+
+    /* Parse errors. Never fatal: the specification defines a recovery for
+       every one of them, and a parser that stops disagrees with every
+       browser. This is a count of how odd the document was, not a verdict. */
+    ar_u32 errors;
+
+    /* Set when any budget ran out -- nodes, attributes, text, or the scratch a
+       character reference decodes into. A document larger than the budget
+       fails cleanly and says so rather than truncating in silence, and the
+       tree holds as much as fitted. */
+    int overflowed;
+} ar_doc;
+
+/*
+ * Parse into the context's own arena, sniffing and decoding the encoding
+ * first.
+ *
+ * How much it may spend was fixed at init: size the block with AR_MEM_DOC and
+ * hand the same figure to ar_init_ex. A document is per-parse rather than
+ * per-frame, so it cannot come out of the box budget -- a caller that asked
+ * for two thousand boxes must still get two thousand.
+ *
+ * Call it **before the first frame**: a frame reserves the whole box budget
+ * from the other end of the arena and does not release it until the next
+ * ar_frame_begin.
+ *
+ * Returns the document, or null if the context could not spare the space at
+ * all. A document that was built but did not fit comes back with `overflowed`
+ * set.
+ */
+ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/*
+ * Parse into storage the caller points at, with no context involved.
+ *
+ * Returns non-zero if the whole document was built, zero if anything
+ * overflowed. Set `nodes`, `node_cap`, `attrs`, `attr_cap`, `text` and
+ * `text_cap` on `doc` first; everything else is written by the parse.
+ *
+ * `scratch` is where a decoded character reference goes and may be null, in
+ * which case a reference is passed through as the literal bytes that spell it
+ * -- which is what a caller rendering only its own markup wants. A few hundred
+ * bytes is plenty for a document; the parser reuses it per token.
+ *
+ * The input is not copied and must outlive the document.
+ */
+int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
+
+/*
+ * Parse a *fragment*, the way `innerHTML` does.
+ *
+ * `context` is the element the markup is being parsed as if it were inside --
+ * `"td"`, `"select"`, `"title"` -- and `context_ns` its namespace. The result
+ * is the children of the document's root element: `ar_dom_root(doc)` is a
+ * synthetic `<html>` that is not part of the answer, and everything under it
+ * is.
+ *
+ * The context changes almost everything. `<td>x` parsed with a `tr` context
+ * is a cell; with a `div` context the tag is dropped and only the text
+ * survives. `a<b>` inside a `title` is text including the angle brackets,
+ * because a title is RCDATA. The same bytes are a different document
+ * depending on where they were going.
+ *
+ * Same storage rules as ar_html_parse, and the same return: non-zero if the
+ * whole fragment was built.
+ */
+int ar_html_parse_fragment(ar_doc *doc, const char *bytes, ar_u32 len, const char *context,
+                           ar_ns context_ns, char *scratch, ar_u32 scratch_cap);
+
+/*
+ * The document into the box tree.
+ *
+ * Call it between ar_frame_begin and ar_frame_end, exactly where the
+ * equivalent ar_begin/ar_end block would go.
+ */
+void ar_dom_build(ar_ctx *c, ar_doc *d);
+
+/*
+ * Every `<style>` element in the document, handed to ar_stylesheet in tree
+ * order -- which is cascade order, and is why it is a walk rather than a
+ * search. Returns how many sheets were found.
+ *
+ * Call it after parsing and before the first frame.
+ */
+ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d);
+
+/*
+ * The user-agent stylesheet: the default style for every element, which is
+ * what makes <h1> large and <table> use the table model.
+ *
+ * Not optional for a document. areole's own default display is `flex`, so
+ * without this every paragraph lays out in a row.
+ */
+void ar_ua_stylesheet(ar_ctx *c);
+
+/* The root element, or -1. Almost always <html>. */
+ar_i32 ar_dom_root(const ar_doc *doc);
+
+/* First child of `i` that is an element with this tag, or -1. */
+ar_i32 ar_dom_child_element(const ar_doc *doc, ar_i32 i, const char *tag);
+
+/* Case-insensitive ASCII comparison of a span against a C string, which is the
+   question every tag name is asked. */
+int ar_span_is(ar_span s, const char *lit);
+
+/* ------------------------------------------------------------------------
+ * Encoding
+ *
+ * The parser reads UTF-8 and a document on disk is whatever somebody saved it
+ * as. Reading windows-1252 as UTF-8 does not fail -- every byte is valid on
+ * its own -- it renders every accented letter as a replacement character and
+ * looks like a font problem.
+ *
+ * ar_html_parse_into does all of this for you. These are for a caller doing
+ * its own reading.
+ * ------------------------------------------------------------------------ */
+typedef enum ar_encoding
+{
+    AR_ENC_UNKNOWN = 0,
+    AR_ENC_UTF8,
+    AR_ENC_UTF16LE,
+    AR_ENC_UTF16BE,
+    AR_ENC_WINDOWS1252
+} ar_encoding;
+
+/*
+ * What these bytes are, and how many of them are a byte order mark.
+ *
+ * A BOM beats a `<meta charset>` that disagrees with it, which is the
+ * specification's rule and matters because authoring tools write both and
+ * contradict themselves constantly.
+ */
+ar_encoding ar_encoding_sniff(const char *bytes, ar_u32 len, ar_u32 *skip);
+
+/* A label such as "utf-8" or "iso-8859-1" to an encoding, or AR_ENC_UNKNOWN. */
+ar_encoding ar_encoding_from_label(const char *label, ar_u32 n);
+
+/* Into UTF-8, in the caller's buffer. Returns the bytes written, truncated
+   rather than overrun if the buffer is too small. */
+ar_u32 ar_encoding_decode(ar_encoding enc, const char *in, ar_u32 len, char *out, ar_u32 cap);
 
 const char *ar_version(void);
 

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole responsive table corpus — the browser twin</title>
+
+<!--
+  The same cases as examples/10_table_responsive/main.c, in HTML:
+
+      python tools/compare_layout.py \
+             --run ./build/example_table_responsive.exe \
+             examples/10_table_responsive/responsive.html
+
+  Every box here is a plain div with a `display` value, so the browser runs its
+  own CSS table algorithm on the same tree instead of being told the answer.
+  Nothing on this page is a <table> element: nothing here needs colspan, which
+  is the only thing that forced real elements in the 09 corpus.
+
+  ----------------------------------------------------------------------------
+  The scroll offsets are set, not gestured
+
+  Each case appears four times, at four offsets on both axes at once. Both
+  engines are asked about the same *offset* rather than about the same
+  gesture -- a wheel notch is not a unit either of them agrees on, and a
+  sticky box that never moves is indistinguishable from one that was placed
+  correctly by accident.
+
+  scrollTop and scrollLeft are applied before the dump, and the dump is taken
+  after a forced reflow so the browser has settled the sticky boxes.
+
+  ----------------------------------------------------------------------------
+  The one compensating rule
+
+  `.port` hides its scrollbars. areole's is an overlay and reserves no space;
+  a browser's takes layout space, which makes its scrollport shorter and lets
+  it scroll further, so the same assigned offset clamps to two different
+  numbers. See the note beside the rule.
+
+  ----------------------------------------------------------------------------
+  Generated boxes are in neither dump
+
+  A browser's are not elements and never appear in a walk of the DOM; areole's
+  are skipped by its own dump. Both sides report the tree the case declared.
+
+  ----------------------------------------------------------------------------
+  Why the cells state their sizes
+
+  This file is about where a box ends up, not how wide it decided to be --
+  that is the 09 corpus's question and it is answered there. Fixing the sizes
+  means a disagreement here is a disagreement about sticky, about collapse or
+  about the caption, and not about column widths arriving from somewhere else.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 14px 0 4px;
+}
+
+.app { width: 240px; height: 160px; background: #fff; }
+
+/* Mirrors SHEET_A..SHEET_C in main.c. */
+/*
+ * The one compensating rule.
+ *
+ * areole's scrollbar is an overlay: it reserves no space, so nothing reflows
+ * when one appears, and the scrollport is the full 220x120. A browser's takes
+ * layout space by default, which makes its scrollport shorter and therefore
+ * lets it scroll *further* -- so the same assigned scrollTop clamps to two
+ * different numbers and every box in the table reads eight pixels apart. That
+ * is a difference of scrollbar policy reported as a difference of scrolling.
+ *
+ * Both properties, because they are two different vendors' spellings of the
+ * same thing and which one Edge honours has moved between versions.
+ */
+.port { display: block; width: 220px; height: 120px; overflow: auto; background: #faf7f0;
+        scrollbar-width: none; }
+.port::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.t { display: table; width: 360px; border-spacing: 0; }
+.g { display: table-row-group; }
+.h { display: table-header-group; }
+.r { display: table-row; }
+.cap { display: table-caption; height: 14px; background: #e8dfcb; }
+.lg { display: table-column-group; }
+.co { display: table-column; }
+.c { display: table-cell; width: 90px; height: 22px; background: #cfd8e3; }
+.hd { background: #b9c8dc; }
+.first { background: #c8d6c2; }
+.stick-h { position: sticky; top: 0px; }
+.stick-c { position: sticky; left: 0px; }
+
+#cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+textarea#out { display: block; width: 100%; height: 240px; margin-top: 20px;
+               font: 12px/1.35 Consolas, monospace; }
+</style>
+
+<h1 style="font-size:15px;margin-bottom:8px">areole responsive table corpus — the browser twin</h1>
+
+<div id="cases"></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+/* Mirrors CASES[] in examples/10_table_responsive/main.c, in the same order.
+   [name, extra css, header sticky, first column sticky] */
+const CASES = [
+  ['plain', '', 0, 0],
+  ['caption', '', 0, 0],
+
+  ['head', '', 1, 0],
+  ['col', '', 0, 1],
+  ['both', '', 1, 1],
+
+  ['row-gone', '.r3 { visibility:collapse; }', 0, 0],
+  ['row-gone-sticky', '.r3 { visibility:collapse; }', 1, 0],
+  ['col-gone', '.co2 { visibility:collapse; }', 0, 0],
+  ['colgroup-gone', '.lg2 { visibility:collapse; }', 0, 0],
+
+  ['caption-under', '.cap { caption-side:bottom; }', 0, 0],
+  ['empty-hidden', '.t { empty-cells:hide; }', 0, 0],
+  ['col-widths', '.co1 { width:60px; } .co2 { width:150px; }', 0, 0]
+];
+
+/* Mirrors SCROLLS[]. Both axes at once, so a case cannot pass by being right
+   on one of them. */
+const SCROLLS = [[0, 0], [0, 34], [40, 0], [70, 58]];
+
+function el(cls, text) {
+  const d = document.createElement('div');
+  d.className = cls;
+  if (text !== undefined) d.textContent = text;
+  return d;
+}
+
+function build(app, k) {
+  const port = el('port');
+  const t = el('t');
+
+  /* No text and no child: a box sized by its own font is the one thing the
+     two engines cannot agree on, and this file is about where boxes end up. */
+  t.appendChild(el('cap'));
+
+  /* Two column groups of two columns each, so a case can close one column or
+     a whole group and the two are told apart. */
+  for (let g = 1; g <= 2; g++) {
+    const lg = el('lg lg' + g);
+    lg.appendChild(el('co co' + (g * 2 - 1)));
+    lg.appendChild(el('co co' + (g * 2)));
+    t.appendChild(lg);
+  }
+
+  const head = el('h' + (k[2] ? ' stick-h' : ''));
+  const hr = el('r');
+  for (let c = 0; c < 4; c++) {
+    let cls = 'c hd';
+    if (c === 0) cls += k[3] ? ' first stick-c' : ' first';
+    hr.appendChild(el(cls, 'h'));
+  }
+  head.appendChild(hr);
+  t.appendChild(head);
+
+  const body = el('g');
+  for (let r = 0; r < 5; r++) {
+    const tr = el('r r' + r);
+    for (let c = 0; c < 4; c++) {
+      let cls = 'c';
+      if (c === 0) cls += k[3] ? ' first stick-c' : ' first';
+      /* The third cell of the third row is empty on purpose, so
+         `empty-cells: hide` has something to hide. */
+      tr.appendChild(el(cls, r === 2 && c === 2 ? '' : 'x'));
+    }
+    body.appendChild(tr);
+  }
+  t.appendChild(body);
+
+  port.appendChild(t);
+  app.appendChild(port);
+}
+
+function scopeCss(css, name) {
+  return css.replace(/(^|\})\s*([^{}]+)\{/g,
+    (m, brace, sel) => brace + sel.split(',')
+      .map(s => '[data-page="' + name + '"] ' + s.trim()).join(',') + '{');
+}
+
+function addCase(k, v) {
+  const name = k[0] + '-s' + v;
+  const host = document.getElementById('cases');
+
+  const title = document.createElement('h2');
+  title.textContent = name;
+
+  const app = el('app');
+  app.dataset.page = name;
+
+  if (k[1]) {
+    const st = document.createElement('style');
+    st.textContent = scopeCss(k[1], name);
+    app.appendChild(st);
+  }
+
+  build(app, k);
+
+  const cell = document.createElement('div');
+  cell.appendChild(title);
+  cell.appendChild(app);
+  host.appendChild(cell);
+
+  /* The offset, set rather than gestured. */
+  const port = app.querySelector('.port');
+  port.scrollTop = SCROLLS[v][1];
+  port.scrollLeft = SCROLLS[v][0];
+}
+
+function buildCases() {
+  for (const k of CASES) {
+    for (let v = 0; v < SCROLLS.length; v++) addCase(k, v);
+  }
+}
+
+function childIndex(e) {
+  let n = 0;
+  for (let p = e.previousElementSibling; p; p = p.previousElementSibling) {
+    if (p.tagName !== 'STYLE') n++;
+  }
+  return n;
+}
+
+function walk(e, path, origin, out) {
+  const r = e.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of e.children) {
+    if (c.tagName === 'STYLE') continue;
+    walk(c, path + '/' + childIndex(c), origin, out);
+  }
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    const origin = app.getBoundingClientRect();
+    out.push('0 0 0 ' + Math.round(origin.width) + ' ' + Math.round(origin.height) + ' |');
+    let n = 0;
+    for (const c of app.children) {
+      if (c.tagName === 'STYLE') continue;
+      walk(c, '0/' + n, origin, out);
+      n++;
+    }
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+buildCases();
+
+/*
+ * A forced reflow before the dump, because the scroll offsets were only just
+ * assigned and a sticky box is placed against the scrollport it is in. Reading
+ * offsetHeight is what makes the browser settle them; a requestAnimationFrame
+ * callback would never fire under headless, which is how the safe-area twin
+ * once silently dumped nothing.
+ */
+document.body.offsetHeight;
+dump();
+</script>

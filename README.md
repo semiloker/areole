@@ -89,7 +89,7 @@ Per unit, which is what scales to a slower machine:
 The glyph figure used to be the bad one. The blitter tied with GDI on text
 while beating it three to ten times on everything else, which is how we learned
 it was about fifteen times slower than it should be; rewriting it to work in
-spans rather than per bit made it 10.7x faster and turned that tie into 9.3x.
+spans rather than per bit made it 10.7x faster and turned that tie into 10.4x.
 
 Averages are not reported. A UI that is smooth apart from one stall every two
 seconds has an excellent average and is unusable.
@@ -265,44 +265,51 @@ so a Latin face plus a CJK face renders both rather than one and a row of tofu.
 Same machine, same process, same output buffer, alternating one frame each so
 neither engine sits on a warmer chip. A ratio above 1.00 means areole is faster.
 
-| case | rival | areole | rival | ratio | areole layout | ratio | read |
-| --- | --- | --: | --: | --: | --: | --: | --- |
-| `clear_uncached` | Win32 GDI | 80 us | 83 us | **1.04x** | - | - | **tie** |
-| `fill_opaque` | Win32 GDI | 343 us | 1288 us | **3.76x** | - | - | solid |
-| `fill_blend` | Win32 GDI | 2056 us | 12592 us | **6.12x** | - | - | solid |
-| `latin_paragraph` | Win32 GDI | 787 us | 823 us | **1.04x** | - | - | **tie** |
-| `hairlines` | Win32 GDI | 31 us | 336 us | **10.90x** | - | - | solid |
-| `flat_1k` | Clay | 109 us | 259 us | **2.37x** | 23 us | **11.25x** | solid |
-| `flat_8k` | Clay | 967 us | 2170 us | **2.24x** | 194 us | **11.19x** | solid |
-| `flat_1k` | microui | 95 us | 10 us | **0.11x** | 21 us | **0.48x** | solid |
-| `flat_8k` | microui | 855 us | 80 us | **0.09x** | 184 us | **0.43x** | solid |
+| case | rival | areole | rival | ratio | read |
+| --- | --- | --: | --: | --: | --- |
+| `clear_uncached` | Win32 GDI | 79 us | 83 us | **1.05x** | solid |
+| `fill_opaque` | Win32 GDI | 308 us | 1225 us | **3.98x** | solid |
+| `fill_blend` | Win32 GDI | 2515 us | 14803 us | **5.89x** | solid |
+| `latin_paragraph` | Win32 GDI | 98 us | 1015 us | **10.40x** | solid |
+| `hairlines` | Win32 GDI | 36 us | 421 us | **11.77x** | solid |
+| `flat_1k` | Clay | 664 us | 335 us | *0.51x* | marginal |
+| `flat_8k` | Clay | 7556 us | 2973 us | *0.39x* | solid |
+| `flat_1k` | microui | 723 us | 14 us | *0.02x* | marginal |
+| `flat_8k` | microui | 6336 us | 104 us | *0.02x* | solid |
 
 `read` is whether the ratio survives the noise it was measured in: **solid**
-when the effect is more than twice the combined per-epoch spread, **tie** when
-it is not. A tie is published as a tie whatever the ratio column says.
+when the effect is more than twice the combined per-epoch spread, **marginal**
+when it is not. Regenerate the whole table with `ar_compare --all --json` and
+`tools/gen_compare_doc.py`; the full version with every caveat is
+[docs/COMPARISON.md](docs/COMPARISON.md).
 
 **What this actually says, in three lines.**
 
-*Filling and blending: areole wins comfortably.* 3.8x GDI on opaque rectangles,
-6.1x on translucent ones, 10.9x on hairlines where per-call overhead dominates.
+*Rasterizing: areole wins comfortably.* 4.0x GDI on opaque rectangles, 5.9x on
+translucent ones, 11.8x on hairlines where per-call overhead dominates.
 `fill_blend` is flattered -- GDI's `AlphaBlend` must read a source surface areole
-does not need -- and `clear_uncached` is a tie because at 3 MB per pass both
-engines are simply waiting on memory, which is the correct answer.
+does not need -- and `clear_uncached` is nearly a tie because at 3 MB per pass
+both engines are simply waiting on memory, which is the correct answer.
 
-*Layout: areole beats the direct competitor and pays for what it buys.* Its
-layout phase is **11x faster than Clay's entire frame** at both sizes. Against
-microui it is 0.43x, and that is the expected price: microui advances a row
-cursor, areole runs two passes per axis over a retained tree so grow and shrink
-can be solved. Real flexbox for 2x a cursor is cheap.
+*Text: 10.4x, and it used to be a tie.* That tie was the most useful number the
+comparison ever produced. A bitmap blitter has no business being level with
+hinted, kerned, antialiased outlines rendered through the system font stack, and
+it was not the outlines that were slow -- the span blitter was writing a pixel
+at a time. Per-span rather than per-bit made it 10.7x faster.
 
-*Text: 9.31x, and it used to be a tie.* That tie was the most useful number the
-comparison produced. A bitmap blitter has no business being level with hinted,
-kerned, antialiased outlines rendered through the system font stack, and it was
-not: the blitter was doing two rectangle intersections and a call to write one
-pixel, once per set bit. In spans it is 10.7x faster, at 46 ns per glyph --
-inside the 30 to 50 ns the measurement release predicted a span blitter would
-reach. Still not a fair comparison, because GDI is producing far better output;
-it becomes one when 0.2.0 brings outlines.
+*Layout: areole loses to both immediate-mode libraries, and the gap has grown.*
+Clay lays out `flat_8k` 2.5x faster and microui 60x. **This table used to claim
+the opposite**, from figures measured when areole's layout was a single pass over
+boxes that stated their own sizes. It is now two passes per axis over a retained
+tree that solves grow and shrink, floats, margin collapsing, grid tracks, table
+columns and line breaking -- and it costs what that costs. microui advances a row
+cursor; the comparison is real but it is not like for like, and the honest
+summary is that **areole buys CSS layout and pays for it.**
+
+Whether it should pay *this much* is an open question and 0.15.0's, and the
+figure that will answer it is not in this table: it is how much of the frame is
+layout at all. On the interface example that is 12 us of a 30 us frame.
+
 
 The caveats are not footnotes -- Clay takes its configuration inline while areole
 resolves a stylesheet per box, so areole is doing strictly more work in the
@@ -374,27 +381,105 @@ toolkit breaks that circle.
 **Pre-alpha.** Built in the open, one issue at a time.
 
 - **0.1.0** *It draws* — window, DIB back buffer, rasterizer, bitmap font ✅
-- **0.1.1** *It measures* — 28 scenes, hardware probe, comparison harness ✅
+- **0.1.1** *It measures* — 47 scenes, hardware probe, comparison harness ✅
 - **0.1.2** *It redraws less* — damage tracking, up to eight dirty regions, partial present ✅
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, selector lists, combinators, `!important`, structural selectors, `:not`/`:is`/`:where` ✅
 - **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
 - **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
-- **0.6.1** *It scrolls properly* — both axes, region move, a draggable bar, touchpad travel
-- **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
-- **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
+- **0.6.1** *It scrolls properly* — both axes, region move, a draggable bar, touchpad travel ✅
+- **0.6.2** *It knows where the screen is* — scroll snap, sticky containing blocks, `env()` and the safe area ✅
+- **0.6.3** *It puts a dialog on top* — the top layer, `::backdrop`, `inert`, anchor positioning ✅
+- **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse ✅
+- **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`, `caption-side`, `empty-cells`, `col` widths ✅
+- **0.8.0** *It lays out in two dimensions* — the rest of flexbox, and CSS grid ✅
+- **0.8.1** *It sizes things properly* — `display: contents`, `aspect-ratio`, the intrinsic keywords, safe alignment ✅
+- **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
+- **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet 🚧
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
+
+### 0.9.0, complete
+
+The parser is real and it is public. `ar_html_parse_into` builds a document, `ar_dom_build` walks
+it into the box tree through the same calls a hand-written interface makes, and everything after
+that is the engine the other releases built.
+
+Where it stands against the conformance suites, which are vendored and run offline:
+
+| | |
+| --- | --- |
+| html5lib tokenizer | **7,026 of 7,026 — 100%**, nothing skipped, a CI gate |
+| html5lib tree construction | **1,884 of 1,922 — 98.0%**, 8 scripting cases skipped, a CI gate |
+| Named character references | all **2,231**, generated from the standard's own JSON and checked against it |
+| Browser tree corpus | **183 of 183** documents agree with Edge exactly |
+| Fuzzing | **50 million** iterations, five seeds, no crash, no hang, no overrun |
+| Encoding sniffing | **50 documents**, the specification's prescan, not a search for the word |
+| Quirks mode | **34 doctypes**, agreeing with Edge on every one |
+| Parse throughput | **40.0 MB/s** on this laptop, against a 30 MB/s floor |
+| Real documents | **10 saved from the web**, nine recognisable, the tenth named |
+
+What is missing is named rather than implied: a real stack of template insertion modes, the
+`<selectedcontent>` mirror, and a tail of thirty-eight cases listed by cause in the release
+document. That work is 0.9.3.
+
+**Reading real documents changed the layout engine more than it changed the parser.** A page whose
+boxes come from markup is not shaped like one a program declares, and eleven bugs only that
+difference could expose came out of a single example:
+
+- **A block is as tall as the blocks inside it.** Heights sweep up while widths sweep down, and
+  `<div><p>two lines</p></div>` — the ordinary shape of every page — reported one line, so what
+  followed was drawn inside the paragraph.
+- **A grid track and a table row are as tall as what wrapped inside them**, measured at the
+  settled column width rather than at max-content.
+- **Each box is laid out once**, not once to measure and once to place. `inline_wrap` −45%,
+  `float_gallery` −41%, `grid_20x20` −20%.
+- **`:hover` matches the ancestors of the box under the cursor**, which is every styled element on
+  a parsed page, because the text is always in a child.
+- **Whitespace collapses on the way into a box**, not in the tree, where html5lib compares bytes.
+
+Two more came out of the same work and are fixed here: a grid track and a table row were
+sized from unwrapped text, and a flex container's automatic height was never settled at all.
+
+**And then ten real documents, which is the release's last acceptance criterion.**
+`examples/15_real` is ten pages saved from the web -- MDN, Wikipedia, a W3C specification,
+RFC 2616, two US Government sites -- every licence permitting redistribution, every one
+attributed. Nine render recognisably. `rfc2616` does not, because `white-space: pre` line
+breaking is 0.5.1's; the Japanese Wikipedia article lays out correctly and draws tofu,
+because selecting a face by `font-family` needs a font database and that is 0.2.1's. Both
+are named in the release document beside what they need, along with the three inline-layout
+faults the corpus turned up.
+
+It found one bug worth having: areole had **no default canvas colour**, so a document that
+declares no background rendered on whatever was already in the surface. Every example in
+this tree declares one, which is exactly why five releases never saw it.
+
+```c
+/* Reading a document. The input is not copied and must outlive the document. */
+ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
+ar_doc *d;
+
+ar_ua_stylesheet(c);              /* the default style for every element */
+d = ar_html_parse_into(c, bytes, len);
+ar_doc_stylesheets(c, d);         /* every <style> in the document, in cascade order */
+
+ar_frame_begin(c, &input);
+ar_dom_build(c, d);               /* the document into the box tree */
+ar_frame_end(c, &surface);
+```
+
+`examples/13_document` is exactly that in a window, and is the only example in
+the tree that declares no boxes at all.
 
 ## Building
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/ar_test               # 732 checks
+./build/ar_test               # 1274 checks
 ./build/example_hello         # the dashboard on the front page
-./build/example_tour          # one page per release, 0.1.0 to 0.6.1
+./build/example_tour          # one page per release, 0.1.0 to 0.8.0
 ./build/example_showcase      # one long page using the whole CSS subset at once
 ./build/example_block         # the block, inline and float corpus, drawn
 ./build/example_block --dump  # the same, as rectangles, for the comparison
@@ -406,7 +491,8 @@ cmake --build build
 
 ## The tour
 
-`example_tour` is one page per release, 0.1.0 to 0.6.1, showing what each added while it runs:
+`example_tour` is one page per release, 0.1.0 to 0.8.0 — fourteen of them — showing what each
+added while it runs:
 
 | | |
 | --- | --- |
@@ -419,6 +505,11 @@ cmake --build build
 | 0.5.0 | margins collapsing, text wrapping around a float, an inline box cut across lines |
 | 0.6.0 | boxes overlapping by `z-index`, a pinned badge, a scrollable list with a sticky header |
 | 0.6.1 | a strip that scrolls sideways from one declaration, nested containers, a draggable bar |
+| 0.6.2 | a header and a footer pinned to the same scrollport at once, and two `env()` bars |
+| 0.6.3 | a box that escapes both a clip and a `z-index` of 9999, a tooltip placed by its anchor |
+| 0.7.0 | anonymous boxes generated around a stray cell, both border models, a `colspan` at width |
+| 0.7.1 | a header that stays while its rows scroll under it, a frozen first column |
+| 0.8.0 | a flex row that is three-to-one because a factor is a ratio, and a `120px / 1fr / 2fr` grid |
 
 The toggles are not captions. Switching off antialiasing on the 0.2.0 page changes how the frame
 you are looking at is rasterized; switching off shaping on the 0.3.0 page drops the same strings
@@ -436,10 +527,26 @@ can be asked to lay out the same thing:
 python tools/compare_layout.py --run ./build/example_tour.exe
 ```
 
-**215 of 215 boxes match, across every release from 0.1.0 to 0.6.0. Two disagree on geometry, both
-one line of text: a paragraph beside a float fits in three lines here and four in Chromium, because
-two rasterizers measure the same words about a pixel apart. Everything else lands on the same
-rectangle exactly.**
+**Seven corpora are checked against a browser, box by box, and five of them agree exactly:**
+
+| corpus | what it checks | result |
+| --- | --- | --- |
+| `03_block` | block, inline, floats, intrinsic sizing, positioning | **168 / 168** |
+| `05_snap` | scroll snapping, 120 pages | **960 / 960** |
+| `06_sticky` | `position: sticky` against its containing block | **355 / 355** |
+| `07_env` | `env()` and the safe area | **28 / 28** |
+| `08_anchor` | anchor positioning and the flip | **168 / 168** |
+| `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
+| `15_real` | ten documents saved from the web | by eye, 9 / 10 |
+| `09_table` | tables: anonymous boxes, collapse, spans | 416 / 624 |
+
+The table corpus is the honest exception and is not gated: **208 of its 624 boxes still land
+somewhere a browser does not**, and the disagreements are listed rather than compensated for.
+The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
+
+**Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped
+without, and grid's arrived late; flex's has not arrived at all. It is the next one to build, and
+0.9.1's gallery is where it belongs.
 
 The first run needed six compensating rules to get there, and two of the six were bugs worth
 fixing rather than documenting: **text never wrapped** — `ar_text_wrap` had implemented UAX #14
@@ -454,8 +561,11 @@ Windows 2000 or newer. A C89 compiler. That is the entire list.
 
 ## Documentation
 
-- [Performance](docs/PERFORMANCE.md) — every scene, every percentile, the
-  comparison tables, and what each number assumed. Generated, never typed
+- [Performance](docs/PERFORMANCE.md) — every scene, every percentile, and what each
+  number assumed. Generated, never typed
+- [Against other engines](docs/COMPARISON.md) — who wins each case against Win32 GDI,
+  Clay and microui, how much of it survives the noise, and the caveat beside every
+  ratio rather than under it. Generated, never typed
 - [The CSS subset](docs/CSS_REFERENCE.md) — every property and selector, and
   what is deliberately missing
 - [Contributing](CONTRIBUTING.md) — the two invariants, the C89 rules, and why

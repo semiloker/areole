@@ -187,8 +187,19 @@ static const bench_scene SC_TABLE = {"table_1k_rows",
 /* ------------------------------------------------------------------------
  * A long scrolled list
  *
- * The case damage tracking cannot help with, because everything moves. This is
- * the number 0.1.2's region move has to improve, and 0.6.1 after it.
+ * The case damage tracking cannot help with, because every row's text changes.
+ *
+ * Worth being exact about what this does and does not measure, because the
+ * name invites the wrong reading. It declares no scroll container: it re-labels
+ * all forty rows every frame, so row N becomes row N+1 and no pixel is merely
+ * in a new place. That is strictly harsher than scrolling, where all but the
+ * newly exposed rows keep their content.
+ *
+ * So the region move cannot improve this scene and was never going to --
+ * there is nothing to retain. fill_px stays near a million here and drops to
+ * twenty thousand in scroll_container, which is the scene that does declare a
+ * container and is the one that number belongs to. Read this one as the floor
+ * a list hits when its content genuinely changes.
  * ------------------------------------------------------------------------ */
 static const char *const SHEET_LIST =
     "#root { display:flex; flex-direction:column; background:#ffffff; padding:0px; }"

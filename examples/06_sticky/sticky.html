@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole sticky corpus — the browser twin</title>
+
+<!--
+  The same sticky cases as examples/06_sticky/main.c, in HTML, so a browser can
+  be asked the same questions:
+
+      python tools/compare_layout.py --run ./build/example_sticky.exe \
+             examples/06_sticky/sticky.html
+
+  Built by script, because there are fifty-five: eleven variants by five scroll
+  offsets. The tables below mirror the ones in main.c and are kept in step with
+  them by hand; the comparison reports a structural mismatch loudly if they
+  drift, which is the safety net rather than the plan.
+
+  ----------------------------------------------------------------------------
+  Compensating rules, and why each one is here
+
+  1. The scrollbar is hidden. areole's is an overlay and takes no width; a
+     classic one takes about fifteen pixels out of the content box, which would
+     change every row's geometry and report a scrollbar difference as a sticky
+     difference.
+
+  2. `display: flow-root` on the case, which is what areole's root is: a block
+     formatting context and nothing else.
+
+  There is deliberately no `box-sizing: border-box` reset — areole defaults to
+  `content-box` as CSS says, so changing it would introduce a difference rather
+  than remove one.
+
+  ----------------------------------------------------------------------------
+  Why the dump waits
+
+  Sticky is resolved against a scroll position, and assigning scrollTop does not
+  necessarily settle on the same turn of the event loop. The dump runs after two
+  animation frames, which is also why the harness gives the page a virtual time
+  budget.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 14px 0 4px;
+}
+
+.app { display: flow-root; width: 200px; height: 200px; background: #fff; }
+
+/* See the note above: areole's bar is an overlay and takes no width. */
+.port, .outer, .inner { scrollbar-width: none; }
+.port::-webkit-scrollbar,
+.outer::-webkit-scrollbar,
+.inner::-webkit-scrollbar { display: none; }
+
+.port   { display: block; overflow: scroll; width: 200px; height: 120px; background: #f4f2ee; }
+.before { display: block; height: 60px;  background: #e6ded0; }
+.stick  { display: block; height: 30px;  background: #b8c6d8; }
+.after  { display: block; height: 220px; background: #dfe6ee; }
+.group  { display: block; height: 120px; background: #eee6f0; }
+.filler { display: block; height: 90px;  background: #f0e6ee; }
+.outer  { display: block; overflow: scroll; width: 200px; height: 150px; background: #eef2f4; }
+.inner  { display: block; overflow: scroll; height: 110px; background: #f8f4ec; }
+.pad    { display: block; height: 70px;  background: #e2e8ea; }
+.hid    { display: block; overflow: hidden; height: 110px; }
+
+/* The eleven variants, mirroring VARIANTS[] in main.c. */
+.v-top            .stick { position: sticky; top: 10px; }
+.v-top-zero       .stick { position: sticky; top: 0px; }
+.v-bottom         .stick { position: sticky; bottom: 12px; }
+.v-top-and-bottom .stick { position: sticky; top: 8px; bottom: 8px; }
+
+.v-left  .port { overflow-x: scroll; }
+.v-left  .before, .v-left  .stick, .v-left  .after { width: 420px; }
+.v-left  .stick { position: sticky; left: 10px; }
+
+.v-right .port { overflow-x: scroll; }
+.v-right .before, .v-right .stick, .v-right .after { width: 420px; }
+.v-right .stick { position: sticky; right: 14px; }
+
+.v-constrained       .stick { position: sticky; top: 0px; }
+.v-constrained-inset .stick { position: sticky; top: 20px; }
+
+.v-nested-inner .stick { position: sticky; top: 6px; }
+.v-nested-outer .stick { position: sticky; top: 6px; }
+
+.v-blocked-by-hidden .stick { position: sticky; top: 6px; }
+.v-static-control .stick { position: static; }
+
+#cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+textarea#out { display: block; width: 100%; height: 200px; margin-top: 20px;
+               font: 12px/1.35 Consolas, monospace; }
+</style>
+
+<h1 style="font-size:15px;margin-bottom:8px">areole sticky corpus — the browser twin</h1>
+
+<div id="cases"></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+/*
+ * Mirrors VARIANTS[] and TARGETS[] in examples/06_sticky/main.c. `scroll` is
+ * the class of the element the offset is applied to, which is what makes
+ * nested-inner and nested-outer two different cases over one tree.
+ */
+const VARIANTS = [
+  { name: 'top',              shape: 'simple',      axis: 'y', scroll: 'port'  },
+  { name: 'top-zero',         shape: 'simple',      axis: 'y', scroll: 'port'  },
+  { name: 'bottom',           shape: 'simple',      axis: 'y', scroll: 'port'  },
+  { name: 'top-and-bottom',   shape: 'simple',      axis: 'y', scroll: 'port'  },
+  { name: 'left',             shape: 'simple',      axis: 'x', scroll: 'port'  },
+  { name: 'right',            shape: 'simple',      axis: 'x', scroll: 'port'  },
+  { name: 'constrained',      shape: 'constrained', axis: 'y', scroll: 'port'  },
+  { name: 'constrained-inset',shape: 'constrained', axis: 'y', scroll: 'port'  },
+  { name: 'nested-inner',     shape: 'nested',      axis: 'y', scroll: 'inner' },
+  { name: 'nested-outer',     shape: 'nested',      axis: 'y', scroll: 'outer' },
+  { name: 'blocked-by-hidden',shape: 'hidden',      axis: 'y', scroll: 'outer' },
+  { name: 'static-control',   shape: 'simple',      axis: 'y', scroll: 'port'  }
+];
+const TARGETS = [0, 20, 45, 80, 9999];
+
+function div(cls) {
+  const d = document.createElement('div');
+  d.className = cls;
+  return d;
+}
+
+function buildShape(shape) {
+  if (shape === 'simple') {
+    const port = div('port');
+    port.appendChild(div('before'));
+    port.appendChild(div('stick'));
+    port.appendChild(div('after'));
+    return port;
+  }
+  if (shape === 'constrained') {
+    const port = div('port');
+    port.appendChild(div('before'));
+    const group = div('group');
+    group.appendChild(div('stick'));
+    group.appendChild(div('filler'));
+    port.appendChild(group);
+    port.appendChild(div('after'));
+    return port;
+  }
+  if (shape === 'hidden') {
+    const outer = div('outer');
+    const hid = div('hid');
+    hid.appendChild(div('before'));
+    hid.appendChild(div('stick'));
+    hid.appendChild(div('after'));
+    outer.appendChild(hid);
+    return outer;
+  }
+  const outer = div('outer');
+  outer.appendChild(div('pad'));
+  const inner = div('inner');
+  inner.appendChild(div('before'));
+  inner.appendChild(div('stick'));
+  inner.appendChild(div('after'));
+  outer.appendChild(inner);
+  outer.appendChild(div('pad'));
+  return outer;
+}
+
+function buildCases() {
+  const host = document.getElementById('cases');
+
+  for (const v of VARIANTS) {
+    for (const t of TARGETS) {
+      const name = v.name + '-t' + t;
+
+      const title = document.createElement('h2');
+      title.textContent = name;
+
+      const app = div('app v-' + v.name);
+      app.dataset.page = name;
+      app.appendChild(buildShape(v.shape));
+
+      const target = app.querySelector('.' + v.scroll);
+      target.dataset.offset = t;
+      target.dataset.axis = v.axis;
+
+      const cell = document.createElement('div');
+      cell.appendChild(title);
+      cell.appendChild(app);
+      host.appendChild(cell);
+    }
+  }
+}
+
+function applyScrolls() {
+  for (const el of document.querySelectorAll('[data-offset]')) {
+    const n = Number(el.dataset.offset);
+    if (el.dataset.axis === 'x') el.scrollLeft = n; else el.scrollTop = n;
+  }
+}
+
+/*
+ * The same walk and the same output format as the other twins: document order
+ * is declaration order, coordinates are relative to the .app origin, and
+ * everything is rounded because areole's layout is integer end to end.
+ */
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    walk(app, '0', app.getBoundingClientRect(), out);
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+buildCases();
+applyScrolls();
+
+requestAnimationFrame(() => requestAnimationFrame(dump));
+</script>

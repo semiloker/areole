@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole table corpus — the browser twin</title>
+
+<!--
+  The same table cases as examples/09_table/main.c, in HTML:
+
+      python tools/compare_layout.py --run ./build/example_table.exe \
+             examples/09_table/table.html
+
+  A real comparison rather than a substitution. Almost every box here is a
+  plain div with a `display` value, so the browser runs its own CSS table
+  algorithm on the same tree instead of being told the answer areole arrived
+  at. The malformed cases especially are divs and not <table> elements: HTML's
+  own parser fix-ups would rewrite them before CSS ever saw them, and those
+  fix-ups are a different mechanism from the anonymous box generation under
+  test.
+
+  The exceptions are the five spanning cases and the twenty-column one. colspan
+  and rowspan are HTML attributes, and a browser honours them on nothing but a
+  real cell -- areole has them as CSS properties, which is the whole reason its
+  per-box budget was renegotiated. Those six are built out of real elements,
+  they are well-formed so the parser has nothing to fix, and they write their
+  `tbody` out because the parser would insert one into the DOM whether it was
+  written or not.
+
+  ----------------------------------------------------------------------------
+  Generated boxes are in neither dump
+
+  A cell declared straight inside a table needs a row to live in. The browser
+  makes one and it is not an element, so a walk of the DOM never sees it;
+  areole makes one and it *is* a node, so its own dump skips it. Both sides
+  therefore report the tree the case declared, and the comparison is over
+  where those boxes landed -- which is the only observable the two engines
+  share, and a strictly harder test than comparing the generated boxes would
+  be, because a wrong generated box moves the declared ones.
+
+  ----------------------------------------------------------------------------
+  The one compensating rule
+
+  `.app` is the case's origin and every rectangle is measured from it, which is
+  what makes a 260x200 areole surface comparable to a box on a scrolling page.
+
+  There is deliberately no `box-sizing: border-box` reset -- areole defaults to
+  `content-box` as CSS says.
+
+  ----------------------------------------------------------------------------
+  Why every cell is given a width
+
+  The malformed cases are about structure. Left to shrink-wrap, each one would
+  also be a test of how surplus width is distributed, and one disagreement
+  there would fail all of them for a reason that has nothing to do with any of
+  them. Every cell is 40 wide and the table is 240, which divides exactly by
+  every column count these cases produce.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 14px 0 4px;
+}
+
+.app { width: 260px; height: 200px; background: #fff; }
+
+/* The element vocabulary, mirroring SHEET_A..SHEET_C in main.c. */
+/* border-spacing: 0 because a real <table> defaults to 2px and areole
+   defaults to none. The spanning cases below are real tables. */
+.t { display: table; width: 240px; background: #f4f1ec; border-spacing: 0; }
+.g { display: table-row-group; }
+.h { display: table-header-group; }
+.f { display: table-footer-group; }
+.r { display: table-row; }
+.p { display: table-caption; height: 14px; background: #e6dfd4; }
+.l { display: table-column-group; }
+.o { display: table-column; }
+.d { display: block; height: 12px; background: #dfe6df; }
+.c { display: table-cell; width: 40px; height: 20px; background: #cfd8e3; }
+
+#cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+textarea#out { display: block; width: 100%; height: 240px; margin-top: 20px;
+               font: 12px/1.35 Consolas, monospace; }
+</style>
+
+<h1 style="font-size:15px;margin-bottom:8px">areole table corpus — the browser twin</h1>
+
+<div id="cases"></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+/* Mirrors SHAPES[] in examples/09_table/main.c, in the same order. */
+const SHAPES = [
+  ['ok-simple', 't[r[c c]]'],
+  ['ok-groups', 't[h[r[c c]] g[r[c c]] f[r[c c]]]'],
+  ['ok-two-rows', 't[g[r[c c] r[c c]]]'],
+
+  ['bare-cell', 't[c]'],
+  ['bare-cells', 't[c c]'],
+  ['bare-cells-three', 't[c c c]'],
+  ['row-then-bare', 't[r[c] c]'],
+  ['bare-then-row', 't[c r[c]]'],
+  ['bare-in-group', 't[g[c]]'],
+  ['bare-in-group-after-row', 't[g[r[c] c]]'],
+  ['bare-cell-no-table', 'c'],
+  ['bare-cells-no-table', 'c c'],
+
+  ['row-no-table', 'r[c c]'],
+  ['group-no-table', 'g[r[c c]]'],
+  ['row-in-row', 't[r[r[c]]]'],
+
+  ['block-in-table', 't[d]'],
+  ['block-then-cell', 't[d c]'],
+  ['cell-then-block', 't[c d]'],
+  ['block-in-row', 't[r[d]]'],
+  ['cell-then-block-in-row', 't[r[c d]]'],
+  ['block-then-cell-in-row', 't[r[d c]]'],
+  ['block-in-group', 't[g[d]]'],
+  ['cell-inside-block', 't[d[c]]'],
+
+  ['empty-table', 't[]'],
+  ['empty-row', 't[r[] r[c]]'],
+  ['empty-group', 't[g[] r[c]]'],
+  ['empty-then-cells', 't[r[] r[c c]]'],
+
+  ['footer-first', 't[f[r[c c]] h[r[c c]] g[r[c c]]]'],
+  ['group-before-header', 't[g[r[c c]] h[r[c c]]]'],
+  ['footer-only', 't[f[r[c c]]]'],
+  ['bare-row-among-groups', 't[h[r[c c]] r[c c] f[r[c c]]]'],
+
+  ['caption-first', 't[p[d] r[c c]]'],
+  ['caption-last', 't[r[c c] p[d]]'],
+  ['two-captions', 't[p[d] p[d] r[c c]]'],
+  ['colgroup', 't[l[o o] r[c c]]'],
+  ['two-colgroups', 't[l[o] l[o] r[c c]]'],
+  ['bare-col', 't[o r[c c]]'],
+
+  ['ragged-short', 't[r[c c] r[c]]'],
+  ['ragged-long', 't[r[c] r[c c]]'],
+  ['colspan-then-cells', 't[g[r[x] r[c c]]]', true],
+  ['colspan-overflow', 't[g[r[c x]]]', true],
+  ['rowspan-first', 't[g[r[y c] r[c]]]', true],
+  ['rowspan-second', 't[g[r[c y] r[c]]]', true],
+  ['colspan-and-rowspan', 't[g[r[z c] r[c] r[c c]]]', true],
+
+  ['table-in-table', 't[t[r[c]]]'],
+  ['table-in-cell', 't[r[c[t[r[c c]]]]]'],
+  ['deep-content', 't[r[c[d[d]]]]']
+];
+
+/* Mirrors CONFLICTS[] and CONFLICT_TREE. */
+const CONFLICT_TREE = 't[g[r[c c] r[c c]]]';
+
+const CONFLICTS = [
+  ['sep-none', ''],
+  ['sep-cells', '.c { border:2px solid #b03030; }'],
+  ['sep-spacing', '.c { border:2px solid #b03030; } .t { border-spacing:6px; }'],
+
+  ['col-plain', '.t { border-collapse:collapse; }'],
+  ['col-cells1', '.t { border-collapse:collapse; } .c { border:1px solid #b03030; }'],
+  ['col-cells2', '.t { border-collapse:collapse; } .c { border:2px solid #b03030; }'],
+  ['col-cells3', '.t { border-collapse:collapse; } .c { border:3px solid #b03030; }'],
+  ['col-cells6', '.t { border-collapse:collapse; } .c { border:6px solid #b03030; }'],
+
+  ['col-one-wider', '.t { border-collapse:collapse; } .c { border:1px solid #b03030; }' +
+                    '.k0 { border:5px solid #3060b0; }'],
+  ['col-one-thinner', '.t { border-collapse:collapse; } .c { border:4px solid #b03030; }' +
+                      '.k0 { border:1px solid #3060b0; }'],
+  ['col-last-wider', '.t { border-collapse:collapse; } .c { border:1px solid #b03030; }' +
+                     '.k1 { border:5px solid #3060b0; }'],
+  ['col-both-wide', '.t { border-collapse:collapse; } .c { border:1px solid #b03030; }' +
+                    '.k0 { border:5px solid #3060b0; } .k1 { border:5px solid #30b060; }'],
+  ['col-tie', '.t { border-collapse:collapse; } .c { border:3px solid #b03030; }' +
+              '.k0 { border:3px solid #3060b0; }'],
+
+  ['col-table1', '.t { border-collapse:collapse; border:1px solid #806040; }' +
+                 '.c { border:1px solid #b03030; }'],
+  ['col-table4', '.t { border-collapse:collapse; border:4px solid #806040; }' +
+                 '.c { border:1px solid #b03030; }'],
+  ['col-table-loses', '.t { border-collapse:collapse; border:1px solid #806040; }' +
+                      '.c { border:5px solid #b03030; }'],
+  ['col-table-alone', '.t { border-collapse:collapse; border:4px solid #806040; }'],
+
+  ['col-row2', '.t { border-collapse:collapse; } .r { border:2px solid #40806a; }' +
+               '.c { border:1px solid #b03030; }'],
+  ['col-row6', '.t { border-collapse:collapse; } .r { border:6px solid #40806a; }' +
+               '.c { border:1px solid #b03030; }'],
+  ['col-row-loses', '.t { border-collapse:collapse; } .r { border:1px solid #40806a; }' +
+                    '.c { border:4px solid #b03030; }'],
+  ['col-row-alone', '.t { border-collapse:collapse; } .r { border:3px solid #40806a; }'],
+
+  ['col-group3', '.t { border-collapse:collapse; } .g { border:3px solid #6a4080; }' +
+                 '.c { border:1px solid #b03030; }'],
+  ['col-group-loses', '.t { border-collapse:collapse; } .g { border:1px solid #6a4080; }' +
+                      '.c { border:4px solid #b03030; }'],
+  ['col-group-alone', '.t { border-collapse:collapse; } .g { border:5px solid #6a4080; }'],
+
+  ['col-all-one', '.t { border-collapse:collapse; border:1px solid #806040; }' +
+                  '.g { border:1px solid #6a4080; } .r { border:1px solid #40806a; }' +
+                  '.c { border:1px solid #b03030; }'],
+  ['col-table-widest', '.t { border-collapse:collapse; border:7px solid #806040; }' +
+                       '.g { border:2px solid #6a4080; } .r { border:3px solid #40806a; }' +
+                       '.c { border:4px solid #b03030; }'],
+  ['col-cell-widest', '.t { border-collapse:collapse; border:2px solid #806040; }' +
+                      '.g { border:3px solid #6a4080; } .r { border:4px solid #40806a; }' +
+                      '.c { border:7px solid #b03030; }'],
+  ['col-row-widest', '.t { border-collapse:collapse; border:2px solid #806040; }' +
+                     '.g { border:3px solid #6a4080; } .r { border:7px solid #40806a; }' +
+                     '.c { border:4px solid #b03030; }'],
+  ['col-odd-widths', '.t { border-collapse:collapse; } .c { border:3px solid #b03030; }' +
+                     '.k1 { border:5px solid #3060b0; }'],
+  ['col-spacing-ignored', '.t { border-collapse:collapse; border-spacing:9px; }' +
+                          '.c { border:2px solid #b03030; }']
+];
+
+/* Mirrors wide_tree() -- twenty columns, and a spanning cell every third one
+   so no two rows agree. */
+function wideTree() {
+  let out = 't[g[';
+  for (let row = 0; row < 4; row++) {
+    out += 'r[';
+    for (let i = 0; i < 20;) {
+      if ((i + row) % 3 === 0 && i + 2 <= 20) { out += 'x '; i += 2; }
+      else { out += 'c '; i += 1; }
+    }
+    out += ']';
+  }
+  return out + ']]';
+}
+
+/*
+ * The same walk as build() in main.c: a letter opens a box, `]` closes
+ * everything above the box whose bracket it is and then that box too, and a
+ * letter closes whatever is still open and not waiting for a bracket.
+ */
+const CLASS_OF = {
+  t: 't', g: 'g', h: 'h', f: 'f', r: 'r', c: 'c',
+  p: 'p', l: 'l', o: 'o', d: 'd',
+  x: 'c x', y: 'c y', z: 'c z'
+};
+
+/* The element each letter becomes when a case is built out of real table
+   elements rather than divs. Only the spanning cases need this: colspan and
+   rowspan are attributes and a browser honours them on nothing else. */
+const TAG_OF = {
+  t: 'table', g: 'tbody', h: 'thead', f: 'tfoot', r: 'tr', c: 'td',
+  p: 'caption', l: 'colgroup', o: 'col', d: 'div',
+  x: 'td', y: 'td', z: 'td'
+};
+
+function build(host, tree, numberColumns, real) {
+  const stack = [host];
+  const open = [];
+  let col = 0;
+
+  const closeUnbracketed = () => {
+    while (stack.length > 1 && !open[open.length - 1]) { stack.pop(); open.pop(); }
+  };
+
+  for (const ch of tree) {
+    if (ch === ' ') continue;
+    if (ch === '[') { if (open.length) open[open.length - 1] = true; continue; }
+    if (ch === ']') {
+      closeUnbracketed();
+      if (stack.length > 1) { stack.pop(); open.pop(); }
+      continue;
+    }
+    const base = CLASS_OF[ch];
+    if (!base) continue;
+
+    closeUnbracketed();
+
+    const el = document.createElement(real ? TAG_OF[ch] : 'div');
+    let cls = base;
+    if (numberColumns && 'cxyz'.includes(ch)) { cls += ' k' + (col % 4); col++; }
+    if (ch === 'r') col = 0;
+    el.className = cls;
+
+    /* areole has these as CSS properties; here they are the attributes they
+       are in HTML, which is why these cases are built out of real elements. */
+    if (ch === 'x' || ch === 'z') el.setAttribute('colspan', '2');
+    if (ch === 'y' || ch === 'z') el.setAttribute('rowspan', '2');
+
+    stack[stack.length - 1].appendChild(el);
+    stack.push(el);
+    open.push(false);
+  }
+}
+
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function addCase(name, tree, extra, numberColumns, real) {
+  const host = document.getElementById('cases');
+
+  const title = document.createElement('h2');
+  title.textContent = name;
+
+  const app = document.createElement('div');
+  app.className = 'app';
+  app.dataset.page = name;
+
+  if (extra) {
+    /* Scoped to this case so thirty conflicting stylesheets can share a page.
+       :scope keeps `.t {...}` from reaching any other case's table. */
+    const st = document.createElement('style');
+    st.textContent = extra.replace(/(^|\})\s*([^{}]+)\{/g,
+      (m, brace, sel) => brace + sel.split(',')
+        .map(s => '[data-page="' + name + '"] ' + s.trim()).join(',') + '{');
+    app.appendChild(st);
+  }
+
+  build(app, tree, numberColumns, real);
+
+  const cell = document.createElement('div');
+  cell.appendChild(title);
+  cell.appendChild(app);
+  host.appendChild(cell);
+}
+
+function buildCases() {
+  for (const [name, tree, real] of SHAPES) addCase(name, tree, '', false, !!real);
+  for (const [name, css] of CONFLICTS) addCase(name, CONFLICT_TREE, css, true, false);
+  addCase('wide-20', wideTree(), '.t { width:800px; }', false, true);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    const origin = app.getBoundingClientRect();
+    out.push('0 0 0 ' + Math.round(origin.width) + ' ' + Math.round(origin.height) + ' |');
+    let n = 0;
+    for (const c of app.children) {
+      if (c.tagName === 'STYLE') continue;
+      walk(c, '0/' + n, origin, out);
+      n++;
+    }
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+buildCases();
+
+/*
+ * Straight away rather than after an animation frame. Nothing on this page
+ * changes once it is built, so headless produces no further frame and a
+ * requestAnimationFrame callback would never fire.
+ */
+dump();
+</script>

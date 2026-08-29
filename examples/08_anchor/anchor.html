@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>areole anchor corpus — the browser twin</title>
+
+<!--
+  The same anchor cases as examples/08_anchor/main.c, in HTML:
+
+      python tools/compare_layout.py --run ./build/example_anchor.exe \
+             examples/08_anchor/anchor.html
+
+  Unlike the safe-area twin, this one is a real comparison rather than a
+  substitution. Edge implements anchor-name, position-anchor and anchor(), so
+  this file says the same thing areole's stylesheet says instead of saying the
+  answer it should arrive at.
+
+  ----------------------------------------------------------------------------
+  The one compensating rule
+
+  `.app` is `position: relative`, so an absolutely positioned box inside it
+  resolves against the case rather than against the page. areole's root box is
+  the containing block for the same reason, and without this the browser would
+  be measuring every inset from the document while areole measured it from a
+  200x200 surface.
+
+  There is deliberately no `box-sizing: border-box` reset — areole defaults to
+  `content-box` as CSS says.
+
+  ----------------------------------------------------------------------------
+  Why position-try is not here
+
+  The flip fires when the box would leave the viewport, and the two engines do
+  not mean the same rectangle by that: areole's is the 200x200 surface, the
+  browser's is the window this page is in. The same case overflows on one side
+  and not the other, so comparing them would report a difference of framing as
+  a difference of flipping. It is checked in ar_test.c instead.
+-->
+
+<style>
+* { margin: 0; padding: 0; }
+
+body {
+  background: #fff;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+}
+
+h2 {
+  font: 600 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #8d8578;
+  margin: 14px 0 4px;
+}
+
+/* See the note above: this is what makes the case the containing block. */
+.app { position: relative; width: 200px; height: 200px; background: #fff; }
+
+.anc { position: absolute; background: #cfd8e3; anchor-name: --a; }
+.pop { position: absolute; position-anchor: --a;
+       width: 30px; height: 16px; background: #b8c6d8; }
+
+/* The fourteen placements, mirroring VARIANTS[] in main.c. */
+.v-below-left   .pop { top: anchor(bottom); left: anchor(left); }
+.v-below-right  .pop { top: anchor(bottom); right: anchor(right); }
+.v-above-left   .pop { bottom: anchor(top); left: anchor(left); }
+.v-above-right  .pop { bottom: anchor(top); right: anchor(right); }
+.v-right-top    .pop { left: anchor(right); top: anchor(top); }
+.v-right-bottom .pop { left: anchor(right); bottom: anchor(bottom); }
+.v-left-top     .pop { right: anchor(left); top: anchor(top); }
+.v-left-bottom  .pop { right: anchor(left); bottom: anchor(bottom); }
+.v-center-below .pop { top: anchor(bottom); left: anchor(center); }
+.v-center-right .pop { left: anchor(right); top: anchor(center); }
+.v-cover        .pop { top: anchor(top); left: anchor(left);
+                       width: anchor-size(width); height: anchor-size(height); }
+.v-size-width   .pop { top: anchor(bottom); left: anchor(left);
+                       width: anchor-size(width); }
+.v-size-crossed .pop { top: anchor(bottom); left: anchor(left);
+                       width: anchor-size(height); }
+.v-stretch-h    .pop { top: anchor(bottom); left: anchor(left); right: anchor(right); }
+
+#cases { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+textarea#out { display: block; width: 100%; height: 200px; margin-top: 20px;
+               font: 12px/1.35 Consolas, monospace; }
+</style>
+
+<h1 style="font-size:15px;margin-bottom:8px">areole anchor corpus — the browser twin</h1>
+
+<div id="cases"></div>
+<textarea id="out" readonly></textarea>
+
+<script>
+/* Mirrors VARIANTS[] and PLACES[] in examples/08_anchor/main.c. */
+const VARIANTS = [
+  'below-left', 'below-right', 'above-left', 'above-right',
+  'right-top', 'right-bottom', 'left-top', 'left-bottom',
+  'center-below', 'center-right', 'cover', 'size-width',
+  'size-crossed', 'stretch-h'
+];
+
+/* Different sizes as well as different places: a case reading the anchor's
+   width where it wanted its height would land correctly on a square one. */
+const PLACES = [
+  { x: 60, y: 70, w: 60, h: 24 },
+  { x: 12, y: 12, w: 40, h: 40 },
+  { x: 130, y: 20, w: 50, h: 30 },
+  { x: 96, y: 150, w: 70, h: 18 }
+];
+
+function buildCases() {
+  const host = document.getElementById('cases');
+
+  for (const v of VARIANTS) {
+    for (let p = 0; p < PLACES.length; p++) {
+      const at = PLACES[p];
+      const name = v + '-p' + p;
+
+      const title = document.createElement('h2');
+      title.textContent = name;
+
+      const app = document.createElement('div');
+      app.className = 'app v-' + v;
+      app.dataset.page = name;
+
+      const anc = document.createElement('div');
+      anc.className = 'anc';
+      anc.style.left = at.x + 'px';
+      anc.style.top = at.y + 'px';
+      anc.style.width = at.w + 'px';
+      anc.style.height = at.h + 'px';
+
+      const pop = document.createElement('div');
+      pop.className = 'pop';
+
+      app.appendChild(anc);
+      app.appendChild(pop);
+
+      const cell = document.createElement('div');
+      cell.appendChild(title);
+      cell.appendChild(app);
+      host.appendChild(cell);
+    }
+  }
+}
+
+/*
+ * The same walk and the same output format as the other twins: document order
+ * is declaration order, coordinates are relative to the .app origin, and
+ * everything is rounded because areole's layout is integer end to end.
+ */
+function childIndex(el) {
+  let n = 0;
+  for (let p = el.previousElementSibling; p; p = p.previousElementSibling) n++;
+  return n;
+}
+
+function walk(el, path, origin, out) {
+  const r = el.getBoundingClientRect();
+  out.push(
+    path + ' ' +
+    Math.round(r.left - origin.left) + ' ' +
+    Math.round(r.top - origin.top) + ' ' +
+    Math.round(r.width) + ' ' +
+    Math.round(r.height) + ' |'
+  );
+  for (const c of el.children) walk(c, path + '/' + childIndex(c), origin, out);
+}
+
+function dump() {
+  const out = ['# browser ' + navigator.userAgent.replace(/\s+/g, ' ')];
+  for (const app of document.querySelectorAll('.app')) {
+    out.push('# page ' + app.dataset.page);
+    walk(app, '0', app.getBoundingClientRect(), out);
+  }
+  const box = document.getElementById('out');
+  box.value = out.join('\n');
+  box.textContent = out.join('\n');   /* so --dump-dom sees it */
+}
+
+buildCases();
+
+/*
+ * Straight away rather than after an animation frame. Nothing on this page
+ * changes once it is built, so headless produces no further frame and a
+ * requestAnimationFrame callback would never fire -- which is how the
+ * safe-area twin silently dumped nothing.
+ */
+dump();
+</script>

@@ -38,8 +38,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static mu_Context   *g_mu;
-static ar_ctx       *g_ui;
+static mu_Context    *g_mu;
+static ar_ctx        *g_ui;
 static unsigned char *g_ui_mem;
 
 /* The rects have to be consumed or -O2 deletes the loop that produces them. */
@@ -218,18 +218,25 @@ static double areole_layout_us(void)
     return g_ui ? (double)ar_perf_percentile(ar_perf_of(g_ui), AR_PHASE_LAYOUT, 50) : 0.0;
 }
 
-static const char *const CAVEAT =
+/* An array rather than `const char *const`, and it has to be. CASES below is a
+   static initializer, and C89 allows a string literal or a constant expression
+   there -- reading the value of a const *pointer* is neither, however obviously
+   constant it looks. An array name decays to its own address, which is an
+   address constant, so this form is legal where the pointer form is not.
+   gcc and clang take the pointer form as an extension and MSVC correctly
+   refuses it, which is how this reached main red: bench/ is outside the strict
+   C89 gate, which only compiles src/. */
+static const char CAVEAT[] =
     "microui builds no tree, resolves no style and tracks no damage: mu_layout_next advances a "
     "row cursor and returns a rectangle. areole runs two passes per axis over a retained tree, "
     "after matching a stylesheet, and records what changed. Nothing is painted here, so that "
     "record is pure cost; in an interface that paints it removes the raster pass. A ratio below "
     "1.00 is the price of the abstraction, not a defect.";
 
-static const cmp_case CASES[] = {
-    {"flat_1k", "1000 cells in rows of sixteen, no painting", CAVEAT, a_1k, m_1k, "ar layout",
-     areole_layout_us},
-    {"flat_8k", "8000 cells in rows of sixteen, no painting", CAVEAT, a_8k, m_8k, "ar layout",
-     areole_layout_us}};
+static const cmp_case CASES[] = {{"flat_1k", "1000 cells in rows of sixteen, no painting", CAVEAT,
+                                  a_1k, m_1k, "ar layout", areole_layout_us},
+                                 {"flat_8k", "8000 cells in rows of sixteen, no painting", CAVEAT,
+                                  a_8k, m_8k, "ar layout", areole_layout_us}};
 
 static const cmp_case *microui_cases(int *count)
 {

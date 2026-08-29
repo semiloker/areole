@@ -37,6 +37,47 @@ ar_u32 ar_hash(const char *s, ar_u32 len)
 /* ------------------------------------------------------------------------
  * Defaults
  * ------------------------------------------------------------------------ */
+ar_i32 ar_style_get(const ar_style *s, ar_i32 prop)
+{
+    if (prop >= AR_P_NARROW_COUNT)
+    {
+        return s->wide[prop - AR_P_NARROW_COUNT];
+    }
+    return s->v[prop];
+}
+
+void ar_style_put(ar_style *s, ar_i32 prop, ar_i32 v)
+{
+    if (prop >= AR_P_NARROW_COUNT)
+    {
+        s->wide[prop - AR_P_NARROW_COUNT] = v;
+        return;
+    }
+    s->v[prop] = (ar_i16)ar_style_clamp_narrow(v);
+}
+
+/*
+ * v[] is sixteen bits, so a stated length above 32767 has to go somewhere
+ * defined. Clamping is the only option that keeps layout monotonic: wrapping
+ * would turn `width: 40000px` into a negative width, which lays out as a box
+ * to the left of its own parent rather than merely a wide one.
+ *
+ * Nothing computed passes through here -- a scroll container's content height
+ * is worked out in ar_i32 and stays there. This is the authored value only.
+ */
+ar_i32 ar_style_clamp_narrow(ar_i32 v)
+{
+    if (v > 32767)
+    {
+        return 32767;
+    }
+    if (v < -32768)
+    {
+        return -32768;
+    }
+    return v;
+}
+
 void ar_style_defaults(ar_style *s)
 {
     ar_i32 i;
@@ -44,7 +85,7 @@ void ar_style_defaults(ar_style *s)
     s->set = ar_pset_none();
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        s->v[i] = 0;
+        ar_style_put(s, i, 0);
         s->unit[i] = AR_UNIT_PX;
     }
 
@@ -63,20 +104,110 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_OVERFLOW] = AR_OVERFLOW_VISIBLE;
     s->v[AR_P_OVERFLOW_X] = AR_OVERFLOW_VISIBLE;
     s->unit[AR_P_OVERFLOW] = AR_UNIT_KEYWORD;
+    /*
+     * A cell spans one column and one row, not zero.
+     *
+     * The loop above zeroes every property, which is right for a length and
+     * wrong for a count: a cell that spans nothing occupies no column, so the
+     * grid pass would assign every cell to column zero and the table would
+     * collapse into a single stack. Worth stating because the failure looks
+     * like a layout bug and is a default.
+     */
+    s->v[AR_P_COLSPAN] = 1;
+    s->v[AR_P_ROWSPAN] = 1;
+    s->v[AR_P_TABLE_LAYOUT] = AR_TABLE_LAYOUT_AUTO;
+    s->unit[AR_P_TABLE_LAYOUT] = AR_UNIT_KEYWORD;
+    s->v[AR_P_BORDER_COLLAPSE] = AR_BORDER_SEPARATE;
+    s->unit[AR_P_BORDER_COLLAPSE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_VISIBILITY] = AR_VIS_VISIBLE;
+    s->unit[AR_P_VISIBILITY] = AR_UNIT_KEYWORD;
+    s->v[AR_P_CAPTION_SIDE] = AR_CAPTION_TOP;
+    s->unit[AR_P_CAPTION_SIDE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_EMPTY_CELLS] = AR_EMPTY_SHOW;
+    s->unit[AR_P_EMPTY_CELLS] = AR_UNIT_KEYWORD;
+
+    s->v[AR_P_FLEX_WRAP] = AR_WRAP_NOWRAP;
+    s->unit[AR_P_FLEX_WRAP] = AR_UNIT_KEYWORD;
+    /*
+     * `flex-basis: auto`, `flex-grow: 0`, `flex-shrink: 1` -- the initial
+     * values CSS specifies, and the reason a flex item that says nothing keeps
+     * its own width and gives ground when the container is too small.
+     */
+    s->v[AR_P_FLEX_BASIS] = 0;
+    s->unit[AR_P_FLEX_BASIS] = AR_UNIT_AUTO;
+    s->v[AR_P_FLEX_GROW] = 0;
+    s->unit[AR_P_FLEX_GROW] = AR_UNIT_NUMBER;
+    s->v[AR_P_FLEX_SHRINK] = 1000;
+    s->unit[AR_P_FLEX_SHRINK] = AR_UNIT_NUMBER;
+    s->v[AR_P_ALIGN_SELF] = AR_ALIGN_AUTO;
+    s->unit[AR_P_ALIGN_SELF] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ALIGN_CONTENT] = AR_ALIGN_STRETCH;
+    s->unit[AR_P_ALIGN_CONTENT] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ORDER] = 0;
+    s->unit[AR_P_ORDER] = AR_UNIT_PX;
+
+    /* Zero is "no track list" and "auto placement" alike, which is why CSS's
+       lines start at one: there is no line zero for a real value to collide
+       with. */
+    s->v[AR_P_GRID_COLS] = 0;
+    s->v[AR_P_GRID_ROWS] = 0;
+    s->v[AR_P_GRID_AUTO_COLS] = 0;
+    s->v[AR_P_GRID_AUTO_ROWS] = 0;
+    s->v[AR_P_GRID_FLOW] = AR_GRID_FLOW_ROW;
+    s->unit[AR_P_GRID_FLOW] = AR_UNIT_KEYWORD;
+    s->v[AR_P_GRID_COL_START] = 0;
+    s->v[AR_P_GRID_COL_END] = 0;
+    s->v[AR_P_GRID_ROW_START] = 0;
+    s->v[AR_P_GRID_ROW_END] = 0;
+    s->v[AR_P_JUSTIFY_ITEMS] = AR_ALIGN_STRETCH;
+    s->unit[AR_P_JUSTIFY_ITEMS] = AR_UNIT_KEYWORD;
+    s->v[AR_P_JUSTIFY_SELF] = AR_ALIGN_AUTO;
+    s->unit[AR_P_JUSTIFY_SELF] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ROW_GAP] = 0;
+    s->v[AR_P_COL_GAP] = 0;
+    s->v[AR_P_ASPECT_RATIO] = 0;
+
+    s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
+    s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
+    s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
+    s->unit[AR_P_OVERSCROLL_X] = AR_UNIT_KEYWORD;
+
+    s->v[AR_P_OVERFLOW_ANCHOR] = AR_ANCHOR_AUTO;
+    s->unit[AR_P_OVERFLOW_ANCHOR] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
+    s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
+    s->unit[AR_P_SCROLL_SNAP_ALIGN] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLL_SNAP_STOP] = AR_SNAP_STOP_NORMAL;
+    s->unit[AR_P_SCROLL_SNAP_STOP] = AR_UNIT_KEYWORD;
+
+    s->v[AR_P_SCROLLBAR_WIDTH] = AR_SCROLLBAR_AUTO;
+    s->unit[AR_P_SCROLLBAR_WIDTH] = AR_UNIT_KEYWORD;
+    s->v[AR_P_SCROLLBAR_GUTTER] = AR_GUTTER_AUTO;
+    s->unit[AR_P_SCROLLBAR_GUTTER] = AR_UNIT_KEYWORD;
+
+    /* Zero alpha, meaning "areole picks". A stylesheet that states a colour
+       gets that colour; one that says nothing gets the translucent grey the
+       bar has always been, which no default colour value can express because
+       it is two colours and both are alpha blends. */
+    AR_WIDE(s, AR_P_SCROLLBAR_THUMB) = 0;
+    s->unit[AR_P_SCROLLBAR_THUMB] = AR_UNIT_COLOR;
+    AR_WIDE(s, AR_P_SCROLLBAR_TRACK) = 0;
+    s->unit[AR_P_SCROLLBAR_TRACK] = AR_UNIT_COLOR;
 
     /* A box with no stated size takes the size of its content. This is what
        makes a stylesheet that says nothing about width still lay out. */
     s->unit[AR_P_WIDTH] = AR_UNIT_AUTO;
     s->unit[AR_P_HEIGHT] = AR_UNIT_AUTO;
 
-    s->v[AR_P_MAX_WIDTH] = 0x7FFFFFFF;
-    s->v[AR_P_MAX_HEIGHT] = 0x7FFFFFFF;
+    AR_WIDE(s, AR_P_MAX_WIDTH) = 0x7FFFFFFF;
+    AR_WIDE(s, AR_P_MAX_HEIGHT) = 0x7FFFFFFF;
 
-    s->v[AR_P_BACKGROUND] = 0; /* fully transparent, so nothing is painted */
+    AR_WIDE(s, AR_P_BACKGROUND) = 0; /* fully transparent, so nothing is painted */
     s->unit[AR_P_BACKGROUND] = AR_UNIT_COLOR;
-    s->v[AR_P_COLOR] = (ar_i32)0xFF202020u;
+    AR_WIDE(s, AR_P_COLOR) = (ar_i32)0xFF202020u;
     s->unit[AR_P_COLOR] = AR_UNIT_COLOR;
-    s->v[AR_P_BORDER_COLOR] = 0;
+    AR_WIDE(s, AR_P_BORDER_COLOR) = 0;
     s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
@@ -222,15 +353,27 @@ ar_pset ar_pset_plus(ar_pset a, ar_pset b)
     return a;
 }
 
+/*
+ * One rule's declarations onto the style being built, per matching rule.
+ *
+ * A rule states two or three properties and the mask says which, so stepping
+ * over a word of thirty-two at a time when it says none is most of the work
+ * gone -- the same reason ar_style_inherit does it, and the same arithmetic.
+ */
 void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set)
 {
     ar_i32 i;
 
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        if (ar_pset_has(set, (ar_i32)i))
+        if ((i & 31) == 0 && set.w[i >> 5] == 0)
         {
-            dst->v[i] = src->v[i];
+            i += 31;
+            continue;
+        }
+        if (ar_pset_has(set, i))
+        {
+            ar_style_put(dst, i, ar_style_get(src, i));
             dst->unit[i] = src->unit[i];
         }
     }
@@ -257,49 +400,107 @@ int ar_prop_inherits(ar_i32 prop)
     {
     case AR_P_COLOR:
     case AR_P_FONT_SIZE:
+    /* `visibility` inherits, and that is what makes `collapse` on a row worth
+       writing: the row goes and every cell in it goes too, without any of them
+       being named. A cell can say `visibility: visible` to come back, which is
+       the one thing that separates it from `display: none`. */
+    case AR_P_VISIBILITY:
+    /* Both of these are written on the table and read on a box inside it --
+       `empty-cells` on the cells, `caption-side` on the caption -- and CSS
+       makes them inherited for exactly that reason. Nobody writes
+       `empty-cells` on every cell. */
+    case AR_P_EMPTY_CELLS:
+    case AR_P_CAPTION_SIDE:
         return 1;
     default:
         return 0;
     }
 }
 
+/*
+ * The same five, as a list.
+ *
+ * ar_prop_inherits above is the authority and this is its inverse: the answer
+ * to "which properties inherit" rather than "does this one". Both exist
+ * because they are asked in different shapes, and ar_test sweeps every
+ * property comparing the two, so they cannot drift apart.
+ */
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR, AR_P_FONT_SIZE, AR_P_VISIBILITY, AR_P_EMPTY_CELLS,
+                                      AR_P_CAPTION_SIDE};
+#define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
+
+/*
+ * Inheritance, per box, per frame -- so this is one of the three or four
+ * hottest functions in the library and it is written to stay off the property
+ * count.
+ *
+ * It used to do two things that made it grow with every release that added a
+ * property, and areole added a lot of them: it rebuilt the whole default style
+ * for every box, ninety slots and forty explicit assignments, to read at most
+ * a handful of them; and it asked `ar_prop_inherits` about all ninety to find
+ * the five that say yes.
+ *
+ * Style resolution grew 14 -> 31 us on a hundred boxes across 0.6.2 to 0.8.2,
+ * roughly one increment a release, and this is where the increments landed.
+ * Neither loop had anything to do with what the stylesheet actually said.
+ */
 void ar_style_inherit(ar_style *child, const ar_style *parent)
 {
     ar_style defaults;
-    ar_i32   i;
+    int      have_defaults = 0;
+    ar_i32   i, k;
 
-    ar_style_defaults(&defaults);
-
+    /*
+     * Pass one: the explicit keywords, which may name any property, so this
+     * one does have to consider them all -- but it asks the set mask and
+     * nothing else, and steps over a whole word of thirty-two when the box
+     * stated nothing in it. Most boxes state a handful.
+     */
     for (i = 0; i < AR_P_COUNT; ++i)
     {
-        /* The explicit keywords first, because they override the question of
-           whether the property inherits by default -- that is what they are
-           for. `inherit` on a non-inherited property is the interesting case
-           and the one CSS authors reach for. */
-        if (ar_pset_has(child->set, i))
+        if ((i & 31) == 0 && child->set.w[i >> 5] == 0)
         {
-            if (child->unit[i] == AR_UNIT_INHERIT)
-            {
-                child->v[i] = parent->v[i];
-                child->unit[i] = parent->unit[i];
-                continue;
-            }
-            if (child->unit[i] == AR_UNIT_INITIAL)
-            {
-                child->v[i] = defaults.v[i];
-                child->unit[i] = defaults.unit[i];
-                continue;
-            }
+            i += 31;
+            continue;
         }
-        if (!ar_prop_inherits(i))
+        if (!ar_pset_has(child->set, i))
         {
             continue;
         }
+        if (child->unit[i] == AR_UNIT_INHERIT)
+        {
+            ar_style_put(child, i, ar_style_get(parent, i));
+            child->unit[i] = parent->unit[i];
+            continue;
+        }
+        if (child->unit[i] == AR_UNIT_INITIAL)
+        {
+            /*
+             * Built once, and only if somebody actually wrote `initial` or
+             * `unset` on a property that does not inherit. That is rare, and
+             * it used to cost every box in the tree whether or not it was
+             * anywhere in the stylesheet.
+             */
+            if (!have_defaults)
+            {
+                ar_style_defaults(&defaults);
+                have_defaults = 1;
+            }
+            ar_style_put(child, i, ar_style_get(&defaults, i));
+            child->unit[i] = defaults.unit[i];
+        }
+    }
+
+    /* Pass two: the properties that inherit by default, asked by name. */
+    for (k = 0; k < AR__INHERITED_COUNT; ++k)
+    {
+        i = (ar_i32)AR__INHERITED[k];
+
         if (ar_pset_has(child->set, i))
         {
             continue; /* the child said something; it wins */
         }
-        child->v[i] = parent->v[i];
+        ar_style_put(child, i, ar_style_get(parent, i));
         child->unit[i] = parent->unit[i];
         /* Marked as set, so a grandchild inherits through a box that only
            inherited it -- which is the whole point of a cascade. */
@@ -325,6 +526,13 @@ static void ar__fail(ar__scan *z)
         z->sheet->first_error_offset = (ar_u32)(z->p - z->base);
     }
     z->sheet->errors++;
+}
+
+/* A failure that costs the whole rule rather than one declaration. */
+static void ar__fail_rule(ar__scan *z)
+{
+    ar__fail(z);
+    z->sheet->rules_refused++;
 }
 
 static int ar__is_space(char c)
@@ -456,14 +664,46 @@ enum
     AR_SH_PADDING = AR_P_COUNT + 1,
     AR_SH_MARGIN,
     AR_SH_BORDER,
-    AR_SH_OVERFLOW
+    AR_SH_OVERFLOW,
+    AR_SH_OVERSCROLL,
+    AR_SH_SCROLLBAR_COLOR,
+    AR_SH_SCROLL_PADDING,
+    AR_SH_SCROLL_MARGIN,
+    AR_SH_FLEX,
+    AR_SH_GRID_COLUMN,
+    AR_SH_GRID_ROW,
+    AR_SH_GAP,
+    AR_SH_PLACE_ITEMS,
+    AR_SH_PLACE_CONTENT,
+    AR_SH_PLACE_SELF
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"flex-direction", AR_P_DIRECTION},
                                           {"justify-content", AR_P_JUSTIFY},
                                           {"align-items", AR_P_ALIGN},
-                                          {"gap", AR_P_GAP},
+                                          {"gap", AR_SH_GAP},
+                                          {"flex-wrap", AR_P_FLEX_WRAP},
+                                          {"flex-basis", AR_P_FLEX_BASIS},
+                                          {"flex-grow", AR_P_FLEX_GROW},
+                                          {"flex-shrink", AR_P_FLEX_SHRINK},
+                                          {"align-self", AR_P_ALIGN_SELF},
+                                          {"align-content", AR_P_ALIGN_CONTENT},
+                                          {"order", AR_P_ORDER},
+                                          {"grid-template-columns", AR_P_GRID_COLS},
+                                          {"grid-template-rows", AR_P_GRID_ROWS},
+                                          {"grid-auto-columns", AR_P_GRID_AUTO_COLS},
+                                          {"grid-auto-rows", AR_P_GRID_AUTO_ROWS},
+                                          {"grid-auto-flow", AR_P_GRID_FLOW},
+                                          {"grid-column-start", AR_P_GRID_COL_START},
+                                          {"grid-column-end", AR_P_GRID_COL_END},
+                                          {"grid-row-start", AR_P_GRID_ROW_START},
+                                          {"grid-row-end", AR_P_GRID_ROW_END},
+                                          {"justify-items", AR_P_JUSTIFY_ITEMS},
+                                          {"justify-self", AR_P_JUSTIFY_SELF},
+                                          {"row-gap", AR_P_ROW_GAP},
+                                          {"column-gap", AR_P_COL_GAP},
+                                          {"aspect-ratio", AR_P_ASPECT_RATIO},
                                           {"padding", AR_SH_PADDING},
                                           {"padding-top", AR_P_PAD_TOP},
                                           {"padding-right", AR_P_PAD_RIGHT},
@@ -491,6 +731,32 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
+                                          {"overflow-anchor", AR_P_OVERFLOW_ANCHOR},
+                                          {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
+                                          {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
+                                          {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
+                                          {"scroll-padding", AR_SH_SCROLL_PADDING},
+                                          {"scroll-padding-top", AR_P_SCROLL_PAD_TOP},
+                                          {"scroll-padding-right", AR_P_SCROLL_PAD_RIGHT},
+                                          {"scroll-padding-bottom", AR_P_SCROLL_PAD_BOTTOM},
+                                          {"scroll-padding-left", AR_P_SCROLL_PAD_LEFT},
+                                          {"scroll-margin", AR_SH_SCROLL_MARGIN},
+                                          {"scroll-margin-top", AR_P_SCROLL_MARGIN_TOP},
+                                          {"scroll-margin-right", AR_P_SCROLL_MARGIN_RIGHT},
+                                          {"scroll-margin-bottom", AR_P_SCROLL_MARGIN_BOTTOM},
+                                          {"scroll-margin-left", AR_P_SCROLL_MARGIN_LEFT},
+                                          {"scrollbar-width", AR_P_SCROLLBAR_WIDTH},
+                                          {"scrollbar-gutter", AR_P_SCROLLBAR_GUTTER},
+                                          {"scrollbar-color", AR_SH_SCROLLBAR_COLOR},
+                                          {"overscroll-behavior", AR_SH_OVERSCROLL},
+                                          {"flex", AR_SH_FLEX},
+                                          {"grid-column", AR_SH_GRID_COLUMN},
+                                          {"grid-row", AR_SH_GRID_ROW},
+                                          {"place-items", AR_SH_PLACE_ITEMS},
+                                          {"place-content", AR_SH_PLACE_CONTENT},
+                                          {"place-self", AR_SH_PLACE_SELF},
+                                          {"overscroll-behavior-x", AR_P_OVERSCROLL_X},
+                                          {"overscroll-behavior-y", AR_P_OVERSCROLL},
                                           {"text-align", AR_P_TEXT_ALIGN},
                                           {"vertical-align", AR_P_VERTICAL_ALIGN},
                                           {"float", AR_P_FLOAT},
@@ -501,6 +767,19 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"bottom", AR_P_BOTTOM},
                                           {"left", AR_P_LEFT},
                                           {"z-index", AR_P_Z_INDEX},
+                                          {"overlay", AR_P_OVERLAY},
+                                          {"inert", AR_P_INERT},
+                                          {"anchor-name", AR_P_ANCHOR_NAME},
+                                          {"position-anchor", AR_P_POSITION_ANCHOR},
+                                          {"position-try", AR_P_POSITION_TRY},
+                                          {"table-layout", AR_P_TABLE_LAYOUT},
+                                          {"border-collapse", AR_P_BORDER_COLLAPSE},
+                                          {"visibility", AR_P_VISIBILITY},
+                                          {"caption-side", AR_P_CAPTION_SIDE},
+                                          {"empty-cells", AR_P_EMPTY_CELLS},
+                                          {"border-spacing", AR_P_BORDER_SPACING},
+                                          {"colspan", AR_P_COLSPAN},
+                                          {"rowspan", AR_P_ROWSPAN},
                                           {"box-sizing", AR_P_BOX_SIZING}};
 
 #define AR_PROP_COUNT ((ar_i32)(sizeof AR_PROPS / sizeof AR_PROPS[0]))
@@ -546,64 +825,281 @@ typedef struct ar__kw
     ar_i32      value;
 } ar__kw;
 
-static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
-                                     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
-                                     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
-                                     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
-                                     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
+static const ar__kw AR_KEYWORDS[] = {
+    {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
+    {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
+    {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
+    {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+    {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
 
-                                     {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
-                                     {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
-                                     {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
+    {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},
+    {"right", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_RIGHT},
+    {"center", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_CENTER},
 
-                                     {"content-box", AR_P_BOX_SIZING, AR_BOX_CONTENT},
-                                     {"border-box", AR_P_BOX_SIZING, AR_BOX_BORDER},
+    {"content-box", AR_P_BOX_SIZING, AR_BOX_CONTENT},
+    {"border-box", AR_P_BOX_SIZING, AR_BOX_BORDER},
 
-                                     {"static", AR_P_POSITION, AR_POS_STATIC},
-                                     {"relative", AR_P_POSITION, AR_POS_RELATIVE},
-                                     {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
-                                     {"fixed", AR_P_POSITION, AR_POS_FIXED},
-                                     {"sticky", AR_P_POSITION, AR_POS_STICKY},
+    {"static", AR_P_POSITION, AR_POS_STATIC},
+    {"relative", AR_P_POSITION, AR_POS_RELATIVE},
+    {"absolute", AR_P_POSITION, AR_POS_ABSOLUTE},
+    {"fixed", AR_P_POSITION, AR_POS_FIXED},
+    {"sticky", AR_P_POSITION, AR_POS_STICKY},
 
-                                     {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
-                                     {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
-                                     {"left", AR_P_CLEAR, AR_CLEAR_LEFT},
-                                     {"right", AR_P_CLEAR, AR_CLEAR_RIGHT},
-                                     {"both", AR_P_CLEAR, AR_CLEAR_BOTH},
+    {"left", AR_P_FLOAT, AR_FLOAT_LEFT},
+    {"right", AR_P_FLOAT, AR_FLOAT_RIGHT},
+    {"left", AR_P_CLEAR, AR_CLEAR_LEFT},
+    {"right", AR_P_CLEAR, AR_CLEAR_RIGHT},
+    {"both", AR_P_CLEAR, AR_CLEAR_BOTH},
 
-                                     {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
-                                     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
-                                     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
-                                     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
+    {"baseline", AR_P_VERTICAL_ALIGN, AR_VALIGN_BASELINE},
+    {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
+    {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
+    {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
 
-                                     {"row", AR_P_DIRECTION, AR_DIR_ROW},
-                                     {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
+    {"row", AR_P_DIRECTION, AR_DIR_ROW},
+    {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
 
-                                     {"flex-start", AR_P_JUSTIFY, AR_JUSTIFY_START},
-                                     {"start", AR_P_JUSTIFY, AR_JUSTIFY_START},
-                                     {"center", AR_P_JUSTIFY, AR_JUSTIFY_CENTER},
-                                     {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
-                                     {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
-                                     {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
+    {"flex-start", AR_P_JUSTIFY, AR_JUSTIFY_START},
+    {"start", AR_P_JUSTIFY, AR_JUSTIFY_START},
+    {"center", AR_P_JUSTIFY, AR_JUSTIFY_CENTER},
+    {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
+    {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
+    {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
+    {"space-around", AR_P_JUSTIFY, AR_JUSTIFY_AROUND},
+    {"space-evenly", AR_P_JUSTIFY, AR_JUSTIFY_EVENLY},
 
-                                     {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
-                                     {"start", AR_P_ALIGN, AR_ALIGN_START},
-                                     {"center", AR_P_ALIGN, AR_ALIGN_CENTER},
-                                     {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
-                                     {"end", AR_P_ALIGN, AR_ALIGN_END},
-                                     {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
+    {"grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
+    {"contents", AR_P_DISPLAY, AR_DISPLAY_CONTENTS},
+    {"inline-grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
 
-                                     {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
-                                     {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
-                                     {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
+    {"row", AR_P_GRID_FLOW, AR_GRID_FLOW_ROW},
+    {"column", AR_P_GRID_FLOW, AR_GRID_FLOW_COLUMN},
+    {"dense", AR_P_GRID_FLOW, AR_GRID_FLOW_DENSE},
 
-                                     {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
-                                     {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
-                                     {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
-                                     {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO}};
+    {"flex-start", AR_P_JUSTIFY_ITEMS, AR_ALIGN_START},
+    {"start", AR_P_JUSTIFY_ITEMS, AR_ALIGN_START},
+    {"center", AR_P_JUSTIFY_ITEMS, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_JUSTIFY_ITEMS, AR_ALIGN_END},
+    {"end", AR_P_JUSTIFY_ITEMS, AR_ALIGN_END},
+    {"stretch", AR_P_JUSTIFY_ITEMS, AR_ALIGN_STRETCH},
+
+    {"auto", AR_P_JUSTIFY_SELF, AR_ALIGN_AUTO},
+    {"flex-start", AR_P_JUSTIFY_SELF, AR_ALIGN_START},
+    {"start", AR_P_JUSTIFY_SELF, AR_ALIGN_START},
+    {"center", AR_P_JUSTIFY_SELF, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_JUSTIFY_SELF, AR_ALIGN_END},
+    {"end", AR_P_JUSTIFY_SELF, AR_ALIGN_END},
+    {"stretch", AR_P_JUSTIFY_SELF, AR_ALIGN_STRETCH},
+
+    {"nowrap", AR_P_FLEX_WRAP, AR_WRAP_NOWRAP},
+    {"wrap", AR_P_FLEX_WRAP, AR_WRAP_WRAP},
+    {"wrap-reverse", AR_P_FLEX_WRAP, AR_WRAP_WRAP_REVERSE},
+
+    {"auto", AR_P_ALIGN_SELF, AR_ALIGN_AUTO},
+    {"flex-start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_SELF, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_SELF, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN_SELF, AR_ALIGN_BASELINE},
+
+    {"flex-start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_CONTENT, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_CONTENT, AR_ALIGN_STRETCH},
+    {"space-between", AR_P_ALIGN_CONTENT, AR_ALIGN_BETWEEN},
+    {"space-around", AR_P_ALIGN_CONTENT, AR_ALIGN_AROUND},
+    {"space-evenly", AR_P_ALIGN_CONTENT, AR_ALIGN_EVENLY},
+
+    {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
+    {"start", AR_P_ALIGN, AR_ALIGN_START},
+    {"center", AR_P_ALIGN, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
+    {"end", AR_P_ALIGN, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN, AR_ALIGN_BASELINE},
+
+    {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
+    {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
+    {"scroll", AR_P_OVERFLOW, AR_OVERFLOW_SCROLL},
+    {"auto", AR_P_OVERFLOW, AR_OVERFLOW_AUTO},
+
+    {"visible", AR_P_OVERFLOW_X, AR_OVERFLOW_VISIBLE},
+    {"hidden", AR_P_OVERFLOW_X, AR_OVERFLOW_HIDDEN},
+    {"scroll", AR_P_OVERFLOW_X, AR_OVERFLOW_SCROLL},
+    {"auto", AR_P_OVERFLOW_X, AR_OVERFLOW_AUTO},
+
+    {"auto", AR_P_OVERSCROLL, AR_OVERSCROLL_AUTO},
+    {"contain", AR_P_OVERSCROLL, AR_OVERSCROLL_CONTAIN},
+    {"none", AR_P_OVERSCROLL, AR_OVERSCROLL_NONE},
+
+    {"auto", AR_P_OVERSCROLL_X, AR_OVERSCROLL_AUTO},
+    {"contain", AR_P_OVERSCROLL_X, AR_OVERSCROLL_CONTAIN},
+    {"none", AR_P_OVERSCROLL_X, AR_OVERSCROLL_NONE},
+
+    {"none", AR_P_OVERLAY, AR_OVERLAY_NONE},
+    {"auto", AR_P_OVERLAY, AR_OVERLAY_AUTO},
+    {"modal", AR_P_OVERLAY, AR_OVERLAY_MODAL},
+
+    {"none", AR_P_INERT, AR_INERT_NONE},
+    {"auto", AR_P_INERT, AR_INERT_AUTO},
+
+    {"table", AR_P_DISPLAY, AR_DISPLAY_TABLE},
+    {"table-row-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_ROW_GROUP},
+    {"table-header-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_HEADER_GROUP},
+    {"table-footer-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_FOOTER_GROUP},
+    {"table-row", AR_P_DISPLAY, AR_DISPLAY_TABLE_ROW},
+    {"table-cell", AR_P_DISPLAY, AR_DISPLAY_TABLE_CELL},
+    {"table-column-group", AR_P_DISPLAY, AR_DISPLAY_TABLE_COLUMN_GROUP},
+    {"table-column", AR_P_DISPLAY, AR_DISPLAY_TABLE_COLUMN},
+    {"table-caption", AR_P_DISPLAY, AR_DISPLAY_TABLE_CAPTION},
+
+    {"auto", AR_P_TABLE_LAYOUT, AR_TABLE_LAYOUT_AUTO},
+    {"fixed", AR_P_TABLE_LAYOUT, AR_TABLE_LAYOUT_FIXED},
+
+    {"separate", AR_P_BORDER_COLLAPSE, AR_BORDER_SEPARATE},
+    {"collapse", AR_P_BORDER_COLLAPSE, AR_BORDER_COLLAPSE},
+    {"visible", AR_P_VISIBILITY, AR_VIS_VISIBLE},
+    {"hidden", AR_P_VISIBILITY, AR_VIS_HIDDEN},
+    {"collapse", AR_P_VISIBILITY, AR_VIS_COLLAPSE},
+    {"top", AR_P_CAPTION_SIDE, AR_CAPTION_TOP},
+    {"bottom", AR_P_CAPTION_SIDE, AR_CAPTION_BOTTOM},
+    {"show", AR_P_EMPTY_CELLS, AR_EMPTY_SHOW},
+    {"hide", AR_P_EMPTY_CELLS, AR_EMPTY_HIDE},
+
+    {"none", AR_P_POSITION_TRY, AR_TRY_NONE},
+    {"flip-block", AR_P_POSITION_TRY, AR_TRY_FLIP_BLOCK},
+    {"flip-inline", AR_P_POSITION_TRY, AR_TRY_FLIP_INLINE},
+    {"flip-both", AR_P_POSITION_TRY, AR_TRY_FLIP_BOTH},
+
+    {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
+    {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
+
+    {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
+    {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},
+    {"y", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_Y},
+    {"both", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_BOTH},
+    {"mandatory", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_MANDATORY},
+    {"proximity", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_PROXIMITY},
+
+    {"none", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_NONE},
+    {"start", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_START},
+    {"center", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_CENTER},
+    {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
+
+    {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
+    {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
+
+    {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
+    {"thin", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_THIN},
+    {"none", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_HIDDEN},
+
+    {"auto", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_AUTO},
+    {"stable", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_STABLE},
+    {"both-edges", AR_P_SCROLLBAR_GUTTER, AR_GUTTER_BOTH_EDGES}};
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))
+
+/*
+ * The env() names, in AR_ENV_* order so the index is the slot.
+ *
+ * Only the two families CSS defines that mean anything to a renderer with no
+ * browser chrome around it: the safe-area insets, and the titlebar rectangle a
+ * backend drawing its own window controls needs. The rest are not here because
+ * nothing can supply them.
+ */
+static const char *const AR_ENV_NAMES[AR_ENV_COUNT] = {
+    "safe-area-inset-top",  "safe-area-inset-right", "safe-area-inset-bottom",
+    "safe-area-inset-left", "titlebar-area-x",       "titlebar-area-y",
+    "titlebar-area-width",  "titlebar-area-height"};
+
+/*
+ * Does this sheet mention a table display anywhere?
+ *
+ * Asked once when a stylesheet is added, not per box. A sheet that never says
+ * `display: table-*` cannot produce a box that needs an anonymous parent, so
+ * ar_begin can skip the whole question -- which is what keeps tables from
+ * costing anything to an interface that has none.
+ */
+const ar_track *ar_sheet_tracks(const ar_sheet *sheet, ar_i32 index, ar_i32 *out_count)
+{
+    if (!sheet || !sheet->tracks || index <= 0 || index >= (ar_i32)sheet->track_count)
+    {
+        *out_count = 0;
+        return 0;
+    }
+    *out_count = sheet->tracks[index].min_v;
+    if (*out_count <= 0 || index + *out_count >= (ar_i32)sheet->track_count)
+    {
+        *out_count = 0;
+        return 0;
+    }
+    return &sheet->tracks[index + 1];
+}
+
+void ar_sheet_note_tables(ar_sheet *sheet)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        if (ar_pset_has(sheet->rules[i].set, AR_P_DISPLAY) &&
+            sheet->rules[i].style.v[AR_P_DISPLAY] >= AR_DISPLAY_TABLE)
+        {
+            sheet->has_table = 1;
+        }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_BORDER_COLLAPSE) &&
+            sheet->rules[i].style.v[AR_P_BORDER_COLLAPSE] == AR_BORDER_COLLAPSE)
+        {
+            sheet->has_collapse = 1;
+        }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_DISPLAY) &&
+            sheet->rules[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID)
+        {
+            sheet->has_grid = 1;
+        }
+        if (ar_pset_has(sheet->rules[i].set, AR_P_GRID_COLS) ||
+            ar_pset_has(sheet->rules[i].set, AR_P_GRID_ROWS))
+        {
+            sheet->has_grid = 1;
+        }
+        if (sheet->has_table && sheet->has_collapse && sheet->has_grid)
+        {
+            return;
+        }
+    }
+}
+
+ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback)
+{
+    if (!e || slot < 0 || slot >= AR_ENV_COUNT)
+    {
+        return fallback;
+    }
+
+    /*
+     * The safe-area insets are only reported to a stylesheet that asked for
+     * the whole display. With `viewport-fit: auto` the layout viewport has
+     * already been shrunk to the safe rectangle, so telling the stylesheet to
+     * avoid the inset as well would move everything twice.
+     *
+     * The titlebar rectangle is not part of that bargain: it says where the
+     * window controls are, which does not change because the viewport was
+     * inset.
+     */
+    if (slot <= AR_ENV_SAFE_LEFT && !e->fit_cover)
+    {
+        return 0;
+    }
+    if (!e->known[slot])
+    {
+        return fallback;
+    }
+    return e->v[slot];
+}
 
 static int ar__lookup_keyword(ar_u8 prop, const char *name, ar_u32 len, ar_i32 *out)
 {
@@ -629,6 +1125,368 @@ typedef struct ar__value
     ar_u8  unit;
     int    ok;
 } ar__value;
+
+/* ------------------------------------------------------------------------
+ * Track lists
+ *
+ * `grid-template-columns: repeat(3, minmax(100px, 1fr)) auto` is nine numbers
+ * and four kinds, and a style slot is sixteen bits. So the list is parsed once
+ * into a pool on the stylesheet and the slot holds the index of its header.
+ *
+ * Every track comes out as a *range*, whatever it was written as: `100px` is
+ * minmax(100px, 100px), `auto` is minmax(min-content, max-content), `1fr` is
+ * minmax(auto, 1fr). The sizing algorithm then has one shape to handle rather
+ * than seven, and this is the only place that remembers there was a shorthand.
+ * ------------------------------------------------------------------------ */
+
+static int ar__track_room(const ar_sheet *sheet, ar_i32 want)
+{
+    return sheet->tracks && (ar_i32)sheet->track_count + want <= (ar_i32)sheet->track_cap;
+}
+
+/* One track, or one half of a minmax. Returns 0 if this is not a track size. */
+static int ar__parse_track_size(ar__scan *z, ar_i16 *out_v, ar_u8 *out_u, int allow_fr)
+{
+    const char *save;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+
+    if (ar__is_digit(*z->p) || *z->p == '.')
+    {
+        ar_i32 n = 0;
+        ar_i32 milli = 0;
+        ar_i32 digits = 0;
+
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            n = n * 10 + (*z->p - '0');
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == '.')
+        {
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                if (digits < 3)
+                {
+                    milli = milli * 10 + (*z->p - '0');
+                    ++digits;
+                }
+                z->p++;
+            }
+            while (digits < 3)
+            {
+                milli *= 10;
+                ++digits;
+            }
+        }
+        if (z->p + 1 < z->end && z->p[0] == 'f' && z->p[1] == 'r')
+        {
+            if (!allow_fr)
+            {
+                return 0;
+            }
+            z->p += 2;
+            *out_v = (ar_i16)(n * 1000 + milli);
+            *out_u = AR_UNIT_FR;
+            return 1;
+        }
+        if (z->p < z->end && *z->p == '%')
+        {
+            z->p++;
+            *out_v = (ar_i16)n;
+            *out_u = AR_UNIT_PCT;
+            return 1;
+        }
+        if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
+        {
+            z->p += 2;
+        }
+        *out_v = (ar_i16)n;
+        *out_u = AR_UNIT_PX;
+        return 1;
+    }
+
+    save = z->p;
+    {
+        const char *name;
+        ar_u32      len = ar__ident(z, &name);
+
+        if (len == 0)
+        {
+            z->p = save;
+            return 0;
+        }
+        *out_v = 0;
+        if (ar__same(name, len, "auto"))
+        {
+            *out_u = AR_UNIT_AUTO;
+            return 1;
+        }
+        if (ar__same(name, len, "min-content"))
+        {
+            *out_u = AR_UNIT_MIN_CONTENT;
+            return 1;
+        }
+        if (ar__same(name, len, "max-content"))
+        {
+            *out_u = AR_UNIT_MAX_CONTENT;
+            return 1;
+        }
+        z->p = save;
+        return 0;
+    }
+}
+
+/*
+ * One entry of a track list, which may be a function.
+ *
+ * `minmax(a, b)` is the range spelled out. `fit-content(x)` is minmax(auto, x)
+ * -- the specification says minmax(auto, max-content) capped at x, and with no
+ * separate cap in this model the max *is* x, which differs only when the
+ * contents are narrower than x and both answers are then the contents.
+ */
+static int ar__parse_one_track(ar__scan *z, ar_track *out)
+{
+    const char *save;
+    const char *name;
+    ar_u32      len;
+
+    ar__skip_ws(z);
+    save = z->p;
+    len = ar__ident(z, &name);
+
+    if (len && z->p < z->end && *z->p == '(')
+    {
+        if (ar__same(name, len, "minmax"))
+        {
+            z->p++;
+            if (!ar__parse_track_size(z, &out->min_v, &out->min_u, 0))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ',')
+            {
+                z->p++;
+            }
+            if (!ar__parse_track_size(z, &out->max_v, &out->max_u, 1))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            return 1;
+        }
+        if (ar__same(name, len, "fit-content"))
+        {
+            z->p++;
+            out->min_v = 0;
+            out->min_u = AR_UNIT_AUTO;
+            if (!ar__parse_track_size(z, &out->max_v, &out->max_u, 0))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            return 1;
+        }
+        z->p = save;
+        return 0;
+    }
+    z->p = save;
+
+    {
+        ar_i16 v;
+        ar_u8  u;
+
+        if (!ar__parse_track_size(z, &v, &u, 1))
+        {
+            return 0;
+        }
+        /*
+         * The shorthand forms, spelled out as ranges.
+         *
+         * A length is a range with itself at both ends. `auto` is min-content
+         * to max-content. `1fr` has a minimum of auto, which is the rule that
+         * stops an fr track collapsing below its contents and is the one
+         * everybody forgets: `1fr` is not "a share", it is "at least the
+         * contents, then a share".
+         */
+        if (u == AR_UNIT_FR)
+        {
+            out->min_v = 0;
+            out->min_u = AR_UNIT_AUTO;
+            out->max_v = v;
+            out->max_u = AR_UNIT_FR;
+        }
+        else if (u == AR_UNIT_AUTO)
+        {
+            out->min_v = 0;
+            out->min_u = AR_UNIT_MIN_CONTENT;
+            out->max_v = 0;
+            out->max_u = AR_UNIT_MAX_CONTENT;
+        }
+        else
+        {
+            out->min_v = v;
+            out->min_u = u;
+            out->max_v = v;
+            out->max_u = u;
+        }
+        return 1;
+    }
+}
+
+/*
+ * A whole track list into the pool, returning the header's index.
+ *
+ * `repeat(n, ...)` is expanded here rather than carried: the sizing algorithm
+ * wants a flat list, and an author writing `repeat(200, 1fr)` has asked for two
+ * hundred tracks whether they are stored once or two hundred times. The pool is
+ * bounded, so a list that does not fit is refused and counted as a parse error
+ * -- which is the same answer a rule with a malformed value gets.
+ */
+static ar_i32 ar__parse_track_list(ar__scan *z, ar_sheet *sheet)
+{
+    ar_i32 header;
+    ar_i32 n = 0;
+
+    if (!ar__track_room(sheet, 1))
+    {
+        return 0;
+    }
+    header = (ar_i32)sheet->track_count;
+    sheet->track_count++;
+
+    for (;;)
+    {
+        const char *save;
+        const char *name;
+        ar_u32      len;
+        ar_i32      times = 1;
+        ar_i32      first_of_repeat = -1;
+
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p == ';' || *z->p == '}' || *z->p == '!')
+        {
+            break;
+        }
+
+        save = z->p;
+        len = ar__ident(z, &name);
+        if (len && ar__same(name, len, "repeat") && z->p < z->end && *z->p == '(')
+        {
+            ar_i32 count = 0;
+
+            z->p++;
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                count = count * 10 + (*z->p - '0');
+                z->p++;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ',')
+            {
+                z->p++;
+            }
+            if (count <= 0)
+            {
+                /* `repeat(auto-fill, ...)` and `repeat(auto-fit, ...)` land
+                   here: the count is not a number and cannot be known until
+                   the container has a width. Not supported, and refused rather
+                   than guessed -- a wrong count is a wrong grid. */
+                z->p = save;
+                break;
+            }
+            times = count;
+            first_of_repeat = (ar_i32)sheet->track_count;
+
+            for (;;)
+            {
+                ar_track t;
+
+                ar__skip_ws(z);
+                if (z->p >= z->end || *z->p == ')')
+                {
+                    if (z->p < z->end)
+                    {
+                        z->p++;
+                    }
+                    break;
+                }
+                if (!ar__parse_one_track(z, &t))
+                {
+                    break;
+                }
+                if (!ar__track_room(sheet, 1))
+                {
+                    return 0;
+                }
+                sheet->tracks[sheet->track_count++] = t;
+                ++n;
+            }
+
+            {
+                ar_i32 group = (ar_i32)sheet->track_count - first_of_repeat;
+                ar_i32 r, k;
+
+                for (r = 1; r < times; ++r)
+                {
+                    for (k = 0; k < group; ++k)
+                    {
+                        if (!ar__track_room(sheet, 1))
+                        {
+                            return 0;
+                        }
+                        sheet->tracks[sheet->track_count] = sheet->tracks[first_of_repeat + k];
+                        sheet->track_count++;
+                        ++n;
+                    }
+                }
+            }
+            continue;
+        }
+        z->p = save;
+
+        {
+            ar_track t;
+
+            if (!ar__parse_one_track(z, &t))
+            {
+                break;
+            }
+            if (!ar__track_room(sheet, 1))
+            {
+                return 0;
+            }
+            sheet->tracks[sheet->track_count++] = t;
+            ++n;
+        }
+    }
+
+    if (n <= 0)
+    {
+        sheet->track_count = (ar_u16)header;
+        return 0;
+    }
+    sheet->tracks[header].min_v = (ar_i16)n;
+    sheet->tracks[header].max_v = 0;
+    sheet->tracks[header].min_u = AR_UNIT_PX;
+    sheet->tracks[header].max_u = AR_UNIT_PX;
+    return header;
+}
 
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
@@ -657,6 +1515,65 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         return out;
     }
 
+    /*
+     * `aspect-ratio: 16 / 9`, and the decimal `1.777` that means the same.
+     *
+     * Read here rather than in the number path because the slash is the value,
+     * not punctuation between two values -- the loop that reads up to four
+     * numbers would take 16 and 9 as two declarations of the same property and
+     * keep the first.
+     */
+    if (prop == AR_P_ASPECT_RATIO && (ar__is_digit(*z->p) || *z->p == '.'))
+    {
+        ar_i32 w = 0, h = 0, milli = 0, digits = 0;
+
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            w = w * 10 + (*z->p - '0');
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == '.')
+        {
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                if (digits < 3)
+                {
+                    milli = milli * 10 + (*z->p - '0');
+                    ++digits;
+                }
+                z->p++;
+            }
+            while (digits < 3)
+            {
+                milli *= 10;
+                ++digits;
+            }
+        }
+        ar__skip_ws(z);
+        if (z->p < z->end && *z->p == '/')
+        {
+            z->p++;
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                h = h * 10 + (*z->p - '0');
+                z->p++;
+            }
+        }
+        if (h > 0)
+        {
+            out.v = (w * 1000 + milli) / h;
+        }
+        else
+        {
+            out.v = w * 1000 + milli;
+        }
+        out.unit = AR_UNIT_PX;
+        out.ok = out.v > 0;
+        return out;
+    }
+
     if (ar__is_digit(*z->p) || (*z->p == '-' && z->p + 1 < z->end && ar__is_digit(z->p[1])))
     {
         ar_i32 sign = 1;
@@ -672,14 +1589,45 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             n = n * 10 + (*z->p - '0');
             z->p++;
         }
-        /* A fractional part is accepted and floored. Sub-pixel sizes are not
-           a thing here: the layout is integer end to end. */
-        if (z->p < z->end && *z->p == '.')
+        /*
+         * A fractional part is accepted and floored -- except for the two flex
+         * factors, which keep it.
+         *
+         * Sub-pixel *sizes* are not a thing here: the layout is integer end to
+         * end. A flex factor is not a size, it is a ratio, and `flex-grow: 0.5`
+         * beside `flex-grow: 1` is a declaration people write and mean. Three
+         * digits are kept, so 0.5 is carried as 500 and the resolution loop
+         * divides by the sum of the factors without losing the ratio.
+         */
         {
-            z->p++;
-            while (z->p < z->end && ar__is_digit(*z->p))
+            ar_i32 milli = 0;
+            ar_i32 digits = 0;
+
+            if (z->p < z->end && *z->p == '.')
             {
                 z->p++;
+                while (z->p < z->end && ar__is_digit(*z->p))
+                {
+                    if (digits < 3)
+                    {
+                        milli = milli * 10 + (*z->p - '0');
+                        ++digits;
+                    }
+                    z->p++;
+                }
+                while (digits < 3)
+                {
+                    milli *= 10;
+                    ++digits;
+                }
+            }
+
+            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK)
+            {
+                out.v = sign * (n * 1000 + milli);
+                out.ok = 1;
+                out.unit = AR_UNIT_NUMBER;
+                return out;
             }
         }
 
@@ -709,7 +1657,55 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             return out;
         }
 
-        if (ar__same(name, len, "auto"))
+        /*
+         * `span 3` on a grid line, carried as -3.
+         *
+         * A line number and a span are two different things in the same slot,
+         * and CSS numbers lines from one -- so zero is free for `auto` and the
+         * negatives are free for spans. A negative line number in CSS counts
+         * back from the end of the grid, which areole does not do yet; when it
+         * does, this encoding is what has to change, and it is named here
+         * rather than left to be discovered.
+         */
+        if ((prop == AR_P_GRID_COL_START || prop == AR_P_GRID_COL_END ||
+             prop == AR_P_GRID_ROW_START || prop == AR_P_GRID_ROW_END) &&
+            ar__same(name, len, "span"))
+        {
+            ar_i32 n = 0;
+
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                n = n * 10 + (*z->p - '0');
+                z->p++;
+            }
+            out.v = -(n > 0 ? n : 1);
+            out.unit = AR_UNIT_PX;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
+         * `auto` is two different things depending on who was asked.
+         *
+         * For width, height, the margins and the insets it is a length that
+         * layout resolves, and AR_UNIT_AUTO is how that is carried. For
+         * overflow it is a keyword with a value of its own, and the keyword
+         * table has always had the entry.
+         *
+         * The length reading used to win unconditionally, because it is tested
+         * here and the table is not consulted until further down. So
+         * `overflow: auto` -- the most common scroll declaration anyone
+         * writes -- parsed as a length, the keyword was never reached, and the
+         * box kept its initial `visible`: no clip, no scrolling, no scrollbar
+         * and no complaint. It cost nothing to spot because a dropped
+         * declaration looks exactly like one that was never written.
+         *
+         * Asking the table first is the whole fix. A property with nothing to
+         * say about `auto` still falls through to the length sentinel, which
+         * is every property that wants one.
+         */
+        if (ar__same(name, len, "auto") && !ar__lookup_keyword(prop, name, len, &kw))
         {
             out.unit = AR_UNIT_AUTO;
             out.ok = 1;
@@ -729,7 +1725,65 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
         if (ar__same(name, len, "fit-content"))
         {
+            /*
+             * `fit-content(200px)` is the bare keyword with a cap.
+             *
+             * The bare form fits the contents into whatever the container has
+             * left; the function fits them into the smaller of that and the
+             * length. Carried as the length, with zero meaning "no cap" --
+             * which is the bare form, and is why they share a unit.
+             */
+            ar_i32 cap = 0;
+
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == '(')
+            {
+                z->p++;
+                ar__skip_ws(z);
+                while (z->p < z->end && ar__is_digit(*z->p))
+                {
+                    cap = cap * 10 + (*z->p - '0');
+                    z->p++;
+                }
+                if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
+                {
+                    z->p += 2;
+                }
+                ar__skip_ws(z);
+                if (z->p < z->end && *z->p == ')')
+                {
+                    z->p++;
+                }
+            }
+            out.v = cap;
             out.unit = AR_UNIT_FIT_CONTENT;
+            out.ok = 1;
+            return out;
+        }
+        /*
+         * `safe` and `unsafe` before an alignment, as a bit on the value.
+         *
+         * Two words meaning one thing, so they cannot be alternatives in the
+         * same slot -- and a caller that does not know about the bit still
+         * reads the right alignment, because the bit is above every value.
+         */
+        if ((ar__same(name, len, "safe") || ar__same(name, len, "unsafe")) &&
+            (prop == AR_P_ALIGN || prop == AR_P_ALIGN_SELF || prop == AR_P_ALIGN_CONTENT ||
+             prop == AR_P_JUSTIFY || prop == AR_P_JUSTIFY_ITEMS || prop == AR_P_JUSTIFY_SELF))
+        {
+            int         is_safe = ar__same(name, len, "safe");
+            const char *word;
+            ar_u32      wlen;
+            ar_i32      mode;
+
+            ar__skip_ws(z);
+            wlen = ar__ident(z, &word);
+            if (wlen == 0 || !ar__lookup_keyword(prop, word, wlen, &mode))
+            {
+                return out;
+            }
+            out.v = is_safe ? (mode | AR_ALIGN_SAFE) : mode;
+            out.unit = AR_UNIT_KEYWORD;
             out.ok = 1;
             return out;
         }
@@ -775,6 +1829,163 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             out.ok = 1;
             return out;
         }
+
+        /*
+         * env(name) and env(name, fallback).
+         *
+         * The fallback is parsed rather than kept as text: it is always a
+         * length in the places areole accepts env() at all, and keeping text
+         * would mean storing a pointer into a stylesheet the caller is free to
+         * free the moment ar_stylesheet returns.
+         *
+         * A missing fallback is zero. That is a stated deviation -- CSS makes
+         * an unknown env() with no fallback invalid at computed-value time,
+         * and there is no way to say that here yet. It is in
+         * docs/CSS_REFERENCE.md rather than only in this comment.
+         */
+        /*
+         * anchor(side) and anchor-size(dimension).
+         *
+         * Parsed here beside env() because they are the same shape: a name
+         * inside parentheses whose value is not known until later. The side
+         * goes in the value slot, so one unit serves all seven forms.
+         */
+        if ((ar__same(name, len, "anchor") || ar__same(name, len, "anchor-size")) &&
+            z->p < z->end && *z->p == '(')
+        {
+            int         size = ar__same(name, len, "anchor-size");
+            const char *sname;
+            ar_u32      slen;
+            ar_i32      side = -1;
+
+            z->p++;
+            ar__skip_ws(z);
+            slen = ar__ident(z, &sname);
+
+            if (size)
+            {
+                if (ar__same(sname, slen, "width"))
+                {
+                    side = AR_ANCHOR_SIZE_WIDTH;
+                }
+                else if (ar__same(sname, slen, "height"))
+                {
+                    side = AR_ANCHOR_SIZE_HEIGHT;
+                }
+            }
+            else if (ar__same(sname, slen, "top"))
+            {
+                side = AR_ANCHOR_SIDE_TOP;
+            }
+            else if (ar__same(sname, slen, "right"))
+            {
+                side = AR_ANCHOR_SIDE_RIGHT;
+            }
+            else if (ar__same(sname, slen, "bottom"))
+            {
+                side = AR_ANCHOR_SIDE_BOTTOM;
+            }
+            else if (ar__same(sname, slen, "left"))
+            {
+                side = AR_ANCHOR_SIDE_LEFT;
+            }
+            else if (ar__same(sname, slen, "center"))
+            {
+                side = AR_ANCHOR_SIDE_CENTER;
+            }
+
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            if (side < 0)
+            {
+                return out; /* a side nothing can resolve */
+            }
+            out.v = side;
+            out.unit = AR_UNIT_ANCHOR;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
+         * A bare custom ident, for the two properties whose value *is* a name.
+         * Hashed on the spot: nothing ever needs the text back, and keeping it
+         * would mean holding a pointer into a stylesheet the caller may free.
+         */
+        if (prop == AR_P_ANCHOR_NAME || prop == AR_P_POSITION_ANCHOR)
+        {
+            out.v = (ar_i32)ar_hash(name, len);
+            out.unit = AR_UNIT_PX;
+            out.ok = 1;
+            return out;
+        }
+
+        if (ar__same(name, len, "env") && z->p < z->end && *z->p == '(')
+        {
+            const char *ename;
+            ar_u32      elen;
+            ar_i32      slot;
+
+            int have_fallback = 0;
+
+            z->p++;
+            ar__skip_ws(z);
+            elen = ar__ident(z, &ename);
+            for (slot = 0; slot < AR_ENV_COUNT; ++slot)
+            {
+                if (ar__same(ename, elen, AR_ENV_NAMES[slot]))
+                {
+                    break;
+                }
+            }
+
+            /* The fallback is read whether or not the name was recognised, and
+               the whole function call is consumed either way. Bailing out at
+               the unknown name instead left the scanner in the middle of the
+               parentheses, and the declaration parser picked the fallback back
+               up as though it were the value -- the right answer by accident,
+               which is the kind that stops being right the moment the grammar
+               changes. */
+            ar__skip_ws(z);
+            out.v = 0;
+            if (z->p < z->end && *z->p == ',')
+            {
+                ar__value fb;
+
+                z->p++;
+                fb = ar__parse_value(z, prop);
+                if (fb.ok && fb.unit == AR_UNIT_PX)
+                {
+                    out.v = fb.v;
+                    have_fallback = 1;
+                }
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+
+            if (slot == AR_ENV_COUNT)
+            {
+                /* Nothing can ever supply this name, so it behaves exactly as
+                   a name whose backend stayed silent: the fallback stands, and
+                   without one there is no value and the declaration goes. */
+                if (!have_fallback)
+                {
+                    return out;
+                }
+                out.unit = AR_UNIT_PX;
+                out.ok = 1;
+                return out;
+            }
+
+            out.unit = (ar_u8)(AR_UNIT_ENV_FIRST + slot);
+            out.ok = 1;
+            return out;
+        }
         if (ar__lookup_keyword(prop, name, len, &kw))
         {
             out.v = kw;
@@ -788,7 +1999,7 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 
 static void ar__set(ar_rule *rule, ar_u8 prop, ar_i32 v, ar_u8 unit)
 {
-    rule->style.v[prop] = v;
+    ar_style_put(&rule->style, prop, v);
     rule->style.unit[prop] = unit;
     ar_pset_add(&rule->set, prop);
 }
@@ -826,7 +2037,7 @@ static int ar__take_important(ar__scan *z)
 /* ------------------------------------------------------------------------
  * Declarations
  * ------------------------------------------------------------------------ */
-static void ar__parse_decl(ar__scan *z, ar_rule *rule)
+static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
 {
     const char *name;
     ar_u32      len;
@@ -878,6 +2089,76 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         return;
     }
 
+    /*
+     * A track list is not a value, so it never reaches the value loop.
+     *
+     * It is a list of unknown length full of functions, and the loop below
+     * reads at most four values of one kind. Handled here, where the property
+     * is known and the sheet -- which owns the pool -- is in hand.
+     */
+    if (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS || prop == AR_P_GRID_AUTO_COLS ||
+        prop == AR_P_GRID_AUTO_ROWS)
+    {
+        ar_i32 header;
+
+        /* `subgrid` is a whole template rather than a track in one, so it is
+           read before the list parser rather than inside it. */
+        {
+            const char *save = z->p;
+            const char *word;
+            ar_u32      wlen;
+
+            ar__skip_ws(z);
+            wlen = ar__ident(z, &word);
+            if (wlen && ar__same(word, wlen, "subgrid") &&
+                (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS))
+            {
+                before_set = rule->set;
+                ar__set(rule, (ar_u8)prop, AR_TRACKS_SUBGRID, AR_UNIT_PX);
+                if (ar__take_important(z))
+                {
+                    rule->important =
+                        ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
+                }
+                while (z->p < z->end && *z->p != ';' && *z->p != '}')
+                {
+                    z->p++;
+                }
+                if (z->p < z->end && *z->p == ';')
+                {
+                    z->p++;
+                }
+                return;
+            }
+            z->p = save;
+        }
+
+        header = sheet ? ar__parse_track_list(z, sheet) : 0;
+
+        before_set = rule->set;
+        if (header > 0)
+        {
+            ar__set(rule, (ar_u8)prop, header, AR_UNIT_PX);
+        }
+        else
+        {
+            ar__fail(z);
+        }
+        if (ar__take_important(z))
+        {
+            rule->important = ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
+        }
+        while (z->p < z->end && *z->p != ';' && *z->p != '}')
+        {
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == ';')
+        {
+            z->p++;
+        }
+        return;
+    }
+
     /* Up to four values, which covers every shorthand in the subset. */
     n = 0;
     while (n < 4)
@@ -894,6 +2175,43 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             as = AR_P_OVERFLOW;
         }
+        if (prop == AR_SH_OVERSCROLL)
+        {
+            as = AR_P_OVERSCROLL;
+        }
+        if (prop == AR_SH_SCROLLBAR_COLOR)
+        {
+            as = AR_P_SCROLLBAR_THUMB;
+        }
+        if (prop == AR_SH_FLEX)
+        {
+            /*
+             * Every value of `flex` is read as a factor first.
+             *
+             * `flex: 1` and `flex: 1 1 auto` and `flex: 0 0 200px` all start
+             * with numbers, and the basis -- when there is one -- is a length
+             * or `auto`, which the factor read rejects and the caller retries.
+             * Reading them as lengths instead would turn `flex: 1` into a
+             * one-pixel basis, which is the wrong half of the declaration.
+             */
+            as = AR_P_FLEX_GROW;
+        }
+        if (prop == AR_SH_PLACE_ITEMS)
+        {
+            as = AR_P_ALIGN;
+        }
+        if (prop == AR_SH_PLACE_CONTENT)
+        {
+            as = AR_P_ALIGN_CONTENT;
+        }
+        if (prop == AR_SH_PLACE_SELF)
+        {
+            as = AR_P_ALIGN_SELF;
+        }
+        if (prop == AR_SH_GRID_COLUMN || prop == AR_SH_GRID_ROW)
+        {
+            as = AR_P_GRID_COL_START;
+        }
 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
@@ -907,6 +2225,28 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         {
             important = ar__take_important(z);
             break;
+        }
+
+        /*
+         * A slash separates values, it does not fail to be one.
+         *
+         * `grid-column: 1 / 3` -- the way essentially every stylesheet on the
+         * web writes grid placement -- reported a stylesheet error. The values
+         * either side were read and the placement was right, so nothing looked
+         * wrong; ar_stylesheet_errors just went up, and any caller that treats
+         * that as fatal refused the sheet. The grid corpus is such a caller,
+         * which is how this was found.
+         *
+         * The comment on the grid-column shorthand said the slash `is skipped
+         * by the value loop the way any punctuation is`. Half true, and the
+         * wrong half was the one nobody checked: it was skipped by the
+         * recovery branch, which exists for input that is actually broken and
+         * counts an error on the way past.
+         */
+        if (*z->p == '/')
+        {
+            z->p++;
+            continue;
         }
 
         before = z->p;
@@ -942,9 +2282,13 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
     {
         ar__fail(z);
     }
-    else if (prop == AR_SH_PADDING || prop == AR_SH_MARGIN)
+    else if (prop == AR_SH_PADDING || prop == AR_SH_MARGIN || prop == AR_SH_SCROLL_PADDING ||
+             prop == AR_SH_SCROLL_MARGIN)
     {
-        ar_u8 base = (ar_u8)(prop == AR_SH_PADDING ? AR_P_PAD_TOP : AR_P_MARGIN_TOP);
+        ar_u8 base = (ar_u8)(prop == AR_SH_PADDING          ? AR_P_PAD_TOP
+                             : prop == AR_SH_MARGIN         ? AR_P_MARGIN_TOP
+                             : prop == AR_SH_SCROLL_PADDING ? AR_P_SCROLL_PAD_TOP
+                                                            : AR_P_SCROLL_MARGIN_TOP);
         /* One value is all sides, two is vertical then horizontal, three adds
            a separate bottom, four is clockwise from the top. */
         ar__value top = vals[0];
@@ -968,6 +2312,28 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         ar__set(rule, AR_P_OVERFLOW_X, x.v, x.unit);
         ar__set(rule, AR_P_OVERFLOW, y.v, y.unit);
     }
+    else if (prop == AR_SH_OVERSCROLL)
+    {
+        ar__value x = vals[0];
+        ar__value y = (n >= 2) ? vals[1] : vals[0];
+
+        ar__set(rule, AR_P_OVERSCROLL_X, x.v, x.unit);
+        ar__set(rule, AR_P_OVERSCROLL, y.v, y.unit);
+    }
+    else if (prop == AR_SH_SCROLLBAR_COLOR)
+    {
+        /* Thumb then track, which is the order the specification gives. One
+           value is not valid CSS here and is taken as the thumb rather than
+           refused: the track keeping its default is the more useful reading of
+           a stylesheet that clearly meant something. */
+        ar__value thumb = vals[0];
+
+        ar__set(rule, AR_P_SCROLLBAR_THUMB, thumb.v, thumb.unit);
+        if (n >= 2)
+        {
+            ar__set(rule, AR_P_SCROLLBAR_TRACK, vals[1].v, vals[1].unit);
+        }
+    }
     else if (prop == AR_SH_BORDER)
     {
         ar_i32 i;
@@ -978,6 +2344,110 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
             {
                 ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, AR_UNIT_COLOR);
             }
+        }
+    }
+    else if (prop == AR_P_SCROLL_SNAP_TYPE)
+    {
+        /* Two words, and they are independent fields rather than one value:
+           an axis and a strictness. `y mandatory` has to mean both, so the
+           parsed keywords are OR-ed instead of the first one winning.
+
+           An axis alone is proximity, which is what CSS says and is why
+           AR_SNAP_PROXIMITY is the zero bit. */
+        ar_i32 i, bits = 0;
+
+        for (i = 0; i < n; ++i)
+        {
+            bits |= vals[i].v;
+        }
+        ar__set(rule, (ar_u8)prop, bits, AR_UNIT_KEYWORD);
+    }
+    else if (prop == AR_SH_GAP)
+    {
+        /* `gap: <row> <column>`, row first, and one value means both. The
+           single-axis property is kept as well because flex only ever used
+           one and every stylesheet written against areole says `gap`. */
+        ar__set(rule, AR_P_ROW_GAP, vals[0].v, vals[0].unit);
+        ar__set(rule, AR_P_COL_GAP, n > 1 ? vals[1].v : vals[0].v,
+                n > 1 ? vals[1].unit : vals[0].unit);
+        ar__set(rule, AR_P_GAP, vals[0].v, vals[0].unit);
+    }
+    else if (prop == AR_SH_GRID_COLUMN || prop == AR_SH_GRID_ROW)
+    {
+        /*
+         * `grid-column: 2 / span 3`.
+         *
+         * The slash is skipped by the value loop the way any punctuation is,
+         * so the two numbers arrive as two values -- start then end. A single
+         * value is a start with an automatic end, which for a line number
+         * means one track.
+         */
+        ar_u8 a = (ar_u8)(prop == AR_SH_GRID_COLUMN ? AR_P_GRID_COL_START : AR_P_GRID_ROW_START);
+        ar_u8 b = (ar_u8)(prop == AR_SH_GRID_COLUMN ? AR_P_GRID_COL_END : AR_P_GRID_ROW_END);
+
+        ar__set(rule, a, vals[0].v, vals[0].unit);
+        if (n > 1)
+        {
+            ar__set(rule, b, vals[1].v, vals[1].unit);
+        }
+    }
+    else if (prop == AR_SH_FLEX)
+    {
+        /*
+         * `flex: <grow> <shrink> <basis>`, and the two short forms.
+         *
+         * A single number means `<grow> 1 0` -- and the zero basis is the part
+         * that matters: `flex: 1` on three boxes makes them equal whatever is
+         * in them, while `flex-grow: 1` alone leaves each one its content's
+         * width and shares only the surplus. Writing one and meaning the other
+         * is the most common flexbox mistake there is, and the shorthand is
+         * where CSS chose to make the difference.
+         *
+         * A single length means `1 1 <basis>`.
+         */
+        ar_i32 i, factors = 0;
+
+        for (i = 0; i < n; ++i)
+        {
+            if (vals[i].unit == AR_UNIT_NUMBER)
+            {
+                ar__set(rule, (ar_u8)(factors == 0 ? AR_P_FLEX_GROW : AR_P_FLEX_SHRINK), vals[i].v,
+                        AR_UNIT_NUMBER);
+                ++factors;
+            }
+            else
+            {
+                ar__set(rule, AR_P_FLEX_BASIS, vals[i].v, vals[i].unit);
+            }
+        }
+        if (factors == 1)
+        {
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+        if (factors > 0 && !ar_pset_has(rule->set, AR_P_FLEX_BASIS))
+        {
+            ar__set(rule, AR_P_FLEX_BASIS, 0, AR_UNIT_PX);
+        }
+        if (factors == 0 && n > 0)
+        {
+            ar__set(rule, AR_P_FLEX_GROW, 1000, AR_UNIT_NUMBER);
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+    }
+    else if (prop == AR_SH_PLACE_ITEMS || prop == AR_SH_PLACE_CONTENT || prop == AR_SH_PLACE_SELF)
+    {
+        /* `place-*` is `<align> <justify>`, align first, and one value means
+           both. areole has no separate justify-self yet, so the second value
+           lands on the container's justify where there is one to land on. */
+        ar_u8 a = (ar_u8)(prop == AR_SH_PLACE_ITEMS     ? AR_P_ALIGN
+                          : prop == AR_SH_PLACE_CONTENT ? AR_P_ALIGN_CONTENT
+                                                        : AR_P_ALIGN_SELF);
+
+        ar__set(rule, a, vals[0].v, vals[0].unit);
+        if (prop != AR_SH_PLACE_SELF)
+        {
+            ar__set(rule, AR_P_JUSTIFY, n > 1 ? vals[1].v : vals[0].v,
+                    n > 1 ? vals[1].unit : vals[0].unit);
         }
     }
     else
@@ -1261,7 +2731,7 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
                               ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
-                              ar_sel_simple *alt, ar_i32 *nalt)
+                              ar_sel_simple *alt, ar_i32 *nalt, ar_u8 *backdrop)
 {
     int any = 0;
 
@@ -1284,6 +2754,29 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
         {
             char mark = *z->p++;
+
+            /*
+             * A second colon is a pseudo-element, and `::backdrop` is the only
+             * one areole has. It is not part of the compound -- it selects
+             * something that is not a box -- so it sets a flag on the rule and
+             * the compound carries on being about the element.
+             */
+            if (mark == ':' && z->p < z->end && *z->p == ':')
+            {
+                z->p++;
+                len = ar__ident(z, &name);
+                if (len == 0 || !ar__same(name, len, "backdrop"))
+                {
+                    return 0; /* a pseudo-element nothing here can paint */
+                }
+                if (backdrop)
+                {
+                    *backdrop = 1;
+                }
+                any = 1;
+                continue;
+            }
+
             len = ar__ident(z, &name);
             if (len == 0)
             {
@@ -1451,7 +2944,7 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
             return 0; /* deeper than this holds; refused rather than truncated */
         }
         got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity, neg, &nneg,
-                                 alt, &nalt);
+                                 alt, &nalt, &rule->backdrop);
         if (!got)
         {
             return 0; /* a dangling combinator is malformed */
@@ -1557,6 +3050,7 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->count = 0;
     sheet->capacity = capacity;
     sheet->errors = 0;
+    sheet->rules_refused = 0;
     sheet->first_error_offset = 0;
     sheet->has_contextual = 0;
     sheet->has_late_state = 0;
@@ -1564,6 +3058,16 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;
     sheet->cache_misses = 0;
+}
+
+void ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity)
+{
+    sheet->tracks = storage;
+    sheet->track_cap = capacity;
+    /* Index zero is spent so that zero can mean "no track list" -- the same
+       trick line numbering uses, and for the same reason: a sentinel that
+       cannot be confused with a real answer. */
+    sheet->track_count = 1;
 }
 
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity)
@@ -1735,7 +3239,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         }
         if (sel_count == 0)
         {
-            ar__fail(&z);
+            ar__fail_rule(&z);
             while (z.p < z.end && *z.p != '}')
             {
                 z.p++;
@@ -1750,7 +3254,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         ar__skip_ws(&z);
         if (z.p >= z.end || *z.p != '{')
         {
-            ar__fail(&z);
+            ar__fail_rule(&z);
             while (z.p < z.end && *z.p != '}')
             {
                 z.p++;
@@ -1770,7 +3274,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             {
                 break;
             }
-            ar__parse_decl(&z, &rule[0]);
+            ar__parse_decl(&z, &rule[0], sheet);
         }
         if (z.p < z.end)
         {
@@ -1872,7 +3376,7 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out)
+                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
 {
     ar_i32 i;
 
@@ -1894,6 +3398,13 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * which is exactly the shape of bug that survives a test suite.
          */
         if (r->nctx > 0)
+        {
+            continue;
+        }
+
+        /* `.dlg::backdrop` says nothing about `.dlg`, and `.dlg` says nothing
+           about its backdrop. One pass answers one of those questions. */
+        if ((int)r->backdrop != want_backdrop)
         {
             continue;
         }
@@ -2097,6 +3608,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     }
 }
 
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out)
+{
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1);
+}
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out)
 {
@@ -2104,7 +3621,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
     if (!sheet->cache_cap)
     {
-        ar__resolve_uncached(sheet, tag, klass, id, state, out);
+        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
         return;
     }
 
@@ -2119,7 +3636,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
         if (!e->used)
         {
-            ar__resolve_uncached(sheet, tag, klass, id, state, out);
+            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
             e->tag = tag;
             e->klass = klass->combined;
             e->id = id;
@@ -2142,6 +3659,6 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
        is slower than evicting something, and simpler than deciding what; an
        interface with that many colliding selectors has not been seen, and if
        one appears the counters say so. */
-    ar__resolve_uncached(sheet, tag, klass, id, state, out);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
     ++sheet->cache_misses;
 }

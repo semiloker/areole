@@ -82,8 +82,7 @@ ar_i32 ar_bidi_class(ar_u32 cp)
         {0xE000, 0xFB1C, AR_BC_L},   {0xFB1D, 0xFB4F, AR_BC_R},   {0xFB50, 0xFDFF, AR_BC_AL},
         {0xFE00, 0xFE0F, AR_BC_NSM}, {0xFE20, 0xFE2F, AR_BC_NSM}, {0xFE50, 0xFE50, AR_BC_CS},
         {0xFE70, 0xFEFC, AR_BC_AL},  {0xFEFF, 0xFEFF, AR_BC_BN},  {0xFF10, 0xFF19, AR_BC_EN},
-        {0x10800, 0x10FFF, AR_BC_R}, {0x1E800, 0x1EFFF, AR_BC_AL}
-    };
+        {0x10800, 0x10FFF, AR_BC_R}, {0x1E800, 0x1EFFF, AR_BC_AL}};
     ar_i32 i, n = (ar_i32)(sizeof RANGES / sizeof RANGES[0]);
 
     for (i = 0; i < n; ++i)
@@ -219,8 +218,9 @@ ar_i32 ar_bidi_levels(const char *utf8, ar_i32 dir, ar_u8 *levels, ar_u8 *classe
                 {
                     ++sp;
                     stack_level[sp] = (ar_u8)next;
-                    stack_override[sp] =
-                        (ar_u8)(c == AR_BC_RLO ? AR_BC_R : c == AR_BC_LRO ? AR_BC_L : AR_BC_ON);
+                    stack_override[sp] = (ar_u8)(c == AR_BC_RLO   ? AR_BC_R
+                                                 : c == AR_BC_LRO ? AR_BC_L
+                                                                  : AR_BC_ON);
                     stack_isolate[sp] = 0;
                 }
                 else if (!overflow_isolate)
@@ -234,7 +234,7 @@ ar_i32 ar_bidi_levels(const char *utf8, ar_i32 dir, ar_u8 *levels, ar_u8 *classe
             case AR_BC_LRI:
             case AR_BC_FSI:
             {
-                int rtl;
+                int    rtl;
                 ar_i32 next;
 
                 if (c == AR_BC_FSI)
@@ -373,11 +373,11 @@ ar_i32 ar_bidi_levels(const char *utf8, ar_i32 dir, ar_u8 *levels, ar_u8 *classe
         {
             if (classes[i] == AR_BC_NSM)
             {
-                classes[i] = (ar_u8)(i == 0 ? (para ? AR_BC_R : AR_BC_L)
-                                            : ar__is_isolate_init(classes[i - 1]) ||
-                                                      classes[i - 1] == AR_BC_PDI
-                                                  ? AR_BC_ON
-                                                  : classes[i - 1]);
+                classes[i] =
+                    (ar_u8)(i == 0 ? (para ? AR_BC_R : AR_BC_L)
+                            : ar__is_isolate_init(classes[i - 1]) || classes[i - 1] == AR_BC_PDI
+                                ? AR_BC_ON
+                                : classes[i - 1]);
             }
         }
 
@@ -474,8 +474,8 @@ ar_i32 ar_bidi_levels(const char *utf8, ar_i32 dir, ar_u8 *levels, ar_u8 *classe
         for (i = 0; i < n; ++i)
         {
             ar_i32 c = classes[i];
-            if (c != AR_BC_ON && c != AR_BC_WS && c != AR_BC_S && c != AR_BC_B &&
-                c != AR_BC_BN && !ar__is_isolate_init(c) && c != AR_BC_PDI)
+            if (c != AR_BC_ON && c != AR_BC_WS && c != AR_BC_S && c != AR_BC_B && c != AR_BC_BN &&
+                !ar__is_isolate_init(c) && c != AR_BC_PDI)
             {
                 continue;
             }

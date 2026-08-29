@@ -19,8 +19,8 @@
 
 #include "areole.h"
 
-#define AR_SUBPIXEL     6                   /* fractional bits in a coordinate */
-#define AR_ONE_PIXEL    (1 << AR_SUBPIXEL)  /* 26.6 value of exactly one pixel */
+#define AR_SUBPIXEL          6                  /* fractional bits in a coordinate */
+#define AR_ONE_PIXEL         (1 << AR_SUBPIXEL) /* 26.6 value of exactly one pixel */
 #define AR_PATH_MAX_CONTOURS 96
 
 /* Coverage accumulates in 12 fractional bits. Sixteen would be the obvious

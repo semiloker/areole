@@ -104,6 +104,22 @@ typedef struct ar_node
     ar_i32 min_w;
 
     /*
+     * The collapsed border this box owns, per side: top, right, bottom, left.
+     *
+     * A collapsed grid line belongs to no single box -- its width is the widest
+     * of everything that meets there, which is a *neighbour's* style, and no
+     * property on this box records it. It is resolved once by the table solve
+     * and left here for the paint pass, which is also why ar_paint_digest mixes
+     * it in: a cell whose own style did not change still has to repaint when
+     * the cell beside it gets a thicker border.
+     *
+     * Only meaningful with AR_STATE_COLLAPSED, and zero on everything else --
+     * including a collapsed table's own box and its rows, which is how they
+     * come to draw nothing.
+     */
+    ar_u8 edge[4];
+
+    /*
      * Where this box's fragments live, when it has more than one rectangle.
      *
      * Zero count means the box is its own single fragment and `rect` is all
@@ -127,6 +143,25 @@ typedef struct ar_node
        the subtree for the furthest right edge and a scroll container would pay
        that on every frame it is queried. */
     ar_i32 content_w;
+
+    /*
+     * The inner width this box's height was last settled at, or -1.
+     *
+     * Heights sweep up while widths sweep down, so a box that stacks
+     * other boxes cannot know how tall it is until its own width is
+     * known -- and its parent needs that height to place whatever comes
+     * after it. The answer is to lay the subtree out early, from
+     * ar_wrap_height, and this is what stops that costing 2^depth: the
+     * parent's stack measures a child, the forward sweep then places the
+     * same child for real, and without a memo each of those two visits
+     * would measure the whole subtree again.
+     *
+     * Paired with `content_h`, which is the height that was arrived at.
+     * Two fields would not fit -- ar_node has exactly four bytes of
+     * headroom against AR_BYTES_PER_BOX -- and `content_h` is already
+     * that number, so only the width it was true for is new.
+     */
+    ar_i32 measured_w;
 
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
@@ -198,7 +233,26 @@ ar_u32  ar_paint_digest(const ar_node *n);
 struct ar_ctx
 {
     ar_arena arena;
+
+    /* What the caller reserved for a parsed document at init, so
+       ar_html_parse_into does not have to be told twice. */
+    ar_u32   doc_budget;
     ar_sheet sheet;
+
+    /* What the backend has said about the display it is drawing on: the
+       safe-area insets, the titlebar rectangle, and whether the stylesheet
+       asked for the whole display. Read by env(). */
+    ar_env env;
+
+    /* Things this frame noticed that are probably not what was meant. Fixed
+       and small: a frame that produces sixteen of these has one cause, and the
+       seventeenth would say nothing the first sixteen did not. */
+    struct
+    {
+        ar_i32 code;
+        ar_i32 node;
+    } diag[AR_DIAG_MAX];
+    ar_i32 diag_count;
 
     ar_node *nodes;
     ar_i32   node_cap;
@@ -225,9 +279,18 @@ struct ar_ctx
 
     ar_i32 wheel;    /* notches this frame */
     ar_i32 wheel_px; /* the same travel in pixels, when the device knows it */
+    ar_u32 keys;     /* AR_KEY_* pressed this frame */
     int    scrolled; /* something moved, so the next frame differs */
 
     ar_i32 stack[AR_MAX_DEPTH];
+
+    /* Which entries of `stack` are anonymous table boxes this frame generated
+       rather than boxes the caller declared. They close when the box holding
+       them closes, or when something arrives that cannot live inside them --
+       not when the box that caused them closes, or two bare cells would get a
+       row each instead of sharing one. Declaration state, dead once the frame
+       is built, so it lives here rather than costing every box a byte. */
+    ar_u8  is_anon[AR_MAX_DEPTH];
     ar_i32 depth;
     ar_i32 unbalanced; /* more ar_end than ar_begin, or a depth overrun */
 
@@ -255,10 +318,40 @@ struct ar_ctx
     ar_rect   last_damage;   /* what ar_frame_end returned, for the backend */
     ar_i32    seen_last;     /* boxes in the tree last frame, to spot removals */
 
-    ar_u32 hot;     /* key of the box under the cursor         */
-    ar_u32 active;  /* key of the box the press started on     */
-    ar_u32 clicked; /* key of the box released on this frame   */
+    ar_u32 hot;
+
+    /* The same box as `hot`, by index rather than key. Anything asking
+       "is the cursor inside this subtree" -- light dismiss, and
+       inertness -- needs to walk parents, and a key would have to be
+       looked up first. Rebuilt every frame beside `hot`, so it is only
+       ever read in the frame that set it. */
+    ar_i32 hot_index; /* key of the box under the cursor         */
+    ar_u32 active;    /* key of the box the press started on     */
+    ar_u32 clicked;   /* key of the box released on this frame   */
     int    hot_changed;
+
+    /*
+     * The hot box's ancestors, by key, innermost first -- and the whole reason
+     * `:hover` works on a document at all.
+     *
+     * CSS says an element matches `:hover` while the pointer is over it *or
+     * over a descendant of it*, and the hit test finds exactly one box: the
+     * topmost. For a hand-declared tree those are usually the same box, which
+     * is why this was never missed. For a parsed document they never are:
+     * `ar_dom_build` gives every element's text a child of its own, so the
+     * box under the cursor is always that child and the element carrying the
+     * `:hover` rule is always its parent. Hovering anything in an HTML page
+     * did nothing whatsoever.
+     *
+     * Keys rather than indices because state is resolved in `ar_begin`, while
+     * the tree is still being built, and this frame's indices do not exist
+     * yet. The chain is a path from a box to the root, so it is at most as
+     * long as the tree is deep and usually about eight.
+     */
+    ar_u32 hot_chain[AR_MAX_DEPTH];
+    ar_i32 hot_chain_n;
+    ar_u32 active_chain[AR_MAX_DEPTH];
+    ar_i32 active_chain_n;
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame
@@ -279,6 +372,30 @@ struct ar_ctx
     ar_u32 move_key;
     ar_i32 move_dy;
     int    move_many;
+
+    /*
+     * The box overflow-anchor is holding still, and how far it sat below the
+     * top of its scrollport when we last looked.
+     *
+     * On the context rather than in the slot table, for the reason the region
+     * move records its shift there: a slot is carried by every box in the
+     * interface, so eight bytes in it is eight bytes a box, and ar_slot is
+     * close enough to the budget AR_MEM promises that a compact build would
+     * land on it exactly.
+     *
+     * One container at a time, therefore. Two lists both growing above the
+     * fold in the same frame is the case this cannot serve, and the second one
+     * behaves as it does today rather than wrongly. Naming that is cheaper
+     * than a per-box field nobody could afford.
+     */
+    ar_u32 anchor_container; /* key of the scroll container, 0 for none */
+    ar_u32 anchor_node;      /* key of the box being held still */
+    ar_i32 anchor_y;         /* its offset from the top of the scrollport */
+
+    /* What the container's offset was when the anchor was taken. If it differs
+       now, the reader moved it, the anchor's apparent movement was asked for,
+       and compensating would cancel the scroll. */
+    ar_i32 anchor_scroll;
 
     /*
      * The scrollbar thumb being dragged, and where inside it the press landed.
@@ -338,6 +455,12 @@ typedef struct ar_layout_env
     ar_wrap_fn       wrap;
     ar_text_range_fn measure;
     void            *ud;
+
+    /* The stylesheet, because a grid template is a list and a style slot is
+       sixteen bits -- the slot holds an index into a pool that lives here.
+       May be null, in which case a grid has no templates and every track is
+       implicit, which is a grid nobody wrote but a solver that still works. */
+    const ar_sheet *sheet;
 
     /* Where a scroll container currently is. Null means nothing scrolls,
        which is what every caller before scrolling got. */
@@ -411,16 +534,17 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
  * Scroll containers -- ar_scroll.c
  * ------------------------------------------------------------------------ */
 
-/* Drawn inside the container's right edge rather than taken out of its width:
-   a scrollbar that appears and reflows the text beside it makes the interface
-   jump, and on a machine where relayout costs milliseconds it does so
-   visibly. */
 /* How far one wheel notch goes. Three lines of an eight pixel face, which is
    what every toolkit settled on and what the hand expects. */
 #define AR_SCROLL_STEP 30
 
-#define AR_SCROLLBAR_W   8
-#define AR_SCROLLBAR_MIN 16
+/* Drawn inside the container's right edge rather than taken out of its width:
+   a scrollbar that appears and reflows the text beside it makes the interface
+   jump, and on a machine where relayout costs milliseconds it does so
+   visibly. */
+#define AR_SCROLLBAR_W      8
+#define AR_SCROLLBAR_W_THIN 4
+#define AR_SCROLLBAR_MIN    16
 
 int    ar_is_scroll_container(const ar_node *n);
 int    ar_scrolls_x(const ar_node *n);
@@ -433,6 +557,22 @@ ar_i32 ar_scroll_clamp(const ar_node *n, ar_i32 want);
 ar_i32 ar_scroll_range_x(const ar_node *n);
 ar_i32 ar_scroll_clamp_x(const ar_node *n, ar_i32 want);
 int    ar_scroll_bar_visible(const ar_node *n);
+
+/* How wide this container's bar is drawn: 0 when scrollbar-width is `none`.
+   Also what scrollbar-gutter reserves, which is why it is not a constant. */
+ar_i32 ar_scroll_bar_width(const ar_node *n);
+
+/* What the gutter takes out of the inline end, 0 unless `stable`. */
+ar_i32 ar_scroll_gutter(const ar_node *n);
+
+/* Does this container snap on the block axis? */
+int ar_scroll_snaps_y(const ar_node *n);
+
+/* Where a scroll heading for `want` from `cur` actually settles. Returns
+   `want` unchanged when the container does not snap or nothing is near
+   enough under `proximity`. */
+ar_i32 ar_scroll_snap(const ar_node *nodes, ar_i32 count, ar_i32 container, ar_i32 cur,
+                      ar_i32 want);
 void   ar_scroll_bar(const ar_node *n, ar_i32 scroll, ar_rect *track, ar_rect *thumb);
 
 /* Shifts every scroll container's contents by its offset. */
@@ -455,6 +595,186 @@ void ar_scroll_apply(ar_node *nodes, ar_i32 count, ar_layout_env *env);
 int ar_z_is_auto(const ar_node *n);
 int ar_forms_stacking_context(const ar_node *n);
 
+/* ------------------------------------------------------------------------
+ * Tables -- ar_layout_table.c
+ * ------------------------------------------------------------------------ */
+
+int ar_is_table(const ar_node *n);
+
+/* Rows and row groups: the table placed their children, so the ordinary
+   sweep must not lay them out again. */
+int ar_is_table_internal(const ar_node *n);
+
+/* A cell, which is a block for whatever is inside it. */
+int ar_is_grid(const ar_node *n);
+int ar_is_table_block(const ar_node *n);
+
+/* Whether this box paints itself -- its background, its border and its text.
+   Its children are asked the same question separately, because `visibility`
+   inherits and a child may say `visible` and come back. */
+int ar_box_paints(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Shared box alignment, in ar_align.c
+ *
+ * Axis 0 is x, axis 1 is y.
+ *
+ * These eleven are here, in the header, and not in ar_align.c beside the rest
+ * of alignment. That is a measurement rather than a preference.
+ *
+ * They were static in ar_layout.c, where the compiler inlined every one of
+ * them into the loops that use them. When flexbox got a file of its own in
+ * 0.8.0 and needed them too, they moved to ar_align.c and stopped being
+ * static -- and a one-line ternary called from another translation unit
+ * cannot be inlined without link-time optimisation, which this project does
+ * not require of anybody building it. Every `n->style.v[AR_P_MARGIN_LEFT]`
+ * that had become `ar_axis_margin_lead(&n->style, axis)` turned back into a
+ * call, several per box per pass, in the hottest loops in the engine.
+ *
+ * It cost 2.2x of the layout phase and nobody saw it, because the release that
+ * did it measured the scenes it added rather than the scenes it slowed down.
+ * flat_1k's layout went 161 -> 361 us across 0.8.0 and came back to 171 when
+ * these moved here.
+ *
+ * So: keep them in the header, keep them one line each, and do not move them
+ * back to a .c file for tidiness. The tidy version is the slow one.
+ * ------------------------------------------------------------------------ */
+static AR_INLINE ar_i32 ar_axis_main(const ar_node *n)
+{
+    return n->style.v[AR_P_DIRECTION] == AR_DIR_COLUMN ? 1 : 0;
+}
+
+static AR_INLINE ar_i32 ar_axis_pad_lead(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_PAD_TOP] : s->v[AR_P_PAD_LEFT];
+}
+
+static AR_INLINE ar_i32 ar_axis_pad_trail(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_PAD_BOTTOM] : s->v[AR_P_PAD_RIGHT];
+}
+
+static AR_INLINE ar_i32 ar_axis_margin_lead(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_MARGIN_TOP] : s->v[AR_P_MARGIN_LEFT];
+}
+
+static AR_INLINE ar_i32 ar_axis_margin_trail(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_MARGIN_BOTTOM] : s->v[AR_P_MARGIN_RIGHT];
+}
+
+static AR_INLINE ar_i32 ar_axis_size_prop(ar_i32 axis)
+{
+    return axis ? AR_P_HEIGHT : AR_P_WIDTH;
+}
+
+static AR_INLINE ar_i32 ar_axis_min_prop(ar_i32 axis)
+{
+    return axis ? AR_P_MIN_HEIGHT : AR_P_MIN_WIDTH;
+}
+
+/*
+ * Unlike the size and min pair above, these two are *wide* properties: they
+ * default to a sentinel meaning "no maximum", which does not fit in v[]. So a
+ * caller holding this result must read it with ar_style_get, never with v[].
+ *
+ * That is not a style preference. v[] would be indexed here by a value rather
+ * than a constant, so -Warray-bounds cannot catch the mistake, and the result
+ * would be whichever bytes follow the array.
+ */
+static AR_INLINE ar_i32 ar_axis_max_prop(ar_i32 axis)
+{
+    return axis ? AR_P_MAX_HEIGHT : AR_P_MAX_WIDTH;
+}
+
+static AR_INLINE ar_i32 *ar_axis_pos(ar_rect *r, ar_i32 axis)
+{
+    return axis ? &r->y : &r->x;
+}
+
+static AR_INLINE ar_i32 *ar_axis_size(ar_rect *r, ar_i32 axis)
+{
+    return axis ? &r->h : &r->w;
+}
+
+/* Clamped to the pair, and then to zero: a negative size is not a size, and
+   every caller here would otherwise have to say so itself. */
+static AR_INLINE ar_i32 ar_clamp(ar_i32 v, ar_i32 lo, ar_i32 hi)
+{
+    if (v < lo)
+    {
+        v = lo;
+    }
+    if (v > hi)
+    {
+        v = hi;
+    }
+    return v < 0 ? 0 : v;
+}
+
+void   ar_align_distribute(ar_i32 mode, ar_i32 free, ar_i32 count, ar_i32 *out_lead,
+                           ar_i32 *out_between);
+ar_i32 ar_align_from_justify(ar_i32 justify);
+ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free);
+
+/* ------------------------------------------------------------------------
+ * The flex formatting context, in ar_layout_flex.c
+ * ------------------------------------------------------------------------ */
+void   ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
+/* Places a flex container whose cross size is whatever its lines come to. */
+void ar_flex_place_auto(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
+/* ------------------------------------------------------------------------
+ * The grid formatting context, in ar_layout_grid.c
+ *
+ * It takes the sheet because a track list lives in a pool there rather than in
+ * the style -- see the comment beside AR_P_GRID_COLS.
+ * ------------------------------------------------------------------------ */
+void   ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
+ar_i32 ar_grid_content_height(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
+
+/* Both defined in ar_layout.c, which owns the sizing rules; the flex solver
+   is the second caller and the reason they stopped being static. */
+ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch);
+
+/* min-content, max-content and fit-content on any size property. Returns 0
+   when the property is not one of them, leaving *out untouched. */
+int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 available, ar_i32 *out);
+
+/* Give a box the axis it did not state, from the one it did and its ratio.
+   Does nothing when there is no ratio, or when both axes were stated. */
+void ar_apply_ratio(ar_node *n, int w_definite);
+void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
+
+/*
+ * What a box's contents come to at a width, in the units fit[1] is in.
+ *
+ * For the sizing algorithms that have to know how tall an item will be
+ * before they can decide the track, row or line it sits in. A measurement
+ * only: the box is left needing to be placed again, and saying so.
+ */
+ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env);
+void   ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n);
+int    ar_is_table_cell(const ar_node *n);
+
+/* The backward sweep's share: column constraints, and the two intrinsic widths
+   they give the table box. No width exists yet, so nothing is placed. */
+void ar_table_measure(ar_node *nodes, ar_i32 table);
+
+/* How tall the table comes to at the width it now has. Called from the same
+   place a paragraph's height is corrected. */
+ar_i32 ar_table_height(ar_node *nodes, ar_i32 table, ar_layout_env *env);
+
+/* The forward sweep's share: rectangles, from a grid already decided. */
+void ar_table_place(ar_node *nodes, ar_i32 table, ar_layout_env *env);
+
+/* Whether this box is in the top layer, which paints above every stacking
+   context rather than merely above its siblings. */
+int ar_in_top_layer(const ar_node *n);
+
 /* Fills `order` with every visible box, back to front. Returns the count. */
 ar_i32 ar_stack_order(ar_node *nodes, ar_i32 count, ar_i32 *order, ar_i32 cap);
 
@@ -468,11 +788,47 @@ int ar_is_out_of_flow(const ar_node *n);
    nearest positioned ancestor, or the viewport. */
 ar_rect ar_containing_block(const ar_node *nodes, ar_i32 i, ar_rect viewport);
 
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport);
-void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport);
+/* Rewrites every anchor() and anchor-size() into a plain length, against the
+   box each one names. Before placement, so nothing downstream knows about
+   anchors. */
+void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport);
+
+/* Flips an anchored box to the anchor's other side when it left the viewport.
+   After placement, because it is a reaction to where the box ended up. */
+/*
+ * Move one box and the fragments it was cut into. The only way to move a box:
+ * a split inline is painted from its fragments' own rectangles, so touching
+ * `rect` alone moves everything that reads a rectangle and nothing that is
+ * drawn.
+ */
+void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx, ar_i32 dy);
+
+/* The same, for the box and everything beneath it. */
+void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
+                      ar_i32 dy);
+
+/*
+ * Move a box to the rectangle just written into it, taking its subtree along.
+ *
+ * `was` is where the box stood before the caller assigned its new position.
+ * Every algorithm that positions a box -- block flow, a grid track, a flex
+ * line, a table row -- must call this after writing the rectangle. A box whose
+ * contents were already laid out is *moved*, never repositioned; assigning
+ * without this leaves everything inside it where it was, which is a page with
+ * every rectangle correct and all of its text in the top-left corner.
+ *
+ * Does nothing for a box with no settled subtree, so it is always safe to call
+ * and never needs a condition at the call site.
+ */
+void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was);
+
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
+
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
+void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 int  ar_is_sticky(const ar_node *n);
-void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport);
+void ar_position_sticky(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 /* ------------------------------------------------------------------------
  * Floats -- ar_layout_float.c

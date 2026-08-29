@@ -26,6 +26,35 @@ typedef enum ar_prop
     AR_P_ALIGN,
     AR_P_GAP,
 
+    /* ------------------------------------------------------------------
+     * 0.8.0: the rest of flexbox
+     *
+     * areole shipped a subset -- direction, gap, justify, align and a `grow`
+     * keyword that is not CSS. That was the right subset to start with and it
+     * is not flexbox: anything written against real CSS uses these.
+     * ------------------------------------------------------------------ */
+    AR_P_FLEX_WRAP,
+    AR_P_FLEX_BASIS,
+
+    /*
+     * The two factors, in thousandths.
+     *
+     * `flex-grow: 2.5` is a real declaration and there is no floating point in
+     * this engine, so the value carried is 2500. Thousandths rather than
+     * hundredths because `flex: 1 1 0` against `flex-grow: 0.001` is a ratio
+     * somebody writes on purpose, and because the resolution loop divides by
+     * the sum of the factors -- a coarse unit there is a visible pixel.
+     */
+    AR_P_FLEX_GROW,
+    AR_P_FLEX_SHRINK,
+
+    AR_P_ALIGN_SELF,
+    AR_P_ALIGN_CONTENT,
+
+    /* Signed: `order: -1` is how a box is moved to the front without being
+       moved in the markup, which is the whole reason the property exists. */
+    AR_P_ORDER,
+
     AR_P_PAD_TOP,
     AR_P_PAD_RIGHT,
     AR_P_PAD_BOTTOM,
@@ -40,13 +69,8 @@ typedef enum ar_prop
     AR_P_HEIGHT,
     AR_P_MIN_WIDTH,
     AR_P_MIN_HEIGHT,
-    AR_P_MAX_WIDTH,
-    AR_P_MAX_HEIGHT,
 
-    AR_P_BACKGROUND,
-    AR_P_COLOR,
     AR_P_BORDER_WIDTH,
-    AR_P_BORDER_COLOR,
     AR_P_BORDER_RADIUS,
 
     AR_P_FONT_SIZE,
@@ -58,6 +82,56 @@ typedef enum ar_prop
        `auto`. */
     AR_P_OVERFLOW,
     AR_P_OVERFLOW_X,
+
+    /* Same axis convention as the overflow pair above: the unsuffixed one is
+       the block axis. Only a scroll container reads these, so they cost every
+       box a slot in ar_style for something few boxes use -- which is the trade
+       the whole flat-style design makes, and is why AR_PSET_WORDS is worth
+       watching as the property count climbs. */
+    AR_P_OVERSCROLL,
+    AR_P_OVERSCROLL_X,
+
+    /* The bar areole draws for itself. It is drawn rather than asked for, so
+       these are honoured on every platform and look the same on all of them,
+       which is the one thing a native scrollbar can never promise. */
+    AR_P_SCROLLBAR_WIDTH,
+    AR_P_SCROLLBAR_GUTTER,
+
+    /*
+     * The two insets snapping and scroll-into-view are measured against.
+     *
+     * scroll-padding shrinks the scrollport: it belongs to the container and
+     * says "do not consider this strip to be visible", which is how a sticky
+     * header stops covering the thing just scrolled to.
+     *
+     * scroll-margin grows the target: it belongs to the child and says "bring
+     * this much of my surroundings along with me".
+     *
+     * Four sides each, adjacent and in top/right/bottom/left order, because
+     * the shorthand expansion keys off the first slot of a contiguous group.
+     */
+    AR_P_SCROLL_PAD_TOP,
+    AR_P_SCROLL_PAD_RIGHT,
+    AR_P_SCROLL_PAD_BOTTOM,
+    AR_P_SCROLL_PAD_LEFT,
+
+    AR_P_SCROLL_MARGIN_TOP,
+    AR_P_SCROLL_MARGIN_RIGHT,
+    AR_P_SCROLL_MARGIN_BOTTOM,
+    AR_P_SCROLL_MARGIN_LEFT,
+
+    /* Snapping. The type is on the container, the align and the stop are on
+       each child -- which is the split that makes a carousel expressible: the
+       track declares that it snaps and the slides declare where. */
+    AR_P_SCROLL_SNAP_TYPE,
+    AR_P_SCROLL_SNAP_ALIGN,
+    AR_P_SCROLL_SNAP_STOP,
+
+    /* Whether this container keeps its reading position when something above
+       the fold changes size. On by default, as CSS says, because the whole
+       point is that nobody should have to ask for it. */
+    AR_P_OVERFLOW_ANCHOR,
+
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -71,8 +145,185 @@ typedef enum ar_prop
     AR_P_Z_INDEX,
     AR_P_BOX_SIZING,
 
+    /*
+     * `overlay`: whether this box is in the top layer.
+     *
+     * A property rather than a magic tag, for two reasons. ar_stack.c decides
+     * paint order by reading n->style.v[...] and nothing else, so a property
+     * costs it one test; and 0.14.2 schedules `overlay` as a *transitionable*
+     * property, so the roadmap is already written against it being one.
+     *
+     * A deviation, named rather than discovered: CSS makes `overlay`
+     * UA-controlled -- a page cannot put itself in the top layer, only
+     * <dialog> and popover can. areole has no UA stylesheet and no elements
+     * yet, so a stylesheet sets it. When 0.9.1's UA sheet lands it sets this
+     * on dialog[open] and nothing here changes.
+     */
+    AR_P_OVERLAY,
+
+    /*
+     * `inert`: this box and its subtree take no pointer input.
+     *
+     * An HTML attribute rather than a CSS property, and areole has no
+     * attributes -- there is no parser and no element type. A property stands
+     * in until 0.9.0, on the same terms as `overlay` above: when the parser
+     * lands, `inert` on an element sets this and nothing here changes.
+     */
+    AR_P_INERT,
+
+    /*
+     * `position-try`, cut down to the part that has stopped moving.
+     *
+     * The full property takes a list of fallback position sets, and
+     * `position-try-fallbacks` is named in tracked-unstable.md as still
+     * changing -- which the 0.6.3 plan schedules anyway, contradicting itself.
+     * The mechanism is what matters and it is stable: if the box would leave
+     * the viewport on an axis, flip it to the anchor's other side. That is
+     * what a popover near an edge needs and it is expressible in one keyword.
+     *
+     * The list grammar stays out until its trigger fires, which is the promise
+     * this project made about moving specifications.
+     */
+    AR_P_POSITION_TRY,
+
+    /* ------------------------------------------------------------------
+     * Tables
+     *
+     * `colspan` and `rowspan` are HTML attributes rather than CSS, and there
+     * are no attributes here until the parser lands at 0.9.0. They are
+     * properties on the same terms `inert` and `overlay` are: the mechanism
+     * has to exist for the parser to drive, and this is the only way to say
+     * it today. Named as a deviation rather than presented as CSS.
+     * ------------------------------------------------------------------ */
+    AR_P_TABLE_LAYOUT,
+    AR_P_BORDER_COLLAPSE,
+    AR_P_BORDER_SPACING,
+    AR_P_COLSPAN,
+    AR_P_ROWSPAN,
+
+    /* ------------------------------------------------------------------
+     * 0.7.1
+     *
+     * `visibility` is real CSS and inherits, which is the whole of what makes
+     * `collapse` on a row useful: the row goes and its cells go with it
+     * without any of them being named.
+     * ------------------------------------------------------------------ */
+    AR_P_VISIBILITY,
+    AR_P_CAPTION_SIDE,
+    AR_P_EMPTY_CELLS,
+
+    /* ------------------------------------------------------------------
+     * 0.8.0: grid
+     *
+     * A track list is not a value. `grid-template-columns: repeat(3, minmax(
+     * 100px, 1fr))` is nine numbers and three kinds, and a style here is one
+     * sixteen-bit slot per property -- so what the slot holds is an *index*
+     * into a pool of tracks on the stylesheet, and the pool entry it points at
+     * is a header carrying the count.
+     *
+     * The pool is on the sheet rather than the node because a track list comes
+     * from a rule and never from a computation: it is parsed once when the
+     * stylesheet is handed over and read every frame after that. Nothing about
+     * it is per-box, and putting it per-box would have cost every box in the
+     * interface a pointer for the sake of the handful that are grids.
+     * ------------------------------------------------------------------ */
+    AR_P_GRID_COLS,
+    AR_P_GRID_ROWS,
+    AR_P_GRID_AUTO_COLS,
+    AR_P_GRID_AUTO_ROWS,
+    AR_P_GRID_FLOW,
+
+    /*
+     * Where an item sits, as line numbers.
+     *
+     * Zero means `auto` -- CSS has no line zero, lines are numbered from one,
+     * so zero is free to mean "the placement algorithm decides". A span is
+     * carried as a negative: `span 2` is -2, which is unambiguous because a
+     * negative line number in CSS counts from the end and areole does not do
+     * that yet. Named here as the shortcut it is.
+     */
+    AR_P_GRID_COL_START,
+    AR_P_GRID_COL_END,
+    AR_P_GRID_ROW_START,
+    AR_P_GRID_ROW_END,
+
+    AR_P_JUSTIFY_ITEMS,
+    AR_P_JUSTIFY_SELF,
+
+    /* `gap` sets both; these are the two halves. Flex only ever used one, and
+       a grid has two axes to put space between. */
+    AR_P_ROW_GAP,
+    AR_P_COL_GAP,
+
+    /*
+     * 0.8.1: `aspect-ratio`, as width over height in thousandths.
+     *
+     * `16 / 9` is 1777. A ratio is not a length and there is no floating
+     * point here, so it is carried the way the flex factors are -- and for the
+     * same reason: `4 / 3` and `1.33` are the same declaration and both have
+     * to survive the parser.
+     *
+     * Zero means the property said nothing, which is safe because a ratio of
+     * zero is not a ratio anybody can write.
+     */
+    AR_P_ASPECT_RATIO,
+
+    /*
+     * Everything above is stored in sixteen bits and everything below in
+     * thirty-two, so this marker is load bearing rather than decorative: it is
+     * the length of ar_style.v.
+     *
+     * A keyword needs three bits and a length needs a screen's worth of
+     * pixels, so almost everything fits in sixteen. One wide array for all of
+     * them spent 160 bytes a box to hold five properties' worth of range.
+     *
+     * The five below are the ones that genuinely need thirty-two:
+     *
+     *   the three colours   0xRRGGBB is twenty-four bits
+     *   max-width/height    they default to a sentinel meaning "no maximum",
+     *                       and ar__clamp applies them to *computed* rects.
+     *                       A ten thousand row list is 240000 px of content,
+     *                       so a 32767 sentinel would not mean unbounded, it
+     *                       would mean a clamp -- which is a rendering bug
+     *                       rather than a smaller struct.
+     *
+     * Putting them past the end of v[] rather than inside it is the part that
+     * makes this safe: v[AR_P_COLOR] is now an out-of-bounds index on a
+     * compile-time constant, which -Warray-bounds reports, where an in-range
+     * index would have quietly returned a neighbouring property.
+     */
+    AR_P_NARROW_COUNT,
+
+    AR_P_MAX_WIDTH = AR_P_NARROW_COUNT,
+    AR_P_MAX_HEIGHT,
+    AR_P_BACKGROUND,
+    AR_P_COLOR,
+    AR_P_BORDER_COLOR,
+
+    /* `scrollbar-color` is two colours in one declaration, thumb then track,
+       and they cascade as one. Two slots because a colour is a colour. */
+    AR_P_SCROLLBAR_THUMB,
+    AR_P_SCROLLBAR_TRACK,
+
+    /*
+     * `anchor-name` and `position-anchor`, as hashes of the ident.
+     *
+     * Wide because a hash is thirty-two bits and narrowing one would make two
+     * different names collide silently -- the worst kind of bug this struct
+     * can produce. Nothing ever needs the text back: an anchor is found by
+     * comparing a name to a name, which a hash answers exactly.
+     */
+    AR_P_ANCHOR_NAME,
+    AR_P_POSITION_ANCHOR,
+
     AR_P_COUNT
 } ar_prop;
+
+/* The wide properties are indexed off the end of the narrow block. Reach them
+   with this rather than with v[], which has no room for them.
+   Not called AR_RGB: areole.h already has one, and this block is no longer
+   only colours. */
+#define AR_WIDE(style, prop) ((style)->wide[(prop) - AR_P_NARROW_COUNT])
 
 /*
  * Which properties a style or a rule has something to say about.
@@ -84,7 +335,12 @@ typedef enum ar_prop
  * Passing it by value keeps every call site reading the way it did when it was
  * an integer, which is most of why this is a struct rather than an array.
  */
-#define AR_PSET_WORDS 2
+/* Two words held sixty-four properties and tables needed a sixty-fifth.
+   Three words is twelve bytes per style, and a style is carried by every
+   box and every rule -- so this is one of the more expensive constants in
+   the file, and the assertion below is what makes the cost visible rather
+   than letting a property silently fall off the end of the mask. */
+#define AR_PSET_WORDS 3
 
 typedef struct ar_pset
 {
@@ -108,6 +364,24 @@ typedef enum ar_unit
     AR_UNIT_PCT,  /* per cent of the parent inner box */
     AR_UNIT_AUTO, /* size to content                  */
     AR_UNIT_GROW, /* take a share of the leftover     */
+    /*
+     * A bare number, carried in thousandths.
+     *
+     * Only the flex factors use it. Every other number in CSS that is not a
+     * length is a keyword, and giving those a unit of their own would mean
+     * every reader of every property checking for it.
+     */
+    AR_UNIT_NUMBER,
+    /* `flex-basis: content` -- size from the contents, which is not the same
+       as `auto`: `auto` defers to `width`, and `content` ignores it. */
+    AR_UNIT_CONTENT,
+    /*
+     * `1fr` -- a share of what is left over, and the only unit in CSS whose
+     * value depends on every other value beside it. Carried in thousandths
+     * like the flex factors, and for the same reason: `0.5fr` is a
+     * declaration people write.
+     */
+    AR_UNIT_FR,
     AR_UNIT_KEYWORD,
     AR_UNIT_COLOR,
 
@@ -135,8 +409,92 @@ typedef enum ar_unit
      */
     AR_UNIT_MIN_CONTENT,
     AR_UNIT_MAX_CONTENT,
-    AR_UNIT_FIT_CONTENT
+    AR_UNIT_FIT_CONTENT,
+
+    /*
+     * env(), one unit per name.
+     *
+     * A unit rather than a value for the same reason `inherit` is one: it says
+     * where the number comes from, and the number is not known when the sheet
+     * is parsed. The value slot carries the fallback, so `env(x, 12px)` parses
+     * to this unit with a 12 in it and needs no second field.
+     *
+     * One unit per name rather than one unit and a packed name-and-fallback
+     * pair, because unit[] is a byte per property with room to spare and v[]
+     * is only sixteen bits. Packing both into v[] would have cost the fallback
+     * most of its range to save a byte that was already there.
+     *
+     * They must stay in AR_ENV_* order: the slot is the offset from
+     * AR_UNIT_ENV_FIRST, which is what lets resolution be a table lookup.
+     */
+    /*
+     * anchor(side) and anchor-size(dimension).
+     *
+     * A unit for the same reason env() is one: it says where the number comes
+     * from, and the number is not known until the anchor has been laid out.
+     * The value slot carries which edge, so one unit covers all of them.
+     */
+    AR_UNIT_ANCHOR,
+
+    AR_UNIT_ENV_FIRST,
+    AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
+    AR_UNIT_ENV_SAFE_RIGHT,
+    AR_UNIT_ENV_SAFE_BOTTOM,
+    AR_UNIT_ENV_SAFE_LEFT,
+    AR_UNIT_ENV_TITLEBAR_X,
+    AR_UNIT_ENV_TITLEBAR_Y,
+    AR_UNIT_ENV_TITLEBAR_W,
+    AR_UNIT_ENV_TITLEBAR_H,
+    AR_UNIT_ENV_LAST = AR_UNIT_ENV_TITLEBAR_H
 } ar_unit;
+
+/*
+ * The environment a stylesheet can ask about.
+ *
+ * Eight numbers the core cannot work out for itself: four safe-area insets and
+ * a titlebar rectangle. A backend that knows them says so through
+ * ar_set_safe_area and ar_set_titlebar_area; one that does not leaves them
+ * unknown, and every env() referring to them takes its fallback.
+ *
+ * Unknown is not the same as zero, and the difference is the whole reason the
+ * `known` flags exist. A windowed desktop has real insets of zero -- there is
+ * no notch and nothing is covered -- so `env(safe-area-inset-top, 20px)` must
+ * resolve to 0, not to 20. A backend that has never heard of safe areas leaves
+ * them unknown, and the same declaration must resolve to 20.
+ */
+enum
+{
+    AR_ENV_SAFE_TOP = 0,
+    AR_ENV_SAFE_RIGHT,
+    AR_ENV_SAFE_BOTTOM,
+    AR_ENV_SAFE_LEFT,
+    AR_ENV_TITLEBAR_X,
+    AR_ENV_TITLEBAR_Y,
+    AR_ENV_TITLEBAR_W,
+    AR_ENV_TITLEBAR_H,
+    AR_ENV_COUNT
+};
+
+typedef struct ar_env
+{
+    ar_i32 v[AR_ENV_COUNT];
+    ar_u8  known[AR_ENV_COUNT];
+
+    /*
+     * `viewport-fit`. Auto is the initial value and means the layout viewport
+     * is already the safe rectangle, so the insets a stylesheet sees are zero
+     * however large the real ones are -- there is nothing left for it to avoid.
+     * Cover hands the stylesheet the whole display and the real insets with it.
+     *
+     * The two move together or not at all: a viewport inset by the safe area
+     * *and* env() reporting that inset would take it off twice.
+     */
+    ar_u8 fit_cover;
+} ar_env;
+
+/* The value an env() name resolves to, given what the backend has said.
+   `fallback` is what the declaration wrote after the comma. */
+ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback);
 
 /* Keyword values, all in one space so the parser can hand back one integer. */
 enum
@@ -165,7 +523,85 @@ enum
      * a paragraph is one box and may be two rectangles, or five, and the ones
      * in the middle get no borders or padding on the sides where they were cut.
      */
-    AR_DISPLAY_INLINE
+    AR_DISPLAY_INLINE,
+
+    /* ------------------------------------------------------------------
+     * The table display values.
+     *
+     * Kept contiguous and in this order so a range test can ask "is this
+     * table-internal" in one comparison rather than nine. AR_DISPLAY_TABLE
+     * itself is deliberately outside that range: a table box is a block-level
+     * box that happens to lay its children out differently, and it is the one
+     * value that appears in ordinary flow.
+     * ------------------------------------------------------------------ */
+    AR_DISPLAY_TABLE,
+
+    AR_DISPLAY_TABLE_ROW_GROUP,
+    AR_DISPLAY_TABLE_HEADER_GROUP,
+    AR_DISPLAY_TABLE_FOOTER_GROUP,
+    AR_DISPLAY_TABLE_ROW,
+    AR_DISPLAY_TABLE_CELL,
+    AR_DISPLAY_TABLE_COLUMN_GROUP,
+    AR_DISPLAY_TABLE_COLUMN,
+    AR_DISPLAY_TABLE_CAPTION,
+
+    /* After every table value, so the contiguous internal range above stays
+       contiguous -- that range is compared as a range in three places. */
+    AR_DISPLAY_GRID,
+
+    /*
+     * `display: contents`: the box generates none, and its children become
+     * its parent's for layout.
+     *
+     * Small to describe and awkward to mean, because it breaks the assumption
+     * every layout pass makes -- that the box tree and the layout tree are the
+     * same tree. It is worth it because it is the only way to put a semantic
+     * wrapper around grid items without breaking the grid: three cards in a
+     * `<section>` inside a grid are three items only if the section generates
+     * no box.
+     */
+    AR_DISPLAY_CONTENTS,
+
+    AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
+    AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
+};
+
+/* Table keyword values. */
+enum
+{
+    AR_TABLE_LAYOUT_AUTO = 0,
+    AR_TABLE_LAYOUT_FIXED = 1,
+
+    AR_BORDER_SEPARATE = 0,
+    AR_BORDER_COLLAPSE = 1
+};
+
+enum
+{
+    AR_VIS_VISIBLE = 0,
+    AR_VIS_HIDDEN,
+    /*
+     * `collapse` is not a third shade of hidden.
+     *
+     * On a row or a column it removes the track and closes the gap, and it
+     * does so **without recomputing the column widths** -- which is the entire
+     * difference from `display: none` and the reason the value exists. A
+     * filter that hides half a table's rows should not make every remaining
+     * column jump to a new width. Anywhere else it means `hidden`.
+     */
+    AR_VIS_COLLAPSE
+};
+
+enum
+{
+    AR_CAPTION_TOP = 0,
+    AR_CAPTION_BOTTOM
+};
+
+enum
+{
+    AR_EMPTY_SHOW = 0,
+    AR_EMPTY_HIDE
 };
 
 enum
@@ -257,7 +693,16 @@ enum
     AR_JUSTIFY_START = 0,
     AR_JUSTIFY_CENTER,
     AR_JUSTIFY_END,
-    AR_JUSTIFY_BETWEEN
+    AR_JUSTIFY_BETWEEN,
+    /*
+     * `around` gives every item a half gap at each end, so the space at the
+     * edges is half the space between two items. `evenly` makes all of them
+     * equal. They look alike in a mock-up and differ by exactly one half-gap
+     * at each edge, which is the difference somebody eventually files a bug
+     * about.
+     */
+    AR_JUSTIFY_AROUND,
+    AR_JUSTIFY_EVENLY
 };
 
 enum
@@ -265,7 +710,56 @@ enum
     AR_ALIGN_START = 0,
     AR_ALIGN_CENTER,
     AR_ALIGN_END,
-    AR_ALIGN_STRETCH
+    AR_ALIGN_STRETCH,
+    /* `baseline` aligns the first lines of the items rather than their boxes,
+       which is what makes a row of labels of different sizes read as one line
+       of text rather than as boxes that happen to be near each other. */
+    AR_ALIGN_BASELINE,
+
+    /* Only on `align-self`, and its initial value: defer to the container's
+       `align-items`. Kept in the same enum so one switch serves both. */
+    AR_ALIGN_AUTO,
+
+    /* Only on `align-content`, which distributes the *lines* of a wrapped
+       container and therefore has the justify vocabulary as well. */
+    AR_ALIGN_BETWEEN,
+    AR_ALIGN_AROUND,
+    AR_ALIGN_EVENLY,
+
+    /*
+     * `safe` and `unsafe`, as a bit rather than a value.
+     *
+     * `align-items: safe center` is two words meaning one thing, so they
+     * cannot be alternatives in the same slot. The bit sits above every value
+     * and readers mask it off.
+     *
+     * What it buys: centring a box larger than its container puts half the
+     * overflow *before* the start edge, where it cannot be scrolled to and
+     * cannot be read. `safe` says to fall back to start alignment when that
+     * would happen, which is the whole of the feature -- and it is why nobody
+     * should have to know the difference to write centred content that stays
+     * reachable.
+     */
+    AR_ALIGN_SAFE = 16,
+    AR_ALIGN_MODE_MASK = 15
+};
+
+enum
+{
+    AR_GRID_FLOW_ROW = 0,
+    AR_GRID_FLOW_COLUMN = 1,
+    /* A bit rather than a third value: `grid-auto-flow: column dense` is two
+       words and means both, so they cannot share a slot as alternatives. */
+    AR_GRID_FLOW_DENSE = 2
+};
+
+enum
+{
+    AR_WRAP_NOWRAP = 0,
+    AR_WRAP_WRAP,
+    /* The lines are stacked from the far edge instead of the near one. The
+       items inside each line keep their order; only the lines reverse. */
+    AR_WRAP_WRAP_REVERSE
 };
 
 enum
@@ -281,10 +775,151 @@ enum
     AR_OVERFLOW_AUTO
 };
 
+enum
+{
+    /* A notch this container cannot use is offered to its ancestors. */
+    AR_OVERSCROLL_AUTO = 0,
+
+    /* It is not. The scroll stops at this boundary, which is what keeps a
+       modal's wheel from scrolling the page behind it -- the single most
+       common scrolling bug in any interface.
+
+       `none` additionally suppresses the platform's overscroll affordance,
+       the bounce or the glow. areole draws neither, so the two behave
+       identically here and are kept apart anyway: a stylesheet saying `none`
+       means it, and the day a backend grows a bounce this is where it looks. */
+    AR_OVERSCROLL_CONTAIN,
+    AR_OVERSCROLL_NONE
+};
+
+enum
+{
+    /* The widths are the drawn widths, not a request to the platform: areole
+       has no platform scrollbar to ask. `none` still scrolls -- it hides the
+       bar, it does not stop the wheel, which is what every implementation of
+       this property has to get right or a list becomes unreachable. */
+    AR_SCROLLBAR_AUTO = 0,
+    AR_SCROLLBAR_THIN,
+    AR_SCROLLBAR_HIDDEN
+};
+
+enum
+{
+    /*
+     * areole's bar is an overlay, drawn inside the right edge rather than
+     * taken out of the width, so a bar appearing never reflows anything and
+     * the layout shift `stable` exists to prevent cannot happen here.
+     *
+     * What `stable` still buys is the overlap: an overlay bar is drawn on top
+     * of the content beside it. `stable` reserves its width at the inline end
+     * so the text stops before the bar instead of running under it.
+     */
+    AR_GUTTER_AUTO = 0,
+    AR_GUTTER_STABLE,
+    AR_GUTTER_BOTH_EDGES
+};
+
+/*
+ * scroll-snap-type is an axis and a strictness, and they are independent, so
+ * it is two fields packed into one property rather than one enum of every
+ * combination -- `both mandatory` and `y proximity` are both sayable.
+ *
+ * The axis occupies the low bits and the strictness the next one up.
+ */
+enum
+{
+    AR_SNAP_AXIS_NONE = 0,
+    AR_SNAP_AXIS_X,
+    AR_SNAP_AXIS_Y,
+    AR_SNAP_AXIS_BOTH,
+    AR_SNAP_AXIS_MASK = 3,
+
+    /* Land on a snap point only if one is close enough to be plausibly
+       intended, which is what lets a long list still be scrolled anywhere.
+
+       This is the zero state because CSS says an omitted strictness means
+       `proximity`: `scroll-snap-type: y` is `y proximity`, not `y mandatory`.
+       Getting that round the wrong way turns every ordinary scroll container
+       with one snap declaration into one that cannot be scrolled off a slide. */
+    AR_SNAP_PROXIMITY = 0,
+
+    /* Always land on a snap point. */
+    AR_SNAP_MANDATORY = 4
+};
+
+enum
+{
+    AR_SNAP_ALIGN_NONE = 0,
+    AR_SNAP_ALIGN_START,
+    AR_SNAP_ALIGN_CENTER,
+    AR_SNAP_ALIGN_END
+};
+
+enum
+{
+    /* `overlay`. `none` is the initial value and is zero, so a box says
+       nothing about the top layer unless it says something. */
+    AR_OVERLAY_NONE = 0,
+    AR_OVERLAY_AUTO = 1,
+
+    /*
+     * `modal` is areole's stand-in for what showModal() does: the top layer,
+     * *and* everything outside it made inert. CSS has no such value -- the
+     * modality comes from the element and its method, neither of which exists
+     * here yet. Named as a deviation rather than presented as CSS.
+     */
+    AR_OVERLAY_MODAL = 2,
+
+    AR_INERT_NONE = 0,
+    AR_INERT_AUTO = 1,
+
+    /* `position-try`. Flip on the axis that would leave the viewport. */
+    AR_TRY_NONE = 0,
+    AR_TRY_FLIP_BLOCK = 1,
+    AR_TRY_FLIP_INLINE = 2,
+    AR_TRY_FLIP_BOTH = 3,
+
+    /* Which edge of the anchor an anchor() refers to. */
+    AR_ANCHOR_SIDE_TOP = 0,
+    AR_ANCHOR_SIDE_RIGHT = 1,
+    AR_ANCHOR_SIDE_BOTTOM = 2,
+    AR_ANCHOR_SIDE_LEFT = 3,
+    AR_ANCHOR_SIDE_CENTER = 4,
+    AR_ANCHOR_SIZE_WIDTH = 5,
+    AR_ANCHOR_SIZE_HEIGHT = 6,
+
+    AR_ANCHOR_AUTO = 0,
+    AR_ANCHOR_NONE
+};
+
+enum
+{
+    AR_SNAP_STOP_NORMAL = 0,
+
+    /* A gesture may not pass this box without stopping on it. It is what
+       separates a good carousel from an infuriating one: without it a hard
+       flick skips three slides. */
+    AR_SNAP_STOP_ALWAYS
+};
+
+/* How near a snap point has to be, under `proximity`, as a fraction of the
+   viewport. Chrome and Firefox both use about half; the exact figure is not
+   specified, and anything in that region feels the same. */
+#define AR_SNAP_PROXIMITY_NUM 1
+#define AR_SNAP_PROXIMITY_DEN 2
+
 typedef struct ar_style
 {
-    ar_i32 v[AR_P_COUNT];
-    ar_u8  unit[AR_P_COUNT];
+    /* Sixteen bits, and the ceiling that implies is real: a stated length
+       above 32767 px is clamped when it is parsed rather than wrapping here.
+       The largest thing anyone lays out is a scroll container's content, and
+       that is computed rather than stated. */
+    ar_i16 v[AR_P_NARROW_COUNT];
+
+    /* The five that need the range. AR_WIDE indexes this. */
+    ar_i32 wide[AR_P_COUNT - AR_P_NARROW_COUNT];
+
+    ar_u8 unit[AR_P_COUNT];
 
     /* Which properties a stylesheet actually stated for this box, as opposed
        to which have a value -- every property always has a value. Inheritance
@@ -321,6 +956,48 @@ enum
     AR_STATE_LAST = 1 << 7,
     AR_STATE_ONLY = 1 << 8,
     AR_STATE_EMPTY = 1 << 9,
+
+    /*
+     * Not a selector state: nothing parses `:inert`, and this is written after
+     * the styles are resolved rather than before. It lives in the same word
+     * because the word had six spare bits and a per-box byte would have cost
+     * every box in the interface one.
+     */
+    AR_STATE_INERT = 1 << 10,
+
+    /*
+     * This box was generated to hold something, not declared.
+     *
+     * Not a selector state either: it exists so a combinator can climb past
+     * it. `tr > td` has to keep matching when the row between them is one
+     * areole invented, or fixing up malformed markup would silently break the
+     * stylesheet written against the markup it was fixing.
+     */
+    AR_STATE_ANON = 1 << 11,
+
+    /*
+     * This box belongs to a table whose borders are collapsed.
+     *
+     * Not a selector state either. It is what tells the paint pass to draw the
+     * four widths in `edge` rather than the one in `border-width`: a collapsed
+     * table, its rows and its row groups draw no border of their own at all --
+     * theirs was folded into the grid lines the cells now carry -- and a cell
+     * draws a different width on each of its four sides. There was a spare bit
+     * and a per-box byte would have cost every box in the interface one.
+     */
+    AR_STATE_COLLAPSED = 1 << 12,
+
+    /*
+     * This flex item's main size is settled and the resolution loop must not
+     * move it again.
+     *
+     * Not a selector state, and not durable: it lives for the length of one
+     * call to the flex solver. It is a bit rather than an array because the
+     * loop needs one flag per item and this engine has no array to put it in
+     * -- the alternative was a field on every box in the interface for the
+     * sake of the handful that are flex items at any moment.
+     */
+    AR_STATE_FLEX_FROZEN = 1 << 13,
 
     /* The ones that cannot be answered until the parent has closed. */
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
@@ -437,22 +1114,50 @@ typedef struct ar_rule
        against everything and the other does not. */
     ar_pset  important;
     ar_style style;
+
+    /*
+     * This rule was written `::backdrop`, so it styles the sheet painted
+     * behind a modal rather than any box in the tree.
+     *
+     * A flag on the rule rather than a pseudo-element in the selector engine,
+     * because there is exactly one pseudo-element and it matches no box: the
+     * backdrop is not in the tree, has no rectangle of its own until a modal
+     * gives it one, and would take a node slot and change every corpus's tree
+     * paths if it were a real box.
+     */
+    ar_u8 backdrop;
 } ar_rule;
 
 /* ------------------------------------------------------------------------
  * The resolved style cache
  *
- * Style resolution is 50 to 89 per cent of every tree-driven frame, measured,
- * and it grows linearly with rule count because every box is matched against
- * every rule. The scene that shows it plainest is identical_siblings: a
- * thousand boxes carrying one class, which resolve to the same answer a
- * thousand times and spend four fifths of the frame doing so.
+ * Style resolution was 50 to 89 per cent of every tree-driven frame, measured,
+ * and grew linearly with rule count because every box was matched against every
+ * rule. It no longer does: 13, 103 and 253 rules over the same 500 boxes now
+ * cost the same to within noise. What did not change is the per-box cost --
+ * about 126 ns whether the sheet has 13 rules or 253, and the same again across
+ * the thousand identically-classed boxes of identical_siblings, where every box
+ * after the first is a hit. A hit still copies the whole ar_style. Rule count
+ * stopped mattering and box count did not; that is what style sharing is for.
  *
  * The key is the tuple ar_sheet_resolve already takes. Two boxes with the same
- * tag, class, id and state cannot resolve differently, because nothing in the
- * resolver depends on anything else -- no inheritance, no positional selectors,
- * no custom properties. When 0.4.0 adds the cascade that stops being true, and
- * the key has to grow with it or the cache becomes a correctness bug.
+ * tag, class, id and state cannot resolve differently -- **and that is a
+ * property of what this cache is allowed to hold, not a happy accident.**
+ *
+ * 0.4.0 added the cascade and the key did not grow, because the two things that
+ * would have forced it are kept out of the cache instead:
+ *
+ *   - combinators resolve per box in ar_sheet_resolve_contextual, outside this
+ *     cache, because their answer depends on where a box sits;
+ *   - inheritance is applied after the lookup, in ar__resolve, because it
+ *     depends on the parent. Caching after inheritance would need the parent in
+ *     the key and would be a different and much worse cache.
+ *
+ * So the rule for anything added later is that one, not "grow the key": if a
+ * new feature makes a resolved style depend on something outside this tuple,
+ * either keep it out of the cache or put it in the key. Getting this wrong does
+ * not produce a slow frame, it produces a silently wrong one, which is why it
+ * is written here at this length.
  * ------------------------------------------------------------------------ */
 typedef struct ar_cache_entry
 {
@@ -462,11 +1167,52 @@ typedef struct ar_cache_entry
     ar_style style;
 } ar_cache_entry;
 
+/*
+ * One track of a grid template.
+ *
+ * Every track is a range, because that is what the sizing algorithm works in:
+ * `100px` is minmax(100px, 100px), `auto` is minmax(min-content, max-content),
+ * `1fr` is minmax(auto, 1fr). Storing them all as a pair means the algorithm
+ * has one shape to handle rather than seven, and the parser is the only place
+ * that knows there was ever a shorthand.
+ */
+typedef struct ar_track
+{
+    ar_i16 min_v;
+    ar_i16 max_v;
+    ar_u8  min_u;
+    ar_u8  max_u;
+} ar_track;
+
+/* A pool entry that is a header rather than a track: `min_v` is how many
+   tracks follow it. Index 0 is never a header, so zero means "no list". */
+#define AR_TRACK_POOL 512
+
+/*
+ * `grid-template-rows: subgrid`, as a sentinel in the slot that holds a pool
+ * index.
+ *
+ * Subgrid is not a track list -- it is the absence of one, and a statement
+ * that the parent's tracks are this box's tracks. Zero already means "nothing
+ * was said" and a pool index is never negative, so -1 is free and says
+ * something no track list could.
+ */
+#define AR_TRACKS_SUBGRID (-1)
+
 typedef struct ar_sheet
 {
     ar_rule *rules;
     ar_u16   count;
     ar_u16   capacity;
+
+    /* Every track list every rule in this sheet declared, laid end to end.
+       See the comment beside AR_P_GRID_COLS. */
+    ar_track *tracks;
+    ar_u16    track_count;
+    ar_u16    track_cap;
+    /* Whether any rule says `display: grid`, on the same terms as has_table:
+       a sheet without one never runs the grid pass. */
+    int has_grid;
 
     /* Dropped wholesale whenever a stylesheet is added, which is the only
        thing that can invalidate it. Adding a stylesheet is a startup
@@ -474,6 +1220,17 @@ typedef struct ar_sheet
     /* Whether any rule needs the second resolve pass, for the same reason and
        with the same payoff as the flag below: a sheet without one skips it. */
     int has_late_state;
+
+    /* Whether any rule in this sheet says `display` is a table value. A sheet
+       without one skips the anonymous-box check on every ar_begin entirely,
+       which is the overwhelming majority of interfaces -- the same bargain
+       has_combinator makes below. */
+    int has_table;
+    /* And whether any of them collapses its borders. The marking pass walks up
+       from every table box to find its table, which is a real cost on a table
+       of ten thousand rows and is pure waste for the separate model -- which is
+       the default, and what every table that does not say otherwise uses. */
+    int has_collapse;
 
     /* Whether any rule in this sheet carries a combinator. A sheet without
        one skips the contextual pass entirely, which is most sheets. */
@@ -487,10 +1244,41 @@ typedef struct ar_sheet
        discard the ninety that follow it, so errors are counted and reported
        rather than thrown. */
     ar_u32 errors;
+
+    /*
+     * Of those, the ones that cost a whole rule.
+     *
+     * The two are not the same failure and conflating them hides the one
+     * that matters. A declaration naming a property areole does not
+     * implement is *dropped*, and the rule around it still applies -- which
+     * is what CSS itself says to do, and means real-world stylesheets full
+     * of `font-family` and `box-shadow` still style what they can. A rule
+     * whose selector list is longer than AR_MAX_SEL_LIST is refused whole,
+     * and nothing it said happens at all.
+     *
+     * Only the second is worth failing a build over, and until this counter
+     * existed there was no way to ask.
+     */
+    ar_u32 rules_refused;
+
     ar_u32 first_error_offset;
 } ar_sheet;
 
 ar_u32 ar_hash(const char *s, ar_u32 len);
+
+/*
+ * The value of any property, whichever array it lives in.
+ *
+ * Every pass that walks properties by index -- defaults, merge, inheritance --
+ * goes through these, so exactly one place knows that colours are stored
+ * apart. Code that names a property outright still uses v[] or AR_RGB
+ * directly, because there the compiler checks the choice.
+ */
+ar_i32 ar_style_get(const ar_style *s, ar_i32 prop);
+void   ar_style_put(ar_style *s, ar_i32 prop, ar_i32 v);
+
+/* A stated length wider than v[] can hold, clamped rather than wrapped. */
+ar_i32 ar_style_clamp_narrow(ar_i32 v);
 
 void ar_style_defaults(ar_style *s);
 
@@ -512,8 +1300,13 @@ void ar_style_inherit(ar_style *child, const ar_style *parent);
 
 /* Non-zero if this property inherits. One table, so adding a property to the
    list is a one-line change and cannot disagree with itself. */
-int  ar_prop_inherits(ar_i32 prop);
-void ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
+int ar_prop_inherits(ar_i32 prop);
+
+/* The track list a template property points at, and how many tracks it holds.
+   Returns NULL when the property said nothing. */
+const ar_track *ar_sheet_tracks(const ar_sheet *sheet, ar_i32 index, ar_i32 *out_count);
+void            ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity);
+void            ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);
@@ -523,6 +1316,22 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 /* Resolves the style for one box. Rules already sit in ascending specificity
    order, so applying them in order leaves the winner on top. */
 /* Not const: resolving populates the cache. */
+/*
+ * The style of the backdrop behind one modal.
+ *
+ * Deliberately not cached. The cache key is tag, class, id and state, and
+ * "is this the backdrop" is none of those -- so it would have to join the key
+ * or stay out, and this file says which of those to prefer. There is at most
+ * one backdrop per modal and modals are counted on one hand, so staying out
+ * costs a linear pass nobody will measure.
+ */
+/* Sets sheet->has_table if any rule declares a table display. Called once
+   per ar_stylesheet, never per box. */
+void ar_sheet_note_tables(ar_sheet *sheet);
+
+void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out);
+
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
                       ar_style *out);
 
