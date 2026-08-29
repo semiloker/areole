@@ -16,7 +16,17 @@ need to: C90 only guarantees 509 characters in a string literal, and adjacent
 literals count as one.
 
 Parsing never aborts. One malformed declaration costs one declaration, not the
-rest of the file. Ask `ar_stylesheet_errors()` whether anything went wrong.
+rest of the file.
+
+Two numbers say whether anything went wrong, and they are not the same question.
+`ar_stylesheet_errors()` counts every complaint, most of which are harmless: a
+declaration naming a property areole has not implemented is dropped and the rule
+around it still applies, which is what CSS says to do and what lets a real stylesheet
+full of `font-family` and `box-shadow` style everything it can.
+`ar_stylesheet_rules_refused()` counts the other kind -- a rule thrown away whole, so
+nothing it said happened at all. A selector list longer than `AR_MAX_SEL_LIST` is how
+you get one, and it fails silently. **Assert that one is zero**; the other is
+information.
 
 ## Selectors
 
