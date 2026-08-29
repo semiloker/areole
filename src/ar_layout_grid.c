@@ -1430,8 +1430,34 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
             ar_apply_ratio(it, 1);
         }
 
-        it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
-        it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
+        {
+            /*
+             * The track decides where the item goes; ar_settle_at is what
+             * takes the item's contents with it. Every placer ends this way
+             * now, and the rule is worth more than any one call site: write
+             * the rectangle, then settle.
+             *
+             * **A no-op today for an item with children**, and it is worth
+             * knowing why rather than assuming it works. The column pass above
+             * asks ar_content_height for the item's contribution, and that
+             * function forgets the subtree it measured -- memo and fragment
+             * counts, all the way down -- because it may have measured at a
+             * width the box will not keep. So the item reaches here
+             * un-memoised, the forward sweep places it again, and there is
+             * nothing stranded for this to rescue.
+             *
+             * Which means the grid still places those items twice. Closing
+             * that means noticing that the width ar_content_height was given
+             * here *is* the item's final width, so the layout it leaves behind
+             * is worth keeping -- and then this line is the only reason the
+             * result is not stranded. It is already right for that day.
+             */
+            ar_rect was = it->rect;
+
+            it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
+            it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);
+            ar_settle_at(nodes, env, index[k], was);
+        }
     }
 
     /* What the contents came to, for a scroll container and for an automatic

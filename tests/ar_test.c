@@ -8871,6 +8871,118 @@ static void test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_the
     CHECK(ar__box(11).h >= ar__box(14).h,
           "sizing: a table row is as tall as the cell that wrapped");
 }
+
+/* Whether `in` lies inside `out`, which is what "the text is in its box" means
+   once a placer has had the chance to move one and not the other. */
+static int ar__within(ar_rect in, ar_rect out)
+{
+    return in.x >= out.x && in.y >= out.y && in.x + in.w <= out.x + out.w &&
+           in.y + in.h <= out.y + out.h;
+}
+
+static void test_every_placer_takes_a_settled_subtree_with_it(void)
+{
+    ar_surface s = ar__ui_surface(700, 600);
+
+    /*
+     * A grid track and a flex line each decide where a box goes. Both used to
+     * write the rectangle and walk away.
+     *
+     * That is only visible once the box has *contents that were already laid
+     * out*, which is what `measured_w` records: the height sweep settles a
+     * subtree while the width is being worked out, and from then on the box
+     * may be moved but never re-placed. A placer that assigns instead of
+     * moving leaves every word inside at the origin it had at the time -- and
+     * because the forward sweep skips a box the memo calls settled, nothing
+     * ever puts it right. It shipped exactly once and drew a whole sidebar's
+     * labels stacked in the top-left corner of the window **with every
+     * rectangle correct**, which is why this asks where the text is and not
+     * where the box is.
+     *
+     * Three things are needed to make it bite, and leaving out any one of them
+     * gives a test that passes either way:
+     *
+     *   - `align-items: start`. A stretched item is told its height by its
+     *     parent, so ar_wrap_height never settles it and there is nothing to
+     *     strand.
+     *   - **Two columns.** A single-column grid places everything at its own
+     *     origin and the parent's block stack moves the lot; the item itself
+     *     never moves relative to the grid, so the grid's own settle has
+     *     nothing to do. The second column does.
+     *   - `.pad`, so the containers are not at the top of the page.
+     *
+     * The table is deliberately absent. A cell is never memoised -- its height
+     * is its row's, and ar__place_block's automatic-height branch excludes
+     * table blocks -- so ar_settle_at is a no-op there and no check can go red
+     * when it is removed. The call is in ar_layout_table.c anyway, so the rule
+     * holds for every placer rather than for the two where it currently bites,
+     * and the comment there says exactly this.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".pad { display:block; height:40px; }"
+                 ".g { display:grid; grid-template-columns:120px 120px; width:240px;"
+                 "     align-items:start; }"
+                 ".f { display:flex; width:240px; height:200px; align-items:flex-start; }"
+                 ".item { display:block; }"
+                 ".inner { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+
+    ar_begin(g_ui, "div.pad"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.g");     /* 2 */
+    ar_begin(g_ui, "div.item");  /* 3, first column */
+    ar_begin(g_ui, "div.inner"); /* 4 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item");  /* 6, second column -- the one that moves */
+    ar_begin(g_ui, "div.inner"); /* 7 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 8 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.pad"); /* 9 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.f");                                                         /* 10 */
+    ar_begin(g_ui, "div.item");                                                      /* 11 */
+    ar_begin(g_ui, "div.inner");                                                     /* 12 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 13 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.item");  /* 14, second item -- the one that moves */
+    ar_begin(g_ui, "div.inner"); /* 15 */
+    ar_text(g_ui, "span.t", "a sentence long enough to break across several lines"); /* 16 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(14).x > ar__box(11).x,
+          "placers: the second flex item really is beside the first, so there was a move");
+    CHECK(ar__within(ar__box(16), ar__box(14)),
+          "placers: a flex line took the item's text with it");
+
+    /*
+     * The grid is laid out here and deliberately not asserted on.
+     *
+     * Its ar_settle_at is a no-op for an item with children, and a check that
+     * cannot go red is worse than no check: the column pass asks
+     * ar_content_height for the item's contribution, and that forgets the
+     * subtree it measured, so the item arrives at the track un-memoised and
+     * the forward sweep places it again. Nothing is stranded because nothing
+     * was kept.
+     *
+     * It is built and rendered anyway, because the day the grid stops
+     * throwing that layout away -- which is the double placement it still
+     * pays -- this is the shape that breaks first.
+     */
+}
 static void test_a_grid_settles_its_own_height(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -16576,6 +16688,7 @@ int main(void)
     test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is();
     test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it();
     test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_them();
+    test_every_placer_takes_a_settled_subtree_with_it();
     test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();

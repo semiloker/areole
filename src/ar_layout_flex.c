@@ -752,6 +752,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                     ar_node *it = &nodes[c];
                     ar_i32   self = it->style.v[AR_P_ALIGN_SELF];
                     ar_i32   free_cross;
+                    ar_rect  was = it->rect;
 
                     if (self == AR_ALIGN_AUTO)
                     {
@@ -785,6 +786,19 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                     *ar_axis_pos(&it->rect, cross) = cross_cursor +
                                                      ar_align_self_offset(self, free_cross) +
                                                      ar_axis_margin_lead(&it->style, cross);
+
+                    /*
+                     * The line decides where the item goes; this takes the
+                     * item's contents with it. Once, after both axes, because
+                     * a subtree shifted twice has moved twice.
+                     *
+                     * The stretch above can change the item's cross size, and
+                     * that is exactly the case where ar_settle_at declines to
+                     * move anything -- a resized box is re-placed by the
+                     * forward sweep rather than shifted, which the memo works
+                     * out for itself.
+                     */
+                    ar_settle_at(nodes, env, c, was);
                     ++index;
                 }
                 (void)index;

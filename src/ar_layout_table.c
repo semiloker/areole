@@ -1361,10 +1361,15 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 if (assign)
                 {
+                    /* A caption is a table block like a cell, and moves the
+                       same way. */
+                    ar_rect was = nodes[e].rect;
+
                     nodes[e].rect.x = t->rect.x + pad_l;
                     nodes[e].rect.y = t->rect.y + y;
                     nodes[e].rect.w = inner_w;
                     nodes[e].rect.h = ch;
+                    ar_settle_at(nodes, env, e, was);
                 }
                 y += ch;
             }
@@ -1487,19 +1492,39 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 if (assign)
                 {
+                    ar_rect was = nodes[c].rect;
+
                     nodes[c].rect.x = t->rect.x + pad_l + col[at < ncol ? at : ncol - 1].x;
                     nodes[c].rect.w = w;
                     nodes[c].edge[3] = (ar_u8)ar__half_far(vline[at]);
                     nodes[c].edge[1] = (ar_u8)ar__half_near(vline[rk]);
                     nodes[c].edge[0] = (ar_u8)ar__half_far(hl);
                     nodes[c].edge[2] = (ar_u8)ar__half_near(hb);
+                    /* The column decides where the cell goes, and this is the
+                       same one line every other placer now ends with.
+
+                       It is a no-op today and should say so: a cell is never
+                       memoised, because ar__place_block's automatic-height
+                       branch excludes table blocks -- a cell's height is its
+                       row's, not its contents'. So there is never a settled
+                       subtree here to strand, and no check can be written that
+                       goes red when this is removed.
+
+                       Kept because the rule is "every placer settles", and a
+                       rule with an exception in it is one somebody has to
+                       remember. If a cell ever is sized by its own contents,
+                       this is already right. */
+                    ar_settle_at(nodes, env, c, was);
                 }
             }
             else if (assign)
             {
+                ar_rect was = nodes[c].rect;
+
                 nodes[c].rect.x = t->rect.x + pad_l + spacing + col[at < ncol ? at : ncol - 1].x +
                                   spacing * (at < ncol ? at : ncol - 1);
                 nodes[c].rect.w = w;
+                ar_settle_at(nodes, env, c, was);
             }
 
             {
@@ -1599,7 +1624,16 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 /* The band is what the row's content occupies; a collapsed
                    cell starts half a line above it and ends half a line below,
                    which is the whole difference between the two models. */
-                nodes[c].rect.y = t->rect.y + y - top;
+                {
+                    /* The row decides the cell's y the way the column decided
+                       its x, and the contents follow it here too. Two writes,
+                       two shifts, each by its own delta -- which comes to the
+                       same place as one shift by the sum. */
+                    ar_rect was = nodes[c].rect;
+
+                    nodes[c].rect.y = t->rect.y + y - top;
+                    ar_settle_at(nodes, env, c, was);
+                }
 
                 /* A spanning cell's height is settled when its countdown ends,
                    so writing the row's height over it here would undo that. */
@@ -1662,10 +1696,15 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 if (assign)
                 {
+                    /* A caption is a table block like a cell, and moves the
+                       same way. */
+                    ar_rect was = nodes[e].rect;
+
                     nodes[e].rect.x = t->rect.x + pad_l;
                     nodes[e].rect.y = t->rect.y + y;
                     nodes[e].rect.w = inner_w;
                     nodes[e].rect.h = ch;
+                    ar_settle_at(nodes, env, e, was);
                 }
                 y += ch;
             }
@@ -1835,18 +1874,18 @@ int ar_box_paints(const ar_node *n)
     return 1;
 }
 
-/* Every box under this one moves with it. Walked through the child links
-   rather than the node array, so a cell costs its own subtree and not the
-   whole tree after it -- which on a ten-thousand-row table is the difference
-   between linear and not. */
+/* Every box under this one moves with it -- ar_shift_subtree, which is the one
+   walk, because a second copy is a second place to forget the fragments. This
+   moves the children without the box, which is the one shape that walk does not
+   have: a cell's own rectangle is the row's and does not move with its
+   contents. */
 static void ar__shift_kids(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dy)
 {
     ar_i32 c;
 
     for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        ar_shift_node(nodes, frags, frag_n, c, 0, dy);
-        ar__shift_kids(nodes, frags, frag_n, c, dy);
+        ar_shift_subtree(nodes, frags, frag_n, c, 0, dy);
     }
 }
 
