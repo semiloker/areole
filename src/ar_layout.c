@@ -566,6 +566,38 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
  */
 static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env);
 
+/*
+ * Whether this box's parent will *move* it rather than place it outright.
+ *
+ * The memo means two things at once: this subtree is settled, so the forward
+ * sweep may skip it -- and whoever positions this box has to shift the subtree
+ * with it, because nothing else is going to. Block flow does: every path out
+ * of ar__place_child_at goes through ar__settle_at.
+ *
+ * The other placers do not. A grid assigns its items `cx, cy` outright, and so
+ * do flex and the table. Setting the memo under one of those is a box that
+ * moves while everything inside it stays behind, and then is skipped so it is
+ * never put right: the interface example's whole sidebar drew its labels
+ * piled up at the top of the window with every rectangle correct.
+ *
+ * So the memo is only claimed where block flow owns the movement. Under the
+ * other three a box is placed the old way, twice, which is what the perf note
+ * in the previous commit meant by "still placed twice, and named" -- it is a
+ * correctness bound, not only a speed one, until those placers shift settled
+ * subtrees the way the block stack does.
+ */
+static int ar__parent_moves_subtree(const ar_node *nodes, const ar_node *n)
+{
+    const ar_node *p;
+
+    if (n->parent < 0)
+    {
+        return 0;
+    }
+    p = &nodes[n->parent];
+    return ar_is_block(p) || ar_is_table_block(p);
+}
+
 void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
 {
     /*
@@ -633,8 +665,13 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
            runs the whole track solve and positions every item. Saying so is
            what lets the forward sweep skip it instead of running a second
            identical solve, and what makes the stack move the settled subtree
-           rather than leaving it behind. */
-        n->measured_w = n->rect.w;
+           rather than leaving it behind -- but only where the stack is what
+           moves it. Under another grid, a flex line or a table the position is
+           assigned outright and the subtree would be stranded. */
+        if (ar__parent_moves_subtree(nodes, n))
+        {
+            n->measured_w = n->rect.w;
+        }
         return;
     }
 
@@ -1197,7 +1234,10 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
            exists only when this exact branch produced the height -- a
            stretched box or a table cell is settled by its parent and must
            not be answered from here. */
-        n->measured_w = n->rect.w;
+        if (ar__parent_moves_subtree(nodes, n))
+        {
+            n->measured_w = n->rect.w;
+        }
     }
 }
 
@@ -1217,10 +1257,18 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
  *
  * It is a measurement and leaves nothing behind. The subtree it places is at
  * the wrong width for the box's final rectangle and at whatever origin the box
- * held at the time, so `measured_w` is cleared to say exactly that: this box
- * has to be placed again, and the forward sweep will. The fragments are
- * rewound for the same reason -- unlike the settled placement in
- * ar_wrap_height, nothing here is being kept.
+ * held at the time, so the memo and the fragment counts are cleared all the way
+ * down: every one of those boxes has to be placed again, and the forward sweep
+ * will.
+ *
+ * What it must NOT do is rewind `frag_used`, which is what the first version
+ * did on the reasoning that none of these fragments are being kept. They are
+ * not -- but the counter is a bump allocator shared with every box on the
+ * page, and boxes settled *earlier* still hold indices into it. Rewinding
+ * hands those slots out twice, and then ar_shift_node finds the old index past
+ * the end of the live range and silently skips it: the box moves and its text
+ * stays where it was. The interface example's whole sidebar piled up at y=0
+ * with correct rectangles. Wasting the slots is the cheap half of that trade.
  *
  * Answers `fit[1]` unchanged for anything the block placer does not lay out,
  * which is a grid, a flex container, a table, and any leaf. Those size
@@ -1258,7 +1306,7 @@ static void ar__forget_measurement(ar_node *nodes, ar_i32 i)
 ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env)
 {
     ar_node *n = &nodes[i];
-    ar_i32   saved_w, saved_h, mark, h;
+    ar_i32   saved_w, saved_h, h;
 
     if (!env || !env->wrap || inner_w <= 0 || n->first_child < 0)
     {
@@ -1275,7 +1323,6 @@ ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env
 
     saved_w = n->rect.w;
     saved_h = n->rect.h;
-    mark = env->frag_used;
 
     n->rect.w =
         inner_w + n->style.v[AR_P_PAD_LEFT] + n->style.v[AR_P_PAD_RIGHT] + ar_scroll_gutter(n);
@@ -1284,7 +1331,6 @@ ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env
 
     n->rect.w = saved_w;
     n->rect.h = saved_h;
-    env->frag_used = mark;
     ar__forget_measurement(nodes, i);
 
     return h;
