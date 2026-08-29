@@ -538,14 +538,19 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `08_anchor` | anchor positioning and the flip | **168 / 168** |
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `15_real` | ten documents saved from the web | by eye, 9 / 10 |
-| `09_table` | tables: anonymous boxes, collapse, spans | 560 / 624 |
+| `09_table` | tables: anonymous boxes, collapse, spans | 563 / 624 |
 
-The table corpus is the honest exception and is not gated: **64 of its 624 boxes still land
-somewhere a browser does not**, down from 208. Two model errors in the collapsed border
-account for the 144 that went: a table's outer border belongs *inside* its box, and a middle
-column's border is not the table's edge. What is left is narrower again -- how a shared line's
-two halves are rounded into the two column widths beside it, and the same question for a row
-group on the vertical axis. Listed rather than compensated for.
+The table corpus is the honest exception and is not gated: **61 of its 624 boxes still land
+somewhere a browser does not**, down from 208. Three model errors in the collapsed border
+account for the 147 that went, and all three are the same sentence -- a border belongs to the
+edges the box actually has. A table's outer border belongs *inside* its box; a middle column's
+border is not the table's side edge; a row group's border is its own top and bottom, not a line
+between every pair of its rows.
+
+What is left is one question, asked in several places: **how the two halves of a shared line are
+divided between the boxes either side of it**. It is worth a pixel per line, and getting it right
+means working through CSS 17.6.2's conflict resolution rather than fitting the remaining deltas.
+Listed rather than compensated for.
 The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
 
 **Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped
