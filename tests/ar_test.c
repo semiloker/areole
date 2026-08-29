@@ -13932,6 +13932,68 @@ static void test_the_ua_stylesheet_parses(void)
     CHECK(ar_stylesheet_errors(g_ui) == 0, "ua: and the whole sheet at once");
 }
 
+static void test_a_stylesheet_that_outgrows_its_table_says_so(void)
+{
+    /*
+     * The rule table is fixed at init and a stylesheet can be longer than it.
+     *
+     * When that happens the rules that do not fit simply are not there: the
+     * page lays out, nothing crashes, and the missing rules are the *last*
+     * ones written -- which in a user-agent sheet are the least common
+     * elements, the ones nobody looks at first. It is the exact shape of
+     * failure this project keeps finding, and it was reported only in
+     * `errors`, beside the harmless "this property is not implemented".
+     *
+     * `rules_refused` is the number callers are told to assert on. A rule with
+     * nowhere to be stored is the most complete refusal there is, and it now
+     * counts as one.
+     *
+     * Deliberately not routed through ar_init_ex: that clamps `max_rules` up
+     * to AR_MAX_RULES, so a small table cannot be asked for through the public
+     * entry point. The sheet is driven directly, which is the only way to make
+     * the table overflow at all.
+     */
+    ar_sheet       sheet;
+    static ar_rule storage[4];
+
+    ar_sheet_init(&sheet, storage, 4);
+    ar_sheet_parse(&sheet, ".a{color:#111}.b{color:#222}.c{color:#333}.d{color:#444}"
+                           ".e{color:#555}.f{color:#666}.g{color:#777}.h{color:#888}"
+                           ".i{color:#999}.j{color:#aaa}");
+
+    CHECK(sheet.count == 4, "rules: the table took as many as it had room for");
+    CHECK(sheet.rules_refused == 6,
+          "rules: and the six with nowhere to go are refused, not warned");
+}
+
+static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
+{
+    /*
+     * `ar_init_ex` will not give a caller fewer than AR_MAX_RULES, which is
+     * 256, so that is the smallest table the user-agent sheet ever lands in.
+     * It comes to 142 rules, and the check is that it still fits with room --
+     * because the failure if it stops fitting is silent and takes the last
+     * elements in the sheet with it.
+     *
+     * Stated as a bound rather than as the exact number so that adding a rule
+     * does not fail a test for no reason, and as a *headroom* rather than
+     * `< 256` so there is warning before the wall.
+     */
+    ar_sheet       sheet;
+    static ar_rule storage[512];
+    ar_i32         i;
+
+    ar_sheet_init(&sheet, storage, 512);
+    for (i = 0; i < ar_ua_stylesheet_parts(); ++i)
+    {
+        ar_sheet_parse(&sheet, ar_ua_stylesheet_part(i));
+    }
+
+    CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
+    CHECK(sheet.count <= 200,
+          "ua: and it fits the 256 every caller gets, with fifty-odd rules to spare");
+}
+
 static void test_a_document_lays_out_as_blocks(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -16891,6 +16953,8 @@ int main(void)
     test_the_tree_builder_survives_anything();
 
     test_the_ua_stylesheet_parses();
+    test_a_stylesheet_that_outgrows_its_table_says_so();
+    test_the_ua_stylesheet_fits_the_table_every_caller_gets();
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
