@@ -1932,6 +1932,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
        another box's text. */
     n->frag_first = 0;
     n->frag_count = 0;
+    n->measured_w = -1;
     n->rect = ar_rect_make(0, 0, 0, 0);
     /* A node is reused frame to frame, and a collapsed edge is written only by
        a table. Without this, a cell that was in a collapsed table one frame

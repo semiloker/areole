@@ -354,6 +354,9 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         ar_i32   main_sum = 0, cross_max = 0, visible = 0;
         ar_i32   c;
 
+        /* Last frame's heights were settled at last frame's widths. */
+        n->measured_w = -1;
+
         if (ar__hidden(n))
         {
             n->fit[0] = 0;
@@ -644,57 +647,67 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
     }
 
     /*
-     * A block whose children are a run of inline boxes: lay the run out at the
-     * width just settled and take the height that came to.
+     * A block with children: lay them out at the width just settled and take
+     * the height that came to.
      *
-     * The text branch below covers a box that carries its own text, which is
-     * every box a hand-written interface declares. A parsed document has none
-     * of them: `ar_dom_build` gives every element's text a child of its own,
-     * so a `<p>` is a block with one inline child and its height is entirely
-     * its child's.
+     * This is the upward half of the sweep. Widths are decided on the way
+     * down -- a child fills what its parent offers -- but a height is only
+     * knowable afterwards, and the parent needs it *during* its own stack,
+     * because the box after this one goes directly below it. Measuring the
+     * subtree here is what makes the two directions meet.
      *
-     * The consequence was that a paragraph that wrapped never told the block
-     * below it how tall it had become. `<p>` wrapping to two lines was stacked
-     * as one, and its next sibling was placed twenty pixels down and drew over
-     * it. Nothing in the repository showed it: every corpus either states its
-     * heights or is one line wide enough not to wrap, and `compare_layout.py`
-     * excludes boxes sized by their own text from its verdict.
+     * Two shapes were wrong, and they are the two a document is made of. A
+     * box carrying its own text was covered by the text branch below, which
+     * is every box a hand-written interface declares and none that a parsed
+     * document produces -- `ar_dom_build` gives an element's text a child of
+     * its own, so a `<p>` is a block whose height is entirely its child's.
+     * That one was fixed first, restricted to a run of inline children
+     * because letting the placement reach another block would recurse.
      *
-     * Bounded on purpose. It runs the block placement, which is what already
-     * knows how to break a run into lines -- but only when *every* child is
-     * inline-level, so the placement it runs cannot reach another block and
-     * recurse. Each such box is placed at most twice: once here for its
-     * height, once in the forward sweep for its position.
+     * It has to recurse. `<div><p>two lines</p></div>` is the ordinary shape
+     * of every page on the web, and the div reported the height of one line,
+     * so whatever followed it was drawn *inside* the paragraph -- 26 pixels
+     * inside, on the case that found this. Restricting the branch did not
+     * avoid the recursion, it only avoided the half of it that was visible.
      *
-     * What is still wrong, named rather than discovered: a block whose
-     * children are *blocks* reports its intrinsic height to its siblings, so
-     * `<div><p>two lines</p></div>` still misplaces whatever follows the div.
-     * Fixing that means heights sweeping upward after widths sweep down --
-     * a third pass, and a release of its own.
+     * What makes the recursion affordable is `measured_w`. Each box is
+     * visited twice -- once by its parent's stack asking how tall it is, once
+     * by the forward sweep placing it for real -- and unmemoized those two
+     * visits each re-measure the whole subtree beneath them, which is 2^depth
+     * and is why this was left alone the first time. With the memo the first
+     * ask lays the tree out once and every later ask is a clamp, so a box is
+     * placed exactly twice and the whole thing is linear.
+     *
+     * The measurement rewinds `frag_used` afterwards. A placement appends the
+     * fragments a split inline is painted from, and measuring is a placement;
+     * without the rewind every wrapped box would spend its fragments twice
+     * against a budget fixed at init, and running out does not fail loudly --
+     * `ar__emit` returns nothing and the box quietly stops being split. The
+     * nodes below still point at those slots, which is harmless because the
+     * forward sweep re-places every one of them and rewrites both.
+     *
+     * The guards mirror the branch in ar__place_block that decides an
+     * automatic height, because that branch is what writes the memo: a table
+     * cell takes its height from its row and a stretched item from its
+     * parent, and neither may be answered from here.
      */
-    if (nodes && n->first_child >= 0 && ar_is_block(n) &&
-        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env->wrap)
+    if (nodes && n->first_child >= 0 && ar_is_block(n) && !ar_is_table_block(n) &&
+        n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env->wrap &&
+        !ar__stretched_by_parent(nodes, n))
     {
-        ar_i32 c;
-        int    all_inline = 1;
-
-        for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+        if (n->measured_w == n->rect.w)
         {
-            if (nodes[c].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-            {
-                continue;
-            }
-            if (!ar_is_inline_level(&nodes[c]))
-            {
-                all_inline = 0;
-                break;
-            }
-        }
-        if (all_inline)
-        {
-            ar__place_block(nodes, (ar_i32)(n - nodes), env);
+            n->rect.h = ar_clamp(n->content_h, n->style.v[AR_P_MIN_HEIGHT],
+                                 AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
             return;
         }
+        {
+            ar_i32 mark = env->frag_used;
+
+            ar__place_block(nodes, (ar_i32)(n - nodes), env);
+            env->frag_used = mark;
+        }
+        return;
     }
 
     if (!env->wrap || !n->text)
@@ -1100,6 +1113,14 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         used += n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
         n->rect.h =
             ar_clamp(used, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+
+        /* `used` and `content_h` are the same number, so the height this
+           arrived at is already stored; all that is missing is the width it
+           was true for. Set here rather than at the call site so the memo
+           exists only when this exact branch produced the height -- a
+           stretched box or a table cell is settled by its parent and must
+           not be answered from here. */
+        n->measured_w = n->rect.w;
     }
 }
 
