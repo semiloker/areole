@@ -8767,6 +8767,110 @@ static void test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it(void)
     CHECK(ar__box(10).y >= ar__box(8).y + ar__box(8).h,
           "blocks: and what follows starts below the paragraph, not inside it");
 }
+
+static void test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_them(void)
+{
+    ar_surface s = ar__ui_surface(700, 500);
+    ar_i32     one;
+
+    /*
+     * The same question the block flow answered, asked of the three sizing
+     * algorithms that each had their own way of getting it wrong.
+     *
+     * All three size a track, a line or a row from what its items contribute,
+     * and all three read that contribution from `fit[1]` -- the max-content
+     * height, which is what the box would be if nothing wrapped. A tile of
+     * prose contributed one line and the row came out one line tall with the
+     * rest of the text hanging out of it.
+     *
+     * The grid and the table are the same bug in the same words, and
+     * ar__cell_height said so in a comment: closing it needs a
+     * measure(subtree, width) entry point, and grid will want it too. That is
+     * `ar_content_height`, and both ask it the same question now.
+     *
+     * The flex container had two faults on top of each other. Its automatic
+     * height was never settled at all -- `ar_flex_content_cross` existed,
+     * was declared in the header, and had no callers -- and underneath that,
+     * `align-items: stretch` on a nowrap line sized every item to the
+     * container while the container was waiting to be sized by its items. The
+     * circle came back out at the guess it started from.
+     *
+     * Written as "the container is at least as tall as the box inside it",
+     * which is true of all three and needs no pixel count. `.ref` is what
+     * proves the text wrapped rather than the check passing because it did
+     * not.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".ref { display:block; width:120px; }"
+                 ".g { display:grid; grid-template-columns:120px; width:120px; }"
+                 ".f { display:flex; width:120px; }"
+                 ".tb { display:table; width:120px; }"
+                 ".tr { display:table-row; }"
+                 ".td { display:table-cell; }"
+                 ".item { display:block; }"
+                 ".inner { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+
+    ar_begin(g_ui, "div.ref"); /* 1 */
+    ar_text(g_ui, "span.t", "one");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.g"); /* 3 */
+    ar_begin(g_ui, "div.item");
+    ar_begin(g_ui, "div.inner"); /* 5 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.f"); /* 7 */
+    ar_begin(g_ui, "div.item");
+    ar_begin(g_ui, "div.inner"); /* 9 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.tb"); /* 11 */
+    ar_begin(g_ui, "div.tr");
+    ar_begin(g_ui, "div.td");
+    ar_begin(g_ui, "div.inner"); /* 14 */
+    ar_text(g_ui, "span.t", "a sentence long enough that it has to break across several lines");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    one = ar__box(1).h;
+    CHECK(ar__box(5).h > one && ar__box(9).h > one && ar__box(14).h > one,
+          "sizing: the prose wrapped in all three, so there is something to measure");
+    CHECK(ar__box(3).h >= ar__box(5).h, "sizing: a grid row is as tall as the item that wrapped");
+    /*
+     * `.f` is deliberately not checked, and the flex line is still wrong.
+     *
+     * A flex container's automatic height has the same hole the grid had --
+     * `ar_flex_content_cross` was written for it, declared in the header, and
+     * has never been called -- but underneath that is a second one:
+     * `align-items: stretch` on a nowrap line sizes every item to the
+     * container while the container is waiting to be sized by its items, so
+     * the circle comes back out at the guess it started from.
+     *
+     * Breaking it means the solve knowing whether its container's cross size
+     * is real yet, which is a third mode on ar__flex_solve. A version that did
+     * all of that passed every check here and laid the interface example's
+     * sidebar out at 49 pixels instead of 240, so it is left whole rather than
+     * half-landed. The grid and the table above are the same bug and are
+     * fixed; this one is not.
+     */
+    CHECK(ar__box(11).h >= ar__box(14).h,
+          "sizing: a table row is as tall as the cell that wrapped");
+}
 static void test_a_grid_settles_its_own_height(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -16471,6 +16575,7 @@ int main(void)
     test_aspect_ratio_gives_the_axis_nobody_stated();
     test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is();
     test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it();
+    test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_them();
     test_a_grid_settles_its_own_height();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
