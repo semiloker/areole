@@ -530,6 +530,11 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
  * Returns the cross size the contents came to, which is what an automatic
  * height on the container becomes.
  */
+/*
+ * `assign`: 0 measures and places nothing, 1 places against a cross size the
+ * container already has, 2 places while that cross size is still being decided
+ * -- the automatic-height case, where the lines are what decide it.
+ */
 static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int assign)
 {
     ar_node *n = &nodes[i];
@@ -539,6 +544,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
     ar_i32   wrap = n->style.v[AR_P_FLEX_WRAP];
     int      ordered = ar__flex_ordered(nodes, i);
     ar_i32   inner_main, inner_cross;
+    int      cross_definite;
     ar_i32   first, c;
     ar_i32   cross_total = 0;
     ar_i32   line_count = 0;
@@ -560,11 +566,28 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
         inner_cross = 0;
     }
 
+    /*
+     * Whether the container's cross size is a number yet.
+     *
+     * `align-items: stretch` on a nowrap line means "be as tall as the
+     * container", which is an answer only once the container has been told how
+     * tall it is. With `height: auto` it has not: its height is what its lines
+     * come to, and its lines are what its items come to. Stretching to it
+     * anyway closes a circle -- the item takes the container's current guess,
+     * the line takes the item, the container takes the line -- and the guess
+     * comes back out unchanged, so a row of prose stayed one line tall.
+     *
+     * When it is indefinite the items are sized by their contents here and
+     * stretched to the line they turned out to make, down in pass one. That is
+     * what CSS §9.4 says to do, and what the wrapped case already did.
+     */
+    cross_definite = (assign != 2);
+
     /* Out-of-flow children get a static position and nothing else; the
        positioning pass resolves whatever their offsets override. */
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (assign && ar__flex_hidden(&nodes[c]))
+        if (assign != 0 && ar__flex_hidden(&nodes[c]))
         {
             nodes[c].rect = ar_rect_make(n->rect.x, n->rect.y, 0, 0);
         }
@@ -580,7 +603,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
      * counts every one of those. `nowrap` is the initial value, so this is the
      * common path and it runs once.
      */
-    for (pass = (wrap == AR_WRAP_NOWRAP && assign) ? 1 : 0; pass < 2; ++pass)
+    for (pass = (wrap == AR_WRAP_NOWRAP && assign != 0) ? 1 : 0; pass < 2; ++pass)
     {
         ar_i32 cross_cursor;
 
@@ -588,7 +611,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
         {
             ar_i32 free_cross = inner_cross - cross_total;
 
-            if (!assign)
+            if (assign == 0)
             {
                 break;
             }
@@ -703,9 +726,40 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                  * every one. `nowrap` is the initial value, so this is the
                  * common path.
                  */
-                stretch = (self == AR_ALIGN_STRETCH && wrap == AR_WRAP_NOWRAP);
+                stretch = (self == AR_ALIGN_STRETCH && wrap == AR_WRAP_NOWRAP && cross_definite);
                 *ar_axis_size(&it->rect, cross) = ar_resolve_size(it, cross, inner_cross, stretch);
                 ar_wrap_height(nodes, it, axis, stretch, env);
+
+                /*
+                 * What the item's contents come to at the main size it just
+                 * got -- which is the number the line has to be sized from,
+                 * and the one ar_wrap_height will not produce here.
+                 *
+                 * It refuses because `align-items: stretch` is the initial
+                 * value, so ar__stretched_by_parent says this item is about to
+                 * be told its height and measuring its content would be
+                 * measuring something it is not going to keep. True of the
+                 * item, and wrong for the *line*: the line's size is its
+                 * items' contributions and the stretch happens afterwards to
+                 * fill it. So an item holding a paragraph contributed one
+                 * unwrapped line and the row came out one line tall.
+                 *
+                 * Only when the container's cross size is indefinite. With a
+                 * definite one the item really is being told its height and
+                 * there is nothing to work out.
+                 */
+                if (cross == 1 && !cross_definite &&
+                    it->style.unit[ar_axis_size_prop(cross)] == AR_UNIT_AUTO)
+                {
+                    ar_i32 iw =
+                        it->rect.w - it->style.v[AR_P_PAD_LEFT] - it->style.v[AR_P_PAD_RIGHT];
+                    ar_i32 ch = ar_content_height(nodes, c, iw, env);
+
+                    if (ch > *ar_axis_size(&it->rect, cross))
+                    {
+                        *ar_axis_size(&it->rect, cross) = ch;
+                    }
+                }
 
                 outer = *ar_axis_size(&it->rect, cross) + ar_axis_margin_lead(&it->style, cross) +
                         ar_axis_margin_trail(&it->style, cross);
@@ -720,7 +774,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
 
             /* A single unwrapped line is as tall as the container gives it,
                so `align-items: stretch` has something to stretch to. */
-            if (wrap == AR_WRAP_NOWRAP && inner_cross > line_cross)
+            if (wrap == AR_WRAP_NOWRAP && cross_definite && inner_cross > line_cross)
             {
                 line_cross = inner_cross;
             }
@@ -767,7 +821,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                     /* Stretch is a size, so it happens before the offset is
                        asked for, and only for an item that stated no cross
                        size of its own. */
-                    if (self == AR_ALIGN_STRETCH && wrap != AR_WRAP_NOWRAP &&
+                    if (self == AR_ALIGN_STRETCH && (wrap != AR_WRAP_NOWRAP || !cross_definite) &&
                         it->style.unit[ar_axis_size_prop(cross)] == AR_UNIT_AUTO)
                     {
                         ar_i32 room = line_cross - ar_axis_margin_lead(&it->style, cross) -
@@ -897,4 +951,31 @@ void ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 {
     return ar__flex_solve(nodes, i, env, 0);
+}
+
+/*
+ * Place a container whose cross size is whatever its lines turn out to be.
+ *
+ * The same work as ar_flex_place, told not to believe the container's current
+ * cross size -- because there is not one yet.
+ *
+ * It exists so the answer costs one solve rather than two. Measuring the
+ * height and then placing against it is the obvious shape and it doubles the
+ * work of every automatic-height flex container on the page, which, since a box
+ * with no `display` is one, is every box that has children. That cost 25% of
+ * the layout time of a flat eight-thousand-box scene when it was tried.
+ */
+void ar_flex_place_auto(ar_node *nodes, ar_i32 i, ar_layout_env *env)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   contents = ar__flex_solve(nodes, i, env, 2);
+
+    if ((ar_axis_main(n) ^ 1) == 1)
+    {
+        n->content_h = contents + n->style.v[AR_P_PAD_TOP] + n->style.v[AR_P_PAD_BOTTOM];
+    }
+    if (n->style.v[AR_P_FLEX_WRAP] == AR_WRAP_WRAP_REVERSE)
+    {
+        ar__flex_reverse(nodes, i);
+    }
 }

@@ -8788,12 +8788,13 @@ static void test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_the
      * measure(subtree, width) entry point, and grid will want it too. That is
      * `ar_content_height`, and both ask it the same question now.
      *
-     * The flex container had two faults on top of each other. Its automatic
-     * height was never settled at all -- `ar_flex_content_cross` existed,
-     * was declared in the header, and had no callers -- and underneath that,
-     * `align-items: stretch` on a nowrap line sized every item to the
-     * container while the container was waiting to be sized by its items. The
-     * circle came back out at the guess it started from.
+     * The flex container had two faults on top of each other, and needed both
+     * fixed to move. Its automatic height was never settled at all --
+     * `ar_flex_content_cross` existed, was declared in the header, and had no
+     * callers -- and underneath that, `align-items: stretch` on a nowrap line
+     * sized every item to the container while the container was waiting to be
+     * sized by its items. The circle came back out at the guess it started
+     * from, so fixing either alone changed nothing.
      *
      * Written as "the container is at least as tall as the box inside it",
      * which is true of all three and needs no pixel count. `.ref` is what
@@ -8851,23 +8852,7 @@ static void test_a_track_a_line_and_a_row_are_as_tall_as_what_wrapped_inside_the
     CHECK(ar__box(5).h > one && ar__box(9).h > one && ar__box(14).h > one,
           "sizing: the prose wrapped in all three, so there is something to measure");
     CHECK(ar__box(3).h >= ar__box(5).h, "sizing: a grid row is as tall as the item that wrapped");
-    /*
-     * `.f` is deliberately not checked, and the flex line is still wrong.
-     *
-     * A flex container's automatic height has the same hole the grid had --
-     * `ar_flex_content_cross` was written for it, declared in the header, and
-     * has never been called -- but underneath that is a second one:
-     * `align-items: stretch` on a nowrap line sizes every item to the
-     * container while the container is waiting to be sized by its items, so
-     * the circle comes back out at the guess it started from.
-     *
-     * Breaking it means the solve knowing whether its container's cross size
-     * is real yet, which is a third mode on ar__flex_solve. A version that did
-     * all of that passed every check here and laid the interface example's
-     * sidebar out at 49 pixels instead of 240, so it is left whole rather than
-     * half-landed. The grid and the table above are the same bug and are
-     * fixed; this one is not.
-     */
+    CHECK(ar__box(7).h >= ar__box(9).h, "sizing: a flex line is as tall as the item that wrapped");
     CHECK(ar__box(11).h >= ar__box(14).h,
           "sizing: a table row is as tall as the cell that wrapped");
 }
