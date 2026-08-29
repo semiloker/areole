@@ -94,6 +94,26 @@ typedef enum ar_prop
      */
     AR_P_LINE_HEIGHT,
 
+    /*
+     * `font-weight` as a number from 1 to 1000, which is what CSS Fonts 4
+     * made the property: `normal` is 400 and `bold` is 700, and the keywords
+     * are spellings of numbers rather than a separate kind of value. Storing
+     * the number means `font-weight: 600` needs no new machinery the day a
+     * variable face arrives.
+     *
+     * `bolder` and `lighter` are relative to the parent's computed value and
+     * are not here: they need the cascade to resolve against an inherited
+     * number rather than against a keyword, which is a different shape from
+     * everything else in this table.
+     */
+    AR_P_FONT_WEIGHT,
+
+    /* `font-style`: normal or italic. `oblique` is a synonym here, as it is
+       in most faces -- a real oblique is a synthesised slant of the upright,
+       and choosing between a designed italic and a slanted roman is a font
+       database's job. */
+    AR_P_FONT_STYLE,
+
     /* AR_P_OVERFLOW is the block axis, which is the one that existed when
        there was only one: the scroll range has always been vertical. The
        shorthand `overflow` sets both, and ar_overflow_x/ar_overflow_y apply the
@@ -359,6 +379,20 @@ typedef enum ar_prop
    box and every rule -- so this is one of the more expensive constants in
    the file, and the assertion below is what makes the cost visible rather
    than letting a property silently fall off the end of the mask. */
+/* Weight is a number; these two are the names CSS gives the ones people
+   write. */
+enum
+{
+    AR_WEIGHT_NORMAL = 400,
+    AR_WEIGHT_BOLD = 700
+};
+
+enum
+{
+    AR_FONT_STYLE_NORMAL = 0,
+    AR_FONT_STYLE_ITALIC = 1
+};
+
 #define AR_PSET_WORDS 3
 
 typedef struct ar_pset

@@ -457,12 +457,29 @@ typedef ar_i32 ar_scroll_pos;
    about it is per-box. Carrying it per-box would have cost every box in the
    interface a pointer for the sake of the handful that are grids.
 
+   528 -> 536 for text at 0.9.1: `line-height`, `font-weight` and `font-style`.
+   Measured, as every line above was: ar_node went 472 -> 480 and the assertion
+   below fired at 532 against 528.
+
+   Three properties for eight bytes, because the first was free. `line-height`
+   landed in the padding the grid work had already paid for -- ar_node did not
+   move at all when it went in -- and the two font properties are what pushed
+   past the boundary. Six bytes of value and unit between them, rounded to
+   eight by the alignment of the pointer at the top of the struct.
+
+   All three had to be properties rather than anything cheaper, and for the
+   same reason `visibility` did: they inherit. `body { line-height: 1.5 }` is
+   written once and has to reach every box under it, and so is
+   `font-weight: bold` on a heading that contains a `<code>`. A call into the
+   context cannot answer an inherited question without walking to the root on
+   every box, which is the loop ar_style_inherit was rewritten to stop doing.
+
    The assertions in ar_ctx.c are what noticed every one of these; they are
    there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 520u
-#else
 #define AR_BYTES_PER_BOX 528u
+#else
+#define AR_BYTES_PER_BOX 536u
 #endif
 
 /*

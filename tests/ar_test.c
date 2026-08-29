@@ -1130,6 +1130,18 @@ static ar_u32 ar__box_bg(ar_i32 index)
     return (ar_u32)AR_WIDE(&g_ui->nodes[index].style, AR_P_BACKGROUND);
 }
 
+/* The resolved style, for checks about the cascade rather than geometry. */
+static const ar_style *ar__box_style(ar_i32 index)
+{
+    static ar_style empty;
+
+    if (!g_ui || index < 0 || index >= g_ui->node_count)
+    {
+        return &empty;
+    }
+    return &g_ui->nodes[index].style;
+}
+
 static int ar__box_is(ar_i32 index, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
 {
     ar_rect r = ar__box(index);
@@ -13905,6 +13917,66 @@ static void ar__render_html(ar_surface *s, const char *src, const char *author)
     ar_frame_end(g_ui, s);
 }
 
+static void test_font_weight_and_style_are_properties_that_inherit(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * The two properties the real corpus made obvious: nothing on a page was
+     * bold or italic, and the user-agent stylesheet had no way to say it
+     * should be.
+     *
+     * `font-weight` is a number from 1 to 1000 rather than a pair of keywords,
+     * because that is what CSS Fonts 4 made it -- `normal` is 400 and `bold`
+     * is 700, and the keywords are spellings of numbers. Storing the number
+     * means `font-weight: 600` needs nothing new the day a variable face
+     * arrives.
+     *
+     * Both inherit, and that is the whole reason they are properties rather
+     * than a call into the context: `font-weight: bold` on a heading has to
+     * reach the `<code>` inside it without naming it, exactly as `visibility`
+     * had to reach a collapsed row's cells.
+     *
+     * Whether a page *looks* bold is a separate question and a separate
+     * commit: it needs a face for the weight. With one face loaded the cascade
+     * is right and the text is roman, which is what a browser does with a
+     * family that has no bold.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".b { display:block; font-weight:bold; }"
+                 ".six { display:block; font-weight:600; }"
+                 ".i { display:block; font-style:italic; }"
+                 ".plain { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");     /* 1 */
+    ar_begin(g_ui, "div.plain"); /* 2, inherits bold */
+    ar_text(g_ui, "span.t", "x");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.six"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");     /* 5 */
+    ar_begin(g_ui, "div.plain"); /* 6, inherits italic */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_style(1)->v[AR_P_FONT_WEIGHT] == AR_WEIGHT_BOLD,
+          "font: `bold` is the number 700");
+    CHECK(ar__box_style(4)->v[AR_P_FONT_WEIGHT] == 600,
+          "font: and a number is itself, so 600 survives");
+    CHECK(ar__box_style(2)->v[AR_P_FONT_WEIGHT] == AR_WEIGHT_BOLD,
+          "font: weight inherits, which is the point of it being a property");
+    CHECK(ar__box_style(5)->v[AR_P_FONT_STYLE] == AR_FONT_STYLE_ITALIC,
+          "font: `italic` is a style");
+    CHECK(ar__box_style(6)->v[AR_P_FONT_STYLE] == AR_FONT_STYLE_ITALIC,
+          "font: and it inherits too");
+}
+
 static void test_line_height_is_a_length_or_a_multiplier(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -17014,6 +17086,7 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_font_weight_and_style_are_properties_that_inherit();
     test_line_height_is_a_length_or_a_multiplier();
     test_the_ua_stylesheet_parses();
     test_a_stylesheet_that_outgrows_its_table_says_so();
