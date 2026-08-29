@@ -305,7 +305,25 @@ struct ar_ctx
 
     /* Text. Absent until ar_font_load, and the bitmap face is used until then,
        so a build that never calls it pays nothing for any of this. */
-    ar_face          face[AR_MAX_FACES];
+    ar_face face[AR_MAX_FACES];
+    ar_i32  face_used; /* how many of the pool are taken */
+
+    /*
+     * A chain per style, and which face in the pool each style got.
+     *
+     * The index is (bold ? 1 : 0) | (italic ? 2 : 0), so the four are regular,
+     * bold, italic and bold italic. `style_face` is -1 for a style nobody
+     * loaded a face for, and its chain then leads with the regular face --
+     * which is what a browser does with a family that has no bold: the rule
+     * applies and the nearest face draws it.
+     *
+     * The fallbacks are shared. A face added for coverage is appended to every
+     * style's chain, because a Japanese glyph is missing from the bold face
+     * for exactly the same reason it is missing from the regular one.
+     */
+    ar_i32        style_face[4];
+    ar_font_chain style_chain[4];
+
     ar_font_chain    chain;
     ar_shaper        shaper;
     int              shaping;
@@ -806,6 +824,10 @@ void ar_shift_node(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i
 /* The same, for the box and everything beneath it. */
 void ar_shift_subtree(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dx,
                       ar_i32 dy);
+
+/* The face chain a box's text is measured and drawn through, chosen by its
+   resolved `font-weight` and `font-style`. */
+const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n);
 
 /*
  * Move a box to the rectangle just written into it, taking its subtree along.

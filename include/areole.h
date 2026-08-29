@@ -626,6 +626,31 @@ ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c);
  * should degrade an interface, not stop it.
  * ------------------------------------------------------------------------ */
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px);
+/*
+ * A face for one weight and slant.
+ *
+ * `ar_font_load` gives areole the regular face and must come first; this
+ * adds the others. `weight` is the CSS number -- 400 is normal, 700 is bold
+ * -- and anything at 600 or above selects the bold face, which is the
+ * boundary CSS Fonts 4 uses.
+ *
+ * Nothing is synthesised. A style with no face of its own is drawn in the
+ * regular one, exactly as a browser draws a family with no italic: the rule
+ * still applies and the nearest face renders it. That is a deliberate
+ * refusal -- a sheared roman and an emboldened outline have the wrong
+ * metrics, and text laid out on wrong metrics is worse than text that is
+ * honestly not italic.
+ *
+ * Up to eight faces in total, across every style and fallback.
+ *
+ * **This face's bytes are not copied either**, and each face needs its own:
+ * reading a family into one buffer leaves every face pointing at whichever
+ * file was read last, and the result is not a wrong weight, it is a blank
+ * page. Worth stating twice because the mistake is easy and its symptom looks
+ * like something else entirely.
+ */
+int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
+
 int ar_font_loaded(const ar_ctx *c);
 
 /*
