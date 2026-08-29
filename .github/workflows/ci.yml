@@ -188,6 +188,15 @@ jobs:
       - name: The interface parses from a file
         run: ./build/example_interface.exe examples/14_interface/page.html --selftest
 
+      # Ten documents saved from the web, which is 0.9.0 acceptance criterion
+      # 9. Not a pixel gate -- the criterion is assessed by eye and says so.
+      # What this catches is the thing an eye cannot be asked about on every
+      # commit: a parse or a layout that crashes, hangs, or silently truncates
+      # on markup nobody wrote for this engine. `--selftest` fails if any of
+      # the ten overflows its budget or produces no boxes.
+      - name: The real-document corpus
+        run: ./build/example_real.exe --selftest
+
       # The HTML tree corpus. Unlike the layout corpora this one needs no
       # window at all -- its output is a tree per case -- so the dump runs
       # here and only the browser half is local.
