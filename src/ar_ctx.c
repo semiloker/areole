@@ -1171,6 +1171,39 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
                                 ar__sel_walk, c, &n->style);
 
     /*
+     * An inline style, which is the box's own declaration list rather than
+     * anything a selector said about it.
+     *
+     * Here rather than in the cache for the same reason env() is: the cache
+     * key is tag, class, id and state, and this depends on none of them. Two
+     * boxes with the same selector and different `style` attributes have to
+     * get different answers, and a cache that could not tell them apart would
+     * hand the second one the first one's colour.
+     *
+     * Three merges, because the cascade has three bands here. Inline's normal
+     * declarations sit above every selector; every `!important` sits above
+     * them; inline's own `!important` sits above that. Merging the lot in one
+     * go would let `style="color:red"` beat `p { color: blue !important }`,
+     * which is the single thing an author writes `!important` to stop.
+     *
+     * The rule is on the stack and is not small, so it is built only for a box
+     * that has an inline style at all -- which in an interface is none of
+     * them, and in a document is a few.
+     */
+    if (n->inline_style)
+    {
+        ar_rule inl;
+
+        if (ar_decls_parse(&c->sheet, n->inline_style, &inl))
+        {
+            ar_style_merge(&n->style, &inl.style, ar_pset_minus(inl.set, inl.important));
+            ar_sheet_apply_important(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                     &n->style);
+            ar_style_merge(&n->style, &inl.style, inl.important);
+        }
+    }
+
+    /*
      * env(), after the cache for exactly the reason inheritance is.
      *
      * A resolved style may only depend on the cache key -- tag, class, id and
@@ -2030,7 +2063,42 @@ static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
 /* ------------------------------------------------------------------------
  * Tree building
  * ------------------------------------------------------------------------ */
-static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
+/*
+ * A copy of a declaration list in the frame arena, or null.
+ *
+ * Copied rather than kept by pointer so `ar_begin_styled` can be handed a
+ * stack buffer -- which is what building one from an element's attributes
+ * produces, and requiring the caller to keep it alive for the frame would be a
+ * lifetime rule nobody reads until it is already wrong.
+ *
+ * From the frame end of the arena, so it is released with the tree by the one
+ * integer store in ar_frame_begin. Running out drops the style rather than
+ * anything worse: the box renders with what its selectors said, which is the
+ * same thing that happens when the tree itself runs out of room, and the arena
+ * counters say so.
+ */
+static const char *ar__keep(ar_ctx *c, const char *s)
+{
+    ar_u32 n;
+    char  *dst;
+
+    if (!s || !*s)
+    {
+        return 0;
+    }
+    n = (ar_u32)strlen(s);
+    dst = (char *)ar_arena_frame(&c->arena, n + 1u);
+    if (!dst)
+    {
+        c->overflowed = 1;
+        return 0;
+    }
+    memcpy(dst, s, n);
+    dst[n] = 0;
+    return dst;
+}
+
+static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, const char *decls)
 {
     ar_i32     idx, parent;
     ar_node   *n;
@@ -2107,6 +2175,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->sel_class = klass;
     n->prev_sibling = parent >= 0 ? c->nodes[parent].last_child : -1;
     n->text = text;
+    n->inline_style = ar__keep(c, decls);
     n->fit[0] = 0;
     n->fit[1] = 0;
     /* The arena hands back memory it does not clear, so a box that never
@@ -2270,7 +2339,7 @@ static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
 
 static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
 {
-    ar_i32 idx = ar__push_node(c, "", 0);
+    ar_i32 idx = ar__push_node(c, "", 0, 0);
 
     if (idx < 0 || c->depth >= AR_MAX_DEPTH)
     {
@@ -2396,6 +2465,11 @@ static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
 
 void ar_begin(ar_ctx *c, const char *selector)
 {
+    ar_begin_styled(c, selector, 0);
+}
+
+void ar_begin_styled(ar_ctx *c, const char *selector, const char *style)
+{
     ar_i32 idx;
 
     /* A sheet that never mentions a table cannot need an anonymous one, and
@@ -2409,7 +2483,7 @@ void ar_begin(ar_ctx *c, const char *selector)
         ar__open_anon_for(c, disp);
     }
 
-    idx = ar__push_node(c, selector, 0);
+    idx = ar__push_node(c, selector, 0, style);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -2452,12 +2526,17 @@ void ar_end(ar_ctx *c)
 
 void ar_text(ar_ctx *c, const char *selector, const char *text)
 {
-    ar__push_node(c, selector, text);
+    ar__push_node(c, selector, text, 0);
+}
+
+void ar_text_styled(ar_ctx *c, const char *selector, const char *text, const char *style)
+{
+    ar__push_node(c, selector, text, style);
 }
 
 int ar_button(ar_ctx *c, const char *selector, const char *label)
 {
-    ar_i32 idx = ar__push_node(c, selector, label);
+    ar_i32 idx = ar__push_node(c, selector, label, 0);
 
     if (idx < 0)
     {

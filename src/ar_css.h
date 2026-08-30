@@ -1423,6 +1423,23 @@ int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *
 typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, ar_u32 *tag,
                            ar_classes *klass, ar_u32 *id);
 
+/*
+ * The `!important` band on its own, for a box that has an inline style.
+ *
+ * Inline declarations outrank every selector and are outranked by every
+ * `!important`, so they cannot simply be merged on top of a resolved style:
+ * the band has to run again above them. See ar__important_band.
+ */
+void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                              ar_u16 state, ar_style *out);
+
+/*
+ * Parse a declaration list -- `color:red; width:4px` -- into a selectorless
+ * rule. Returns non-zero if anything was set. The caller merges
+ * `set - important` and then `important` in cascade order.
+ */
+int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule);
+
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
                                  const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
                                  void *ud, ar_style *out);

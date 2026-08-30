@@ -64,21 +64,27 @@ static ar_span ar__attr_of(const ar_doc *d, ar_i32 node, const char *name)
     return none;
 }
 
-static void ar__put(char *buf, ar_u32 *used, char c)
+/* How much of a `style=""` attribute is kept. Long enough for the inline
+   styles real markup carries -- a colour, a width, a couple of margins -- and
+   truncation cuts back to the last complete declaration rather than leaving
+   half of one, so what survives is always something the parser can read. */
+#define AR_DOM_STYLE 256
+
+static void ar__put(char *buf, ar_u32 *used, ar_u32 cap, char c)
 {
-    if (*used + 1 < AR_DOM_SEL)
+    if (*used + 1 < cap)
     {
         buf[(*used)++] = c;
     }
 }
 
-static void ar__put_span(char *buf, ar_u32 *used, ar_span s)
+static void ar__put_span(char *buf, ar_u32 *used, ar_u32 cap, ar_span s)
 {
     ar_u32 i;
 
     for (i = 0; i < s.n; ++i)
     {
-        ar__put(buf, used, s.p[i]);
+        ar__put(buf, used, cap, s.p[i]);
     }
 }
 
@@ -94,7 +100,7 @@ static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
     ar_span klass = ar__attr_of(d, node, "class");
     ar_span id = ar__attr_of(d, node, "id");
 
-    ar__put_span(buf, &used, d->nodes[node].name);
+    ar__put_span(buf, &used, AR_DOM_SEL, d->nodes[node].name);
 
     if (klass.n > 0)
     {
@@ -112,16 +118,16 @@ static void ar__selector(const ar_doc *d, ar_i32 node, char *buf)
             }
             if (!open)
             {
-                ar__put(buf, &used, '.');
+                ar__put(buf, &used, AR_DOM_SEL, '.');
                 open = 1;
             }
-            ar__put(buf, &used, c);
+            ar__put(buf, &used, AR_DOM_SEL, c);
         }
     }
     if (id.n > 0)
     {
-        ar__put(buf, &used, '#');
-        ar__put_span(buf, &used, id);
+        ar__put(buf, &used, AR_DOM_SEL, '#');
+        ar__put_span(buf, &used, AR_DOM_SEL, id);
     }
     buf[used] = 0;
 }
@@ -236,9 +242,46 @@ static int ar__preformatted(ar_span name)
            ar_span_is(name, "xmp") || ar_span_is(name, "plaintext");
 }
 
+/*
+ * An element's `style` attribute, as a NUL-terminated declaration list.
+ *
+ * The attribute's value is a span into the document rather than a string, so
+ * it has to be copied somewhere before the style engine can be handed it. The
+ * caller's buffer is a stack one, which is why ar_begin_styled copies again --
+ * this one is gone as soon as the element's children have been walked.
+ *
+ * Truncation cuts back to the last semicolon, so a `style` longer than the
+ * buffer loses whole declarations rather than ending mid-value. A value cut in
+ * half is not merely dropped: `width: 40p` is a parse error that the sheet
+ * counts, and `color: #ff000` is a different colour.
+ *
+ * Returns the buffer, or null if there was nothing to copy.
+ */
+static const char *ar__inline_style(const ar_doc *d, ar_i32 node, char *buf)
+{
+    ar_span style = ar__attr_of(d, node, "style");
+    ar_u32  used = 0;
+
+    if (style.n == 0)
+    {
+        return 0;
+    }
+    ar__put_span(buf, &used, AR_DOM_STYLE, style);
+    if (used < style.n)
+    {
+        while (used > 0 && buf[used - 1] != ';')
+        {
+            --used;
+        }
+    }
+    buf[used] = 0;
+    return used > 0 ? buf : 0;
+}
+
 static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
+    char   style[AR_DOM_STYLE];
     ar_i32 child;
 
     if (node < 0)
@@ -272,7 +315,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     }
 
     ar__selector(d, node, sel);
-    ar_begin(c, sel);
+    ar_begin_styled(c, sel, ar__inline_style(d, node, style));
     for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {
         ar__walk(c, d, child, pre);

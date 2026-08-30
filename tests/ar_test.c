@@ -7732,6 +7732,179 @@ static void test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel(void
           "table: and a half-pixel share rounds up, not away");
 }
 
+/* ------------------------------------------------------------------------
+ * Inline styles
+ *
+ * A declaration list belonging to one box rather than to a selector, which is
+ * what HTML's `style=""` attribute is. Its whole meaning is where it sits in
+ * the cascade: above every selector, below every `!important`.
+ * ------------------------------------------------------------------------ */
+static void test_an_inline_style_outranks_every_selector(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `#a.b.c` is as specific as this engine's selectors get, and it loses.
+     * That is not a tie broken by source order -- inline declarations are a
+     * band of their own above the whole selector cascade, and no number of
+     * classes reaches it.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "div { width:10px; }"
+                 "#a.b.c { width:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div.b.c#a", "width:30px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b.c#a"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 30, "inline: a declaration list beats the most specific selector");
+    CHECK(ar__box(2).w == 20, "inline: and the box beside it, with no style, is unaffected");
+}
+
+static void test_important_outranks_an_inline_style_and_inline_important_outranks_that(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The three bands, in one scene.
+     *
+     * `!important` is what an author writes to stop a `style` attribute
+     * winning, and it is the one thing that does. An `!important` inside the
+     * attribute beats it back again, which is the order CSS gives and the
+     * reason the inline style is applied in three merges rather than one:
+     * normal declarations, then the sheet's important band on top of them,
+     * then the attribute's own important declarations last.
+     *
+     * A single merge over the resolved style passes the first check here and
+     * fails the second, which is why the second exists.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".q { width:10px !important; }"
+                 ".p { width:11px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div.p", "width:30px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div.q", "width:30px"); /* 2 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div.q", "width:30px !important"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 30, "inline: it beats an ordinary rule");
+    CHECK(ar__box(2).w == 10, "inline: and loses to an important one");
+    CHECK(ar__box(3).w == 30, "inline: unless it is important itself, which beats both");
+}
+
+static void test_two_boxes_with_one_selector_keep_their_own_inline_styles(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The style cache is keyed on tag, class, id and state, and an inline
+     * style is none of those.
+     *
+     * These three boxes are identical to the cache and different on the page.
+     * If the inline style were resolved inside the cache the second and third
+     * would be handed the first one's answer, which is the failure mode the
+     * cache's key has to be complete to avoid -- and the one that fails
+     * silently, because the page still renders.
+     */
+    ar__ui_reset("#root { display:block; } div { width:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div", "width:21px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div", "width:22px"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 21 && ar__box(2).w == 22,
+          "inline: two boxes the cache cannot tell apart keep their own styles");
+    CHECK(ar__box(3).w == 10, "inline: and the one without a style still gets the cached answer");
+}
+
+static void test_an_inline_style_survives_the_late_state_pass(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * :last-child is not known until the parent closes, so a box that has it
+     * is resolved a second time -- from the cascade, which knows nothing about
+     * the box's own declaration list.
+     *
+     * That is why the string is kept on the node rather than passed in and
+     * forgotten. Without it the second resolve throws the inline style away,
+     * and only for the last child of something, and only in a sheet that asks
+     * about it -- which is exactly the shape of bug that ships.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "div { width:10px; }"
+                 "div:last-child { width:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div", "width:31px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div", "width:32px"); /* 2, the last child */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).w == 32, "inline: a box re-resolved for :last-child keeps its inline style");
+    CHECK(ar__box(1).w == 31, "inline: and so does the one that was not");
+}
+
+static void test_an_inline_style_is_read_by_the_same_parser_as_a_sheet(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_u32     errors;
+
+    /*
+     * Two declarations, a shorthand, a colour and a comment, in the syntax a
+     * stylesheet body uses -- because it is the same function reading it. A
+     * second parser for `style=""` would be a second place for `#f00` to mean
+     * something slightly different.
+     *
+     * The trailing garbage is here on purpose: a malformed declaration costs
+     * itself and not the ones beside it, and it is counted, so a document with
+     * broken inline CSS is diagnosable rather than merely wrong.
+     *
+     * 46 rather than 40 because `width` is the content box and the padding is
+     * outside it -- which is the point of asking for both in one list.
+     */
+    ar__ui_reset("#root { display:block; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div",
+                    "width:40px; /* a comment */ padding:3px; background:#ff0000;"); /* 1 */
+    ar_end(g_ui);
+    errors = g_ui->sheet.errors;
+    ar_begin_styled(g_ui, "div", "width:41px; !!!"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 40 + 3 + 3, "inline: a declaration list is read the way a rule body is");
+    CHECK(ar__box_style(1)->v[AR_P_PAD_LEFT] == 3 && ar__box_style(1)->v[AR_P_PAD_TOP] == 3,
+          "inline: shorthands included");
+    CHECK(ar__box_bg(1) == 0xffff0000u, "inline: and colours");
+    CHECK(ar__box(2).w == 41, "inline: garbage costs its own declaration and no other");
+    CHECK(g_ui->sheet.errors > errors, "inline: and is counted, not swallowed");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -14311,6 +14484,62 @@ static void ar__render_html(ar_surface *s, const char *src, const char *author)
     ar_frame_end(g_ui, s);
 }
 
+static void test_the_style_attribute_reaches_the_box(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * The whole path, from bytes to a rectangle: the tokenizer keeps the
+     * attribute, the DOM walk copies its value out of the span it lives in,
+     * and the style engine reads it as a declaration list.
+     *
+     * Real documents are full of these, and until now every one of them was
+     * dropped on the floor -- silently, because the page still rendered, just
+     * not the way it was written.
+     *
+     * The second paragraph is the same element with no attribute, so the two
+     * differ only by the thing being tested. The third has a `style` the
+     * author sheet contradicts with `!important`, which is the one case a
+     * document can rely on to win.
+     */
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<p style=\"width:40px; height:11px\">a</p>"
+                    "<p>b</p>"
+                    "<p class=\"pin\" style=\"width:40px\">c</p>"
+                    "</body></html>",
+                    "p { width:100px; } .pin { width:70px !important; }");
+
+    {
+        ar_i32 a = -1, b = -1, c = -1, i;
+
+        for (i = 0; i < g_ui->node_count; ++i)
+        {
+            if (g_ui->nodes[i].sel_tag != ar_hash("p", 1u))
+            {
+                continue;
+            }
+            if (a < 0)
+            {
+                a = i;
+            }
+            else if (b < 0)
+            {
+                b = i;
+            }
+            else if (c < 0)
+            {
+                c = i;
+            }
+        }
+        CHECK(a >= 0 && b >= 0 && c >= 0, "html: three paragraphs came out of the markup");
+        CHECK(ar__box(a).w == 40 && ar__box(a).h == 11,
+              "html: a style attribute reaches the box it was written on");
+        CHECK(ar__box(b).w == 100, "html: and the paragraph beside it keeps the sheet's width");
+        CHECK(ar__box(c).w == 70, "html: and an important rule still beats it");
+    }
+}
+
 static void test_font_weight_and_style_are_properties_that_inherit(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -17229,6 +17458,11 @@ int main(void)
     test_a_row_groups_border_is_its_own_two_edges();
     test_a_collapsed_table_is_its_lines_and_its_rows();
     test_a_cells_two_half_lines_are_one_number();
+    test_an_inline_style_outranks_every_selector();
+    test_important_outranks_an_inline_style_and_inline_important_outranks_that();
+    test_two_boxes_with_one_selector_keep_their_own_inline_styles();
+    test_an_inline_style_survives_the_late_state_pass();
+    test_an_inline_style_is_read_by_the_same_parser_as_a_sheet();
     test_the_columns_hold_every_pixel_of_every_line();
     test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel();
     test_a_collapsed_line_is_drawn_once();
@@ -17487,6 +17721,7 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_the_style_attribute_reaches_the_box();
     test_font_weight_and_style_are_properties_that_inherit();
     test_line_height_is_a_length_or_a_multiplier();
     test_the_ua_stylesheet_parses();
