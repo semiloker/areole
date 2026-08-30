@@ -14484,6 +14484,199 @@ static void ar__render_html(ar_surface *s, const char *src, const char *author)
     ar_frame_end(g_ui, s);
 }
 
+/*
+ * Every box declared with this tag, in tree order.
+ *
+ * Not `first + n`: ar_dom_build gives an element's text a box of its own, so
+ * two adjacent `<td>a</td>` cells are four boxes and the second cell is not
+ * the one after the first.
+ */
+static ar_i32 ar__tags(const char *tag, ar_i32 *out, ar_i32 cap)
+{
+    ar_u32 h = ar_hash(tag, (ar_u32)strlen(tag));
+    ar_i32 i, n = 0;
+
+    for (i = 0; i < g_ui->node_count && n < cap; ++i)
+    {
+        if (g_ui->nodes[i].sel_tag == h)
+        {
+            out[n++] = i;
+        }
+    }
+    return n;
+}
+
+static ar_i32 ar__first_tag(const char *tag)
+{
+    ar_i32 one[1];
+
+    return ar__tags(tag, one, 1) == 1 ? one[0] : -1;
+}
+
+static void test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `<td bgcolor>` and `<table cellspacing>` are not a `style` attribute.
+     * They are a band of the cascade between the user agent's stylesheet and
+     * the page's own, and the two directions are separate failures.
+     *
+     * Below the UA sheet they do nothing at all: html.css already says
+     * `table { border-spacing: 2px }` and `td { padding: 1px }`, so a hint
+     * that loses to it is a hint that never applies to anything.
+     *
+     * Above the author's they make a restyled page impossible: a document
+     * written in 1998 and given a stylesheet in 2010 has to be able to say
+     * `td { padding: 0 }` and be obeyed. That is the whole reason these are a
+     * band and `style=""` is not.
+     */
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    0);
+    {
+        ar_i32 t = ar__first_tag("table");
+        ar_i32 c = ar__first_tag("td");
+
+        CHECK(t >= 0 && c >= 0, "hints: the table and its cell came out of the markup");
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 9,
+              "hints: cellspacing beats the user agent's border-spacing");
+        CHECK(ar__box_style(c)->v[AR_P_PAD_LEFT] == 8,
+              "hints: and cellpadding, written on the table, beats its padding");
+    }
+
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    "table { border-spacing:4px; } td { padding:3px; }");
+    {
+        ar_i32 t = ar__first_tag("table");
+        ar_i32 c = ar__first_tag("td");
+
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 4,
+              "hints: and the page's own stylesheet beats the hint");
+        CHECK(ar__box_style(c)->v[AR_P_PAD_LEFT] == 3, "hints: on the cell too");
+    }
+
+    /*
+     * And once more with a stylesheet that says nothing about tables.
+     *
+     * The two checks above pass whether the hint goes in at the boundary or in
+     * front of every rule in the sheet, because in the first render there are
+     * no author rules at all and in the second the author rule wins either
+     * way. This is the case that separates them: a page that has a stylesheet
+     * and does not mention `table`, where the hint still has to beat html.css.
+     */
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    "p { color:#123456; }");
+    {
+        ar_i32 t = ar__first_tag("table");
+
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 9,
+              "hints: a hint goes in at the boundary, not in front of the whole sheet");
+    }
+}
+
+static void test_a_style_attribute_beats_a_hint_on_the_same_element(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Two bands on one element, and the order between them is the order they
+     * are written in the specification rather than the order they are written
+     * in the tag: an inline style wins wherever it appears.
+     */
+    ar__render_html(&s, "<img width=\"200\" height=\"90\" style=\"width:50px\">", 0);
+    {
+        ar_i32 i = ar__first_tag("img");
+
+        CHECK(i >= 0 && ar__box(i).w == 50,
+              "hints: a style attribute beats width= on the same tag");
+        CHECK(ar__box(i).h == 90, "hints: and leaves the attribute it says nothing about alone");
+    }
+}
+
+static void test_a_legacy_colour_is_not_a_css_colour(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `bgcolor="red"`, `bgcolor="#ff0000"` and `bgcolor="ff0000"` are three
+     * spellings of one colour and all three are in real markup. The third is
+     * the one CSS has no syntax for at all -- a bare hex triple, no hash --
+     * and passing it through unchanged makes it a parse error rather than a
+     * colour.
+     *
+     * `bgcolor="chartreuse"` is a fourth spelling nothing here knows: HTML
+     * names sixteen colours and CSS in this engine names none, so the mapping
+     * carries the sixteen itself. A name outside them has to write nothing at
+     * all rather than write something the style parser will refuse -- a
+     * refusal would be counted in the sheet's error tally, and that tally is
+     * what tells anyone whether a page's CSS is broken. It must also not cost
+     * the declaration beside it.
+     */
+    ar__render_html(&s,
+                    "<table><tr>"
+                    "<td bgcolor=\"red\">a</td>"
+                    "<td bgcolor=\"#ff0000\">b</td>"
+                    "<td bgcolor=\"ff0000\">c</td>"
+                    "<td bgcolor=\"chartreuse\" width=\"70\">d</td>"
+                    "</tr></table>",
+                    0);
+    {
+        ar_i32 c[4];
+
+        CHECK(ar__tags("td", c, 4) == 4, "hints: four cells came out of the markup");
+        CHECK(ar__box_bg(c[0]) == 0xffff0000u, "hints: bgcolor=red is a colour");
+        CHECK(ar__box_bg(c[1]) == 0xffff0000u, "hints: and so is the same colour with a hash");
+        CHECK(ar__box_bg(c[2]) == 0xffff0000u,
+              "hints: and a bare hex triple, which CSS cannot spell");
+        /* The style rather than the rectangle: four cells in one auto-sized
+           table share the width between them, so what the fourth one *asked*
+           for is the question here and what it got is the table's business. */
+        CHECK(ar__box_style(c[3])->v[AR_P_WIDTH] == 70,
+              "hints: a colour this engine does not know costs its own declaration and no other");
+    }
+}
+
+static void test_a_legacy_length_is_pixels_or_a_percentage_or_nothing(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    ar_u32     errors;
+
+    /*
+     * `width="200"` is 200 pixels, `width="50%"` is half the parent, and
+     * `width="auto"` is markup a browser ignores.
+     *
+     * The third is why this is its own function rather than a `strcat`.
+     * Writing `width:auto px` and letting the CSS parser refuse it would give
+     * the same rectangle and a false entry in the error tally -- and the tally
+     * is what tells anyone whether a page's CSS is broken.
+     */
+    ar__render_html(&s, "<div style=\"width:400px\"><img width=\"50%\"></div>", 0);
+    CHECK(ar__box(ar__first_tag("img")).w == 200, "hints: width=50% is half the parent");
+
+    ar__render_html(&s, "<img width=\"200\">", 0);
+    CHECK(ar__box(ar__first_tag("img")).w == 200, "hints: and width=200 is pixels");
+
+    errors = g_ui->sheet.errors;
+    ar__render_html(&s, "<img width=\"auto\" height=\"77\">", 0);
+    {
+        ar_i32 i = ar__first_tag("img");
+
+        CHECK(ar__box(i).h == 77, "hints: a value that is not a length is skipped");
+        /* The unit rather than the number: writing `width:0px` for it would
+           give the same rectangle here and a stated width of nothing, which is
+           not what `width="auto"` means and is not what a browser does. */
+        CHECK(ar__box_style(i)->unit[AR_P_WIDTH] != AR_UNIT_PX,
+              "hints: and leaves the property unstated rather than stating zero");
+        CHECK(g_ui->sheet.errors == errors, "hints: and is not counted as a parse error");
+    }
+}
+
 static void test_the_style_attribute_reaches_the_box(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -17722,6 +17915,10 @@ int main(void)
     test_the_tree_builder_survives_anything();
 
     test_the_style_attribute_reaches_the_box();
+    test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author();
+    test_a_style_attribute_beats_a_hint_on_the_same_element();
+    test_a_legacy_colour_is_not_a_css_colour();
+    test_a_legacy_length_is_pixels_or_a_percentage_or_nothing();
     test_font_weight_and_style_are_properties_that_inherit();
     test_line_height_is_a_length_or_a_multiplier();
     test_the_ua_stylesheet_parses();

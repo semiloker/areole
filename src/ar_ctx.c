@@ -1162,7 +1162,33 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
 {
     ar_node *n = &c->nodes[i];
 
-    ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+    if (n->hints && *n->hints)
+    {
+        /*
+         * Presentational hints -- `<td bgcolor=red>`, `<font size=5>` -- are a
+         * band of the cascade between the user agent's rules and the author's,
+         * not a declaration list on top of everything the way `style=""` is.
+         * So they cannot be merged onto a resolved style; the cascade has to
+         * be walked with them in the middle of it, which also means it cannot
+         * be cached. A page whose markup carries no legacy attributes never
+         * takes this path.
+         */
+        ar_rule hint;
+
+        if (ar_decls_parse(&c->sheet, n->hints, &hint))
+        {
+            ar_sheet_resolve_hinted(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                    &hint, &n->style);
+        }
+        else
+        {
+            ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+        }
+    }
+    else
+    {
+        ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+    }
 
     /* Rules with a combinator, which the cache cannot hold because their
        answer depends on where this box sits rather than only on what it is.
@@ -1190,11 +1216,11 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
      * that has an inline style at all -- which in an interface is none of
      * them, and in a document is a few.
      */
-    if (n->inline_style)
+    if (n->inline_at && n->hints[n->inline_at])
     {
         ar_rule inl;
 
-        if (ar_decls_parse(&c->sheet, n->inline_style, &inl))
+        if (ar_decls_parse(&c->sheet, n->hints + n->inline_at, &inl))
         {
             ar_style_merge(&n->style, &inl.style, ar_pset_minus(inl.set, inl.important));
             ar_sheet_apply_important(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
@@ -2077,28 +2103,40 @@ static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
  * same thing that happens when the tree itself runs out of room, and the arena
  * counters say so.
  */
-static const char *ar__keep(ar_ctx *c, const char *s)
+static const char *ar__keep(ar_ctx *c, const char *hints, const char *style, ar_u16 *at)
 {
-    ar_u32 n;
+    ar_u32 a, b;
     char  *dst;
 
-    if (!s || !*s)
+    *at = 0;
+    a = hints ? (ar_u32)strlen(hints) : 0u;
+    b = style ? (ar_u32)strlen(style) : 0u;
+    if (a + b == 0)
     {
         return 0;
     }
-    n = (ar_u32)strlen(s);
-    dst = (char *)ar_arena_frame(&c->arena, n + 1u);
+    dst = (char *)ar_arena_frame(&c->arena, a + b + 2u);
     if (!dst)
     {
         c->overflowed = 1;
         return 0;
     }
-    memcpy(dst, s, n);
-    dst[n] = 0;
+    if (a)
+    {
+        memcpy(dst, hints, a);
+    }
+    dst[a] = 0;
+    if (b)
+    {
+        memcpy(dst + a + 1, style, b);
+    }
+    dst[a + 1 + b] = 0;
+    *at = (ar_u16)(a + 1);
     return dst;
 }
 
-static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, const char *decls)
+static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, const char *hints,
+                            const char *decls)
 {
     ar_i32     idx, parent;
     ar_node   *n;
@@ -2175,7 +2213,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     n->sel_class = klass;
     n->prev_sibling = parent >= 0 ? c->nodes[parent].last_child : -1;
     n->text = text;
-    n->inline_style = ar__keep(c, decls);
+    n->hints = ar__keep(c, hints, decls, &n->inline_at);
     n->fit[0] = 0;
     n->fit[1] = 0;
     /* The arena hands back memory it does not clear, so a box that never
@@ -2339,7 +2377,7 @@ static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
 
 static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
 {
-    ar_i32 idx = ar__push_node(c, "", 0, 0);
+    ar_i32 idx = ar__push_node(c, "", 0, 0, 0);
 
     if (idx < 0 || c->depth >= AR_MAX_DEPTH)
     {
@@ -2470,6 +2508,11 @@ void ar_begin(ar_ctx *c, const char *selector)
 
 void ar_begin_styled(ar_ctx *c, const char *selector, const char *style)
 {
+    ar_begin_hinted(c, selector, 0, style);
+}
+
+void ar_begin_hinted(ar_ctx *c, const char *selector, const char *hints, const char *style)
+{
     ar_i32 idx;
 
     /* A sheet that never mentions a table cannot need an anonymous one, and
@@ -2483,7 +2526,7 @@ void ar_begin_styled(ar_ctx *c, const char *selector, const char *style)
         ar__open_anon_for(c, disp);
     }
 
-    idx = ar__push_node(c, selector, 0, style);
+    idx = ar__push_node(c, selector, 0, hints, style);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -2526,17 +2569,17 @@ void ar_end(ar_ctx *c)
 
 void ar_text(ar_ctx *c, const char *selector, const char *text)
 {
-    ar__push_node(c, selector, text, 0);
+    ar__push_node(c, selector, text, 0, 0);
 }
 
 void ar_text_styled(ar_ctx *c, const char *selector, const char *text, const char *style)
 {
-    ar__push_node(c, selector, text, style);
+    ar__push_node(c, selector, text, 0, style);
 }
 
 int ar_button(ar_ctx *c, const char *selector, const char *label)
 {
-    ar_i32 idx = ar__push_node(c, selector, label, 0);
+    ar_i32 idx = ar__push_node(c, selector, label, 0, 0);
 
     if (idx < 0)
     {

@@ -91,7 +91,48 @@ are accepted too. `unset` is inherit or initial depending on the property;
 `revert` means "back to the UA sheet", and since there is no separate UA layer
 it means the same as `initial`.
 
-There is one author origin, so no origin ordering exists to get wrong.
+**Two origins.** The user-agent stylesheet and the page's own, and the origin
+outranks specificity: `td { padding: 0 }` written by a page beats
+`td { padding: 1px }` written by `html.css` whatever the two selectors look
+like. Rules are sorted on origin before specificity, so this costs nothing per
+box.
+
+In practice it reorders nothing today, because every rule in the user-agent
+sheet is a type selector parsed before any of the page's and so already lost
+every tie. What it buys is a fixed boundary in the rule array, which is where a
+presentational hint goes.
+
+**Presentational hints** are what HTML's legacy attributes mean:
+
+| Attribute | On | Becomes |
+| --- | --- | --- |
+| `bgcolor` | `body`, `table`, `tr`, `td`, `th` | `background` |
+| `text` | `body` | `color` |
+| `color` | `font` | `color` |
+| `width`, `height` | `img`, `table`, `td`, `th`, `col`, `hr`, `canvas`, `video`, `iframe`, `embed`, `object` | `width`, `height` |
+| `border` | `table` | `border-width`, and 1px on its cells |
+| `border` | `img` | `border-width` |
+| `cellspacing` | `table` | `border-spacing` |
+| `cellpadding` | `table` | `padding` on its cells |
+| `hspace`, `vspace` | `img` | `margin-left`, `margin-top` |
+| `align` | anything | `text-align` |
+
+They sit **above the user-agent sheet and below every author rule**, which is
+the band between the two origins. A page written in 1998 and given a stylesheet
+in 2010 can say `td { padding: 0 }` and be obeyed; a page with no stylesheet
+gets what its markup asked for.
+
+Their values are HTML's, not CSS's. `bgcolor="red"`, `bgcolor="#f00"` and
+`bgcolor="ff0000"` all mean the same colour and only the second is legal CSS,
+so the sixteen colour keywords HTML names are translated here rather than in
+the style parser. `width="200"` is pixels and `width="50%"` is a percentage;
+anything that is not one of those writes nothing at all, rather than writing a
+value the parser would refuse and count as an error.
+
+Not mapped, and each because the property does not exist yet: `nowrap`
+(`white-space`), `valign` (`vertical-align` on a row), `type` on a list
+(`list-style-type`), and the `rules` and `frame` attributes of `<table>`
+(`border-style`).
 
 **One known ordering divergence:** rules carrying a combinator are resolved in
 a pass after the cached one, so a combinator rule beats a simple rule of higher

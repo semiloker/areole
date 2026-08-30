@@ -43,6 +43,7 @@
  * rule table has to become a function of the arena before that release.
  */
 #include "ar_html.h"
+#include "ar_node.h"
 
 /*
  * Split into several strings because C89 guarantees only 509 characters in one
@@ -277,10 +278,14 @@ void ar_ua_stylesheet(ar_ctx *c)
 {
     ar_i32 i;
 
+    /* Everything parsed inside these two calls is the user agent's, and a
+       presentational hint goes in above it and below whatever the page says. */
+    ar_sheet_begin_ua(&c->sheet);
     for (i = 0; AR__UA[i]; ++i)
     {
         ar_stylesheet(c, AR__UA[i]);
     }
+    ar_sheet_mark_ua(&c->sheet);
 }
 
 ar_i32 ar_ua_stylesheet_parts(void)

@@ -3142,9 +3142,12 @@ void ar_sheet_cache_clear(ar_sheet *sheet)
     }
 }
 
-/* Ascending specificity, ties broken by source order, so resolution can apply
-   rules front to back and let the last writer win. Insertion sort because the
-   input is nearly sorted already and this runs once. */
+/* Ascending origin, then specificity, then source order, so resolution can
+   apply rules front to back and let the last writer win. Origin first because
+   it outranks specificity: everything the page says comes after everything the
+   user agent says, which also puts the presentational-hint boundary at a fixed
+   index. Insertion sort because the input is nearly sorted already and this
+   runs once. */
 static void ar__note_contextual(ar_sheet *sheet)
 {
     ar_i32 i;
@@ -3192,14 +3195,29 @@ static void ar__sort_rules(ar_sheet *sheet)
     {
         ar_rule tmp = sheet->rules[i];
         j = i;
-        while (j > 0 && (sheet->rules[j - 1].specificity > tmp.specificity ||
-                         (sheet->rules[j - 1].specificity == tmp.specificity &&
-                          sheet->rules[j - 1].order > tmp.order)))
+        while (j > 0 && (sheet->rules[j - 1].origin > tmp.origin ||
+                         (sheet->rules[j - 1].origin == tmp.origin &&
+                          (sheet->rules[j - 1].specificity > tmp.specificity ||
+                           (sheet->rules[j - 1].specificity == tmp.specificity &&
+                            sheet->rules[j - 1].order > tmp.order)))))
         {
             sheet->rules[j] = sheet->rules[j - 1];
             j--;
         }
         sheet->rules[j] = tmp;
+    }
+
+    /* Where the page's rules begin, which is where a presentational hint goes.
+       Recomputed here rather than remembered, because every added stylesheet
+       sorts the whole array again. */
+    sheet->ua_count = sheet->count;
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        if (sheet->rules[i].origin != 0)
+        {
+            sheet->ua_count = (ar_u16)i;
+            break;
+        }
     }
 }
 
@@ -3369,6 +3387,10 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             rule[k].style = rule[0].style;
             rule[k].set = rule[0].set;
             rule[k].important = rule[0].important;
+            /* Stamped where the rule is stored, because that is the one
+               place every rule passes through: the selector list is parsed
+               into its own slots and each of them is zeroed on the way in. */
+            rule[k].origin = (ar_u8)(sheet->in_ua ? 0 : 1);
             rule[k].order = sheet->count;
             sheet->rules[sheet->count++] = rule[k];
         }
@@ -3501,7 +3523,8 @@ static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_class
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
+                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop,
+                                 const ar_rule *hints)
 {
     ar_i32 i;
 
@@ -3522,6 +3545,18 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * combinators also had a second rule that overwrote the wrong answer,
          * which is exactly the shape of bug that survives a test suite.
          */
+        /*
+         * The presentational-hint band, between the user agent's rules and the
+         * author's. `<font color=red>` beats what html.css says about `font`
+         * and loses to anything the page's own stylesheet says -- which is the
+         * order HTML gives these attributes, and the reason they are a band
+         * rather than a declaration list like `style="..."`.
+         */
+        if (hints && i == (ar_i32)sheet->ua_count)
+        {
+            ar_style_merge(out, &hints->style, hints->set);
+        }
+
         if (r->nctx > 0)
         {
             continue;
@@ -3559,10 +3594,39 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         ar_style_merge(out, &r->style, ar_pset_minus(r->set, r->important));
     }
 
+    /* A sheet whose rules are all the user agent's -- or one with no rules at
+       all -- never reaches the boundary inside the loop. */
+    if (hints && (ar_i32)sheet->ua_count >= (ar_i32)sheet->count)
+    {
+        ar_style_merge(out, &hints->style, hints->set);
+    }
+
     /*
      * The important band, after everything normal. See ar__important_band.
      */
     ar__important_band(sheet, tag, klass, id, state, out);
+}
+
+void ar_sheet_begin_ua(ar_sheet *sheet)
+{
+    if (sheet)
+    {
+        sheet->in_ua = 1;
+    }
+}
+
+void ar_sheet_mark_ua(ar_sheet *sheet)
+{
+    if (sheet)
+    {
+        sheet->in_ua = 0;
+    }
+}
+
+void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, const ar_rule *hints, ar_style *out)
+{
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, hints);
 }
 
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
@@ -3763,7 +3827,7 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                ar_u32 id, ar_u16 state, ar_style *out)
 {
-    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1, 0);
 }
 
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
@@ -3773,7 +3837,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
     if (!sheet->cache_cap)
     {
-        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
         return;
     }
 
@@ -3788,7 +3852,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
         if (!e->used)
         {
-            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
             e->tag = tag;
             e->klass = klass->combined;
             e->id = id;
@@ -3811,6 +3875,6 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
        is slower than evicting something, and simpler than deciding what; an
        interface with that many colliding selectors has not been seen, and if
        one appears the counters say so. */
-    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
     ++sheet->cache_misses;
 }
