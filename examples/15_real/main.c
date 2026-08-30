@@ -513,7 +513,16 @@ int main(int argc, char **argv)
         }
     }
 
-    if (!path)
+    /*
+     * With no arguments at all, open the first document rather than printing a
+     * table and exiting.
+     *
+     * Every other example in this tree opens a window when it is run with
+     * nothing, and this one did not -- so the obvious thing to type produced a
+     * summary and no picture, which reads as the example being broken. The
+     * table is what `--dump` is for.
+     */
+    if (!path && (want_selftest || want_dump))
     {
         int bad = report(want_selftest);
 
@@ -523,6 +532,10 @@ int main(int argc, char **argv)
             printf("%s\n", bad ? "selftest FAILED" : "selftest passed");
         }
         return bad ? 1 : 0;
+    }
+    if (!path)
+    {
+        path = CORPUS[0];
     }
 
     {
@@ -558,20 +571,67 @@ int main(int argc, char **argv)
 
         {
             ar_win *win = ar_win_open("areole - a real document", WIN_W, WIN_H);
+            int     at = 0;
 
             if (!win)
             {
                 printf("could not open a window\n");
                 return 1;
             }
+            /* Where in the corpus this document is, so the arrow keys have
+               somewhere to go from. A file named on the command line that is
+               not in the corpus stays put, which is what naming one means. */
+            for (k = 0; k < CORPUS_N; ++k)
+            {
+                if (strcmp(CORPUS[k], path) == 0)
+                {
+                    at = k;
+                }
+            }
             ar_set_clock(c, ar_time_us);
-            printf("areole %s: %s, %ld nodes, %ld boxes\n", ar_version(), base(path),
-                   (long)d->node_count, (long)ar_node_count(c));
+            printf("areole %s: %s\n", ar_version(), base(path));
+            printf("left and right walk the other %d documents\n", CORPUS_N - 1);
             while (ar_win_pump(win))
             {
-                ar_i32 region;
+                const ar_input *in = ar_win_input(win);
+                ar_i32          region;
+                int             step = 0;
 
-                frame(c, d, ar_win_input(win), ar_win_surface(win));
+                if (in && (in->keys_pressed & AR_KEY_RIGHT) != 0)
+                {
+                    step = 1;
+                }
+                else if (in && (in->keys_pressed & AR_KEY_LEFT) != 0)
+                {
+                    step = -1;
+                }
+                if (step != 0)
+                {
+                    /*
+                     * A different document is a different everything: the
+                     * arena is re-initialised under it, so the old context and
+                     * the old document are both gone the moment this returns.
+                     * Nothing is kept across the switch except the window,
+                     * which owns its own pixels.
+                     */
+                    ar_doc *nd = 0;
+                    ar_ctx *nc;
+                    int     want = (at + step + CORPUS_N) % CORPUS_N;
+
+                    nc = open_document(CORPUS[want], &nd);
+                    if (nc)
+                    {
+                        c = nc;
+                        d = nd;
+                        at = want;
+                        ar_set_clock(c, ar_time_us);
+                        printf("%s\n", base(CORPUS[at]));
+                    }
+                    /* A document that would not open leaves the last one on
+                       the screen rather than a blank window. */
+                    continue;
+                }
+                frame(c, d, in, ar_win_surface(win));
                 for (region = 0; region < ar_damage_count(c); ++region)
                 {
                     ar_win_present(win, ar_damage_rect(c, region));
