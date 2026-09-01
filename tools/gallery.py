@@ -351,6 +351,12 @@ def compare_one(demo, browser, tmp, want_pixels=True):
         if path == ROOT_PATH:
             continue
         t = theirs[path]
+        # A box with no size has no position. `display: none` produces one in
+        # both engines and they disagree about where it is not: a browser
+        # reports all zeros and areole reports its parent's corner. Comparing
+        # the corner of a rectangle that does not exist is comparing nothing.
+        if box[2] == 0 and box[3] == 0 and t[2] == 0 and t[3] == 0:
+            continue
         if max(abs(box[i] - t[i]) for i in range(4)) > GEOMETRY_TOLERANCE:
             bad.append((path, box, t))
 

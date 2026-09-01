@@ -367,6 +367,35 @@ static void ar__hint_len(char *buf, ar_u32 *used, const char *prop, ar_span v)
 }
 
 /*
+ * `colspan="2"` -> `colspan:2`, with no unit.
+ *
+ * A span is a count and not a length, and `colspan:2px` is not a thing anyone
+ * can write in CSS. It happens to *work* -- the parser stores the number and
+ * the layout reads it without asking what unit came with it -- which is why
+ * this is a matter of the declaration saying what it means rather than a bug
+ * with a symptom. A declaration that is only accidentally correct is one that
+ * stops being correct the day the unit starts mattering.
+ *
+ * Zero and one are written like any other number and mean what they say. A
+ * value that is not a number at all writes nothing, for the same reason a
+ * length that is not a length does.
+ */
+static void ar__hint_count(char *buf, ar_u32 *used, const char *prop, ar_span v)
+{
+    ar_i32 n = 0;
+    int    pct = 0;
+
+    if (v.n == 0 || ar__legacy_len(v, &n, &pct) == 0 || pct)
+    {
+        return;
+    }
+    ar__put_str(buf, used, AR_DOM_HINTS, prop);
+    ar__put(buf, used, AR_DOM_HINTS, ':');
+    ar__put_num(buf, used, AR_DOM_HINTS, n);
+    ar__put(buf, used, AR_DOM_HINTS, ';');
+}
+
+/*
  * A legacy colour, which is not a CSS colour.
  *
  * `bgcolor=red`, `bgcolor="#f00"` and `bgcolor=FF0000` are all legal HTML and
@@ -536,6 +565,25 @@ static const char *ar__hints(const ar_doc *d, ar_i32 node, char *buf)
          * happens once per cell.
          */
         ar_i32 up = d->nodes[node].parent;
+
+        /*
+         * `colspan` and `rowspan` first, which are not presentational at all.
+         *
+         * They are structure: they say which cells of the grid this one
+         * occupies, and no stylesheet has ever been able to say it. They are
+         * mapped here because this is where an attribute becomes a declaration
+         * and areole carries both as properties -- and because they were
+         * mapped nowhere at all, so a `<table>` written in HTML had every span
+         * silently ignored. A two-row `rowspan` laid out as one cell of one
+         * row, and the row below it started in the column the span was
+         * holding.
+         *
+         * Being in the hint band means a stylesheet could overrule them, which
+         * no stylesheet will: there is no CSS spelling of `colspan` for an
+         * author to have written one in.
+         */
+        ar__hint_count(buf, &used, "colspan", ar__attr_of(d, node, "colspan"));
+        ar__hint_count(buf, &used, "rowspan", ar__attr_of(d, node, "rowspan"));
 
         while (up >= 0 && !ar_span_is(d->nodes[up].name, "table"))
         {
