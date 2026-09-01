@@ -1531,6 +1531,63 @@ static int ar__number_has_unit(const ar__scan *z)
     return z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x';
 }
 
+/*
+ * Properties whose value is a length and nothing but a length.
+ *
+ * A bare number is not one of those in standards mode: `width: 100` is an
+ * invalid declaration and a browser drops it. Zero is the exception CSS makes
+ * everywhere, and `line-height` is missing from this list on purpose -- a bare
+ * number there is legal and means a multiplier.
+ *
+ * Listed rather than derived because there is nothing to derive it from: the
+ * property table carries a name and an index and says nothing about what kind
+ * of value the property takes. A list that is wrong in one direction rejects a
+ * declaration a browser keeps, and in the other keeps one a browser drops;
+ * both are visible, which is why it is written out.
+ */
+static int ar__prop_is_length(ar_u8 prop)
+{
+    switch (prop)
+    {
+    case AR_P_WIDTH:
+    case AR_P_HEIGHT:
+    case AR_P_MIN_WIDTH:
+    case AR_P_MIN_HEIGHT:
+    case AR_P_MAX_HEIGHT:
+    case AR_P_PAD_TOP:
+    case AR_P_PAD_RIGHT:
+    case AR_P_PAD_BOTTOM:
+    case AR_P_PAD_LEFT:
+    case AR_P_MARGIN_TOP:
+    case AR_P_MARGIN_RIGHT:
+    case AR_P_MARGIN_BOTTOM:
+    case AR_P_MARGIN_LEFT:
+    case AR_P_TOP:
+    case AR_P_RIGHT:
+    case AR_P_BOTTOM:
+    case AR_P_LEFT:
+    case AR_P_GAP:
+    case AR_P_ROW_GAP:
+    case AR_P_COL_GAP:
+    case AR_P_BORDER_WIDTH:
+    case AR_P_BORDER_RADIUS:
+    case AR_P_BORDER_SPACING:
+    case AR_P_FONT_SIZE:
+    case AR_P_FLEX_BASIS:
+    case AR_P_SCROLL_PAD_TOP:
+    case AR_P_SCROLL_PAD_RIGHT:
+    case AR_P_SCROLL_PAD_BOTTOM:
+    case AR_P_SCROLL_PAD_LEFT:
+    case AR_P_SCROLL_MARGIN_TOP:
+    case AR_P_SCROLL_MARGIN_RIGHT:
+    case AR_P_SCROLL_MARGIN_BOTTOM:
+    case AR_P_SCROLL_MARGIN_LEFT:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -1690,6 +1747,22 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         out.v = sign * n;
         out.ok = 1;
         out.unit = AR_UNIT_PX;
+
+        /*
+         * A length with no unit, which is quirks mode and nothing else.
+         *
+         * Zero is exempt in every mode, because CSS says so: `margin: 0` is
+         * legal everywhere and is most of what anyone writes. Everything else
+         * is dropped, and dropping it is the point -- the declaration does not
+         * become zero, it stops existing, and the property keeps whatever the
+         * cascade gave it.
+         */
+        if (z->sheet->strict_lengths && n != 0 && ar__prop_is_length(prop) &&
+            !ar__number_has_unit(z))
+        {
+            out.ok = 0;
+            return out;
+        }
 
         if (z->p < z->end && *z->p == '%')
         {
@@ -2579,6 +2652,24 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
             break;
         }
 
+        if (*p == '*')
+        {
+            /*
+             * The universal selector: matches anything, sets no tag, and adds
+             * nothing to specificity.
+             *
+             * Handled here because it cannot be handled below. `*` is not an
+             * identifier character, so the loop that reads a tag name stopped
+             * on it immediately and the compound was refused as malformed --
+             * which meant `* { box-sizing: border-box }`, and every other rule
+             * written with a universal selector, was dropped whole. The test
+             * for it after that loop could never fire and is gone.
+             */
+            ++p;
+            any = 1;
+            continue;
+        }
+
         start = p;
         while (*p && ar__is_ident(*p))
         {
@@ -2588,10 +2679,7 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
         {
             return 0;
         }
-        if (!(p - start == 1 && *start == '*'))
-        {
-            *tag = ar_hash(start, (ar_u32)(p - start));
-        }
+        *tag = ar_hash(start, (ar_u32)(p - start));
         any = 1;
     }
     return any;
@@ -2941,6 +3029,22 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 }
                 *spec = (ar_u16)(*spec + 10);
             }
+            any = 1;
+            continue;
+        }
+
+        /*
+         * The universal selector: matches anything, sets no tag, and adds
+         * nothing to specificity -- which is exactly why it is worth having
+         * and why it has to be its own branch. `*` is not an identifier
+         * character, so the branch below never saw it and `* { ... }` was
+         * refused as a malformed selector: every rule written with one was
+         * dropped whole, silently, and `* { box-sizing: border-box }` is in a
+         * large fraction of the stylesheets on the web.
+         */
+        if (*z->p == '*')
+        {
+            z->p++;
             any = 1;
             continue;
         }
@@ -3613,6 +3717,14 @@ void ar_sheet_begin_ua(ar_sheet *sheet)
     if (sheet)
     {
         sheet->in_ua = 1;
+    }
+}
+
+void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on)
+{
+    if (sheet)
+    {
+        sheet->strict_lengths = (ar_u8)(on ? 1 : 0);
     }
 }
 

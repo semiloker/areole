@@ -1307,6 +1307,23 @@ typedef struct ar_sheet
        length of ar_ua_stylesheet and at no other time. */
     ar_u8 in_ua;
 
+    /*
+     * Whether a length in the sheets parsed from here on must carry its unit.
+     *
+     * `width: 100` is a hundred pixels in quirks mode and is *invalid* in
+     * standards, where the declaration is dropped and the width stays `auto`.
+     * A page with a doctype and a unitless width lays out one way in every
+     * browser, and this engine laid it out the other way.
+     *
+     * Off by default, and that is deliberate rather than lazy. An interface's
+     * stylesheet is not a document: it has no doctype to read a mode from,
+     * nobody validates it, and `gap: 8` there is what somebody meant. Only
+     * ar_doc_stylesheets turns this on, and only for a document whose doctype
+     * asked for standards mode -- so the strictness lands exactly where the
+     * distinction is observable and nowhere else.
+     */
+    ar_u8 strict_lengths;
+
     /* Every track list every rule in this sheet declared, laid end to end.
        See the comment beside AR_P_GRID_COLS. */
     ar_track *tracks;
@@ -1506,6 +1523,10 @@ void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classe
  * `set - important` and then `important` in cascade order.
  */
 int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule);
+
+/* Whether lengths in the sheets parsed from here on must carry their unit.
+   See ar_sheet.strict_lengths. */
+void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
                                  const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,

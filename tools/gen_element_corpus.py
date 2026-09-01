@@ -115,7 +115,7 @@ static const ar__case CASES[] = {
 
 int main(int argc, char **argv)
 {
-    return ar__corpus_main(argc, argv, CASES, CASE_N, "user-agent stylesheet", "ar_elements");
+    return ar__corpus_main(argc, argv, CASES, CASE_N, "user-agent stylesheet", "ar_elements",\n                           0);
 }
 ''' % (PROPS, BODY)
 

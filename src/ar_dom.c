@@ -696,13 +696,54 @@ static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
     return found;
 }
 
+/*
+ * The user-agent rules that apply only in quirks mode.
+ *
+ * One rule, and it is not a curiosity. A `<table>` in quirks mode does not
+ * inherit the font its container set: a page that says `body { font-size:30px }`
+ * gets a table at sixteen, which is what browsers did before CSS and still do
+ * for a document that asks for quirks. A page written that way and rendered
+ * with the table inherited is wrong everywhere there is a table, which on the
+ * old web is most pages.
+ *
+ * `font-family` belongs here too and is missing because there is no such
+ * property yet.
+ */
+static const char AR__QUIRKS_CSS[] = "table { font-size:16px; }";
+
 ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d)
 {
     if (!c || !d || d->node_count == 0)
     {
         return 0;
     }
-    return ar__collect_styles(c, d, 0);
+
+    /*
+     * The doctype decides two things about how the page's own stylesheets are
+     * read, and both are decided here because here is the first moment both
+     * the document and the sheets are in hand.
+     *
+     * The quirks rules are bracketed as the user agent's so they sort into the
+     * user-agent band -- above nothing and below everything the page says,
+     * which is where a default belongs. Written after the main sheet rather
+     * than inside it because the mode is not known when that one is loaded.
+     */
+    if (d->quirks == AR_QUIRKS_YES)
+    {
+        ar_sheet_begin_ua(&c->sheet);
+        ar_stylesheet(c, AR__QUIRKS_CSS);
+        ar_sheet_mark_ua(&c->sheet);
+    }
+    ar_sheet_set_strict_lengths(&c->sheet, d->quirks != AR_QUIRKS_YES);
+
+    {
+        ar_i32 n = ar__collect_styles(c, d, 0);
+
+        /* Back to lenient, so the next thing parsed -- an interface's sheet,
+           another document's -- is not styled by this document's doctype. */
+        ar_sheet_set_strict_lengths(&c->sheet, 0);
+        return n;
+    }
 }
 
 /* ------------------------------------------------------------------------

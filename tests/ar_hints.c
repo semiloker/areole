@@ -118,5 +118,5 @@ static const ar__case CASES[] = {
 
 int main(int argc, char **argv)
 {
-    return ar__corpus_main(argc, argv, CASES, CASE_N, "presentational hints", "ar_hints");
+    return ar__corpus_main(argc, argv, CASES, CASE_N, "presentational hints", "ar_hints", 0);
 }
