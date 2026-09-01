@@ -615,6 +615,21 @@ enum
      */
     AR_DISPLAY_CONTENTS,
 
+    /*
+     * `display: list-item`: a block box that also generates a marker.
+     *
+     * The box is the whole of it here. A marker needs `list-style`, `::marker`
+     * and counters, which are 0.5.3 -- so an `<li>` lays out exactly as a
+     * block and shows no bullet, which is what it did before this value
+     * existed. What the value buys is that it is no longer a *lie*: `<li>` and
+     * `<summary>` are list items in every browser and were `block` here, and a
+     * corpus that compares computed values against one said so.
+     *
+     * After AR_DISPLAY_CONTENTS so the table-internal range above stays
+     * contiguous -- that range is compared as a range in three places.
+     */
+    AR_DISPLAY_LIST_ITEM,
+
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };

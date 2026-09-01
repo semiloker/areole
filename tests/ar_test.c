@@ -14717,6 +14717,146 @@ static void test_a_legacy_length_is_pixels_or_a_percentage_or_nothing(void)
     }
 }
 
+static void test_a_document_reads_at_sixteen_pixels(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * areole's own default font-size is eight -- one face height, meaning
+     * scale 1 -- because areole began as a UI library where that is the useful
+     * size. A document is not a UI, and every browser's root is sixteen.
+     *
+     * The two numbers were each internally consistent and wrong together.
+     * `h1 { font-size:32px }` in the user-agent sheet was chosen to be twice a
+     * browser's root; against a root of eight it was *four* times the body
+     * text. Every heading on every page was too big by a factor of two
+     * relative to the words under it, and nothing said so until a corpus asked
+     * a browser what the numbers should be.
+     *
+     * In the sheet rather than in ar_style_defaults, which is the whole point:
+     * a document gets sixteen and an interface that never asks for the sheet
+     * still gets eight.
+     */
+    ar__render_html(&s, "<html><body><p>t</p><h1>h</h1></body></html>", 0);
+    {
+        ar_i32 p = ar__first_tag("p");
+        ar_i32 h = ar__first_tag("h1");
+
+        CHECK(ar__box_style(p)->v[AR_P_FONT_SIZE] == 16,
+              "ua: a document's text is sixteen pixels, as a browser's is");
+        CHECK(ar__box_style(h)->v[AR_P_FONT_SIZE] == 2 * ar__box_style(p)->v[AR_P_FONT_SIZE],
+              "ua: and a first-level heading is twice it, not four times");
+    }
+
+    /* And an interface, which never loads the sheet, still gets eight. */
+    ar__ui_reset("#root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box_style(1)->v[AR_P_FONT_SIZE] == 8,
+          "ua: an interface that never asks for the sheet keeps its own default");
+}
+
+static void test_the_elements_the_corpus_found(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Six defaults that were wrong, each found by asking a browser rather than
+     * by reading the specification -- which is the argument for the corpus in
+     * tests/ar_elements.c and not for these checks, since a check can only ask
+     * what somebody already thought to ask.
+     *
+     * They are here because each is a rule a later edit could quietly undo,
+     * and because two of them were wrong in a way that looked right: `dfn` and
+     * `hgroup` both *had* rules, and both were in a selector list that gave
+     * them something they should not have had.
+     */
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<dfn>a</dfn><hgroup>b</hgroup><noscript>c</noscript>"
+                    "<ul><li>d</li></ul>"
+                    "<table><thead><tr><td>e</td></tr></thead>"
+                    "<tfoot><tr><td>f</td></tr></tfoot></table>"
+                    "</body></html>",
+                    0);
+    {
+        /* `dfn` was in a rule for its slant and in none for its display, so it
+           fell to the initial one: a defined term was a flex container in the
+           middle of a sentence. */
+        CHECK(ar__box_style(ar__first_tag("dfn"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+              "ua: a defined term is inline, not a flex container");
+        /* `hgroup` shared `pre`'s selector list and took its margins with it.
+           It contributes nothing of its own in any browser. */
+        CHECK(ar__box_style(ar__first_tag("hgroup"))->v[AR_P_MARGIN_TOP] == 0,
+              "ua: a heading group adds no margin of its own");
+        /* Hidden only when scripting is *enabled*, and there is none here at
+           all -- so its content is the fallback that should be shown. This
+           engine had it backwards and hid the one thing written for a reader
+           with no script engine. */
+        CHECK(ar__box_style(ar__first_tag("noscript"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+              "ua: an engine with no scripting shows what noscript holds");
+        CHECK(ar__box_style(ar__first_tag("li"))->v[AR_P_DISPLAY] == AR_DISPLAY_LIST_ITEM,
+              "ua: a list item is a list item, which is a block that wants a marker");
+        /* Three groups, not one: a table that puts its footer first still
+           draws it last, which is the only reason the distinction exists. */
+        CHECK(ar__box_style(ar__first_tag("thead"))->v[AR_P_DISPLAY] ==
+                  AR_DISPLAY_TABLE_HEADER_GROUP,
+              "ua: a table head is a header group");
+        CHECK(ar__box_style(ar__first_tag("tfoot"))->v[AR_P_DISPLAY] ==
+                  AR_DISPLAY_TABLE_FOOTER_GROUP,
+              "ua: and a table foot is a footer group");
+    }
+}
+
+static void test_a_list_item_lays_out_as_a_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The value is new and the behaviour is not: `display: list-item` is a
+     * block box that also draws a marker, and the marker is 0.5.3's. Every
+     * question the layout asks -- does it stack, does it take the width, does
+     * it collapse margins -- has the same answer for both, and `ar_is_block`
+     * is the one place that has to say so.
+     *
+     * Two items in a row would be a flex line and are not; they are two lines.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".i { display:list-item; }"
+                 ".k { display:block; width:20px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.i"); /* 1 */
+    ar_begin(g_ui, "div.k"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.k"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == ar__box(0).w,
+          "list-item: takes the width of its container, as a block does");
+    /*
+     * And its *children* stack, which is the half that ar_is_block decides.
+     *
+     * A box this engine does not recognise as a block is a flex container --
+     * that is the initial display -- so its two children would sit side by
+     * side. Checking the item's own rectangle does not catch that: the item
+     * is inside a block either way and stacks either way. The first version
+     * of this check tested the wrong box and stayed green when the rule was
+     * taken out.
+     */
+    CHECK(ar__box(3).y == ar__box(2).y + ar__box(2).h,
+          "list-item: and what is inside it stacks, so it is a block box");
+    CHECK(ar__box(3).x == ar__box(2).x, "list-item: rather than a flex line");
+}
+
 static void test_the_style_attribute_reaches_the_box(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -15110,11 +15250,13 @@ static void test_a_table_from_markup_uses_the_table_model(void)
         ar_i32 cells[8];
         ar_i32 n = 0;
 
+        /* Found by what they are rather than by how big they are. Sized 40
+           by 10 was the first version, and it stopped finding anything the
+           day the user-agent sheet gave documents a 16px root: a cell is as
+           tall as the words in it, and the words got taller. */
         for (i = 0; i < ar_node_count(g_ui) && n < 8; ++i)
         {
-            ar_rect r = ar_node_rect(g_ui, i);
-
-            if (r.w == 40 && r.h == 10)
+            if (g_ui->nodes[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_CELL)
             {
                 cells[n++] = i;
             }
@@ -17954,6 +18096,9 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_a_document_reads_at_sixteen_pixels();
+    test_the_elements_the_corpus_found();
+    test_a_list_item_lays_out_as_a_block();
     test_the_style_attribute_reaches_the_box();
     test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author();
     test_a_style_attribute_beats_a_hint_on_the_same_element();

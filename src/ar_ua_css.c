@@ -89,7 +89,23 @@ static const char *const AR__UA[] = {
      * overrides `html`, which now works because there is something to
      * override.
      */
-    "html { display:block; background:#ffffff; }"
+    /*
+     * Sixteen pixels, which is every browser's default and the number this
+     * whole sheet was written against.
+     *
+     * areole's own default is eight -- one face height, meaning scale 1 --
+     * because areole began as a UI library where that is the useful size. A
+     * document is not a UI: `h1 { font-size:32px }` here was chosen to be
+     * twice a browser's root, and against a root of eight it was four times
+     * the body text instead of twice. Every heading on every page was too big
+     * by a factor of two relative to the words under it, and nothing said so
+     * because both numbers were internally consistent.
+     *
+     * In the user-agent sheet rather than in ar_style_defaults, so it reaches
+     * documents and leaves interfaces alone: an ar_begin tree that never asks
+     * for this sheet still gets eight.
+     */
+    "html { display:block; background:#ffffff; font-size:16px; }"
     "body { display:block; margin:8px; }",
 
     "head, style, script, title { display:none; }"
@@ -100,7 +116,11 @@ static const char *const AR__UA[] = {
     "aside, nav, header, footer { display:block; }",
 
     "main, figure, figcaption, blockquote { display:block; }"
-    "pre, address, hgroup, dl { display:block; }",
+    "pre, address, hgroup, dl { display:block; }"
+    /* `hgroup` groups a heading with its subtitle and adds nothing of its
+       own -- it was taking `pre`'s margins because it shares that rule's
+       selector list and nothing said otherwise. */
+    "hgroup { margin:0px; }", /* and nothing later takes it back */
 
     "dd, dt, form, fieldset { display:block; }",
 
@@ -118,6 +138,16 @@ static const char *const AR__UA[] = {
     "h1 { display:block; font-size:32px; margin:21px 0px; font-weight:bold; }"
     "h2 { display:block; font-size:24px; margin:20px 0px; font-weight:bold; }"
     "h3 { display:block; font-size:19px; margin:18px 0px; font-weight:bold; }",
+
+    /*
+     * The four elements whose whole purpose is a relative size, in pixels at
+     * a 16px root for the same reason the headings are: `big` is 1.2em and
+     * the other three are 0.8125em, which come to 19.2 and 13.33. Rounded,
+     * because there are no fractions here -- inside the pixel the corpus
+     * allows, and wrong at any other root.
+     */
+    "big { font-size:19px; }"
+    "small, sub, sup { font-size:13px; }",
 
     "h4 { display:block; font-size:16px; margin:21px 0px; font-weight:bold; }"
     "h5 { display:block; font-size:13px; margin:22px 0px; font-weight:bold; }"
@@ -140,13 +170,18 @@ static const char *const AR__UA[] = {
     "b, strong, th { font-weight:bold; }"
     "i, em, cite, var { font-style:italic; }",
 
+    /* `dfn` is here for its slant and was nowhere for its display, so it
+       fell to the initial one and a defined term was a flex container in the
+       middle of a sentence. `legend` is not bold in any browser; `optgroup`
+       is. */
     "dfn, address { font-style:italic; }"
-    "optgroup, legend { font-weight:bold; }",
+    "dfn { display:inline; }"
+    "optgroup { font-weight:bold; }",
 
     /* Lists. No markers: `list-style` and `::marker` are 0.5.3, so these
        indent and show nothing. */
     "ul, ol, menu { display:block; margin:16px 0px; padding-left:40px; }"
-    "li { display:block; }",
+    "li { display:list-item; }",
 
     /* Inline content, in fours. */
     "span, a, b, i { display:inline; }"
@@ -161,7 +196,12 @@ static const char *const AR__UA[] = {
     /* The table model, which areole has had since 0.7.0 and which is the whole
        reason a document's tables lay out at all. */
     "table { display:table; border-spacing:2px; }"
-    "thead, tbody, tfoot { display:table-row-group; }"
+    /* Three groups, not one. The header and footer groups have displays of
+       their own, and a table that puts its `<tfoot>` first still draws it
+       last -- which is the only reason the distinction exists. */
+    "tbody { display:table-row-group; }"
+    "thead { display:table-header-group; }"
+    "tfoot { display:table-footer-group; }"
     "tr { display:table-row; }",
 
     "td { display:table-cell; padding:1px; }"
@@ -183,7 +223,29 @@ static const char *const AR__UA[] = {
     /* Form controls, which have no appearance of their own until 0.10.1. They
        are given a display so they are not flex boxes, and nothing else. */
     "input, button, select, textarea { display:inline-block; }"
-    "output, progress, meter { display:inline-block; }",
+    "progress, meter { display:inline-block; }"
+    /* `output` is inline in every browser and was inline-block here only
+       because it shared a rule with two elements that are. */
+    "output { display:inline; }",
+
+    /*
+     * What a form control looks like is 0.10.1. What it *measures* is not,
+     * and a control two pixels narrower than a browser's puts every following
+     * word in the wrong place -- so the sizes and the padding are here and
+     * the appearance is not.
+     *
+     * 13px is the 13.33 a browser computes from its own font shorthand,
+     * rounded; `fieldset` is 12 of padding a side rather than the 10 that was
+     * guessed at.
+     */
+    /* Two rules, because AR_MAX_SEL_LIST is four and a list of six is
+       refused whole rather than truncated -- which is the trap this
+       file's own header warns about, and which caught the first
+       version of this rule and every rule after it in the same part. */
+    "input, button, select, textarea { font-size:13px; }"
+    "optgroup, option { font-size:13px; }"
+    "input, textarea, option { padding-left:2px; padding-right:2px; }"
+    "button { padding-left:6px; padding-right:6px; text-align:center; }"
 
     /*
      * ------------------------------------------------------------------
@@ -204,25 +266,59 @@ static const char *const AR__UA[] = {
 
     /* Block-level, in fours. `summary` is `list-item` in the specification and
        block here, because markers are 0.5.3. */
-    "details, summary, dialog, search { display:block; }"
+    "details, dialog, search { display:block; }"
+    "summary { display:list-item; }"
     "optgroup, option, legend, center { display:block; }",
 
     "xmp, listing, plaintext, marquee { display:block; }"
     "dir, frameset, noframes, fieldset { display:block; }",
+
+    /* `dir` is a list and has been since before `ul` replaced it; `marquee`
+       is inline-block; and a `dialog` that has not been opened is not
+       displayed at all, which is the only state this engine can be in until
+       there is something to open it. */
+    "dir { margin:16px 0px; padding-left:40px; }"
+    "marquee { display:inline-block; }"
+    "dialog { display:none; padding:16px; margin:auto; }",
 
     /* Inline-level. `del` and `ins` are the pair that showed the flex-box
        default: both are inline in every browser and neither had a rule. */
     "del, ins, strike, big { display:inline; }"
     "tt, bdi, bdo, data { display:inline; }",
 
-    "ruby, rt, rp, slot { display:inline; }"
+    /* A `slot` is transparent: it is not a box, its children are its
+       parent's. `display:contents` is exactly that and areole has had it
+       since 0.8.1. The three ruby elements have displays of their own that
+       this engine does not, and are inline until it does. */
+    "slot { display:contents; }"
+    /* `ruby`, `rt` and `rp` have displays of their own that this engine does
+       not have, and are inline until it does. The size is right even so: ruby
+       text is half the size of the text it annotates. */
+    "ruby, rt, rp { display:inline; }"
+    "rt { font-size:8px; }"
     "map, canvas, video, audio { display:inline; }",
 
     "iframe, embed, object, picture { display:inline; }",
 
     /* Drawn by nobody: metadata, and elements whose content is not rendered. */
-    "template, datalist, param, track { display:none; }"
-    "source, area, frame, noscript { display:none; }",
+    "template, datalist, param { display:none; }"
+    /*
+     * Three of those four are not `none`, and a browser says so.
+     *
+     * `area` computes to `inline` -- it is rendered as part of an image map
+     * rather than as a box, but the element itself is an ordinary inline one
+     * and nothing in html.css hides it. `source` and `track` are the same:
+     * inside a media element a browser builds no style for them at all, and
+     * outside one they are inline like anything else.
+     *
+     * `noscript` is the interesting one. It is hidden only when scripting is
+     * *enabled*, and there is no scripting here at all -- so its content is
+     * the fallback that should be shown, which is what `inline` means. This
+     * engine had it backwards and hid the one thing written for a reader
+     * without a script engine.
+     */
+    "area, source, track, noscript { display:inline; }"
+    "frame { display:none; }",
 
     /*
      * Margins the block rules above gave a display but no box.
@@ -231,7 +327,12 @@ static const char *const AR__UA[] = {
      * against the paragraph before it. `pre` and its three legacy spellings
      * are the same shape.
      */
-    "dl, hgroup { margin:16px 0px; }"
+    /* `hgroup` is not in this rule. It groups a heading with its subtitle
+       and contributes nothing of its own -- no margin, in any browser --
+       and it was here only because it shares a selector list with `dl`
+       further up the sheet. Adding `hgroup { margin:0 }` above this line
+       did nothing, which is what a sheet resolved in source order does. */
+    "dl { margin:16px 0px; }"
     "pre, xmp, listing, plaintext { margin:16px 0px; }",
 
     /*
@@ -247,7 +348,7 @@ static const char *const AR__UA[] = {
        is a border rather than a margin. The specification's border is
        `2px groove`; per-side widths and border styles are not implemented, so
        this is a flat two pixels and says so. */
-    "fieldset { margin:0px 2px; padding:5px 10px 10px 10px;"
+    "fieldset { margin:0px 2px; padding:6px 12px 10px 12px;"
     "           border-width:2px; border-color:#c0c0c0; }"
     "legend { padding-left:2px; padding-right:2px; }",
 

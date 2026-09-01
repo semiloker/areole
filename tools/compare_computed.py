@@ -71,7 +71,6 @@ def load(path):
                 continue
             prop, _, value = line.partition(' ')
             cases.append((cur, prop.strip(), norm(value)))
-            cur = None
     return cases
 
 
@@ -86,6 +85,25 @@ ALIAS = {
 def norm(s):
     s = re.sub(r'\s+', ' ', s).strip()
     return ALIAS.get(s, s)
+
+
+PX = re.compile(r'^(-?\d+(?:\.\d+)?)px$')
+
+# What "the same" means for a length, and it is not "the same string".
+#
+# 0.9.1's first acceptance criterion says a pixel, and a browser computes in
+# fractions: `h1 { margin: 0.67em 0 }` at a 16px root is 21.44px, and this
+# engine has no fraction to put it in. A pixel of tolerance is the criterion,
+# not a convenience -- and it is only ever applied to two values that are both
+# lengths, so `auto` and `0px` still disagree.
+TOLERANCE_PX = 1.0
+
+
+def same(mine, theirs):
+    if mine == theirs:
+        return True
+    a, b = PX.match(mine), PX.match(theirs)
+    return bool(a and b) and abs(float(a.group(1)) - float(b.group(1))) <= TOLERANCE_PX
 
 
 def main(argv):
@@ -111,7 +129,7 @@ def main(argv):
         return 2
 
     a = load(argv[1])
-    b = dict((case, (prop, value)) for case, prop, value in load(argv[2]))
+    b = dict(((case, prop), value) for case, prop, value in load(argv[2]))
 
     if not b:
         print('THE BROWSER PRODUCED NOTHING -- this is not a pass.')
@@ -123,34 +141,32 @@ def main(argv):
     differ = []
     missing = []
     for case, prop, value in a:
-        if case not in b:
+        if (case, prop) not in b:
             missing.append((case, prop))
             continue
-        b_prop, b_value = b[case]
-        if b_prop != prop:
-            differ.append((case, prop, value, '(the twin reported %s)' % b_prop))
-        elif b_value == value:
-            agree.append(case)
+        b_value = b[(case, prop)]
+        if same(value, b_value):
+            agree.append((case, prop))
         else:
             differ.append((case, prop, value, b_value))
 
-    print('cases in areole : %d' % len(a))
-    print('matched by name : %d' % (len(a) - len(missing)))
+    print('values in areole : %d' % len(a))
+    print('matched by name  : %d' % (len(a) - len(missing)))
     print()
 
     if missing:
         print('IN AREOLE, NOT IN THE TWIN (%d)' % len(missing))
-        for case, prop in missing:
+        for case, prop in missing[:40]:
             print('  %-40s %s' % (case, prop))
         print()
 
     if differ:
         print('DISAGREE (%d)' % len(differ))
-        for case, prop, mine, theirs in differ:
-            print('  %-40s %-18s areole %-22s browser %s' % (case, prop, mine, theirs))
+        for case, prop, mine, theirs in differ[:120]:
+            print('  %-28s %-16s areole %-22s browser %s' % (case, prop, mine, theirs))
         print()
     else:
-        print('all agree exactly')
+        print('all agree')
         print()
 
     print('%d of %d agree' % (len(agree), len(a)))

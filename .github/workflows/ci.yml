@@ -222,6 +222,24 @@ jobs:
           ./build/ar_hints.exe --html > /tmp/hints.html
           diff -u tests/hints.html /tmp/hints.html
 
+      # 0.9.1 acceptance criterion 1: every element's defaults. Same split as
+      # the hints corpus -- the browser half runs locally, the dump and the
+      # twin's freshness run here. The twin is generated from the selectors in
+      # src/ar_ua_css.c, so an element added to the sheet and not to the corpus
+      # fails this step rather than going unchecked.
+      - name: User-agent stylesheet dumps
+        run: ./build/ar_elements.exe > /dev/null
+
+      - name: The element corpus is generated from the sheet
+        run: |
+          python tools/gen_element_corpus.py
+          git diff --exit-code tests/ar_elements.c
+
+      - name: The element twin is up to date
+        run: |
+          ./build/ar_elements.exe --html > /tmp/elements.html
+          diff -u tests/elements.html /tmp/elements.html
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,
