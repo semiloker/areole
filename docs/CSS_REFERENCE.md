@@ -152,6 +152,34 @@ a pass after the cached one, so a combinator rule beats a simple rule of higher
 specificity. `#id .btn` and `.btn#id` are not the trap; `.panel .btn` beating
 `#the-button` is.
 
+## Where a stylesheet comes from
+
+`ar_stylesheet(ui, css)` for one you have in hand, and for a document
+`ar_doc_stylesheets(ui, doc)`, which walks it and reads every `<style>` in
+document order -- because that order is the cascade.
+
+**`<link rel=stylesheet>` needs you.** areole does no networking and no file
+IO, in this release or any other, so an external sheet is the one thing a
+document can ask for that the library cannot go and get:
+
+```c
+static const char *load(void *user, const char *href) { ... }   /* or null */
+ar_set_stylesheet_loader(ui, load, 0);
+```
+
+The loader is called once per link, in document order, interleaved with the
+`<style>` elements around it. `href` is exactly what the attribute said and is
+not resolved -- a relative one is relative to the document you handed over,
+which you know and this does not. Return null for a link you cannot or will not
+fetch; `ar_doc_links_skipped(ui)` counts those, because a page whose design is
+in one external sheet renders as unstyled text whether the sheet was declined
+or never existed, and that is the first question anyone asks.
+
+`rel` is matched as HTML defines it: a case-insensitive list of keywords, so
+`StyleSheet` counts and `icon` does not. `alternate stylesheet` is a stylesheet
+and is still not loaded -- it is one the reader may choose, and nothing has
+chosen it.
+
 ## Properties
 
 ### Layout

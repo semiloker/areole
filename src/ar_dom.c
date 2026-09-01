@@ -664,10 +664,96 @@ void ar_dom_build(ar_ctx *c, ar_doc *d)
  * the whole element in RAWTEXT -- so there is no reassembly to do here, which
  * there would be if `<` inside a stylesheet had been read as markup.
  *
- * Not handled: `<link rel=stylesheet>`, which needs a resource the embedder
- * has to fetch, and there is no networking here by design. The release
- * document gives that a callback and 0.9.1 is where it lands.
+ * `<link rel=stylesheet>` is handled too, through the callback the embedder
+ * sets with ar_set_stylesheet_loader. There is no networking and no file IO
+ * here, by design, so the bytes have to come from somebody who has them --
+ * and a link with no loader behind it is counted rather than ignored.
  */
+/*
+ * Whether this `rel` names a stylesheet.
+ *
+ * A space-separated list of keywords, matched case-insensitively, because
+ * `rel="stylesheet"` and `rel="STYLESHEET"` and `rel="alternate stylesheet"`
+ * are all in real markup and the first two mean the same thing. The third does
+ * not -- an alternate sheet is one the reader may choose and is not applied
+ * until they do -- so it is refused rather than loaded.
+ */
+static int ar__rel_is_stylesheet(ar_span rel)
+{
+    ar_u32 i = 0;
+    int    saw_sheet = 0;
+    int    saw_alt = 0;
+
+    while (i < rel.n)
+    {
+        ar_u32 start;
+
+        while (i < rel.n && ar__space(rel.p[i]))
+        {
+            ++i;
+        }
+        start = i;
+        while (i < rel.n && !ar__space(rel.p[i]))
+        {
+            ++i;
+        }
+        if (i > start)
+        {
+            ar_span word;
+
+            word.p = rel.p + start;
+            word.n = i - start;
+            if (ar_span_is(word, "stylesheet"))
+            {
+                saw_sheet = 1;
+            }
+            else if (ar_span_is(word, "alternate"))
+            {
+                saw_alt = 1;
+            }
+        }
+    }
+    return saw_sheet && !saw_alt;
+}
+
+/*
+ * One `<link rel=stylesheet>`, handed to whoever can fetch it.
+ *
+ * Returns 1 if a sheet was parsed. A link with no loader, no href or a loader
+ * that declined is counted as skipped instead -- a number a caller can ask
+ * for, because a page whose design is in one external sheet renders as
+ * unstyled text either way and the difference matters.
+ */
+static int ar__collect_link(ar_ctx *c, const ar_doc *d, ar_i32 node)
+{
+    char        href[512];
+    ar_span     rel = ar__attr_of(d, node, "rel");
+    ar_span     h = ar__attr_of(d, node, "href");
+    const char *css;
+    ar_u32      used = 0;
+
+    if (!ar__rel_is_stylesheet(rel))
+    {
+        return 0; /* not a stylesheet link at all, so nothing was skipped */
+    }
+    if (!c->link_load || h.n == 0)
+    {
+        ++c->links_skipped;
+        return 0;
+    }
+    ar__put_span(href, &used, (ar_u32)sizeof href, h);
+    href[used] = 0;
+
+    css = c->link_load(c->link_user, href);
+    if (!css)
+    {
+        ++c->links_skipped;
+        return 0;
+    }
+    ar_stylesheet(c, css);
+    return 1;
+}
+
 static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
 {
     ar_i32 found = 0;
@@ -676,6 +762,13 @@ static ar_i32 ar__collect_styles(ar_ctx *c, const ar_doc *d, ar_i32 node)
     if (node < 0)
     {
         return 0;
+    }
+    if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "link"))
+    {
+        /* In the same walk as `<style>` and not in a pass of its own, because
+           the two interleave: `<link>` then `<style>` then `<link>` is three
+           sheets in that order, and the order is the cascade. */
+        return ar__collect_link(c, d, node);
     }
     if (d->nodes[node].kind == AR_DOM_ELEMENT && ar_span_is(d->nodes[node].name, "style"))
     {
@@ -728,6 +821,7 @@ ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d)
      * which is where a default belongs. Written after the main sheet rather
      * than inside it because the mode is not known when that one is loaded.
      */
+    c->links_skipped = 0;
     if (d->quirks == AR_QUIRKS_YES)
     {
         ar_sheet_begin_ua(&c->sheet);
