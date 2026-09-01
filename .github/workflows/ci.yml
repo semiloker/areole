@@ -253,6 +253,21 @@ jobs:
           ./build/ar_quirks.exe --html > /tmp/quirks.html
           diff -u tests/quirks.html /tmp/quirks.html
 
+      # 0.9.1 acceptance criterion 4: the gallery harness, end to end. The
+      # browser half needs a browser and runs locally like every other
+      # comparison; what runs here is the half that can, which is that every
+      # demo still renders and still draws exactly what was blessed. A change
+      # to any pixel of any demo fails this step until somebody blesses it on
+      # purpose.
+      - name: Every gallery demo renders
+        run: |
+          for f in $(find examples/gallery -name '*.html'); do
+            ./build/ar_gallery.exe "$f" --geometry > /dev/null || exit 1
+          done
+
+      - name: The gallery draws what was blessed
+        run: python tools/gallery.py run --all --golden-only --gate
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,

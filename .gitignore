@@ -23,3 +23,8 @@ docs/roadmap/
 # the odd throwaway script and they are not part of the repository.
 __pycache__/
 *.pyc
+
+# The gallery's blessed renders are hashes in examples/gallery/_golden.txt.
+# The images themselves are 1.4 MB each and are regenerated on demand.
+examples/gallery/_golden/
+docs/gallery/

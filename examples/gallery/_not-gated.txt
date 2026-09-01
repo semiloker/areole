@@ -1,0 +1,47 @@
+# Demos whose geometry is not gated, and why.
+#
+# One id per line, then a reason. A demo is on this list because something
+# other than layout decides its rectangles, and a gate that included it would
+# be red for a reason nobody can fix by fixing layout.
+#
+# Every line here is a debt, not an exemption. The reason is the thing to go
+# and remove.
+#
+# ------------------------------------------------------------------------
+# font: a box sized by text
+#
+# areole draws with its own face and Chrome with whatever `sans-serif` resolves
+# to on the machine, so any box whose width or height comes from the words in
+# it differs by the difference between two fonts. That is not layout and no
+# amount of layout work will close it.
+#
+# The gallery design says how to fix it -- rule 4, one permissively licensed
+# face bundled with the gallery as a data URI, loaded by both engines, so the
+# comparison measures rasterizers rather than font substitution. Nothing is
+# vendored yet, so nothing is bundled yet, and until it is these are reported
+# and not gated.
+#
+# The pixel numbers for these are still published, and they are the useful
+# half: a demo that goes from 4% to 40% has broken even though its geometry
+# was never gated.
+
+css/table/basic          font: cells are sized by their words
+css/table/collapse       font: cells are sized by their words
+css/table/colspan        font: cells are sized by their words
+css/table/spacing        font: cells are sized by their words
+css/table/widths         font: the second column is sized by its words
+css/text/align           font: every box here is a line of text
+css/text/font-size       font: every box here is a line of text
+css/text/line-height     font: the paragraph's height is its line count
+css/text/weight          font: bold and italic have their own advances
+css/text/wrap            font: where the line breaks decides the height
+html/elements/blockquote font: the quote is sized by its words
+html/elements/headings   font: six headings, all sized by their words
+html/elements/hr         font: the rule sits under a line of text
+html/elements/list       font: three items, all sized by their words
+html/elements/paragraph  font: two paragraphs, sized by their words
+html/elements/pre        font: monospace, and there is no font-family here yet
+html/hints/align         font: the centred line is sized by its words
+html/hints/bgcolor       font: cells are sized by their words
+html/hints/cellpadding   font: cells are sized by their words
+html/hints/width         font: the cell is sized by its words
