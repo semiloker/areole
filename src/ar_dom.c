@@ -462,10 +462,11 @@ static void ar__hint_align(char *buf, ar_u32 *used, ar_span v)
     {
         css = "center";
     }
-    else if (ar_span_is(v, "justify"))
-    {
-        css = "justify";
-    }
+    /* `justify` is left out on purpose. This engine has three text-align
+       values and that is not one of them, so writing it would be a
+       declaration the style parser refuses -- counted in the sheet's error
+       tally, which is what says whether a page's CSS is broken. The
+       attribute maps to nothing until the value exists. */
     if (css)
     {
         ar__put_str(buf, used, AR_DOM_HINTS, "text-align:");
