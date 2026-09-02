@@ -17,33 +17,43 @@
 # into TrueType, and every demo inlines it. Thirteen of the twenty-four went
 # green the moment both engines were drawing the same outlines.
 #
-# What is left is five real causes, each named below, and none of them is the
-# font any more. `css/text/line-height` came off this list a second time when
-# the line-box compounding below was fixed.
+# What is left is seven demos under five causes, each named below, and none of
+# them is the font any more. `css/text/line-height` came off a second time when
+# the line-box compounding was fixed, and three more came off when line boxes
+# got the strut they were missing.
 
-# ---- a line box has no strut -------------------------------------------
+# ---- fractional lines and fractional margins ---------------------------
 #
-# A browser's line box is at least as tall as the containing block's own font
-# would make it, whether or not any text is on that line -- the "strut". This
-# engine's line is only as tall as the tallest thing actually on it, so a line
-# holding one 30px inline-block is 30 tall where a browser gives 36, and the
-# last line of a paragraph is short by the font's descent.
+# A browser lays out in 1/64ths and rounds every number it reports on its own.
+# This engine is integers all the way down, so `line-height: 1.4` at 16px is
+# 22.4 there and 22 here: six lines of a paragraph are 134 and 132. The `em`
+# margins between headings are the same arithmetic from the other end -- h1
+# through h5 agree box for box, and by h6 the discarded fractions are worth two
+# whole pixels.
 #
-# It is a feature and not a bug: the arithmetic here is self-consistent and
-# every one of these is short by a fixed amount rather than wrong in a way that
-# compounds. That distinguishes it from what used to be on this list.
+# This is the residual the table corpus is also down to, and the only one on
+# this list that integer geometry cannot reach rather than merely has not
+# reached yet.
 #
-# (What used to be here -- a wrapped paragraph as many times too tall as it had
-# lines -- is fixed. A fragment took its height from `n->rect.h` while that
-# field was still being grown into the union of the fragments before it, so the
-# second line was two lines tall and the third was four. `css/text/line-height`
-# went green and `css/text/wrap` went from 24% of its pixels differing to 2%.)
+# (What used to be here: five demos with no strut. A browser's line box is at
+# least as tall as the containing block's own font would make it whether or not
+# any text is on it -- CSS 2.1 10.8.1, a zero-width inline box carrying the
+# block's font, whose ascent and descent join the maxima like any item's. This
+# engine's line was only as tall as the tallest thing actually on it, so a line
+# holding one inline-block was short by the font's descent, and so was the last
+# line of every paragraph. `css/display/inline-block`, `html/parsing/foreign-svg`
+# and `html/parsing/cdata` are green; the two below stayed for the reason above,
+# which was underneath the strut and is not the same thing.
+#
+# Finding it took a second fix, because the browser's number was wrong too. A
+# demo built out of empty boxes never puts a glyph on the page, a browser
+# fetches a web font only when a glyph needs one, and the browser was therefore
+# measuring its strut against whatever font it had found -- reporting 36 for a
+# line both engines put at 33. `_font.css` now carries one hidden character to
+# force the load, which is rule 4 enforced instead of assumed.)
 
-css/text/wrap            engine: no strut, so the last line is short by the font's descent
-css/display/inline-block engine: no strut, so a line holding only an inline-block is short by it
-html/parsing/foreign-svg engine: the svg is an inline-block on such a line
-html/parsing/cdata       engine: the svg is an inline-block on such a line
-html/elements/headings   engine: h6 alone, by two pixels, from the same missing strut
+css/text/wrap            engine: integer line boxes, so six lines of 22.4px are 132 and not 134
+html/elements/headings   engine: integer `em` margins, accumulating to two pixels by h6
 
 # ---- there is one face, and it is neither bold nor italic ---------------
 #
