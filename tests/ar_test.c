@@ -715,9 +715,18 @@ static void test_perf_overlay_draws_and_clips(void)
 static ar_rule  g_rules[64];
 static ar_sheet g_sheet;
 
-static void ar__sheet(const char *css)
+static ar_mq g_queries[16];
+static char  g_qtext[512];
+
+static void ar__sheet_reset(void)
 {
     ar_sheet_init(&g_sheet, g_rules, 64);
+    ar_sheet_set_queries(&g_sheet, g_queries, 16, g_qtext, 512);
+}
+
+static void ar__sheet(const char *css)
+{
+    ar__sheet_reset();
     ar_sheet_parse(&g_sheet, css);
 }
 
@@ -729,7 +738,7 @@ static void ar__sheet_at(const char *css, ar_i32 w, ar_i32 h, ar_i32 res)
     m.width = w;
     m.height = h;
     m.resolution = res;
-    ar_sheet_init(&g_sheet, g_rules, 64);
+    ar__sheet_reset();
     ar_sheet_set_media(&g_sheet, &m);
     ar_sheet_parse(&g_sheet, css);
 }
@@ -1200,6 +1209,84 @@ static void test_media_queries_answer_from_the_window(void)
     ar__sheet_at("@media (min-width: 9999px) { .a { width: 5px; } } .b { width: 42px; }", 800, 600,
                  1000);
     CHECK(ar__css_value(".b", 0, AR_P_WIDTH) == 42, "media: the sheet carries on past a false one");
+}
+
+/* Resizes the window and answers the queries again, as a frame would. */
+static void ar__resize(ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    ar_media m;
+
+    m.width = w;
+    m.height = h;
+    m.resolution = res;
+    ar_sheet_set_media(&g_sheet, &m);
+}
+
+/*
+ * A resize re-evaluates the queries it could have moved, and no others.
+ *
+ * The rules a false query guards are stored rather than dropped, which is the
+ * only way a resize can turn them on without parsing the stylesheet again --
+ * and parsing again is not an option, because a window drag would do it sixty
+ * times a second.
+ *
+ * The counter is the evidence. Without it "only the affected queries" is a
+ * claim nobody can check, which is the same as not being true.
+ */
+static void test_a_resize_re_evaluates_only_what_moved(void)
+{
+    ar_u32 after_parse;
+    ar_u32 before;
+
+    ar__sheet_at("@media (min-width: 600px) { .w { width: 5px; } }"
+                 "@media (prefers-color-scheme: light) { .c { width: 6px; } }"
+                 "@media (min-height: 400px) { .h { width: 7px; } }",
+                 400, 300, 1000);
+    after_parse = g_sheet.queries_evaluated;
+    CHECK(after_parse == 3, "resize: each query is answered once as it is parsed");
+
+    /* Narrow and short: the width and height queries are false. */
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) != 5, "resize: a false query holds its rules back");
+    CHECK(ar__css_value(".c", 0, AR_P_WIDTH) == 6, "resize: a true one lets them through");
+
+    /* Wider, and the rule appears without the sheet being parsed again. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 300, 1000);
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) == 5,
+          "resize: the guarded rule was kept, not dropped");
+    CHECK(ar__css_value(".h", 0, AR_P_WIDTH) != 7, "resize: and the height query did not move");
+
+    /* Only the queries that name width could have changed: the two that do
+       not mention it are not asked again. */
+    CHECK(g_sheet.queries_evaluated == before + 1,
+          "resize: only the query naming the feature that changed is re-evaluated");
+
+    /* Taller, and the other one turns on. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 600, 1000);
+    CHECK(ar__css_value(".h", 0, AR_P_WIDTH) == 7, "resize: height, the same way");
+    CHECK(g_sheet.queries_evaluated == before + 1, "resize: and again only the one that moved");
+
+    /* A frame where nothing moved costs nothing at all, which is what makes
+       this safe to call from ar_frame_begin every frame. */
+    before = g_sheet.queries_evaluated;
+    ar__resize(800, 600, 1000);
+    CHECK(g_sheet.queries_evaluated == before, "resize: an unchanged window asks nothing");
+
+    /* Narrow again, and the rule goes away. */
+    ar__resize(400, 600, 1000);
+    CHECK(ar__css_value(".w", 0, AR_P_WIDTH) != 5, "resize: and it turns off again");
+
+    /* Nesting: a rule inside two queries needs both, and the inner one is
+       stored after the outer so the outer's answer is settled first. */
+    ar__sheet_at("@media (min-width: 600px) { @media (min-height: 400px) {"
+                 " .both { width: 9px; } } }",
+                 800, 300, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) != 9, "resize: nested, the inner one false");
+    ar__resize(800, 600, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) == 9, "resize: nested, both true");
+    ar__resize(400, 600, 1000);
+    CHECK(ar__css_value(".both", 0, AR_P_WIDTH) != 9, "resize: nested, the outer one false");
 }
 
 /* The parser must terminate on any input at all.
@@ -18651,6 +18738,7 @@ int main(void)
     test_an_at_rule_is_skipped_whole();
     test_supports_asks_the_parser();
     test_media_queries_answer_from_the_window();
+    test_a_resize_re_evaluates_only_what_moved();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();

@@ -229,6 +229,7 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
         return 0;
     }
     ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
+    c->media_resolution = 1000;
 
     {
         ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
@@ -251,6 +252,21 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
             return 0;
         }
         ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
+    }
+
+    {
+        /* Where `@media` preludes live. Persistent and given here rather than
+           left to the caller, because a sheet without it refuses every
+           guarded rule -- correct, and not a thing to discover in a page. */
+        ar_mq *queries =
+            (ar_mq *)ar_arena_persist(&c->arena, AR_QUERY_POOL * (ar_u32)sizeof(ar_mq));
+        char *qtext = (char *)ar_arena_persist(&c->arena, AR_QUERY_TEXT);
+
+        if (!queries || !qtext)
+        {
+            return 0;
+        }
+        ar_sheet_set_queries(&c->sheet, queries, AR_QUERY_POOL, qtext, AR_QUERY_TEXT);
     }
 
     /*
@@ -1978,6 +1994,14 @@ ar_i32 ar_node_child_index(const ar_ctx *c, ar_i32 i)
 /* ------------------------------------------------------------------------
  * Frame
  * ------------------------------------------------------------------------ */
+void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths)
+{
+    if (c && dppx_thousandths > 0)
+    {
+        c->media_resolution = dppx_thousandths;
+    }
+}
+
 void ar_frame_begin(ar_ctx *c, const ar_input *in)
 {
     ar_u32 room;
@@ -1994,6 +2018,27 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     c->frame++;
 
     ar_damage_reset(&c->damage);
+
+    /*
+     * Media queries are answered against the window the last frame was drawn
+     * into, because that is the most recent size this engine has been told.
+     * Style resolves in ar_begin, so the answer has to be settled before the
+     * boxes are declared and the surface for *this* frame is not known until
+     * ar_frame_end -- one frame behind on the frame a resize happens, and
+     * correct from the next. A caller that cannot live with that calls
+     * ar_set_media itself.
+     *
+     * Cheap when nothing moved: ar_sheet_set_media compares before it does
+     * anything, and re-evaluates only the queries whose features changed.
+     */
+    {
+        ar_media m;
+
+        m.width = c->last_viewport.w;
+        m.height = c->last_viewport.h;
+        m.resolution = c->media_resolution;
+        ar_sheet_set_media(&c->sheet, &m);
+    }
 
     c->mouse_x = in ? in->mouse_x : -1;
     c->mouse_y = in ? in->mouse_y : -1;

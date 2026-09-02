@@ -1150,6 +1150,29 @@ typedef struct ar_sel_part
     ar_u8      comb; /* how this part reaches the one to its right */
 } ar_sel_part;
 
+/*
+ * One `@media` prelude, kept so a resize does not need the sheet parsed again.
+ *
+ * `at` and `len` point into the sheet's own copy of the text, because the
+ * stylesheet a caller handed to ar_sheet_parse is not required to outlive the
+ * sheet and nothing else here retains a pointer into it.
+ *
+ * `used` is which parts of ar_media the query actually consulted. That is what
+ * makes a resize cheap: a query that named only `prefers-color-scheme` cannot
+ * have changed its answer because the window got wider, and is not asked
+ * again. `parent` chains a nested block to the one around it, so a rule inside
+ * two queries is guarded by both without storing the pair.
+ */
+typedef struct ar_mq
+{
+    ar_u16 at;
+    ar_u16 len;
+    ar_u16 parent; /* 1-based; 0 means top level */
+    ar_u32 used;
+    ar_u8  result; /* this query alone            */
+    ar_u8  active; /* and every query outside it  */
+} ar_mq;
+
 typedef struct ar_rule
 {
     ar_u32     tag; /* hash, 0 means any */
@@ -1188,7 +1211,13 @@ typedef struct ar_rule
      * type selector and is parsed first, so it already lost every tie. What it
      * buys is the boundary.
      */
-    ar_u8   origin;
+    ar_u8 origin;
+
+    /* Which `@media` guards this rule: 1-based into the sheet's query table,
+       0 for a rule no query guards. A guarded rule is stored whatever the
+       query says right now, because a resize can turn it on. */
+    ar_u16 query;
+
     ar_pset set; /* which properties this rule sets */
 
     /* Which of them were marked !important. Per declaration rather than per
@@ -1270,6 +1299,12 @@ typedef struct ar_track
 /* A pool entry that is a header rather than a track: `min_v` is how many
    tracks follow it. Index 0 is never a header, so zero means "no list". */
 #define AR_TRACK_POOL 512
+
+/* Every `@media` prelude in every stylesheet, and the bytes to keep them in.
+   Both are small because a prelude is short and a sheet has few: the whole of
+   the user-agent stylesheet has none at all. */
+#define AR_QUERY_POOL 64
+#define AR_QUERY_TEXT 2048
 
 /*
  * `grid-template-rows: subgrid`, as a sentinel in the slot that holds a pool
@@ -1370,6 +1405,13 @@ typedef struct ar_sheet
     ar_media media;
     ar_u32   queries_evaluated;
 
+    ar_mq *queries;
+    ar_u16 query_count;
+    ar_u16 query_cap;
+    char  *qtext;
+    ar_u16 qtext_used;
+    ar_u16 qtext_cap;
+
     ar_u32 errors;
 
     /*
@@ -1446,6 +1488,14 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
  * sets it first; a caller outside the tree has to.
  */
 void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media);
+
+/*
+ * Where `@media` preludes are kept. Without it a guarded rule is refused, so
+ * a sheet with no query storage behaves as though every query were false --
+ * which is stated here because the alternative is discovering it in a page.
+ */
+void ar_sheet_set_queries(ar_sheet *sheet, ar_mq *storage, ar_u16 capacity, char *text,
+                          ar_u16 text_capacity);
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);
 void ar_sheet_cache_clear(ar_sheet *sheet);
 void ar_sheet_parse(ar_sheet *sheet, const char *css);
