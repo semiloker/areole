@@ -721,6 +721,19 @@ static void ar__sheet(const char *css)
     ar_sheet_parse(&g_sheet, css);
 }
 
+/* The same, against a window of a stated size and scale. */
+static void ar__sheet_at(const char *css, ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    ar_media m;
+
+    m.width = w;
+    m.height = h;
+    m.resolution = res;
+    ar_sheet_init(&g_sheet, g_rules, 64);
+    ar_sheet_set_media(&g_sheet, &m);
+    ar_sheet_parse(&g_sheet, css);
+}
+
 /* Resolves for a box described the way ar_begin will describe one. */
 static ar_style ar__resolve(const char *selector, ar_u8 state)
 {
@@ -993,10 +1006,10 @@ static void test_an_at_rule_is_skipped_whole(void)
     CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
           "at-rule: and the rule after the block still parses");
 
-    /* Two levels. Both are `@media`, which is not evaluated yet and so is
-       skipped whole; the sibling sits outside the inner block and inside the
-       outer one, which is exactly what a brace count gets wrong. */
-    ar__sheet("@media screen { @media print { .deep { width: 7px; } }"
+    /* Two levels of an at-rule nothing understands, so both are skipped
+       whole. The sibling sits outside the inner block and inside the outer
+       one, which is exactly what a scan for the first brace gets wrong. */
+    ar__sheet("@unknown screen { @unknown print { .deep { width: 7px; } }"
               " .sibling { width: 8px; } }"
               ".after { width: 42px; }");
     CHECK(ar__css_value(".sibling", 0, AR_P_WIDTH) != 8,
@@ -1086,6 +1099,107 @@ static void test_supports_asks_the_parser(void)
     ar__sheet("@supports (flibbertigibbet: 1px) { .a { width: 5px; } }"
               ".after { width: 42px; }");
     CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42, "supports: and the sheet carries on");
+}
+
+/* Applies at this window? One rule, guarded, and one number to read back. */
+static int ar__mq(const char *query, ar_i32 w, ar_i32 h, ar_i32 res)
+{
+    char css[256];
+
+    strcpy(css, "@media ");
+    strcat(css, query);
+    strcat(css, " { .a { width: 5px; } }");
+    ar__sheet_at(css, w, h, res);
+    return ar__css_value(".a", 0, AR_P_WIDTH) == 5;
+}
+
+/*
+ * Media Queries Level 4, against a window this test states.
+ *
+ * The legacy prefixes are not a second grammar: `min-width: 600px` is
+ * `width >= 600px` against the same feature, which is why the two forms have
+ * to give identical answers everywhere and why one corpus can check both.
+ */
+static void test_media_queries_answer_from_the_window(void)
+{
+    /* Lengths, both ways round, and the boundary is inclusive. */
+    CHECK(ar__mq("(min-width: 600px)", 800, 600, 1000), "media: min-width under a wide window");
+    CHECK(!ar__mq("(min-width: 600px)", 400, 600, 1000), "media: and not under a narrow one");
+    CHECK(ar__mq("(min-width: 600px)", 600, 600, 1000), "media: min- includes its own value");
+    CHECK(ar__mq("(max-width: 600px)", 400, 600, 1000), "media: max-width");
+    CHECK(!ar__mq("(max-width: 600px)", 800, 600, 1000), "media: and not past it");
+
+    /* The range syntax says the same thing, which is the point of it. */
+    CHECK(ar__mq("(width >= 600px)", 800, 600, 1000), "media: range >=");
+    CHECK(!ar__mq("(width >= 600px)", 400, 600, 1000), "media: range >= is not always true");
+    CHECK(ar__mq("(width > 600px)", 601, 600, 1000), "media: range > is strict");
+    CHECK(!ar__mq("(width > 600px)", 600, 600, 1000), "media: and excludes its own value");
+    CHECK(ar__mq("(600px <= width)", 800, 600, 1000), "media: the value may come first");
+    CHECK(ar__mq("(400px <= width <= 700px)", 500, 600, 1000), "media: a pair of bounds");
+    CHECK(!ar__mq("(400px <= width <= 700px)", 800, 600, 1000), "media: outside the pair");
+
+    /* `(width)` is true when it is not zero. */
+    CHECK(ar__mq("(width)", 800, 600, 1000), "media: the boolean form");
+    CHECK(!ar__mq("(width)", 0, 600, 1000), "media: which a zero window fails");
+
+    /* Computed from the window rather than stored beside it. */
+    CHECK(ar__mq("(orientation: landscape)", 800, 600, 1000), "media: orientation, landscape");
+    CHECK(ar__mq("(orientation: portrait)", 600, 800, 1000), "media: orientation, portrait");
+    CHECK(ar__mq("(aspect-ratio: 4/3)", 800, 600, 1000), "media: aspect-ratio");
+    CHECK(!ar__mq("(aspect-ratio: 16/9)", 800, 600, 1000), "media: a ratio it is not");
+    CHECK(ar__mq("(min-aspect-ratio: 1/1)", 800, 600, 1000), "media: a ratio with a prefix");
+
+    /* Resolution, in each of its units. */
+    CHECK(ar__mq("(resolution: 2dppx)", 800, 600, 2000), "media: resolution in dppx");
+    CHECK(ar__mq("(resolution: 2x)", 800, 600, 2000), "media: and the x shorthand");
+    CHECK(ar__mq("(min-resolution: 192dpi)", 800, 600, 2000), "media: dpi against 96 per pixel");
+    CHECK(!ar__mq("(min-resolution: 192dpi)", 800, 600, 1000),
+          "media: which an ordinary one fails");
+
+    /* Types. `print` waits for the fragmentation model at 0.5.2. */
+    CHECK(ar__mq("screen", 800, 600, 1000), "media: screen");
+    CHECK(ar__mq("all", 800, 600, 1000), "media: all");
+    CHECK(!ar__mq("print", 800, 600, 1000), "media: print is not this engine yet");
+    CHECK(!ar__mq("not screen", 800, 600, 1000), "media: not screen");
+    CHECK(ar__mq("not print", 800, 600, 1000), "media: not print");
+    CHECK(ar__mq("only screen", 800, 600, 1000), "media: only is read and discarded");
+    CHECK(ar__mq("screen and (min-width: 600px)", 800, 600, 1000), "media: a type and a condition");
+    CHECK(!ar__mq("screen and (min-width: 600px)", 400, 600, 1000), "media: both have to hold");
+
+    /* Combinators, and a comma list, which is a disjunction. */
+    CHECK(ar__mq("(min-width: 600px) and (max-width: 900px)", 800, 600, 1000), "media: and");
+    CHECK(!ar__mq("(min-width: 600px) and (max-width: 700px)", 800, 600, 1000),
+          "media: and, false");
+    CHECK(ar__mq("(max-width: 100px), (min-width: 600px)", 800, 600, 1000), "media: a comma list");
+    CHECK(!ar__mq("(max-width: 100px), (max-width: 200px)", 800, 600, 1000), "media: none of them");
+    CHECK(ar__mq("(min-width: 100px) or (min-width: 9999px)", 800, 600, 1000), "media: or");
+    CHECK(ar__mq("not (min-width: 9999px)", 800, 600, 1000), "media: not a condition");
+
+    /* The documented defaults, which have to be stated: a feature that answers
+       false to everything silently disables the common case. */
+    CHECK(ar__mq("(scripting: none)", 800, 600, 1000), "media: scripting is none, permanently");
+    CHECK(!ar__mq("(scripting: enabled)", 800, 600, 1000), "media: and never enabled");
+    CHECK(ar__mq("(display-mode: standalone)", 800, 600, 1000), "media: not in a browser tab");
+    CHECK(ar__mq("(prefers-color-scheme: light)", 800, 600, 1000), "media: the documented default");
+    CHECK(!ar__mq("(prefers-color-scheme: dark)", 800, 600, 1000), "media: and not the other one");
+    CHECK(ar__mq("(prefers-reduced-motion: no-preference)", 800, 600, 1000),
+          "media: an animation guarded this way still runs");
+    CHECK(ar__mq("(pointer: fine)", 800, 600, 1000), "media: a window has a pointer");
+    CHECK(ar__mq("(color: 8)", 800, 600, 1000), "media: bits per channel");
+
+    /* An unknown feature is false and not an error, so a stylesheet written
+       for a browser degrades here rather than losing the sheet. */
+    CHECK(!ar__mq("(flibbertigibbet: 3px)", 800, 600, 1000), "media: an unknown feature is false");
+    CHECK(g_sheet.errors == 0, "media: and asking about one is not an error");
+
+    /* A malformed query costs itself and not the list around it. */
+    CHECK(ar__mq("(min-width: 600px), (nonsense", 800, 600, 1000),
+          "media: a broken query in a list costs only itself");
+
+    /* And the rules the query guards are the only thing it decides. */
+    ar__sheet_at("@media (min-width: 9999px) { .a { width: 5px; } } .b { width: 42px; }", 800, 600,
+                 1000);
+    CHECK(ar__css_value(".b", 0, AR_P_WIDTH) == 42, "media: the sheet carries on past a false one");
 }
 
 /* The parser must terminate on any input at all.
@@ -18536,6 +18650,7 @@ int main(void)
     test_css_survives_malformed_input();
     test_an_at_rule_is_skipped_whole();
     test_supports_asks_the_parser();
+    test_media_queries_answer_from_the_window();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();

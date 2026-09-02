@@ -1362,6 +1362,14 @@ typedef struct ar_sheet
     /* Parsing never aborts. One malformed declaration should not silently
        discard the ninety that follow it, so errors are counted and reported
        rather than thrown. */
+    /*
+     * What @media is answered against, and how many times a query has been
+     * evaluated. The counter is the evidence for "a resize re-evaluates only
+     * the queries that could have changed"; without it that claim is a hope.
+     */
+    ar_media media;
+    ar_u32   queries_evaluated;
+
     ar_u32 errors;
 
     /*
@@ -1428,6 +1436,16 @@ void            ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 c
 void            ar_style_merge(ar_style *dst, const ar_style *src, ar_pset set);
 
 void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity);
+
+/*
+ * What media queries are answered against. Takes effect on the next parse.
+ *
+ * Defaults to a zero-sized window at one device pixel per CSS pixel, so a
+ * caller that never sets it gets `min-width` queries that are all false --
+ * which is wrong quietly. Every path in this tree that parses a stylesheet
+ * sets it first; a caller outside the tree has to.
+ */
+void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media);
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity);
 void ar_sheet_cache_clear(ar_sheet *sheet);
 void ar_sheet_parse(ar_sheet *sheet, const char *css);
