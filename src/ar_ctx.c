@@ -230,6 +230,10 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     }
     ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
     c->media_resolution = 1000;
+    c->media_from_caller = 0;
+    c->media.width = 0;
+    c->media.height = 0;
+    c->media.resolution = 1000;
 
     {
         ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
@@ -1999,7 +2003,27 @@ void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths)
     if (c && dppx_thousandths > 0)
     {
         c->media_resolution = dppx_thousandths;
+        if (c->media_from_caller)
+        {
+            c->media.resolution = dppx_thousandths;
+        }
     }
+}
+
+void ar_set_media(ar_ctx *c, const ar_media *media)
+{
+    if (!c)
+    {
+        return;
+    }
+    if (!media)
+    {
+        c->media_from_caller = 0;
+        return;
+    }
+    c->media = *media;
+    c->media_from_caller = 1;
+    ar_sheet_set_media(&c->sheet, &c->media);
 }
 
 void ar_frame_begin(ar_ctx *c, const ar_input *in)
@@ -2031,6 +2055,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
      * Cheap when nothing moved: ar_sheet_set_media compares before it does
      * anything, and re-evaluates only the queries whose features changed.
      */
+    if (!c->media_from_caller)
     {
         ar_media m;
 
