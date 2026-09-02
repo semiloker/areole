@@ -63,6 +63,33 @@ ar_i32 ar_inline_baseline(const ar_node *n)
     return n->rect.h + n->style.v[AR_P_MARGIN_BOTTOM];
 }
 
+/*
+ * One line's worth of a box, which is emphatically not `n->rect.h`.
+ *
+ * `n->rect` is *grown* into the union of a box's fragments as they are
+ * emitted -- that is what makes a wrapped box report one truthful rectangle to
+ * hit testing and damage tracking. Reading the height back out of it while it
+ * is still growing made every fragment after the first as tall as all the
+ * fragments before it, so the second line was two lines tall, the third was
+ * four, and a sixty-character sentence in a 200px box came out 880 pixels
+ * where a browser gives 64. The narrower the box, the worse it got.
+ *
+ * A text box's line is `text_h` -- the height of the text itself, which is
+ * what `rect.h` held before the first union and what every single-line box was
+ * therefore already using. `line_h` is the wrong one: it carries the face's
+ * line gap, and adding that here makes every line taller than the box a
+ * browser draws. An atomic item is one fragment and its whole box sits on the
+ * line, so `rect.h` is right for it and never grows.
+ */
+static ar_i32 ar__frag_h(const ar_node *n)
+{
+    if (n->text && n->text[0])
+    {
+        return n->style.v[AR_P_PAD_TOP] + n->text_h + n->style.v[AR_P_PAD_BOTTOM];
+    }
+    return n->rect.h;
+}
+
 /* The horizontal space an atomic item takes on a line, margins included. */
 static ar_i32 ar__outer_w(const ar_node *n)
 {
@@ -171,7 +198,7 @@ static void ar__flush_open(ar__liner *L)
     r.x = L->left + L->line_off + L->open_x;
     r.y = L->top + L->y; /* provisional; closing the line fixes it */
     r.w = L->open_w;
-    r.h = n->rect.h;
+    r.h = ar__frag_h(n);
 
     if (L->pieces_placed == 0)
     {
@@ -224,7 +251,8 @@ static ar_i32 ar__close_line(ar__liner *L)
     for (i = L->line_frag0; i < env->frag_used; ++i)
     {
         const ar_node *n = &L->nodes[env->frags[i].node];
-        ar_i32 outer_h = n->rect.h + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
+        ar_i32         outer_h =
+            ar__frag_h(n) + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
         ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP];
         ar_i32 descent = outer_h - ascent;
 
@@ -258,7 +286,13 @@ static ar_i32 ar__close_line(ar__liner *L)
         ar_node *n = &L->nodes[f->node];
         ar_i32   was_y = f->rect.y;
         ar_i32   valign = n->style.v[AR_P_VERTICAL_ALIGN];
-        ar_i32   outer_h = n->rect.h + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
+        /* One line's worth, for the same reason the line's own height is: this
+           runs while `n->rect` is still being grown into the union of the
+           fragments, so `rect.h` here is every line already emitted and not
+           this one. `vertical-align: bottom` on a wrapped box pushed every
+           line after the first off the bottom of its own line. */
+        ar_i32 outer_h =
+            ar__frag_h(n) + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
 
         f->rect.x += shift;
 
