@@ -386,7 +386,6 @@ toolkit breaks that circle.
 - **0.2.0** *It has real text* — TrueType and CFF, an outline rasterizer, a glyph cache ✅
 - **0.3.0** *It shapes text* — bidi, ligatures, kerning, Arabic, Indic ✅
 - **0.4.0** *It has the cascade* — specificity, inheritance, selector lists, combinators, `!important`, structural selectors, `:not`/`:is`/`:where` ✅
-- **0.4.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅ *(built after 0.9.1, because 0.9.2 needs it)*
 - **0.5.0** *It lays out documents* — block, inline, floats, margin collapsing ✅
 - **0.6.0** *It positions and scrolls* — absolute, fixed, sticky, z-index, scroll ✅
 - **0.6.1** *It scrolls properly* — both axes, region move, a draggable bar, touchpad travel ✅
@@ -399,6 +398,7 @@ toolkit breaks that circle.
 - **0.8.2** *Its grids line up* — `subgrid`, and the card layout it exists for ✅
 - **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet ✅
 - **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
+- **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -534,12 +534,14 @@ scenes went the other way on the place-once work: `offscreen_90pc` −29% and `t
 −23%. All 52 scenes are in `docs/PERFORMANCE.md`, stability column included, because a
 number this machine cannot reproduce is not a number.
 
-### 0.4.2, complete
+### 0.9.2, complete
 
-Built out of order, and for a reason worth stating: **0.9.2 is responsive images, and it cannot be
-written without this.** `<picture>`'s `<source media>` and `sizes`' media-condition list are media
-queries, so the release after 0.9.1 turned out to be blocked on the release four minor versions
-behind it. `srcset` selection and an image decoder are still 0.9.2's and 0.11.0's.
+This is the content the roadmap files under 0.4.2, shipped as the release after 0.9.1 and for a
+reason worth stating: **the release that was going to be 0.9.2 is responsive images, and it cannot
+be written without this.** `<picture>`'s `<source media>` and `sizes`' media-condition list *are*
+media queries, so the next release turned out to be blocked on one four minor versions behind it.
+Responsive images keeps its scope and moves down the list; `srcset` selection still wants an image
+decoder, which is 0.11.0's.
 
 **`@supports` answers from the implementation, never from a table.** A property is supported when
 this engine's own declaration parser accepts it and sets something. A hand-maintained list of
