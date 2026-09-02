@@ -65,6 +65,23 @@ typedef struct ar__tree
     ar_i32 open_n;
 
     /*
+     * The stack of template insertion modes, 13.2.4.4.
+     *
+     * A template's mode cannot be recovered from the shape of the open-element
+     * stack the way every other mode can, because it depends on what has been
+     * *seen inside it* rather than on what encloses it: two templates sitting
+     * in identical positions are in `in row` and `in body` according to
+     * whether a `<tr>` went past. So it is the one mode that has to be
+     * remembered, and remembered per template rather than once.
+     *
+     * One value was not enough. `<template><tr></tr><template></template>`
+     * closes the inner template and has to resume the outer one's `in row`;
+     * with a single value the inner `</template>` overwrote it.
+     */
+    ar_u8  tmpl_mode[AR_HTML_STACK];
+    ar_i32 tmpl_mode_n;
+
+    /*
      * The list of active formatting elements.
      *
      * A marker is -1 and is pushed by a table cell or a caption, so
@@ -487,11 +504,44 @@ static void ar__push(ar__tree *t, ar_i32 node)
     t->open[t->open_n++] = node;
 }
 
+/*
+ * The stack of template insertion modes, 13.2.4.4.
+ *
+ * Pushed when a template element is inserted and popped when one is popped,
+ * which is why the popping lives in ar__pop rather than beside `</template>`:
+ * a template also comes off the stack at end of file, inside ar__pop_until for
+ * an enclosing tag, and on the "stop parsing" path, and a mode stack that
+ * tracked only the explicit close would drift a little further out of step
+ * with every unclosed template in a document.
+ */
+static void ar__tmpl_push(ar__tree *t, int mode)
+{
+    if (t->tmpl_mode_n < AR_HTML_STACK)
+    {
+        t->tmpl_mode[t->tmpl_mode_n++] = (ar_u8)mode;
+    }
+}
+
+/* Replace the current template insertion mode, which is what every rule in
+   `in template` does: pop one off, push the mode it is switching to. */
+static void ar__tmpl_set(ar__tree *t, int mode)
+{
+    if (t->tmpl_mode_n > 0)
+    {
+        t->tmpl_mode[t->tmpl_mode_n - 1] = (ar_u8)mode;
+    }
+}
+
 static void ar__pop(ar__tree *t)
 {
     if (t->open_n > 0)
     {
         --t->open_n;
+        if (t->doc->nodes[t->open[t->open_n]].ns == AR_NS_HTML &&
+            ar__is(t, t->open[t->open_n], "template") && t->tmpl_mode_n > 0)
+        {
+            t->tmpl_mode_n--;
+        }
     }
 }
 
@@ -743,22 +793,48 @@ static ar_i32 ar__insertion_point(ar__tree *t, ar_i32 target, ar_i32 *before)
         if (ar__is(t, cur, FOSTER[i]))
         {
             ar_i32 k;
+            ar_i32 last_table = -1;
+            ar_i32 last_tmpl = -1;
 
-            /* The last table on the stack; insert before it. */
+            /*
+             * The last table and the last template, and which of them is
+             * lower on the stack decides where this goes -- 13.2.6.1, steps 2
+             * to 4 of "the appropriate place for inserting a node".
+             *
+             * The template step was missing entirely, and it is not an edge
+             * case: a template's contents are their own document, so anything
+             * fostered out of a table inside one has to land in the template
+             * rather than beside it. Without it `<template><tr><div></div>`
+             * put the div outside the template altogether, which is the one
+             * place it certainly does not belong.
+             */
             for (k = t->open_n - 1; k >= 1; --k)
             {
-                if (ar__is(t, t->open[k], "table"))
+                if (last_table < 0 && ar__is(t, t->open[k], "table"))
                 {
-                    if (t->doc->nodes[t->open[k]].parent >= 0)
-                    {
-                        *before = t->open[k];
-                        return t->doc->nodes[t->open[k]].parent;
-                    }
-                    break;
+                    last_table = k;
+                }
+                if (last_tmpl < 0 && t->doc->nodes[t->open[k]].ns == AR_NS_HTML &&
+                    ar__is(t, t->open[k], "template"))
+                {
+                    last_tmpl = k;
                 }
             }
-            /* A table with no parent: fall back to the element below it. */
-            return k > 1 ? t->open[k - 1] : t->open[0];
+            if (last_tmpl >= 0 && (last_table < 0 || last_tmpl > last_table))
+            {
+                return ar__content_of(t, t->open[last_tmpl]);
+            }
+            if (last_table >= 0)
+            {
+                if (t->doc->nodes[t->open[last_table]].parent >= 0)
+                {
+                    *before = t->open[last_table];
+                    return t->doc->nodes[t->open[last_table]].parent;
+                }
+                /* A table with no parent: fall back to the element below it. */
+                return last_table > 1 ? t->open[last_table - 1] : t->open[0];
+            }
+            return t->open[0];
         }
     }
     return cur;
@@ -2417,11 +2493,10 @@ static void ar__reset_mode(ar__tree *t)
         }
         if (ar__is(t, node, "template"))
         {
-            /* The specification takes the current template insertion mode off
-               its stack here. areole keeps one value, which is the gap named
-               below; `in body` is the answer for every template that is not
-               inside a table. */
-            t->mode = M_IN_TEMPLATE;
+            /* Step 4 of "reset the insertion mode appropriately": the current
+               template insertion mode, which is the top of the stack and not
+               a value computed from anything visible here. */
+            t->mode = t->tmpl_mode_n > 0 ? (int)t->tmpl_mode[t->tmpl_mode_n - 1] : M_IN_TEMPLATE;
             return;
         }
         if (ar__is(t, node, "head") && !last)
@@ -4990,6 +5065,7 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
                 ar__insert_element(t, tok, 0);
                 ar__fmt_marker(t);
                 t->original_mode = M_IN_HEAD;
+                ar__tmpl_push(t, M_IN_TEMPLATE);
                 t->mode = M_IN_TEMPLATE;
                 return;
             }
@@ -5214,6 +5290,10 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
 
             if (ar__name_in(tok->name, HEAD_CONTENT))
             {
+                /* Head content does not change the template's mode: the
+                   specification has no "pop, push" step for these, and a
+                   `<style>` inside a template must not undo a `<tr>` before
+                   it. */
                 t->mode = M_IN_HEAD;
                 ar__process_mode(t, tok);
                 t->mode = M_IN_TEMPLATE;
@@ -5223,6 +5303,7 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
                 ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
                 ar_span_is(tok->name, "thead"))
             {
+                ar__tmpl_set(t, M_IN_TABLE);
                 t->mode = M_IN_TABLE;
                 ar__process_mode(t, tok);
                 return;
@@ -5235,16 +5316,19 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
             }
             if (ar_span_is(tok->name, "tr"))
             {
+                ar__tmpl_set(t, M_IN_TABLE_BODY);
                 t->mode = M_IN_TABLE_BODY;
                 ar__process_mode(t, tok);
                 return;
             }
             if (ar_span_is(tok->name, "td") || ar_span_is(tok->name, "th"))
             {
+                ar__tmpl_set(t, M_IN_ROW);
                 t->mode = M_IN_ROW;
                 ar__process_mode(t, tok);
                 return;
             }
+            ar__tmpl_set(t, M_IN_BODY);
             t->mode = M_IN_BODY;
             ar__process_mode(t, tok);
             return;
@@ -5489,6 +5573,14 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
         if (root < 0)
         {
             return 0;
+        }
+        /* 13.2.6.5 step 4: a template context pushes `in template` onto the
+           stack of template insertion modes, so that the mode reset below
+           has something to take. Without it a fragment parsed with a
+           template context pops a stack that was never pushed. */
+        if (ctx_ns == AR_NS_HTML && ar__lit_is(ctx, "template"))
+        {
+            ar__tmpl_push(&t, M_IN_TEMPLATE);
         }
         ar__reset_mode(&t);
 
