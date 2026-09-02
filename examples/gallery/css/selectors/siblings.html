@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selectors: adjacent and general sibling</title>
+<style>
+  html { font: 16px/1.4 sans-serif; }
+  body { margin: 0; padding: 16px; background: #fff; }
+  .box { background: #cfe3f5; }
+  .alt { background: #f5d9cf; }
+</style>
+<style>
+.a { width:60px; height:20px; background:#ddd; }
+.a + div { width:300px; }
+.a ~ div { height:20px; }
+div { width:100px; height:20px; }
+</style>
+<div class="a"></div><div class="box"></div><div class="alt"></div>

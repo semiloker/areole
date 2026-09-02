@@ -268,6 +268,18 @@ jobs:
       - name: The gallery draws what was blessed
         run: python tools/gallery.py run --all --golden-only --gate
 
+      # 0.9.1 acceptance criterion 5: every catalogue row marked shipped has a
+      # demo. The demo id is a column in the matrix and the path of the file,
+      # which is what lets the two be compared -- and the note at the top of
+      # support-matrix-css.md is the record of what happens when they are not:
+      # six releases of rows that had gone stale in both directions.
+      #
+      # Only shipped rows are required. A partial row names its limitation and
+      # a planned row is not built, and requiring demos for those would make
+      # this red for the two states the catalogue uses to be honest.
+      - name: Every shipped catalogue row has a demo
+        run: python tools/check_gallery.py --check
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,

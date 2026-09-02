@@ -143,6 +143,7 @@ static const ar__case CASES[] = {
     {"sub", "", "<sub id=\"x\">t</sub>", PROPS},
     {"summary", "", "<details><summary id=\"x\">t</summary></details>", PROPS},
     {"sup", "", "<sup id=\"x\">t</sup>", PROPS},
+    {"svg", "", "<svg id=\"x\">t</svg>", PROPS},
     {"table", "", "<table id=\"x\">t</table>", PROPS},
     {"tbody", "", "<table><tbody id=\"x\">t</tbody></table>", PROPS},
     {"td", "", "<table><tr><td id=\"x\">t</td></tr></table>", PROPS},

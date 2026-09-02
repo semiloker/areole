@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selectors: first, last and only child</title>
+<style>
+  html { font: 16px/1.4 sans-serif; }
+  body { margin: 0; padding: 16px; background: #fff; }
+  .box { background: #cfe3f5; }
+  .alt { background: #f5d9cf; }
+</style>
+<style>
+.p > div, .q > div { height:20px; width:80px; background:#cfe3f5; }
+.p > div:first-child { width:200px; }
+.p > div:last-child { width:300px; }
+.q > div:only-child { width:250px; background:#f5d9cf; }
+</style>
+<div class="p"><div></div><div></div><div></div></div><div class="q"><div></div></div>

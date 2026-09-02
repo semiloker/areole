@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selectors: :is() and :where()</title>
+<style>
+  html { font: 16px/1.4 sans-serif; }
+  body { margin: 0; padding: 16px; background: #fff; }
+  .box { background: #cfe3f5; }
+  .alt { background: #f5d9cf; }
+</style>
+<style>
+div { width:100px; height:20px; background:#cfe3f5; }
+div:is(.a, .b) { width:300px; }
+div:where(.c) { width:200px; background:#f5d9cf; }
+</style>
+<div class="a"></div><div class="b"></div><div class="c"></div>
