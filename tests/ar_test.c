@@ -969,6 +969,57 @@ static void test_css_survives_malformed_input(void)
           "css: an empty block is legal and has no effect");
 }
 
+/*
+ * An at-rule is skipped whole: nothing inside it leaks, nothing after it dies.
+ *
+ * There was no at-rule handling at all. One failed `ar__parse_selector` and
+ * the recovery path scanned to the next `}`, which for a nested at-rule lands
+ * *inside* the block -- so the second rule in it was parsed as a top-level
+ * rule whatever the query said. Nothing in this tree nested an at-rule, so
+ * nothing had ever found it.
+ *
+ * Every case here needs two rules inside the block. With one, the old
+ * recovery swallowed it and then met the block's real closing brace with the
+ * cursor already on it, so the brace cost nothing and the rule after the block
+ * survived -- the bug hiding behind the shape of the smallest example. The
+ * second rule is the one that leaks.
+ */
+static void test_an_at_rule_is_skipped_whole(void)
+{
+    ar__sheet("@media (min-width: 1px) { .one { width: 10px; } .two { width: 20px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".two", 0, AR_P_WIDTH) != 20,
+          "at-rule: a rule inside an unevaluated block does not leak out of it");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and the rule after the block still parses");
+
+    /* Two levels, which is the shape `@media` inside `@supports` makes. The
+       sibling is outside the inner block and inside the outer one. */
+    ar__sheet("@supports (display: block) { @media screen { .deep { width: 7px; } }"
+              " .sibling { width: 8px; } }"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".sibling", 0, AR_P_WIDTH) != 8,
+          "at-rule: nesting is counted, not guessed at from the first brace");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and two levels still end where they should");
+
+    /* A statement at-rule ends at its semicolon and has no block to find.
+       Scanning for a brace instead runs into the next rule's. */
+    ar__sheet("@charset \"utf-8\";"
+              ".after { width: 42px; }");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: a statement at-rule ends at its semicolon");
+
+    /* A brace inside a string is not a brace. Counting it ends the at-rule
+       early, in the middle of a declaration, and what follows is garbage --
+       which is an error even though the rule after it recovers. */
+    ar__sheet("@font-face { font-family: \"a}b\"; }"
+              ".after { width: 42px; }");
+    CHECK(g_sheet.errors == 0, "at-rule: a brace inside a string does not close the block");
+    CHECK(ar__css_value(".after", 0, AR_P_WIDTH) == 42,
+          "at-rule: and the rule after it is untouched");
+}
+
 /* The parser must terminate on any input at all.
  *
  * This is here because it did not. An unknown property left the cursor
@@ -18415,6 +18466,7 @@ int main(void)
     test_css_keywords();
     test_css_comments_and_whitespace();
     test_css_survives_malformed_input();
+    test_an_at_rule_is_skipped_whole();
     test_css_always_terminates();
     test_css_capacity();
     test_selector_split();

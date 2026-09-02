@@ -3326,6 +3326,75 @@ static void ar__sort_rules(ar_sheet *sheet)
     }
 }
 
+/*
+ * Everything from an `@` to the end of the at-rule, whatever kind it is.
+ *
+ * Two shapes: a statement ending at a semicolon (`@charset "utf-8";`) and a
+ * block ending at its matching brace (`@font-face { ... }`). Which one it is
+ * cannot be known from the keyword, because an unknown at-rule may be either,
+ * so it is decided by whichever comes first at depth zero.
+ *
+ * This existed before only by accident. An at-rule failed `ar__parse_selector`
+ * and the recovery path scanned to the next `}` -- which is right for a flat
+ * block and wrong for every nested one: `@media (min-width: 600px) { .a { } }`
+ * would resynchronise on the *inner* brace, parse `.a`'s siblings as top-level
+ * rules whatever the query said, and then meet a stray `}` it had no use for.
+ * Nothing in the tree nested an at-rule, so nothing found it.
+ *
+ * Braces inside strings do not count. `content: "}"` is ordinary, and a
+ * stylesheet that ends early because of one loses every rule after it.
+ */
+static void ar__skip_at_rule(ar__scan *z)
+{
+    ar_i32 depth = 0;
+
+    while (z->p < z->end)
+    {
+        char c = *z->p;
+
+        if (c == '"' || c == '\'')
+        {
+            char quote = c;
+
+            z->p++;
+            while (z->p < z->end && *z->p != quote)
+            {
+                /* A backslash escapes the next byte, including the quote that
+                   would otherwise end the string. */
+                if (*z->p == '\\' && z->p + 1 < z->end)
+                {
+                    z->p++;
+                }
+                z->p++;
+            }
+            if (z->p < z->end)
+            {
+                z->p++;
+            }
+            continue;
+        }
+        if (c == '{')
+        {
+            depth++;
+        }
+        else if (c == '}')
+        {
+            z->p++;
+            if (--depth <= 0)
+            {
+                return;
+            }
+            continue;
+        }
+        else if (c == ';' && depth == 0)
+        {
+            z->p++;
+            return; /* a statement at-rule, with no block at all */
+        }
+        z->p++;
+    }
+}
+
 void ar_sheet_parse(ar_sheet *sheet, const char *css)
 {
     ar__scan z;
@@ -3363,6 +3432,16 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         if (z.p >= z.end)
         {
             break;
+        }
+
+        /* An at-rule is not a selector and must not be recovered from as
+           though it were one. None is understood yet, so all of them are
+           skipped whole -- but skipped correctly, which is what lets the
+           conditional ones be understood without moving this code again. */
+        if (*z.p == '@')
+        {
+            ar__skip_at_rule(&z);
+            continue;
         }
 
         memset(&rule[0], 0, sizeof rule[0]);
