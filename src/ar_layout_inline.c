@@ -161,6 +161,22 @@ typedef struct ar__liner
     /* How many runs of the current node have been placed, so its rectangle is
        written the first time and widened afterwards. */
     ar_i32 pieces_placed;
+
+    /*
+     * The strut: what the containing block's own font contributes to every
+     * line, whether or not anything on that line is text.
+     *
+     * CSS 2.1 10.8.1. A line box begins with a zero-width inline box carrying
+     * the block's font and line-height, and its ascent and descent join the
+     * maxima like any other item's. Without it a line is only as tall as the
+     * tallest thing actually on it: a line holding one 30px inline-block came
+     * out 30 where a browser gives 33, the three being the half-leading the
+     * block's own text would have had, and the last line of every paragraph
+     * was short by the same amount.
+     *
+     * Computed once, because it is a property of the block and not of a line.
+     */
+    ar_i32 strut_asc, strut_desc;
 } ar__liner;
 
 static ar_frag *ar__emit(ar__liner *L)
@@ -247,6 +263,11 @@ static ar_i32 ar__close_line(ar__liner *L)
     {
         return 0;
     }
+
+    /* The strut first, so a line is never shorter than the block's own font
+       would make it even when nothing on it is text. */
+    max_ascent = L->strut_asc;
+    max_descent = L->strut_desc;
 
     for (i = L->line_frag0; i < env->frag_used; ++i)
     {
@@ -375,6 +396,23 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
     L.y = 0;
     L.x = 0;
     L.line_frag0 = env->frags ? env->frag_used : 0;
+
+    /*
+     * The block is the run's parent: the box whose font every line here is
+     * measured against. Its `ascent` and `text_h` already carry the
+     * half-leading that `line-height` asked for, so the strut needs no
+     * arithmetic of its own.
+     */
+    {
+        ar_i32 block = first >= 0 ? nodes[first].parent : -1;
+
+        L.strut_asc = block >= 0 ? nodes[block].ascent : 0;
+        L.strut_desc = block >= 0 ? nodes[block].text_h - nodes[block].ascent : 0;
+        if (L.strut_desc < 0)
+        {
+            L.strut_desc = 0;
+        }
+    }
     L.open_node = -1;
     L.open_from = 0;
     L.open_to = 0;
