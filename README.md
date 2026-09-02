@@ -545,7 +545,7 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `ar_hints` | what HTML's legacy attributes compute to | 42 / 43 |
 | `ar_elements` | what every element's defaults compute to | 1066 / 1071 |
 | `ar_quirks` | what a document with no doctype does differently | 39 / 39 |
-| `gallery` | one standalone page per feature, both engines | 93 / 93 gated |
+| `gallery` | one standalone page per feature, both engines | 107 / 107 gated |
 | `09_table` | tables: anonymous boxes, collapse, spans | 616 / 624 |
 
 The table corpus is the honest exception and is not gated: **8 of its 624 boxes still land

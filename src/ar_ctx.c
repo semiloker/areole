@@ -1408,19 +1408,30 @@ static ar_i32 ar__round_px(ar_i32 v)
 /*
  * What `line-height` asks the line box to be, or zero for `normal`.
  *
- * `em` is the font size the multiplier is against: the ppem on the outline
- * path, and the cell height on the bitmap one, which is the same quantity for
- * a face whose glyphs fill their cell.
+ * A multiplier is against the **computed font-size**, and not against whatever
+ * the face managed to draw. Those are the same number on the outline path and
+ * they are not on the bitmap one: `n->scale` is `font-size / 8` in integers, so
+ * a 19-pixel heading draws in a 16-pixel cell, and resolving `line-height: 1.4`
+ * against the cell gave that heading a 22-pixel line where CSS asks for 27.
+ *
+ * The glyphs are still 16 pixels tall -- that is what a bitmap face is -- but
+ * the line box is the size the page asked for, so everything below the heading
+ * lands where a browser puts it. Getting the box right is separable from
+ * getting the glyphs right, and only one of the two is waiting on 0.2.1.
+ *
+ * `em` is still taken for the `normal` case's callers, which want the face's
+ * own arithmetic and not the page's.
  */
 static ar_i32 ar__asked_line_height(const ar_node *n, ar_i32 em)
 {
+    (void)em;
     if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_PX)
     {
         return n->style.v[AR_P_LINE_HEIGHT] > 0 ? n->style.v[AR_P_LINE_HEIGHT] : 1;
     }
     if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
     {
-        ar_i32 h = (em * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000;
+        ar_i32 h = (n->style.v[AR_P_FONT_SIZE] * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000;
 
         return h > 0 ? h : 1;
     }
