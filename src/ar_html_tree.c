@@ -2687,6 +2687,51 @@ static void ar__via_head(ar__tree *t, const ar_token *tok, int back)
     }
 }
 
+/*
+ * "Any other end tag", 13.2.6.4.7, as a function rather than a tail.
+ *
+ * Walk the stack for an element with this name and close through to it -- but
+ * stop at the first element in the special category, which is what makes a
+ * stray `</div>` inside a paragraph harmless instead of destructive.
+ *
+ * It is a function because the adoption agency's step 4.3 ends "return and
+ * instead act as described in the 'any other end tag' entry above", and the
+ * `<nobr>` start tag reaches that step: it tests for a nobr on the *stack* and
+ * the agency looks for one in the *list* after the last marker, so a marker
+ * between them makes the two disagree. `<nobr><table><marquee></table><nobr>`
+ * is that shape -- the marquee leaves a marker the `</table>` never clears --
+ * and without the fallback the agency did nothing at all and the second nobr
+ * opened inside the first.
+ */
+static void ar__close_by_name(ar__tree *t, ar_span name)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        if (t->doc->nodes[t->open[i]].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML &&
+            ar__span_eq(t->doc->nodes[t->open[i]].name, name))
+        {
+            while (t->open_n > i + 1)
+            {
+                ar__pop(t);
+            }
+            ar__pop(t);
+            return;
+        }
+        if (ar__is_special(t, t->open[i]))
+        {
+            t->doc->errors++;
+            return;
+        }
+    }
+    t->doc->errors++;
+}
+
 static void ar__in_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_TEXT)
@@ -2917,6 +2962,27 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar__pop(t);
             return;
         }
+        /*
+         * `applet`, `marquee` and `object` open a scope in the list of active
+         * formatting elements, 13.2.6.4.7. The marker is the whole of it:
+         * without one the Noah's Ark clause counts across the boundary, so
+         * `<b id=a><b id=a><b id=a><b><object><b id=a>` saw three matching
+         * `<b>`s from *outside* the object and dropped the earliest of them.
+         * The list came back from `</object>` with the same four entries in a
+         * different order, and the paragraph after it was rebuilt inside out.
+         *
+         * These are also the elements `ar__in_scope` already stops at, which
+         * is the same boundary seen from the other side.
+         */
+        if (ar_span_is(tok->name, "applet") || ar_span_is(tok->name, "marquee") ||
+            ar_span_is(tok->name, "object"))
+        {
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 1);
+            ar__fmt_marker(t);
+            t->frameset_ok = 0;
+            return;
+        }
         if (ar__is_formatting(tok->name))
         {
             /*
@@ -2965,7 +3031,14 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             if (ar_span_is(tok->name, "nobr") && ar__in_scope(t, "nobr", 0))
             {
                 t->doc->errors++;
-                ar__adoption(t, "nobr");
+                if (!ar__adoption(t, "nobr"))
+                {
+                    /* Step 4.3: no such element in the list, so close it the
+                       way a stray end tag would. The scope test above looked
+                       at the stack and the agency looks at the list, and a
+                       marker between them is where they part company. */
+                    ar__close_by_name(t, tok->name);
+                }
             }
             ar__reconstruct(t);
             {
@@ -3341,6 +3414,33 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
      * a paragraph from closing the div and everything between -- thirty
      * conformance cases turned red at once and said so.
      */
+    /* And close it again, clearing the list back to the marker it left. */
+    if (ar_span_is(tok->name, "applet") || ar_span_is(tok->name, "marquee") ||
+        ar_span_is(tok->name, "object"))
+    {
+        char   name[16];
+        ar_u32 n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32 k;
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        if (!ar__in_scope(t, name, 0))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__implied_end_tags(t, 0);
+        if (!ar__span_eq(t->doc->nodes[ar__current(t)].name, tok->name))
+        {
+            t->doc->errors++;
+        }
+        ar__pop_until(t, name);
+        ar__fmt_clear_to_marker(t);
+        return;
+    }
     if ((ar__closes_p(tok->name) || ar_span_is(tok->name, "button")) &&
         !ar_span_is(tok->name, "p") && !ar_span_is(tok->name, "form") &&
         !ar_span_is(tok->name, "table") && !ar_span_is(tok->name, "hr"))
@@ -3378,33 +3478,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
      * destructive. Without that stop the walk keeps going, finds the div, and
      * closes everything between.
      */
-    {
-        ar_i32 i;
-
-        for (i = t->open_n - 1; i >= 1; --i)
-        {
-            if (t->doc->nodes[t->open[i]].kind != AR_DOM_ELEMENT)
-            {
-                continue;
-            }
-            if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML &&
-                ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
-            {
-                while (t->open_n > i + 1)
-                {
-                    ar__pop(t);
-                }
-                ar__pop(t);
-                return;
-            }
-            if (ar__is_special(t, t->open[i]))
-            {
-                t->doc->errors++;
-                return;
-            }
-        }
-        t->doc->errors++;
-    }
+    ar__close_by_name(t, tok->name);
 }
 
 /* ------------------------------------------------------------------------
