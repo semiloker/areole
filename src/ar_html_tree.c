@@ -82,6 +82,23 @@ typedef struct ar__tree
     ar_i32 tmpl_mode_n;
 
     /*
+     * "Enable foster parenting", 13.2.6.4.9.
+     *
+     * The specification turns foster parenting on around the whole of "process
+     * the token using the rules for the in body insertion mode", not around
+     * one insertion. Passing it per call is the same thing right up until `in
+     * body` hands the token on again, and it does that constantly: `</p>` with
+     * no p in scope inserts one through a path that never saw the flag, and
+     * `<title>` goes to `in head`, which has a flag of its own set to zero. A
+     * flag the insertion reads gets both, because every layer below inherits
+     * it without having to be told.
+     *
+     * Saved and restored rather than set and cleared, because in body can
+     * re-enter a table mode and these then nest.
+     */
+    int foster;
+
+    /*
      * The list of active formatting elements.
      *
      * A marker is -1 and is pushed by a table cell or a caption, so
@@ -1077,9 +1094,11 @@ static ar_u32 ar__non_nul(ar_span s)
 static void ar__insert_text_ex(ar__tree *t, ar_span s, int foster, int rule)
 {
     ar_i32 before = -1;
-    ar_i32 parent =
-        ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
+    ar_i32 parent;
     ar_i32 node;
+
+    foster = foster || t->foster;
+    parent = ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
 
     if (s.n == 0 || (rule == AR__NUL_DROP && ar__non_nul(s) == 0))
     {
@@ -1224,8 +1243,11 @@ static int ar__is_special(const ar__tree *t, ar_i32 node)
 
 static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
 {
-    ar_i32 node = ar__node(t, AR_DOM_ELEMENT);
+    ar_i32 node;
     ar_i32 k;
+
+    foster = foster || t->foster;
+    node = ar__node(t, AR_DOM_ELEMENT);
 
     if (node < 0)
     {
@@ -3423,9 +3445,24 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_CAPTION;
             return;
         }
-        /* A template inside a table stays inside it. Everything else that is
-           not a table part gets fostered out; a template is head content and
-           the specification routes it to the `in head` rules instead. */
+        /*
+         * Head content inside a table stays inside it. 13.2.6.4.9 gives
+         * `style`, `script` and `template` a rule of their own -- "process the
+         * token using the rules for the in head insertion mode" -- so they are
+         * not the "anything else" that gets fostered out, and
+         * `<table><style> <tr>x </style>` keeps its stylesheet in the table
+         * where the author put it.
+         *
+         * Reached through the fall-through from `in table body` and `in row`
+         * as well, so the mode to come back to is whichever one asked, not
+         * `in table`.
+         */
+        if (ar_span_is(tok->name, "style") || ar_span_is(tok->name, "script"))
+        {
+            ar__via_head(t, tok, t->mode);
+            return;
+        }
+        /* A template inside a table stays inside it, for the same reason. */
         if (ar_span_is(tok->name, "template"))
         {
             ar__insert_element(t, tok, 0);
@@ -3521,13 +3558,25 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         }
         /* Anything else is foster parented. */
         t->doc->errors++;
-        ar__in_body(t, tok);
+        {
+            int was = t->foster;
+
+            t->foster = 1;
+            ar__in_body(t, tok);
+            t->foster = was;
+        }
         return;
     }
     if (tok->kind == AR_TOK_END)
     {
-        static const char *const STRUCTURAL[] = {"tbody", "tfoot",   "thead",    "tr",  "td",
-                                                 "th",    "caption", "colgroup", "col", 0};
+        /* 13.2.6.4.9's ignore list, all eleven of it. `body` and `html` were
+           missing, and they are the two that do damage rather than nothing:
+           `</body>` reaches `in body`, which switches to `after body`, so
+           `<table></body></tbody><td>` left the table behind and put the cell
+           at the end of the document. */
+        static const char *const STRUCTURAL[] = {"body", "caption", "col", "colgroup",
+                                                 "html", "tbody",   "td",  "tfoot",
+                                                 "th",   "thead",   "tr",  0};
         ar_i32                   i;
 
         if (ar_span_is(tok->name, "table"))
@@ -3573,7 +3622,13 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
          * the emphasis* and the table came out empty. The corpus check that
          * only asked whether `em` appeared before `table` passed on that tree.
          */
-        ar__in_body(t, tok);
+        {
+            int was = t->foster;
+
+            t->foster = 1;
+            ar__in_body(t, tok);
+            t->foster = was;
+        }
         return;
     }
 }
@@ -5379,13 +5434,25 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "frameset"))
         {
+            /* The fragment case, 13.2.6.4.20: when the current node is the
+               root html element there is nothing outside it to close, so the
+               token is a parse error and nothing else. Popping it left the
+               synthetic root gone and every following `<frame>` with nowhere
+               to be inserted. */
+            if (t->ctx && t->open_n <= 2)
+            {
+                t->doc->errors++;
+                return;
+            }
             if (t->open_n > 2)
             {
                 ar__pop(t);
             }
             /* The outermost one closes the frameset document. A nested one
-               leaves an enclosing frameset behind and changes nothing. */
-            if (!ar__is(t, ar__current(t), "frameset"))
+               leaves an enclosing frameset behind and changes nothing -- and
+               a fragment never leaves `in frameset` at all, because there is
+               no document around it for the parser to be after. */
+            if (!t->ctx && !ar__is(t, ar__current(t), "frameset"))
             {
                 t->mode = M_AFTER_FRAMESET;
             }
@@ -5593,9 +5660,19 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
         /*
          * A `<title>` context makes the whole fragment RCDATA and a `<script>`
          * context makes it script data, which is why `a<b>` inside a title is
-         * five characters of text rather than an element. `last_start` has to
-         * name the context too, or the appropriate-end-tag rule never fires
-         * and the fragment never leaves that state.
+         * five characters of text rather than an element.
+         *
+         * `last_start` is deliberately *not* seeded from the context, and it
+         * used to be. An "appropriate end tag token" is one whose name matches
+         * the last start tag the tokenizer itself emitted, and in a fragment
+         * the tokenizer has emitted none -- 13.2.6.5 switches the state and
+         * says nothing about the last start tag, because there is no start tag
+         * to be last. So a fragment in one of these states never leaves it,
+         * which is the whole point: `</script>` inside a script fragment is
+         * five more characters of script, not the end of one.
+         *
+         * Seeding it read as harmless because nothing else in the suite closes
+         * its own context tag. One case does.
          */
         {
             ar_html_state s = AR_HTML_DATA;
@@ -5622,18 +5699,6 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
                 }
             }
             tk.state = s;
-            if (s != AR_HTML_DATA && s != AR_HTML_PLAINTEXT)
-            {
-                ar_u32 k = 0;
-
-                while (ctx[k] && k + 1 < (ar_u32)sizeof tk.last_start)
-                {
-                    tk.last_start[k] =
-                        (char)(ctx[k] >= 'A' && ctx[k] <= 'Z' ? ctx[k] + 32 : ctx[k]);
-                    ++k;
-                }
-                tk.last_start_n = k;
-            }
         }
     }
 
