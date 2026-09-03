@@ -101,6 +101,11 @@ target_include_directories(ar_quirks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_quirks PRIVATE areole)
 areole_set_warnings(ar_quirks)
 
+add_executable(ar_units tests/ar_units.c)
+target_include_directories(ar_units PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_units PRIVATE areole)
+areole_set_warnings(ar_units)
+
 add_executable(ar_gallery tests/ar_gallery.c)
 target_include_directories(ar_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_gallery PRIVATE areole)
