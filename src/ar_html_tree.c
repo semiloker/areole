@@ -1043,23 +1043,69 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s, int rule)
 {
     ar_span old = t->doc->nodes[node].text;
 
-    if (old.n == 0 || old.p + old.n + 1 != t->doc->text + t->doc->text_used)
+    if (old.n == 0)
     {
         return 0;
     }
-    if (t->doc->text_used + ar__stored_len(s, rule) > t->doc->text_cap)
-    {
-        t->doc->overflowed = 1;
-        return 0;
-    }
-    --t->doc->text_used; /* drop the terminator; a new one goes after */
-    {
-        ar_u32 wrote = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
 
-        t->doc->text_used += wrote;
-        t->doc->nodes[node].text.n += wrote;
+    /* The usual case: this node's text is the last thing written, so the new
+       run goes straight after it and nothing moves. */
+    if (old.p + old.n + 1 == t->doc->text + t->doc->text_used)
+    {
+        if (t->doc->text_used + ar__stored_len(s, rule) > t->doc->text_cap)
+        {
+            t->doc->overflowed = 1;
+            return 0;
+        }
+        --t->doc->text_used; /* drop the terminator; a new one goes after */
+        {
+            ar_u32 wrote = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
+
+            t->doc->text_used += wrote;
+            t->doc->nodes[node].text.n += wrote;
+        }
+        t->doc->text[t->doc->text_used++] = 0;
+        return 1;
     }
-    t->doc->text[t->doc->text_used++] = 0;
+
+    /*
+     * And the case a table makes, where it is not.
+     *
+     * `<table>A<td>B</td>C</table>` fosters A out, writes B into the cell, and
+     * then fosters C out to join A -- by which time A is no longer at the end
+     * of the arena and cannot simply be grown. The DOM has one text node there
+     * and not two, so the pair is copied to the end and the node repointed.
+     *
+     * The bytes A occupied are not reclaimed: this arena only ever appends,
+     * which is what makes every other insertion a pointer bump. That is a real
+     * cost and it is bounded -- a document that runs out says so through
+     * `overflowed`, the way every other capacity here does -- but a page that
+     * interleaves fostered text with cell content many times over pays for
+     * each merge twice. It is the rarer half of a rare case, and correctness
+     * of the tree is worth more than the bytes.
+     */
+    {
+        ar_u32 add = ar__stored_len(s, rule);
+
+        if (t->doc->text_used + old.n + add + 1 > t->doc->text_cap)
+        {
+            t->doc->overflowed = 1;
+            return 0;
+        }
+        {
+            char  *dst = t->doc->text + t->doc->text_used;
+            ar_u32 i;
+
+            for (i = 0; i < old.n; ++i)
+            {
+                dst[i] = old.p[i];
+            }
+            t->doc->nodes[node].text.p = dst;
+            t->doc->nodes[node].text.n = old.n + ar__store_bytes(dst + old.n, s, rule);
+            t->doc->text_used += t->doc->nodes[node].text.n;
+            t->doc->text[t->doc->text_used++] = 0;
+        }
+    }
     return 1;
 }
 
@@ -2886,8 +2932,27 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                 {
                     if (ar__is(t, t->fmt[i], "a"))
                     {
+                        ar_i32 dup = t->fmt[i];
+
                         t->doc->errors++;
                         ar__adoption(t, "a");
+                        /*
+                         * "...then remove that element from the list of active
+                         * formatting elements and the stack of open elements
+                         * if the adoption agency algorithm didn't already
+                         * remove it (it might not have if the element is not
+                         * in table scope)."
+                         *
+                         * Which is the case a table makes: the open `<a>` sits
+                         * below the table, so it is not in table scope and the
+                         * agency leaves it alone. Without the removal it stays
+                         * the current node after `</table>`, and every element
+                         * after the table is built inside a link the author
+                         * closed long ago -- `<a><table><a></table><p>` put the
+                         * paragraph in the anchor.
+                         */
+                        ar__fmt_remove(t, dup);
+                        ar__pop_index(t, dup);
                         break;
                     }
                 }
