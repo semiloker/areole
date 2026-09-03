@@ -811,6 +811,34 @@ static int ar__same(const char *a, ar_u32 alen, const char *b)
     return b[alen] == 0;
 }
 
+/*
+ * The same comparison, ignoring case, against a lower-case literal.
+ *
+ * Units are the reason it exists: CSS is case-insensitive about them and
+ * `10PX` is a length people write, most often out of a spreadsheet or a
+ * generator. `b` is lower case by construction -- every caller passes a table
+ * entry -- so only `a` is folded.
+ */
+static int ar__same_fold(const char *a, ar_u32 alen, const char *b)
+{
+    ar_u32 i;
+
+    for (i = 0; i < alen; ++i)
+    {
+        char c = a[i];
+
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = (char)(c - 'A' + 'a');
+        }
+        if (b[i] == 0 || c != b[i])
+        {
+            return 0;
+        }
+    }
+    return b[alen] == 0;
+}
+
 static ar_i32 ar__lookup_prop(const char *name, ar_u32 len)
 {
     ar_i32 i;
@@ -1150,6 +1178,198 @@ typedef struct ar__value
 } ar__value;
 
 /* ------------------------------------------------------------------------
+ * Units
+ *
+ * Every unit CSS Values Level 4 defines a length in, in one table.
+ *
+ * One table because the suffix after a number is read in four places -- a
+ * declaration, a track size, a media feature, and the peek that tells a bare
+ * number from a length -- and four copies of a unit list is four places for a
+ * unit to be missing from. 0.9.0 learned that the same mistake in four
+ * insertion modes was a missing helper; this is the same shape, written as a
+ * helper first.
+ *
+ * The absolute units convert here and now, because their ratio to a pixel is
+ * a constant CSS states: 1in is 96px by definition and everything else falls
+ * out of it. `num`/`den` is that ratio as a fraction, never as a decimal --
+ * 1cm is 4800/127 px and no rounding of 37.795 is the same number.
+ *
+ * A relative unit cannot convert here: `em` needs a font size that inheritance
+ * has not settled yet and `vh` needs a viewport that can change without the
+ * stylesheet changing. Those carry `unit` instead, and `ar__resolve_units`
+ * converts them once the context exists -- the same bargain env() makes, for
+ * the same reason.
+ * ------------------------------------------------------------------------ */
+typedef struct ar__unit_row
+{
+    const char *name;
+    ar_u8       len;
+    /* AR_UNIT_PX for an absolute unit, which `num`/`den` converts on the spot;
+       otherwise the relative unit to carry to resolution. */
+    ar_u8  unit;
+    ar_i16 num;
+    ar_i16 den;
+} ar__unit_row;
+
+static const ar__unit_row AR__UNITS[] = {
+    /* Absolute. 1in = 96px is the definition; the rest are exact fractions of
+       it, so `cm` is 96/2.54 written as 4800/127 rather than as 37.795. */
+    {"px", 2, AR_UNIT_PX, 1, 1},
+    {"in", 2, AR_UNIT_PX, 96, 1},
+    {"cm", 2, AR_UNIT_PX, 4800, 127},
+    {"mm", 2, AR_UNIT_PX, 480, 127},
+    {"q", 1, AR_UNIT_PX, 120, 127},
+    {"pt", 2, AR_UNIT_PX, 4, 3},
+    {"pc", 2, AR_UNIT_PX, 16, 1},
+
+    /* Relative to the element's own font. Kept in AR_UNIT_EM order, which
+       resolution indexes by subtraction. */
+    {"em", 2, AR_UNIT_EM, 0, 0},
+    {"ex", 2, AR_UNIT_EX, 0, 0},
+    {"ch", 2, AR_UNIT_CH, 0, 0},
+    {"cap", 3, AR_UNIT_CAP, 0, 0},
+    {"ic", 2, AR_UNIT_IC, 0, 0},
+    {"lh", 2, AR_UNIT_LH, 0, 0},
+
+    /* Relative to the root's font. Same six, same order. */
+    {"rem", 3, AR_UNIT_REM, 0, 0},
+    {"rex", 3, AR_UNIT_REX, 0, 0},
+    {"rch", 3, AR_UNIT_RCH, 0, 0},
+    {"rcap", 4, AR_UNIT_RCAP, 0, 0},
+    {"ric", 3, AR_UNIT_RIC, 0, 0},
+    {"rlh", 3, AR_UNIT_RLH, 0, 0},
+
+    /* The viewport, four families of six. The families are identical on a
+       backend with no retracting chrome, which is every backend areole has --
+       see ar__viewport_axis for why they exist anyway. */
+    {"vw", 2, AR_UNIT_VW, 0, 0},
+    {"vh", 2, AR_UNIT_VH, 0, 0},
+    {"vmin", 4, AR_UNIT_VMIN, 0, 0},
+    {"vmax", 4, AR_UNIT_VMAX, 0, 0},
+    {"vi", 2, AR_UNIT_VI, 0, 0},
+    {"vb", 2, AR_UNIT_VB, 0, 0},
+
+    {"svw", 3, AR_UNIT_SVW, 0, 0},
+    {"svh", 3, AR_UNIT_SVH, 0, 0},
+    {"svmin", 5, AR_UNIT_SVMIN, 0, 0},
+    {"svmax", 5, AR_UNIT_SVMAX, 0, 0},
+    {"svi", 3, AR_UNIT_SVI, 0, 0},
+    {"svb", 3, AR_UNIT_SVB, 0, 0},
+
+    {"lvw", 3, AR_UNIT_LVW, 0, 0},
+    {"lvh", 3, AR_UNIT_LVH, 0, 0},
+    {"lvmin", 5, AR_UNIT_LVMIN, 0, 0},
+    {"lvmax", 5, AR_UNIT_LVMAX, 0, 0},
+    {"lvi", 3, AR_UNIT_LVI, 0, 0},
+    {"lvb", 3, AR_UNIT_LVB, 0, 0},
+
+    {"dvw", 3, AR_UNIT_DVW, 0, 0},
+    {"dvh", 3, AR_UNIT_DVH, 0, 0},
+    {"dvmin", 5, AR_UNIT_DVMIN, 0, 0},
+    {"dvmax", 5, AR_UNIT_DVMAX, 0, 0},
+    {"dvi", 3, AR_UNIT_DVI, 0, 0},
+    {"dvb", 3, AR_UNIT_DVB, 0, 0}};
+
+#define AR__UNIT_COUNT ((ar_i32)(sizeof AR__UNITS / sizeof AR__UNITS[0]))
+
+/*
+ * The unit suffix at `p`, or -1.
+ *
+ * Case-insensitive, because CSS units are: `10PX` and `10Px` are both ten
+ * pixels. The longest match wins and the table is searched whole rather than
+ * stopping at the first prefix, which is what keeps `vmin` from reading as
+ * `vm` and `rem` from reading as `r`.
+ */
+static ar_i32 ar__unit_at(const char *p, const char *end)
+{
+    ar_i32 best = -1;
+    ar_i32 best_len = 0;
+    ar_i32 i;
+
+    for (i = 0; i < AR__UNIT_COUNT; ++i)
+    {
+        ar_i32 len = (ar_i32)AR__UNITS[i].len;
+
+        if (len <= best_len || p + len > end)
+        {
+            continue;
+        }
+        if (!ar__same_fold(p, (ar_u32)len, AR__UNITS[i].name))
+        {
+            continue;
+        }
+        /* A unit is a whole identifier: `10emx` is not ten em followed by an
+           x, it is a bad declaration. */
+        if (p + len < end && ar__is_ident(p[len]))
+        {
+            continue;
+        }
+        best = i;
+        best_len = len;
+    }
+    return best;
+}
+
+/*
+ * A number in thousandths, and a unit row, to a value in the slot's own scale.
+ *
+ * An absolute unit becomes whole pixels and rounds once, here, rather than at
+ * every place that reads it. A relative unit keeps its number in *hundredths*
+ * of the unit, which is what lets `1.5em` and `62.5%`-style values survive a
+ * slot that is only sixteen bits wide: 327.67 units of anything is past every
+ * length a stylesheet states, and a hundredth of an em at any font size a
+ * screen can show is a fraction of a pixel.
+ */
+static ar_i32 ar__unit_value(ar_i32 milli, const ar__unit_row *row)
+{
+    ar_i32 neg = milli < 0;
+    ar_i32 v;
+
+    if (neg)
+    {
+        milli = -milli;
+    }
+    if (row->unit == AR_UNIT_PX)
+    {
+        /*
+         * Thousandths of a pixel, and then one rounding at the end.
+         *
+         * Split around the denominator rather than around the decimal point,
+         * which is what keeps a centimetre exact: 4800/127 truncated to 37
+         * before the rounding gives 37px where every browser gives 38, and
+         * splitting off the whole part first is the version that made that
+         * mistake. `q` carries the part that divides evenly and `r` the
+         * remainder, so no precision is lost before the multiply.
+         *
+         * `lim` is the overflow guard, derived rather than guessed: the only
+         * product here is q * num, so q may be as large as will keep that
+         * inside a signed 32-bit int. Past it the answer is clamped, which is
+         * the same ceiling the sixteen-bit slot has always had -- 400 inches
+         * does not fit in it either.
+         */
+        ar_i32 q = milli / row->den;
+        ar_i32 r = milli % row->den;
+        ar_i32 lim = 2000000000 / row->num;
+
+        if (q > lim)
+        {
+            q = lim;
+        }
+        v = q * row->num + (r * row->num) / row->den;
+        v = (v + 500) / 1000;
+    }
+    else
+    {
+        v = (milli + 5) / 10; /* thousandths to hundredths */
+    }
+    if (v > 32767)
+    {
+        v = 32767;
+    }
+    return neg ? -v : v;
+}
+
+/* ------------------------------------------------------------------------
  * Track lists
  *
  * `grid-template-columns: repeat(3, minmax(100px, 1fr)) auto` is nine numbers
@@ -1225,9 +1445,38 @@ static int ar__parse_track_size(ar__scan *z, ar_i16 *out_v, ar_u8 *out_u, int al
             *out_u = AR_UNIT_PCT;
             return 1;
         }
-        if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
         {
-            z->p += 2;
+            ar_i32 u = ar__unit_at(z->p, z->end);
+
+            if (u >= 0)
+            {
+                const ar__unit_row *row = &AR__UNITS[u];
+
+                /*
+                 * ponytail: absolute units only in a track list.
+                 *
+                 * A track list is parsed once into a pool on the *stylesheet*
+                 * and every box using the rule shares it, so there is nowhere
+                 * to put the answer to `10em` -- which is a different number
+                 * for every box, because the font size is. An absolute unit
+                 * has become pixels by now and shares perfectly well.
+                 *
+                 * The ceiling: `grid-template-columns: 10em 1fr` is refused,
+                 * and refusing is the right failure while the alternative is
+                 * storing a unit the track sizer cannot read. Lifting it means
+                 * the pool entry holding the specified value and the sizer
+                 * resolving it per box, which is the same change subgrid will
+                 * want for line names.
+                 */
+                if (row->unit != AR_UNIT_PX)
+                {
+                    return 0;
+                }
+                z->p += row->len;
+                *out_v = (ar_i16)ar__unit_value(n * 1000 + milli, row);
+                *out_u = AR_UNIT_PX;
+                return 1;
+            }
         }
         *out_v = (ar_i16)n;
         *out_u = AR_UNIT_PX;
@@ -1517,6 +1766,10 @@ static ar_i32 ar__parse_track_list(ar__scan *z, ar_sheet *sheet)
  * Only `line-height` needs to ask -- every other property that accepts a bare
  * number accepts nothing else -- but the question is about the syntax rather
  * than the property, so it lives here with the scanner.
+ *
+ * It asks the table rather than testing for `px`, which is what it did until
+ * units arrived: `line-height: 1.5em` is a length and had been reading as a
+ * bare multiplier of one and a half.
  */
 static int ar__number_has_unit(const ar__scan *z)
 {
@@ -1528,7 +1781,7 @@ static int ar__number_has_unit(const ar__scan *z)
     {
         return 1;
     }
-    return z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x';
+    return ar__unit_at(z->p, z->end) >= 0;
 }
 
 /*
@@ -1678,6 +1931,8 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
     {
         ar_i32 sign = 1;
         ar_i32 n = 0;
+        ar_i32 milli = 0;
+        ar_i32 digits = 0;
 
         if (*z->p == '-')
         {
@@ -1690,58 +1945,56 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             z->p++;
         }
         /*
-         * A fractional part is accepted and floored -- except for the two flex
-         * factors, which keep it.
+         * A fractional part is kept, and the three digits are the whole of the
+         * precision this parser has.
          *
-         * Sub-pixel *sizes* are not a thing here: the layout is integer end to
-         * end. A flex factor is not a size, it is a ratio, and `flex-grow: 0.5`
-         * beside `flex-grow: 1` is a declaration people write and mean. Three
-         * digits are kept, so 0.5 is carried as 500 and the resolution loop
-         * divides by the sum of the factors without losing the ratio.
+         * It used to be floored for everything but the two flex factors, on
+         * the grounds that layout is integer end to end -- which is still true
+         * of a *pixel*. It stopped being true of the number in front of the
+         * unit when relative units arrived: `1.5em` at a sixteen-pixel font is
+         * twenty-four whole pixels, and flooring the 1.5 to 1 made it sixteen.
+         * So the fraction survives to ar__unit_value, which is the one place
+         * that knows whether this number is about to become pixels or stay a
+         * multiple of something not yet known.
          */
+        if (z->p < z->end && *z->p == '.')
         {
-            ar_i32 milli = 0;
-            ar_i32 digits = 0;
-
-            if (z->p < z->end && *z->p == '.')
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
             {
-                z->p++;
-                while (z->p < z->end && ar__is_digit(*z->p))
+                if (digits < 3)
                 {
-                    if (digits < 3)
-                    {
-                        milli = milli * 10 + (*z->p - '0');
-                        ++digits;
-                    }
-                    z->p++;
-                }
-                while (digits < 3)
-                {
-                    milli *= 10;
+                    milli = milli * 10 + (*z->p - '0');
                     ++digits;
                 }
+                z->p++;
             }
-
-            /*
-             * `line-height` joins the flex factors, but only when the number
-             * is bare.
-             *
-             * A flex factor has no units and never did, so those two can take
-             * this branch on sight. `line-height` takes both forms, and they
-             * mean different things -- `1.5` is a multiplier of the font size
-             * and `1.5px` is a length -- so the unit has to be looked at
-             * first. Taking it on sight turned `line-height: 40px` into a
-             * multiplier of forty thousand, which clamped to 32767 and gave a
-             * sixteen-pixel paragraph a five-hundred-pixel line.
-             */
-            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK ||
-                (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
+            while (digits < 3)
             {
-                out.v = sign * (n * 1000 + milli);
-                out.ok = 1;
-                out.unit = AR_UNIT_NUMBER;
-                return out;
+                milli *= 10;
+                ++digits;
             }
+        }
+
+        /*
+         * `line-height` joins the flex factors, but only when the number
+         * is bare.
+         *
+         * A flex factor has no units and never did, so those two can take
+         * this branch on sight. `line-height` takes both forms, and they
+         * mean different things -- `1.5` is a multiplier of the font size
+         * and `1.5px` is a length -- so the unit has to be looked at
+         * first. Taking it on sight turned `line-height: 40px` into a
+         * multiplier of forty thousand, which clamped to 32767 and gave a
+         * sixteen-pixel paragraph a five-hundred-pixel line.
+         */
+        if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK ||
+            (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
+        {
+            out.v = sign * (n * 1000 + milli);
+            out.ok = 1;
+            out.unit = AR_UNIT_NUMBER;
+            return out;
         }
 
         out.v = sign * n;
@@ -1769,9 +2022,26 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             z->p++;
             out.unit = AR_UNIT_PCT;
         }
-        else if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
+        else
         {
-            z->p += 2;
+            ar_i32 u = ar__unit_at(z->p, z->end);
+
+            if (u >= 0)
+            {
+                const ar__unit_row *row = &AR__UNITS[u];
+
+                z->p += row->len;
+                out.v = ar__unit_value(sign * (n * 1000 + milli), row);
+                out.unit = row->unit;
+                if (row->unit >= AR_UNIT_REL_FIRST)
+                {
+                    z->sheet->has_rel_units = 1;
+                }
+                if (row->unit >= AR_UNIT_VIEW_FIRST)
+                {
+                    z->sheet->has_view_units = 1;
+                }
+            }
         }
         return out;
     }
@@ -3535,6 +3805,22 @@ typedef struct ar__mscan
 } ar__mscan;
 
 /*
+ * What `em` means in a media query.
+ *
+ * Sixteen, and not AR_FONT_H, which is eight: this is the *initial* font size
+ * CSS defines rather than the height of the bitmap face areole falls back to.
+ * A query is asked once for the document and before any element exists, so it
+ * cannot mean the font of the box that matched -- `(min-width: 40em)` is 640
+ * pixels in every browser and has to be 640 here.
+ *
+ * It matches the `html` rule in the user-agent sheet on purpose, and the two
+ * are checked against each other in ar_test: a document whose root reads at a
+ * different size from the queries about it is the kind of disagreement that
+ * shows up as one breakpoint being off by a hair and nothing else.
+ */
+#define AR__MQ_INITIAL_FONT_PX 16
+
+/*
  * `a / b` in thousandths, without a 64-bit intermediate.
  *
  * There is no 64-bit type here -- C89 has no `long long` and `long` is not
@@ -3667,16 +3953,72 @@ static ar_i32 ar__mvalue(ar__mscan *z, ar_u8 kind, int *ok)
     }
     if (kind == AR__MK_LEN)
     {
-        if (ulen == 2 && ar__same(unit, ulen, "px"))
+        if (ulen == 0)
         {
-            return n / 1000;
+            if (n == 0)
+            {
+                return 0; /* a bare zero is a length */
+            }
+            *ok = 0;
+            return 0;
         }
-        if (ulen == 0 && n == 0)
         {
-            return 0; /* a bare zero is a length */
+            ar_i32 u = ar__unit_at(unit, unit + ulen);
+
+            if (u < 0)
+            {
+                *ok = 0;
+                return 0;
+            }
+            /*
+             * A relative unit in a media query measures against the *initial*
+             * font size, not against any element's -- there is no element
+             * here, and a query that changed meaning depending on which box
+             * asked it could not be evaluated once for the document.
+             *
+             * The viewport families are the exception that needs no work:
+             * `(min-width: 50vw)` is half the width the query is being asked
+             * about, so it is a percentage of the answer.
+             */
+            {
+                const ar__unit_row *row = &AR__UNITS[u];
+                ar_i32              v = ar__unit_value(n, row);
+
+                if (row->unit == AR_UNIT_PX)
+                {
+                    return v;
+                }
+                if (row->unit >= AR_UNIT_VIEW_FIRST)
+                {
+                    ar_i32 k = (ar_i32)row->unit - AR_UNIT_VIEW_FIRST;
+                    ar_i32 axis = k % AR_UNIT_VIEW_AXES;
+                    ar_i32 w = z->m->width;
+                    ar_i32 h = z->m->height;
+                    ar_i32 basis = axis == 0 || axis == 4   ? w
+                                   : axis == 1 || axis == 5 ? h
+                                   : axis == 2              ? (w < h ? w : h)
+                                                            : (w > h ? w : h);
+
+                    return (v * basis + 5000) / 10000;
+                }
+                /*
+                 * The font-relative six, against the initial font size. No
+                 * face is consulted: the fallbacks CSS names for ex, ch and
+                 * cap are fractions of an em, and the initial font is whatever
+                 * the document has not yet chosen.
+                 */
+                {
+                    ar_i32 k = (ar_i32)row->unit - AR_UNIT_EM;
+                    ar_i32 metric = k % AR_UNIT_METRIC_COUNT;
+                    ar_i32 em = AR__MQ_INITIAL_FONT_PX;
+                    ar_i32 basis = metric == 1 || metric == 2 ? em * 50
+                                   : metric == 3              ? em * 70
+                                                              : em * 100;
+
+                    return (v * basis + 5000) / 10000;
+                }
+            }
         }
-        *ok = 0;
-        return 0;
     }
     if (ulen != 0)
     {

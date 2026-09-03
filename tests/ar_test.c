@@ -818,9 +818,109 @@ static void test_css_units(void)
         CHECK(b.v[AR_P_GAP] == 8 && b.unit[AR_P_GAP] == AR_UNIT_PX,
               "css: a unitless length is pixels");
 
-        /* The layout is integer end to end, so a fraction is floored at parse
-           time rather than carried and rounded inconsistently later. */
-        CHECK(c.v[AR_P_WIDTH] == 12, "css: a fractional length is floored");
+        /*
+         * The layout is integer end to end, so a fraction is resolved once,
+         * at parse time, rather than carried and rounded inconsistently later.
+         * That principle is unchanged since it was written; the direction is
+         * not. It said *floored*, and 12.75 read as 12.
+         *
+         * 0.4.1 made flooring untenable rather than merely imprecise. A
+         * relative unit has to carry its fraction -- `0.75em` floored to zero
+         * em is zero pixels, not twelve -- so the number reaches the one
+         * conversion in ar__unit_value with the fraction intact, and that
+         * conversion has to pick an integer. Nearest is the only defensible
+         * pick: flooring biases every fractional length downward, and a bias
+         * that every margin and every line height shares is the accumulating
+         * drift the gallery's text demos are already down to.
+         */
+        CHECK(c.v[AR_P_WIDTH] == 13, "css: a fractional length rounds to nearest");
+    }
+}
+
+/*
+ * The absolute units, which convert where they are parsed.
+ *
+ * Every expectation here is CSS Values Level 4 arithmetic and none of it is a
+ * measurement: 1in is 96px by definition, and the rest are exact fractions of
+ * that. They are checked as whole numbers where the fraction is exact and as
+ * the nearest pixel where it is not, which is the same rounding every other
+ * length now takes.
+ */
+static void test_css_absolute_units(void)
+{
+    ar__sheet(".px { width: 40px; }"
+              ".in { width: 2in; }"
+              ".pc { width: 3pc; }"
+              ".pt { width: 12pt; }"
+              ".cm { width: 1cm; }"
+              ".mm { width: 10mm; }"
+              ".q  { width: 40q; }"
+              ".up { width: 10PX; }"
+              ".ptf { width: 7.5pt; }");
+
+    CHECK(g_sheet.errors == 0, "units: every absolute unit parses without error");
+
+    CHECK(ar__css_value(".px", 0, AR_P_WIDTH) == 40, "units: px is itself");
+    CHECK(ar__css_value(".in", 0, AR_P_WIDTH) == 192, "units: an inch is ninety six pixels");
+    CHECK(ar__css_value(".pc", 0, AR_P_WIDTH) == 48, "units: a pica is sixteen");
+    CHECK(ar__css_value(".pt", 0, AR_P_WIDTH) == 16, "units: twelve points is sixteen pixels");
+    /* 96/2.54 is 37.795, and a centimetre is a centimetre whichever way it is
+       written -- which is the whole reason the table carries 4800/127 rather
+       than a rounded decimal. */
+    CHECK(ar__css_value(".cm", 0, AR_P_WIDTH) == 38, "units: a centimetre rounds to thirty eight");
+    CHECK(ar__css_value(".mm", 0, AR_P_WIDTH) == 38, "units: and ten millimetres is the same");
+    CHECK(ar__css_value(".q", 0, AR_P_WIDTH) == 38, "units: as is forty quarter-millimetres");
+    CHECK(ar__css_value(".up", 0, AR_P_WIDTH) == 10, "units: a unit is case insensitive");
+    CHECK(ar__css_value(".ptf", 0, AR_P_WIDTH) == 10, "units: 7.5pt keeps its fraction to 10px");
+
+    /* Every one of them is a plain pixel length by the time it is stored:
+       nothing downstream should ever meet a `pt`. */
+    {
+        ar_style c = ar__resolve(".cm", AR_STATE_NONE);
+
+        CHECK(c.unit[AR_P_WIDTH] == AR_UNIT_PX, "units: an absolute unit is pixels once parsed");
+    }
+}
+
+/*
+ * The relative units, which cannot convert until there is a box.
+ *
+ * The parse side only: what is stored is the unit and the number in
+ * hundredths, and a stylesheet that says `1.5em` has to still say one and a
+ * half when it reaches resolution. test_units_resolve is the other half.
+ */
+static void test_css_relative_units_parse(void)
+{
+    ar__sheet(".em { width: 1.5em; }"
+              ".rem { width: 2rem; }"
+              ".vh { height: 50vh; }"
+              ".dvh { height: 50dvh; }"
+              ".ch { width: 10ch; }"
+              ".small { width: 0.25em; }");
+
+    CHECK(g_sheet.errors == 0, "units: every relative unit parses without error");
+
+    {
+        ar_style e = ar__resolve(".em", AR_STATE_NONE);
+        ar_style r = ar__resolve(".rem", AR_STATE_NONE);
+        ar_style v = ar__resolve(".vh", AR_STATE_NONE);
+        ar_style d = ar__resolve(".dvh", AR_STATE_NONE);
+        ar_style c = ar__resolve(".ch", AR_STATE_NONE);
+        ar_style s = ar__resolve(".small", AR_STATE_NONE);
+
+        CHECK(e.unit[AR_P_WIDTH] == AR_UNIT_EM && e.v[AR_P_WIDTH] == 150,
+              "units: em carries hundredths, so 1.5em survives a sixteen bit slot");
+        CHECK(r.unit[AR_P_WIDTH] == AR_UNIT_REM && r.v[AR_P_WIDTH] == 200, "units: rem is its own");
+        CHECK(v.unit[AR_P_HEIGHT] == AR_UNIT_VH && v.v[AR_P_HEIGHT] == 5000,
+              "units: vh is its own");
+        /* The dynamic family is a separate unit even though it answers the
+           same, because the backend that makes it differ is a real thing to
+           build and this is where it would be told apart. */
+        CHECK(d.unit[AR_P_HEIGHT] == AR_UNIT_DVH, "units: dvh is not folded into vh at parse time");
+        CHECK(c.unit[AR_P_WIDTH] == AR_UNIT_CH, "units: ch is its own");
+        /* The reason hundredths exist: a quarter em floored to whole units is
+           zero, and zero is a box that is not there. */
+        CHECK(s.v[AR_P_WIDTH] == 25, "units: a quarter em is twenty five hundredths, not zero");
     }
 }
 
@@ -5171,6 +5271,100 @@ static void test_inheritance_flows_down(void)
           "inherit: a box that states its own colour keeps it");
     CHECK(g_ui->nodes[3].style.v[AR_P_FONT_SIZE] == 17,
           "inherit: while still inheriting what it did not state");
+}
+
+/*
+ * A relative unit becomes pixels, and against the right basis.
+ *
+ * The order is the thing being pinned rather than the arithmetic. `font-size:
+ * 2em` measures against the *parent's* font and every other unit on the same
+ * box measures against the answer, so a box at 2em with 1em of padding is
+ * thirty-two pixels of font and thirty-two of padding -- not sixteen and
+ * sixteen, and not thirty-two and sixteen. Getting that wrong reads as a
+ * spacing bug three releases later.
+ */
+static void test_units_resolve(void)
+{
+    ar_surface s = ar__ui_surface(200, 400);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:16px; }"
+                 ".dbl  { font-size:2em; padding:1em; }"
+                 ".kid  { width:1.5em; }"
+                 ".rt   { width:2rem; }"
+                 ".vp   { height:25vh; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.dbl");
+    ar_begin(g_ui, "div.kid");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.rt");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.vp");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_FONT_SIZE] == 32,
+          "units: font-size in em measures against the parent's font");
+    /* The same box, and the padding takes the size the font-size just became
+       rather than the one it was. */
+    CHECK(g_ui->nodes[1].style.v[AR_P_PAD_TOP] == 32,
+          "units: and every other unit on that box measures against the answer");
+    CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 48,
+          "units: a child's em is its own inherited font, not the root's");
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] == 32,
+          "units: rem is the root's font, wherever asked");
+    CHECK(g_ui->nodes[4].style.v[AR_P_HEIGHT] == 100, "units: vh is one per cent of the viewport");
+
+    /* Nothing may reach layout still carrying a relative unit: a unit layout
+       does not know reads as a pixel count of whatever hundredths were in the
+       slot, which is a box eighty times too big rather than a missing one. */
+    {
+        ar_i32 i, rel = 0;
+
+        for (i = 0; i < g_ui->node_count; ++i)
+        {
+            ar_i32 p;
+
+            for (p = 0; p < AR_P_COUNT; ++p)
+            {
+                if (g_ui->nodes[i].style.unit[p] >= AR_UNIT_REL_FIRST)
+                {
+                    ++rel;
+                }
+            }
+        }
+        CHECK(rel == 0, "units: no relative unit survives into layout");
+    }
+}
+
+/*
+ * `em` in a media query is the initial font size, not any element's.
+ *
+ * A query is answered once for the document and before a box exists, so it
+ * cannot mean the font of whatever matched. Forty em is 640 pixels in every
+ * browser; the check is that the two ends of this engine agree about which
+ * sixteen that is.
+ */
+static void test_units_in_media_queries(void)
+{
+    CHECK(ar__mq("(min-width: 40em)", 640, 480, 1000), "units: 40em is 640px in a query");
+    CHECK(!ar__mq("(min-width: 40em)", 639, 480, 1000), "units: and 639 does not reach it");
+    CHECK(ar__mq("(min-width: 20pc)", 320, 480, 1000), "units: an absolute unit in a query too");
+    /* A viewport unit inside a query about the viewport is a share of the
+       answer, so this one is true at every size but zero -- which is the
+       point: it is arithmetic on the number being asked about, not a
+       breakpoint. */
+    CHECK(ar__mq("(min-width: 50vw)", 800, 600, 1000),
+          "units: a viewport unit in a query is a share of the answer");
+    CHECK(!ar__mq("(min-width: 150vw)", 800, 600, 1000), "units: and can exceed it");
+    /* The unit has to be a unit. `(min-width: 40zz)` is not a query with a
+       length in it, and a feature that cannot be parsed is false rather than
+       true -- which is the difference between a breakpoint that never fires
+       and one that always does. */
+    CHECK(!ar__mq("(min-width: 40zz)", 5000, 480, 1000), "units: an unknown unit is not a length");
 }
 
 static void test_layout_properties_do_not_inherit(void)
@@ -18882,6 +19076,8 @@ int main(void)
 
     test_css_basic();
     test_css_units();
+    test_css_absolute_units();
+    test_css_relative_units_parse();
     test_css_colors();
     test_css_specificity();
     test_css_source_order_breaks_ties();
@@ -19242,6 +19438,8 @@ int main(void)
     test_the_inherited_list_matches_the_switch();
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
+    test_units_resolve();
+    test_units_in_media_queries();
     test_inheritance_is_not_in_the_style_cache();
     test_style_cache_agrees_with_the_resolver();
     test_style_cache_is_dropped_when_a_sheet_is_added();
