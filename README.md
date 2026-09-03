@@ -399,6 +399,7 @@ toolkit breaks that circle.
 - **0.9.0** *It reads HTML* — the tokenizer, tree construction, encoding, a user-agent stylesheet ✅
 - **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
 - **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
+- **0.9.3** *It parses the awkward third* — the stack of template insertion modes, foster parenting, and twenty insertion-mode rules ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -583,6 +584,57 @@ never will), `display-mode` (a browser tab is not an application), and `prefers-
 where the documented default is `light` until 0.16.1 wires the OS and the headless browser reports
 `dark`. Each is named in `examples/gallery/_not-gated.txt`. If the first ever agreed, something
 would be broken.
+
+### 0.9.3, complete
+
+The last third of tree construction, and the release that was going to be about one subsystem. It
+was not: fragment parsing -- the 196-case algorithm 0.9.3 was scoped around -- shipped inside 0.9.0
+instead, and what remained turned out to be twenty rules, each small, each invisible until a
+document happened to need it.
+
+| | |
+| --- | --- |
+| html5lib tree construction | **1,914 of 1,922 — 99.58%**, from 1,884 and 98.02% |
+| html5lib tokenizer | **7,026 of 7,026 — 100%**, unchanged |
+| Browser tree corpus | **183 of 183** documents agree with Edge exactly |
+| Fuzzing | a million iterations, no crash, no hang, no overrun |
+| Failures left | **8**, each named below |
+
+**A stack of template insertion modes**, 13.2.4.4. A template's mode is the one mode that cannot be
+recovered from the shape of the open-element stack, because it depends on what has been seen
+*inside* it rather than on what encloses it: two templates in identical positions are in `in row`
+and `in body` according to whether a `<tr>` went past. One remembered value was not enough, and the
+comment in `ar__reset_mode` had said so for two releases.
+
+**Foster parenting is a flag on the parser**, which is how the specification phrases it -- "enable
+foster parenting, process the token using the rules for the in body insertion mode, then disable
+foster parenting" -- and not an argument to a single insertion. It was tried twice and reverted
+twice before it worked, because it broke six cases while fixing two. It was not wrong; it was
+exposing a missing rule. `style`, `script` and `template` inside a table have a rule of their own
+and are not the "anything else" that gets fostered, and once they had it the flag fixed both and
+broke none.
+
+**Four bugs whose shape was the same: a rule that read the wrong name.** `ar__pop_until(t, "tbody")`
+closed a tbody whatever row-group end tag arrived, so `</thead>` silently did nothing. `<![CDATA[`
+demanded a byte after it that a file need not have. The in-table ignore list held nine of its eleven
+end tags, and the two missing ones -- `body` and `html` -- are the two that do damage rather than
+nothing. `applet`, `marquee` and `object` had no rule at all, so the marker they put in the list of
+active formatting elements was never there; they are the same three elements `ar__in_scope` already
+stops at, and only one of those two boundaries had been implemented.
+
+**And a size budget that fired.** 0.9.2 was cut at forty-four bytes under the 144 KB figure, which
+is not headroom, it is a coincidence. These rules cost 1,472 bytes between them. Raised to 150 KB
+with the reasoning in `tools/check_size.py`, including the part that weakens it: 0.9.3's own
+document allocates "under 6 KB", but that figure was written for fragment parsing and CDATA, which
+shipped inside 0.9.0 and are already counted. This is a new allowance, not a draw-down.
+
+Eight failures remain and none is an insertion-mode rule. Four are `<selectedcontent>`, an element
+that mirrors another element's content -- a feature, not a rule, and named as deferred since 0.9.0.
+Three are foreign content and a template meeting each other. One is a case where the vendored suite
+and the current specification disagree: `<textarea>` inside a select fragment, where the suite
+expects the element to be inserted and the rule that covers `input`, `keygen` *and* `textarea` says
+to ignore it. That one is written down rather than papered over by special-casing a tag to match a
+test.
 
 ## Building
 

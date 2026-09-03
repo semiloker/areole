@@ -82,6 +82,23 @@ typedef struct ar__tree
     ar_i32 tmpl_mode_n;
 
     /*
+     * "Enable foster parenting", 13.2.6.4.9.
+     *
+     * The specification turns foster parenting on around the whole of "process
+     * the token using the rules for the in body insertion mode", not around
+     * one insertion. Passing it per call is the same thing right up until `in
+     * body` hands the token on again, and it does that constantly: `</p>` with
+     * no p in scope inserts one through a path that never saw the flag, and
+     * `<title>` goes to `in head`, which has a flag of its own set to zero. A
+     * flag the insertion reads gets both, because every layer below inherits
+     * it without having to be told.
+     *
+     * Saved and restored rather than set and cleared, because in body can
+     * re-enter a table mode and these then nest.
+     */
+    int foster;
+
+    /*
      * The list of active formatting elements.
      *
      * A marker is -1 and is pushed by a table cell or a caption, so
@@ -1026,23 +1043,69 @@ static int ar__text_extend(ar__tree *t, ar_i32 node, ar_span s, int rule)
 {
     ar_span old = t->doc->nodes[node].text;
 
-    if (old.n == 0 || old.p + old.n + 1 != t->doc->text + t->doc->text_used)
+    if (old.n == 0)
     {
         return 0;
     }
-    if (t->doc->text_used + ar__stored_len(s, rule) > t->doc->text_cap)
-    {
-        t->doc->overflowed = 1;
-        return 0;
-    }
-    --t->doc->text_used; /* drop the terminator; a new one goes after */
-    {
-        ar_u32 wrote = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
 
-        t->doc->text_used += wrote;
-        t->doc->nodes[node].text.n += wrote;
+    /* The usual case: this node's text is the last thing written, so the new
+       run goes straight after it and nothing moves. */
+    if (old.p + old.n + 1 == t->doc->text + t->doc->text_used)
+    {
+        if (t->doc->text_used + ar__stored_len(s, rule) > t->doc->text_cap)
+        {
+            t->doc->overflowed = 1;
+            return 0;
+        }
+        --t->doc->text_used; /* drop the terminator; a new one goes after */
+        {
+            ar_u32 wrote = ar__store_bytes(t->doc->text + t->doc->text_used, s, rule);
+
+            t->doc->text_used += wrote;
+            t->doc->nodes[node].text.n += wrote;
+        }
+        t->doc->text[t->doc->text_used++] = 0;
+        return 1;
     }
-    t->doc->text[t->doc->text_used++] = 0;
+
+    /*
+     * And the case a table makes, where it is not.
+     *
+     * `<table>A<td>B</td>C</table>` fosters A out, writes B into the cell, and
+     * then fosters C out to join A -- by which time A is no longer at the end
+     * of the arena and cannot simply be grown. The DOM has one text node there
+     * and not two, so the pair is copied to the end and the node repointed.
+     *
+     * The bytes A occupied are not reclaimed: this arena only ever appends,
+     * which is what makes every other insertion a pointer bump. That is a real
+     * cost and it is bounded -- a document that runs out says so through
+     * `overflowed`, the way every other capacity here does -- but a page that
+     * interleaves fostered text with cell content many times over pays for
+     * each merge twice. It is the rarer half of a rare case, and correctness
+     * of the tree is worth more than the bytes.
+     */
+    {
+        ar_u32 add = ar__stored_len(s, rule);
+
+        if (t->doc->text_used + old.n + add + 1 > t->doc->text_cap)
+        {
+            t->doc->overflowed = 1;
+            return 0;
+        }
+        {
+            char  *dst = t->doc->text + t->doc->text_used;
+            ar_u32 i;
+
+            for (i = 0; i < old.n; ++i)
+            {
+                dst[i] = old.p[i];
+            }
+            t->doc->nodes[node].text.p = dst;
+            t->doc->nodes[node].text.n = old.n + ar__store_bytes(dst + old.n, s, rule);
+            t->doc->text_used += t->doc->nodes[node].text.n;
+            t->doc->text[t->doc->text_used++] = 0;
+        }
+    }
     return 1;
 }
 
@@ -1077,9 +1140,11 @@ static ar_u32 ar__non_nul(ar_span s)
 static void ar__insert_text_ex(ar__tree *t, ar_span s, int foster, int rule)
 {
     ar_i32 before = -1;
-    ar_i32 parent =
-        ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
+    ar_i32 parent;
     ar_i32 node;
+
+    foster = foster || t->foster;
+    parent = ar__content_of(t, foster ? ar__insertion_point(t, -1, &before) : ar__current(t));
 
     if (s.n == 0 || (rule == AR__NUL_DROP && ar__non_nul(s) == 0))
     {
@@ -1224,8 +1289,11 @@ static int ar__is_special(const ar__tree *t, ar_i32 node)
 
 static ar_i32 ar__insert_element(ar__tree *t, const ar_token *tok, int foster)
 {
-    ar_i32 node = ar__node(t, AR_DOM_ELEMENT);
+    ar_i32 node;
     ar_i32 k;
+
+    foster = foster || t->foster;
+    node = ar__node(t, AR_DOM_ELEMENT);
 
     if (node < 0)
     {
@@ -2366,6 +2434,22 @@ static void ar__reset_mode(ar__tree *t)
                 t->mode = M_IN_BODY;
                 return;
             }
+            if (ar__lit_is(t->ctx, "select"))
+            {
+                /*
+                 * Step 4 of the mode reset, and the one context that was
+                 * missing. A select fragment began in `in body`, where every
+                 * rule that makes a select a select is absent: `<input>` was
+                 * inserted instead of ignored, because "ignore it when there
+                 * is no select in select scope" is a rule of `in select` and
+                 * nothing was reading it.
+                 *
+                 * Never the in-table variant: the context element is not on
+                 * the stack, so there is nothing below it to be a table.
+                 */
+                t->mode = M_IN_SELECT;
+                return;
+            }
             if (ar__lit_is(t->ctx, "td") || ar__lit_is(t->ctx, "th"))
             {
                 t->mode = M_IN_BODY; /* a cell context parses as body content */
@@ -2603,6 +2687,51 @@ static void ar__via_head(ar__tree *t, const ar_token *tok, int back)
     }
 }
 
+/*
+ * "Any other end tag", 13.2.6.4.7, as a function rather than a tail.
+ *
+ * Walk the stack for an element with this name and close through to it -- but
+ * stop at the first element in the special category, which is what makes a
+ * stray `</div>` inside a paragraph harmless instead of destructive.
+ *
+ * It is a function because the adoption agency's step 4.3 ends "return and
+ * instead act as described in the 'any other end tag' entry above", and the
+ * `<nobr>` start tag reaches that step: it tests for a nobr on the *stack* and
+ * the agency looks for one in the *list* after the last marker, so a marker
+ * between them makes the two disagree. `<nobr><table><marquee></table><nobr>`
+ * is that shape -- the marquee leaves a marker the `</table>` never clears --
+ * and without the fallback the agency did nothing at all and the second nobr
+ * opened inside the first.
+ */
+static void ar__close_by_name(ar__tree *t, ar_span name)
+{
+    ar_i32 i;
+
+    for (i = t->open_n - 1; i >= 1; --i)
+    {
+        if (t->doc->nodes[t->open[i]].kind != AR_DOM_ELEMENT)
+        {
+            continue;
+        }
+        if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML &&
+            ar__span_eq(t->doc->nodes[t->open[i]].name, name))
+        {
+            while (t->open_n > i + 1)
+            {
+                ar__pop(t);
+            }
+            ar__pop(t);
+            return;
+        }
+        if (ar__is_special(t, t->open[i]))
+        {
+            t->doc->errors++;
+            return;
+        }
+    }
+    t->doc->errors++;
+}
+
 static void ar__in_body(ar__tree *t, const ar_token *tok)
 {
     if (tok->kind == AR_TOK_TEXT)
@@ -2833,6 +2962,27 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             ar__pop(t);
             return;
         }
+        /*
+         * `applet`, `marquee` and `object` open a scope in the list of active
+         * formatting elements, 13.2.6.4.7. The marker is the whole of it:
+         * without one the Noah's Ark clause counts across the boundary, so
+         * `<b id=a><b id=a><b id=a><b><object><b id=a>` saw three matching
+         * `<b>`s from *outside* the object and dropped the earliest of them.
+         * The list came back from `</object>` with the same four entries in a
+         * different order, and the paragraph after it was rebuilt inside out.
+         *
+         * These are also the elements `ar__in_scope` already stops at, which
+         * is the same boundary seen from the other side.
+         */
+        if (ar_span_is(tok->name, "applet") || ar_span_is(tok->name, "marquee") ||
+            ar_span_is(tok->name, "object"))
+        {
+            ar__reconstruct(t);
+            ar__insert_element(t, tok, 1);
+            ar__fmt_marker(t);
+            t->frameset_ok = 0;
+            return;
+        }
         if (ar__is_formatting(tok->name))
         {
             /*
@@ -2848,8 +2998,27 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
                 {
                     if (ar__is(t, t->fmt[i], "a"))
                     {
+                        ar_i32 dup = t->fmt[i];
+
                         t->doc->errors++;
                         ar__adoption(t, "a");
+                        /*
+                         * "...then remove that element from the list of active
+                         * formatting elements and the stack of open elements
+                         * if the adoption agency algorithm didn't already
+                         * remove it (it might not have if the element is not
+                         * in table scope)."
+                         *
+                         * Which is the case a table makes: the open `<a>` sits
+                         * below the table, so it is not in table scope and the
+                         * agency leaves it alone. Without the removal it stays
+                         * the current node after `</table>`, and every element
+                         * after the table is built inside a link the author
+                         * closed long ago -- `<a><table><a></table><p>` put the
+                         * paragraph in the anchor.
+                         */
+                        ar__fmt_remove(t, dup);
+                        ar__pop_index(t, dup);
                         break;
                     }
                 }
@@ -2862,7 +3031,14 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
             if (ar_span_is(tok->name, "nobr") && ar__in_scope(t, "nobr", 0))
             {
                 t->doc->errors++;
-                ar__adoption(t, "nobr");
+                if (!ar__adoption(t, "nobr"))
+                {
+                    /* Step 4.3: no such element in the list, so close it the
+                       way a stray end tag would. The scope test above looked
+                       at the stack and the agency looks at the list, and a
+                       marker between them is where they part company. */
+                    ar__close_by_name(t, tok->name);
+                }
             }
             ar__reconstruct(t);
             {
@@ -3238,6 +3414,33 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
      * a paragraph from closing the div and everything between -- thirty
      * conformance cases turned red at once and said so.
      */
+    /* And close it again, clearing the list back to the marker it left. */
+    if (ar_span_is(tok->name, "applet") || ar_span_is(tok->name, "marquee") ||
+        ar_span_is(tok->name, "object"))
+    {
+        char   name[16];
+        ar_u32 n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32 k;
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        if (!ar__in_scope(t, name, 0))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__implied_end_tags(t, 0);
+        if (!ar__span_eq(t->doc->nodes[ar__current(t)].name, tok->name))
+        {
+            t->doc->errors++;
+        }
+        ar__pop_until(t, name);
+        ar__fmt_clear_to_marker(t);
+        return;
+    }
     if ((ar__closes_p(tok->name) || ar_span_is(tok->name, "button")) &&
         !ar_span_is(tok->name, "p") && !ar_span_is(tok->name, "form") &&
         !ar_span_is(tok->name, "table") && !ar_span_is(tok->name, "hr"))
@@ -3275,33 +3478,7 @@ static void ar__in_body(ar__tree *t, const ar_token *tok)
      * destructive. Without that stop the walk keeps going, finds the div, and
      * closes everything between.
      */
-    {
-        ar_i32 i;
-
-        for (i = t->open_n - 1; i >= 1; --i)
-        {
-            if (t->doc->nodes[t->open[i]].kind != AR_DOM_ELEMENT)
-            {
-                continue;
-            }
-            if (t->doc->nodes[t->open[i]].ns == AR_NS_HTML &&
-                ar__span_eq(t->doc->nodes[t->open[i]].name, tok->name))
-            {
-                while (t->open_n > i + 1)
-                {
-                    ar__pop(t);
-                }
-                ar__pop(t);
-                return;
-            }
-            if (ar__is_special(t, t->open[i]))
-            {
-                t->doc->errors++;
-                return;
-            }
-        }
-        t->doc->errors++;
-    }
+    ar__close_by_name(t, tok->name);
 }
 
 /* ------------------------------------------------------------------------
@@ -3423,9 +3600,24 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
             t->mode = M_IN_CAPTION;
             return;
         }
-        /* A template inside a table stays inside it. Everything else that is
-           not a table part gets fostered out; a template is head content and
-           the specification routes it to the `in head` rules instead. */
+        /*
+         * Head content inside a table stays inside it. 13.2.6.4.9 gives
+         * `style`, `script` and `template` a rule of their own -- "process the
+         * token using the rules for the in head insertion mode" -- so they are
+         * not the "anything else" that gets fostered out, and
+         * `<table><style> <tr>x </style>` keeps its stylesheet in the table
+         * where the author put it.
+         *
+         * Reached through the fall-through from `in table body` and `in row`
+         * as well, so the mode to come back to is whichever one asked, not
+         * `in table`.
+         */
+        if (ar_span_is(tok->name, "style") || ar_span_is(tok->name, "script"))
+        {
+            ar__via_head(t, tok, t->mode);
+            return;
+        }
+        /* A template inside a table stays inside it, for the same reason. */
         if (ar_span_is(tok->name, "template"))
         {
             ar__insert_element(t, tok, 0);
@@ -3521,13 +3713,25 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
         }
         /* Anything else is foster parented. */
         t->doc->errors++;
-        ar__in_body(t, tok);
+        {
+            int was = t->foster;
+
+            t->foster = 1;
+            ar__in_body(t, tok);
+            t->foster = was;
+        }
         return;
     }
     if (tok->kind == AR_TOK_END)
     {
-        static const char *const STRUCTURAL[] = {"tbody", "tfoot",   "thead",    "tr",  "td",
-                                                 "th",    "caption", "colgroup", "col", 0};
+        /* 13.2.6.4.9's ignore list, all eleven of it. `body` and `html` were
+           missing, and they are the two that do damage rather than nothing:
+           `</body>` reaches `in body`, which switches to `after body`, so
+           `<table></body></tbody><td>` left the table behind and put the cell
+           at the end of the document. */
+        static const char *const STRUCTURAL[] = {"body", "caption", "col", "colgroup",
+                                                 "html", "tbody",   "td",  "tfoot",
+                                                 "th",   "thead",   "tr",  0};
         ar_i32                   i;
 
         if (ar_span_is(tok->name, "table"))
@@ -3573,7 +3777,13 @@ static void ar__in_table(ar__tree *t, const ar_token *tok)
          * the emphasis* and the table came out empty. The corpus check that
          * only asked whether `em` appeared before `table` passed on that tree.
          */
-        ar__in_body(t, tok);
+        {
+            int was = t->foster;
+
+            t->foster = 1;
+            ar__in_body(t, tok);
+            t->foster = was;
+        }
         return;
     }
 }
@@ -3730,6 +3940,27 @@ static void ar__in_select(ar__tree *t, const ar_token *tok)
             ar__via_head(t, tok, t->mode);
             return;
         }
+        /*
+         * A formatting end tag is dropped rather than run.
+         *
+         * 13.2.6.4.16 ignores every end tag but these three, and areole
+         * deliberately does not -- a `<div>` is allowed to live inside a
+         * select here, and it needs its `</div>` to close it. But the
+         * adoption agency is a different thing from closing an element: it
+         * reparents across whatever is between, and a select is exactly the
+         * boundary it should not reach across.
+         *
+         * `<font><select><option>a</option></font>` ran it for the font,
+         * which found the select as its furthest block and moved a clone of
+         * the font *inside* the select with the option under it -- a tree no
+         * browser produces, out of a page that only forgot to close a tag in
+         * order.
+         */
+        if (ar__is_formatting(tok->name))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__in_body(t, tok);
         return;
     }
@@ -3786,9 +4017,50 @@ static void ar__in_select_in_table(ar__tree *t, const ar_token *tok)
  */
 static void ar__in_column_group(ar__tree *t, const ar_token *tok)
 {
-    if (tok->kind == AR_TOK_TEXT && ar__all_space(tok->text))
+    if (tok->kind == AR_TOK_TEXT)
     {
-        ar__insert_text(t, tok->text, 0);
+        /*
+         * 13.2.6.4.12 takes the whitespace and hands the rest back, which
+         * means splitting the token: the tokenizer emits `" foo"` as one
+         * character run, and only its leading spaces belong in the column
+         * group. Treating it as indivisible fostered the spaces out with the
+         * word, so `<colgroup> foo</colgroup>` lost the one character that
+         * was in the right place already.
+         */
+        ar_u32 lead = 0;
+
+        while (lead < tok->text.n && (tok->text.p[lead] == 0 || ar__space_char(tok->text.p[lead])))
+        {
+            lead++;
+        }
+        if (lead > 0)
+        {
+            ar_span space;
+
+            space.p = tok->text.p;
+            space.n = lead;
+            ar__insert_text(t, space, 0);
+        }
+        if (lead == tok->text.n)
+        {
+            return;
+        }
+        /* The rest closes the group and is reprocessed in `in table`, which
+           is where it gets fostered out to the body. */
+        if (!ar__is(t, ar__current(t), "colgroup"))
+        {
+            t->doc->errors++;
+            return;
+        }
+        {
+            ar_token rest = *tok;
+
+            rest.text.p = tok->text.p + lead;
+            rest.text.n = tok->text.n - lead;
+            ar__pop(t);
+            t->mode = M_IN_TABLE;
+            ar__process(t, &rest);
+        }
         return;
     }
     if (tok->kind == AR_TOK_COMMENT)
@@ -3893,7 +4165,35 @@ static void ar__in_table_body(ar__tree *t, const ar_token *tok)
         (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
          ar_span_is(tok->name, "thead")))
     {
-        ar__pop_until(t, "tbody");
+        /*
+         * 13.2.6.4.13 closes the group the tag *names*, and this closed
+         * `tbody` whatever arrived. `</thead>` therefore found no tbody on the
+         * stack and did nothing at all -- silently, because `ar__pop_until`
+         * returns when the tag it is given is absent -- so the head group
+         * stayed open and everything after it was built inside it.
+         *
+         * Invisible in an ordinary table, where the group is a tbody and the
+         * hardcoded name happens to be right.
+         */
+        char        name[16];
+        ar_u32      n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32      k;
+        const char *one[2];
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        one[0] = name;
+        one[1] = 0;
+        if (!ar__in_table_scope(t, one))
+        {
+            t->doc->errors++;
+            return;
+        }
+        ar__clear_to_table_body(t);
+        ar__pop(t);
         t->mode = M_IN_TABLE;
         return;
     }
@@ -4023,6 +4323,49 @@ static void ar__in_cell(ar__tree *t, const ar_token *tok)
            `<thead><tr><td>h<tbody>` two row groups rather than a tbody inside
            a cell -- the tree the corpus found when only td, th and tr were
            listed here. */
+        ar__implied_end_tags(t, 0);
+        while (t->open_n > 1 && !ar__is(t, ar__current(t), "td") &&
+               !ar__is(t, ar__current(t), "th"))
+        {
+            ar__pop(t);
+        }
+        ar__pop(t);
+        ar__fmt_clear_to_marker(t);
+        t->mode = M_IN_ROW;
+        ar__process(t, tok);
+        return;
+    }
+    if (tok->kind == AR_TOK_END &&
+        (ar_span_is(tok->name, "tbody") || ar_span_is(tok->name, "tfoot") ||
+         ar_span_is(tok->name, "thead") || ar_span_is(tok->name, "tr")))
+    {
+        /*
+         * A row-group or row end tag closes the cell and is then reprocessed,
+         * 13.2.6.4.15 -- but only if there is one of them in table scope,
+         * because a stray `</tbody>` in a cell that is not in a tbody must
+         * not tear the cell down around it.
+         *
+         * Without this the tag reached `in body`, which found nothing to
+         * close and dropped it, and the cell stayed open: `<table><td></tbody>A`
+         * put the A in the cell where a browser fosters it out of the table.
+         */
+        char        name[16];
+        ar_u32      n = tok->name.n < sizeof name - 1u ? tok->name.n : (ar_u32)sizeof name - 1u;
+        ar_u32      k;
+        const char *one[2];
+
+        for (k = 0; k < n; ++k)
+        {
+            name[k] = tok->name.p[k];
+        }
+        name[n] = 0;
+        one[0] = name;
+        one[1] = 0;
+        if (!ar__in_table_scope(t, one))
+        {
+            t->doc->errors++;
+            return;
+        }
         ar__implied_end_tags(t, 0);
         while (t->open_n > 1 && !ar__is(t, ar__current(t), "td") &&
                !ar__is(t, ar__current(t), "th"))
@@ -5145,13 +5488,28 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
                 ar__push(t, t->head);
                 t->mode = M_IN_HEAD;
                 ar__process_mode(t, tok);
-                /* The head comes back off unless the token opened something
-                   inside it, in which case the mode it switched to owns the
-                   stack now. */
+                /*
+                 * The head comes off again whatever happened. It was pushed
+                 * only so the `in head` rules had somewhere to insert, and
+                 * 13.2.6.4.5 removes it in the same breath -- before the
+                 * element's own content is tokenized, not after.
+                 *
+                 * Leaving it on when the token opened a text element was the
+                 * bug: `<head></head><style></style><!-- -->` put the comment
+                 * inside the head, because `</style>` came back to a stack
+                 * that still had one. `ar__pop_index` takes it out from under
+                 * the style, which is exactly what it is for.
+                 */
+                ar__pop_index(t, t->head);
                 if (t->mode == M_IN_HEAD)
                 {
-                    ar__pop_index(t, t->head);
                     t->mode = M_AFTER_HEAD;
+                }
+                else if (t->original_mode == M_IN_HEAD)
+                {
+                    /* `in head` was borrowed; the mode to return to when the
+                       text ends is the one we were really in. */
+                    t->original_mode = M_AFTER_HEAD;
                 }
                 return;
             }
@@ -5379,13 +5737,25 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         }
         if (tok->kind == AR_TOK_END && ar_span_is(tok->name, "frameset"))
         {
+            /* The fragment case, 13.2.6.4.20: when the current node is the
+               root html element there is nothing outside it to close, so the
+               token is a parse error and nothing else. Popping it left the
+               synthetic root gone and every following `<frame>` with nowhere
+               to be inserted. */
+            if (t->ctx && t->open_n <= 2)
+            {
+                t->doc->errors++;
+                return;
+            }
             if (t->open_n > 2)
             {
                 ar__pop(t);
             }
             /* The outermost one closes the frameset document. A nested one
-               leaves an enclosing frameset behind and changes nothing. */
-            if (!ar__is(t, ar__current(t), "frameset"))
+               leaves an enclosing frameset behind and changes nothing -- and
+               a fragment never leaves `in frameset` at all, because there is
+               no document around it for the parser to be after. */
+            if (!t->ctx && !ar__is(t, ar__current(t), "frameset"))
             {
                 t->mode = M_AFTER_FRAMESET;
             }
@@ -5456,6 +5826,16 @@ static void ar__process_switch(ar__tree *t, const ar_token *tok)
         if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "noframes"))
         {
             ar__via_head(t, tok, M_AFTER_AFTER_FRAMESET);
+            return;
+        }
+        /* A second `<html>` is still the same html element, and its
+           attributes are merged onto the one that exists -- 13.2.6.4.22
+           routes it to `in body`, which is where that merge lives. Dropping
+           it lost `<html a=b>` written after `</html>`, which is exactly the
+           shape a template engine emits when it closes the document twice. */
+        if (tok->kind == AR_TOK_START && ar_span_is(tok->name, "html"))
+        {
+            ar__in_body(t, tok);
             return;
         }
         t->doc->errors++;
@@ -5593,9 +5973,19 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
         /*
          * A `<title>` context makes the whole fragment RCDATA and a `<script>`
          * context makes it script data, which is why `a<b>` inside a title is
-         * five characters of text rather than an element. `last_start` has to
-         * name the context too, or the appropriate-end-tag rule never fires
-         * and the fragment never leaves that state.
+         * five characters of text rather than an element.
+         *
+         * `last_start` is deliberately *not* seeded from the context, and it
+         * used to be. An "appropriate end tag token" is one whose name matches
+         * the last start tag the tokenizer itself emitted, and in a fragment
+         * the tokenizer has emitted none -- 13.2.6.5 switches the state and
+         * says nothing about the last start tag, because there is no start tag
+         * to be last. So a fragment in one of these states never leaves it,
+         * which is the whole point: `</script>` inside a script fragment is
+         * five more characters of script, not the end of one.
+         *
+         * Seeding it read as harmless because nothing else in the suite closes
+         * its own context tag. One case does.
          */
         {
             ar_html_state s = AR_HTML_DATA;
@@ -5622,18 +6012,6 @@ static int ar__parse_core(ar_doc *doc, const char *bytes, ar_u32 len, char *scra
                 }
             }
             tk.state = s;
-            if (s != AR_HTML_DATA && s != AR_HTML_PLAINTEXT)
-            {
-                ar_u32 k = 0;
-
-                while (ctx[k] && k + 1 < (ar_u32)sizeof tk.last_start)
-                {
-                    tk.last_start[k] =
-                        (char)(ctx[k] >= 'A' && ctx[k] <= 'Z' ? ctx[k] + 32 : ctx[k]);
-                    ++k;
-                }
-                tk.last_start_n = k;
-            }
         }
     }
 
