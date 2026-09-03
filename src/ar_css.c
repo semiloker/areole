@@ -3218,6 +3218,27 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;
     sheet->cache_misses = 0;
+    sheet->queries_evaluated = 0;
+    sheet->queries = 0;
+    sheet->query_count = 0;
+    sheet->query_cap = 0;
+    sheet->qtext = 0;
+    sheet->qtext_used = 0;
+    sheet->qtext_cap = 0;
+    sheet->media.width = 0;
+    sheet->media.height = 0;
+    sheet->media.resolution = 1000;
+}
+
+void ar_sheet_set_queries(ar_sheet *sheet, ar_mq *storage, ar_u16 capacity, char *text,
+                          ar_u16 text_capacity)
+{
+    sheet->queries = storage;
+    sheet->query_cap = capacity;
+    sheet->query_count = 0;
+    sheet->qtext = text;
+    sheet->qtext_cap = text_capacity;
+    sheet->qtext_used = 0;
 }
 
 void ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity)
@@ -3326,25 +3347,1268 @@ static void ar__sort_rules(ar_sheet *sheet)
     }
 }
 
-void ar_sheet_parse(ar_sheet *sheet, const char *css)
+/*
+ * Everything from an `@` to the end of the at-rule, whatever kind it is.
+ *
+ * Two shapes: a statement ending at a semicolon (`@charset "utf-8";`) and a
+ * block ending at its matching brace (`@font-face { ... }`). Which one it is
+ * cannot be known from the keyword, because an unknown at-rule may be either,
+ * so it is decided by whichever comes first at depth zero.
+ *
+ * This existed before only by accident. An at-rule failed `ar__parse_selector`
+ * and the recovery path scanned to the next `}` -- which is right for a flat
+ * block and wrong for every nested one: `@media (min-width: 600px) { .a { } }`
+ * would resynchronise on the *inner* brace, parse `.a`'s siblings as top-level
+ * rules whatever the query said, and then meet a stray `}` it had no use for.
+ * Nothing in the tree nested an at-rule, so nothing found it.
+ *
+ * Braces inside strings do not count. `content: "}"` is ordinary, and a
+ * stylesheet that ends early because of one loses every rule after it.
+ */
+static void ar__skip_at_rule(ar__scan *z)
 {
-    ar__scan z;
+    ar_i32 depth = 0;
 
-    if (!css)
+    while (z->p < z->end)
+    {
+        char c = *z->p;
+
+        if (c == '"' || c == '\'')
+        {
+            char quote = c;
+
+            z->p++;
+            while (z->p < z->end && *z->p != quote)
+            {
+                /* A backslash escapes the next byte, including the quote that
+                   would otherwise end the string. */
+                if (*z->p == '\\' && z->p + 1 < z->end)
+                {
+                    z->p++;
+                }
+                z->p++;
+            }
+            if (z->p < z->end)
+            {
+                z->p++;
+            }
+            continue;
+        }
+        if (c == '{')
+        {
+            depth++;
+        }
+        else if (c == '}')
+        {
+            z->p++;
+            if (--depth <= 0)
+            {
+                return;
+            }
+            continue;
+        }
+        else if (c == ';' && depth == 0)
+        {
+            z->p++;
+            return; /* a statement at-rule, with no block at all */
+        }
+        z->p++;
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Media queries
+ *
+ * Media Queries Level 4, in both the legacy `min-`/`max-` forms and the range
+ * syntax. The table below is the whole of it, and every feature says where its
+ * value comes from -- which is the question that decides whether a real
+ * stylesheet behaves.
+ *
+ * Three come from the window: `width`, `height` and `resolution`, with
+ * `aspect-ratio` and `orientation` computed from the first two. The rest
+ * report the documented default in docs/roadmap/responsive-and-adaptive.md
+ * until a backend can answer them at 0.10.2 and 0.16.1. Two of those defaults
+ * are permanent rather than pending, and both are useful:
+ *
+ *   `scripting: none`          -- true, and how a page tells areole what to do
+ *   `display-mode: standalone` -- an application is not in a browser tab
+ *
+ * The defaults are stated rather than left to fall through as false, because
+ * `@media (prefers-reduced-motion: no-preference)` guarding an animation has
+ * to run it. A feature that answers false to everything does not degrade
+ * gracefully; it silently disables the common case.
+ * ------------------------------------------------------------------------ */
+
+/* Shared with @supports below: both grammars nest, and neither may nest
+   without a bound -- a stylesheet is input, and input decides the depth. */
+#define AR__COND_MAX_DEPTH 8
+
+/* What kind of value a feature takes, which is what tells the parser how to
+   read the right-hand side. */
+enum
+{
+    AR__MK_LEN,   /* px, and a bare 0                       */
+    AR__MK_RATIO, /* `16/9`, and a bare number as `n / 1`    */
+    AR__MK_RES,   /* `2dppx`, `2x`, `192dpi`, `96dpcm`       */
+    AR__MK_INT,   /* a plain integer                         */
+    AR__MK_WORD   /* a keyword, compared against the default */
+};
+
+/* Which part of ar_media an answer depends on, so a resize re-evaluates only
+   the queries that can have changed. Zero means it depends on nothing that
+   moves, and such a query is evaluated once and never again. */
+#define AR__MM_NONE 0u
+#define AR__MM_W    1u
+#define AR__MM_H    2u
+#define AR__MM_RES  4u
+
+typedef struct ar__mfeat
+{
+    const char *name;
+    ar_u8       kind;
+    ar_u8       mask;
+    ar_i32      fixed; /* numeric features this build does not measure */
+    const char *deflt; /* AR__MK_WORD: the one keyword that is true    */
+} ar__mfeat;
+
+static const ar__mfeat AR__MFEATS[] = {
+    /* From the window. */
+    {"width", AR__MK_LEN, AR__MM_W, 0, 0},
+    {"height", AR__MK_LEN, AR__MM_H, 0, 0},
+    {"aspect-ratio", AR__MK_RATIO, AR__MM_W | AR__MM_H, 0, 0},
+    {"orientation", AR__MK_WORD, AR__MM_W | AR__MM_H, 0, 0},
+    {"resolution", AR__MK_RES, AR__MM_RES, 0, 0},
+
+    /* Permanently true, and said so rather than left pending. */
+    {"scripting", AR__MK_WORD, AR__MM_NONE, 0, "none"},
+    {"display-mode", AR__MK_WORD, AR__MM_NONE, 0, "standalone"},
+    {"prefers-reduced-data", AR__MK_WORD, AR__MM_NONE, 0, "no-preference"},
+
+    /* Wired to the OS at 0.16.1; the documented default until then. */
+    {"prefers-color-scheme", AR__MK_WORD, AR__MM_NONE, 0, "light"},
+    {"prefers-reduced-motion", AR__MK_WORD, AR__MM_NONE, 0, "no-preference"},
+    {"prefers-contrast", AR__MK_WORD, AR__MM_NONE, 0, "no-preference"},
+    {"prefers-reduced-transparency", AR__MK_WORD, AR__MM_NONE, 0, "no-preference"},
+    {"inverted-colors", AR__MK_WORD, AR__MM_NONE, 0, "none"},
+    {"forced-colors", AR__MK_WORD, AR__MM_NONE, 0, "none"},
+    {"light-level", AR__MK_WORD, AR__MM_NONE, 0, "normal"},
+    {"color-gamut", AR__MK_WORD, AR__MM_NONE, 0, "srgb"},
+    {"dynamic-range", AR__MK_WORD, AR__MM_NONE, 0, "standard"},
+    {"video-dynamic-range", AR__MK_WORD, AR__MM_NONE, 0, "standard"},
+    {"update", AR__MK_WORD, AR__MM_NONE, 0, "fast"},
+    {"overflow-block", AR__MK_WORD, AR__MM_NONE, 0, "scroll"},
+    {"overflow-inline", AR__MK_WORD, AR__MM_NONE, 0, "scroll"},
+
+    /* Input modality, wired at 0.10.2. A window with a pointer is the default
+       because that is what every backend in this tree has. */
+    {"hover", AR__MK_WORD, AR__MM_NONE, 0, "hover"},
+    {"any-hover", AR__MK_WORD, AR__MM_NONE, 0, "hover"},
+    {"pointer", AR__MK_WORD, AR__MM_NONE, 0, "fine"},
+    {"any-pointer", AR__MK_WORD, AR__MM_NONE, 0, "fine"},
+
+    /* Numeric and fixed until a backend reports otherwise. `color` is bits per
+       channel; `grid` is zero because this is not a character terminal. */
+    {"color", AR__MK_INT, AR__MM_NONE, 8, 0},
+    {"color-index", AR__MK_INT, AR__MM_NONE, 0, 0},
+    {"monochrome", AR__MK_INT, AR__MM_NONE, 0, 0},
+    {"grid", AR__MK_INT, AR__MM_NONE, 0, 0}};
+
+#define AR__MFEAT_N ((ar_i32)(sizeof AR__MFEATS / sizeof AR__MFEATS[0]))
+
+enum
+{
+    AR__MOP_EQ,
+    AR__MOP_LT,
+    AR__MOP_LE,
+    AR__MOP_GT,
+    AR__MOP_GE,
+    AR__MOP_BOOL /* `(width)` -- true when the value is not zero */
+};
+
+typedef struct ar__mscan
+{
+    const char     *p;
+    const char     *end;
+    const ar_media *m;
+    ar_u32          used; /* which features were consulted */
+    int             bad;  /* malformed, and therefore false */
+} ar__mscan;
+
+/*
+ * `a / b` in thousandths, without a 64-bit intermediate.
+ *
+ * There is no 64-bit type here -- C89 has no `long long` and `long` is not
+ * required to be wider than `int` -- so `a * 1000 / b` is not available for
+ * the sizes this has to take: `(1920 / 1080)` in thousandths would need
+ * 1,920,000,000 before the divide, which is most of what an `ar_i32` holds,
+ * and the next size up overflows silently.
+ *
+ * Splitting it costs nothing and cannot overflow until the denominator passes
+ * two million, which no ratio anybody writes comes close to.
+ */
+static ar_i32 ar__thou_div(ar_i32 a, ar_i32 b)
+{
+    if (b == 0)
+    {
+        return 0;
+    }
+    return (a / b) * 1000 + ((a % b) * 1000) / b;
+}
+
+static void ar__msp(ar__mscan *z)
+{
+    while (z->p < z->end && ar__is_space(*z->p))
+    {
+        z->p++;
+    }
+}
+
+static ar_i32 ar__mword(ar__mscan *z, const char **out)
+{
+    const char *start = z->p;
+
+    while (z->p < z->end && ar__is_ident(*z->p))
+    {
+        z->p++;
+    }
+    *out = start;
+    return (ar_i32)(z->p - start);
+}
+
+/* A number in thousandths, so `1.5` and `0.5dppx` survive with no float. */
+static ar_i32 ar__mnum(ar__mscan *z, int *ok)
+{
+    ar_i32 whole = 0;
+    ar_i32 frac = 0;
+    ar_i32 scale = 1000;
+    int    any = 0;
+
+    while (z->p < z->end && ar__is_digit(*z->p))
+    {
+        whole = whole * 10 + (*z->p++ - '0');
+        any = 1;
+    }
+    if (z->p < z->end && *z->p == '.')
+    {
+        z->p++;
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            if (scale > 1)
+            {
+                scale /= 10;
+                frac += (*z->p - '0') * scale;
+            }
+            z->p++;
+            any = 1;
+        }
+    }
+    *ok = any;
+    return whole * 1000 + frac;
+}
+
+/* The value on the right of a feature, in that feature's own units: px for a
+   length, thousandths for a ratio or a resolution, units for an integer. */
+static ar_i32 ar__mvalue(ar__mscan *z, ar_u8 kind, int *ok)
+{
+    ar_i32      n;
+    const char *unit;
+    ar_i32      ulen;
+
+    ar__msp(z);
+    n = ar__mnum(z, ok);
+    if (!*ok)
+    {
+        return 0;
+    }
+    unit = z->p;
+    ulen = 0;
+    while (z->p < z->end && ar__is_ident(*z->p))
+    {
+        z->p++;
+        ulen++;
+    }
+
+    if (kind == AR__MK_RATIO)
+    {
+        ar__msp(z);
+        if (z->p < z->end && *z->p == '/')
+        {
+            ar_i32 d;
+            int    dok = 0;
+
+            z->p++;
+            ar__msp(z);
+            d = ar__mnum(z, &dok);
+            if (!dok || d == 0)
+            {
+                *ok = 0;
+                return 0;
+            }
+            return ar__thou_div(n, d);
+        }
+        return n; /* a bare number means `n / 1` */
+    }
+    if (kind == AR__MK_RES)
+    {
+        if ((ulen == 4 && ar__same(unit, ulen, "dppx")) || (ulen == 1 && ar__same(unit, ulen, "x")))
+        {
+            return n;
+        }
+        if (ulen == 3 && ar__same(unit, ulen, "dpi"))
+        {
+            return n / 96; /* 96 dpi is one device pixel per CSS pixel */
+        }
+        if (ulen == 4 && ar__same(unit, ulen, "dpcm"))
+        {
+            return (n / 96) * 254 / 100 + ((n % 96) * 254) / 9600;
+        }
+        *ok = 0;
+        return 0;
+    }
+    if (kind == AR__MK_LEN)
+    {
+        if (ulen == 2 && ar__same(unit, ulen, "px"))
+        {
+            return n / 1000;
+        }
+        if (ulen == 0 && n == 0)
+        {
+            return 0; /* a bare zero is a length */
+        }
+        *ok = 0;
+        return 0;
+    }
+    if (ulen != 0)
+    {
+        *ok = 0;
+        return 0;
+    }
+    return n / 1000;
+}
+
+static int ar__mcmp(ar_i32 have, ar_u8 op, ar_i32 want)
+{
+    switch (op)
+    {
+    case AR__MOP_LT:
+        return have < want;
+    case AR__MOP_LE:
+        return have <= want;
+    case AR__MOP_GT:
+        return have > want;
+    case AR__MOP_GE:
+        return have >= want;
+    case AR__MOP_BOOL:
+        return have != 0;
+    default:
+        return have == want;
+    }
+}
+
+/* What the window says, in the feature's own units. */
+static ar_i32 ar__mhave(const ar__mfeat *f, const ar_media *m)
+{
+    if (f->mask == AR__MM_W)
+    {
+        return m->width;
+    }
+    if (f->mask == AR__MM_H)
+    {
+        return m->height;
+    }
+    if (f->mask == AR__MM_RES)
+    {
+        return m->resolution;
+    }
+    if (f->kind == AR__MK_RATIO)
+    {
+        return ar__thou_div(m->width, m->height);
+    }
+    return f->fixed;
+}
+
+static const ar__mfeat *ar__mfind(const char *name, ar_i32 len)
+{
+    ar_i32 i;
+
+    for (i = 0; i < AR__MFEAT_N; ++i)
+    {
+        if (ar__same(name, len, AR__MFEATS[i].name))
+        {
+            return &AR__MFEATS[i];
+        }
+    }
+    return 0;
+}
+
+/*
+ * One `( ... )`, in any of the three shapes Media Queries Level 4 allows.
+ *
+ *   (width)                     boolean: true when the value is not zero
+ *   (min-width: 600px)          legacy, and still the common way to write it
+ *   (width >= 600px)            range, and `(400px <= width <= 700px)` too
+ *
+ * The legacy prefixes are not a separate grammar: `min-` is `>=` and `max-`
+ * is `<=` against the same feature, which is why the two forms are required
+ * to give identical answers and why one corpus can check both.
+ */
+static int ar__mcond_parens(ar__mscan *z)
+{
+    const ar__mfeat *f;
+    const char      *name;
+    ar_i32           len;
+    ar_i32           want;
+    ar_u8            op = AR__MOP_BOOL;
+    int              ok = 0;
+    int              flipped = 0;
+    ar_i32           lo = 0;
+    ar_u8            lo_op = AR__MOP_EQ;
+    int              have_lo = 0;
+
+    ar__msp(z);
+    if (z->p >= z->end || *z->p != '(')
+    {
+        z->bad = 1;
+        return 0;
+    }
+    z->p++;
+    ar__msp(z);
+
+    /* The range form can open with the value: `(400px <= width)`. */
+    if (z->p < z->end && (ar__is_digit(*z->p) || *z->p == '.'))
+    {
+        ar__mscan probe = *z;
+        int       pok = 0;
+
+        (void)ar__mnum(&probe, &pok);
+        while (probe.p < probe.end && ar__is_ident(*probe.p))
+        {
+            probe.p++;
+        }
+        ar__msp(&probe);
+        if (pok && probe.p < probe.end && (*probe.p == '<' || *probe.p == '>' || *probe.p == '='))
+        {
+            have_lo = 1;
+        }
+    }
+
+    if (have_lo)
+    {
+        /* Read it once the feature is known, because the units depend on it.
+           The text is rewound after the feature name has been seen. */
+        const char *value_at = z->p;
+
+        while (z->p < z->end && *z->p != '<' && *z->p != '>' && *z->p != '=')
+        {
+            z->p++;
+        }
+        if (*z->p == '<')
+        {
+            lo_op = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_LE : AR__MOP_LT;
+        }
+        else if (*z->p == '>')
+        {
+            lo_op = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_GE : AR__MOP_GT;
+        }
+        else
+        {
+            lo_op = AR__MOP_EQ;
+        }
+        z->p += (lo_op == AR__MOP_LE || lo_op == AR__MOP_GE) ? 2 : 1;
+        ar__msp(z);
+        len = ar__mword(z, &name);
+        f = ar__mfind(name, len);
+        if (!f)
+        {
+            z->bad = 1;
+            return 0;
+        }
+        {
+            ar__mscan v = *z;
+
+            v.p = value_at;
+            lo = ar__mvalue(&v, f->kind, &ok);
+            if (!ok)
+            {
+                z->bad = 1;
+                return 0;
+            }
+        }
+        /* `400px <= width` is `width >= 400px`. */
+        lo_op = lo_op == AR__MOP_LT   ? AR__MOP_GT
+                : lo_op == AR__MOP_LE ? AR__MOP_GE
+                : lo_op == AR__MOP_GT ? AR__MOP_LT
+                : lo_op == AR__MOP_GE ? AR__MOP_LE
+                                      : AR__MOP_EQ;
+    }
+    else
+    {
+        len = ar__mword(z, &name);
+        if (len == 0)
+        {
+            z->bad = 1;
+            return 0;
+        }
+        f = ar__mfind(name, len);
+        if (!f && len > 4 && ar__same(name, 4, "min-"))
+        {
+            f = ar__mfind(name + 4, len - 4);
+            op = AR__MOP_GE;
+            flipped = 1;
+        }
+        if (!f && len > 4 && ar__same(name, 4, "max-"))
+        {
+            f = ar__mfind(name + 4, len - 4);
+            op = AR__MOP_LE;
+            flipped = 1;
+        }
+        if (!f)
+        {
+            /* An unknown feature is false, not an error: a stylesheet written
+               for a browser degrades here rather than losing the whole sheet.
+               The brackets still have to be stepped over. */
+            while (z->p < z->end && *z->p != ')')
+            {
+                z->p++;
+            }
+            if (z->p < z->end)
+            {
+                z->p++;
+            }
+            return 0;
+        }
+    }
+
+    z->used |= f->mask;
+    ar__msp(z);
+
+    /* A keyword feature: `(orientation: portrait)`, or bare, which is true
+       when the feature has any value at all -- and every one of these does. */
+    if (f->kind == AR__MK_WORD)
+    {
+        int result;
+
+        if (z->p < z->end && *z->p == ')')
+        {
+            z->p++;
+            return 1;
+        }
+        if (z->p >= z->end || *z->p != ':' || flipped)
+        {
+            z->bad = 1;
+            return 0;
+        }
+        z->p++;
+        ar__msp(z);
+        len = ar__mword(z, &name);
+        if (f->mask != AR__MM_NONE)
+        {
+            /* orientation, the one keyword feature the window decides. */
+            const char *have = z->m->height >= z->m->width ? "portrait" : "landscape";
+
+            result = ar__same(name, len, have);
+        }
+        else
+        {
+            result = f->deflt && ar__same(name, len, f->deflt);
+        }
+        ar__msp(z);
+        if (z->p < z->end && *z->p == ')')
+        {
+            z->p++;
+        }
+        else
+        {
+            z->bad = 1;
+            return 0;
+        }
+        return result;
+    }
+
+    /* Bare: `(width)`, true when it is not zero. */
+    if (z->p < z->end && *z->p == ')' && !have_lo)
+    {
+        z->p++;
+        return ar__mcmp(ar__mhave(f, z->m), AR__MOP_BOOL, 0);
+    }
+
+    if (!have_lo)
+    {
+        if (z->p < z->end && *z->p == ':')
+        {
+            z->p++;
+            if (!flipped)
+            {
+                op = AR__MOP_EQ;
+            }
+        }
+        else if (z->p < z->end && (*z->p == '<' || *z->p == '>' || *z->p == '='))
+        {
+            if (*z->p == '<')
+            {
+                op = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_LE : AR__MOP_LT;
+            }
+            else if (*z->p == '>')
+            {
+                op = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_GE : AR__MOP_GT;
+            }
+            else
+            {
+                op = AR__MOP_EQ;
+            }
+            z->p += (op == AR__MOP_LE || op == AR__MOP_GE) ? 2 : 1;
+        }
+        else
+        {
+            z->bad = 1;
+            return 0;
+        }
+        want = ar__mvalue(z, f->kind, &ok);
+        if (!ok)
+        {
+            z->bad = 1;
+            return 0;
+        }
+    }
+    else
+    {
+        /* `400px <= width` may be the whole of it, or the low end of a pair. */
+        want = lo;
+        op = lo_op;
+        ar__msp(z);
+        if (z->p < z->end && (*z->p == '<' || *z->p == '>'))
+        {
+            ar_u8  op2;
+            ar_i32 hi;
+
+            if (*z->p == '<')
+            {
+                op2 = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_LE : AR__MOP_LT;
+            }
+            else
+            {
+                op2 = (z->p + 1 < z->end && z->p[1] == '=') ? AR__MOP_GE : AR__MOP_GT;
+            }
+            z->p += (op2 == AR__MOP_LE || op2 == AR__MOP_GE) ? 2 : 1;
+            hi = ar__mvalue(z, f->kind, &ok);
+            if (!ok)
+            {
+                z->bad = 1;
+                return 0;
+            }
+            ar__msp(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            else
+            {
+                z->bad = 1;
+            }
+            return ar__mcmp(ar__mhave(f, z->m), op, want) && ar__mcmp(ar__mhave(f, z->m), op2, hi);
+        }
+    }
+
+    ar__msp(z);
+    if (z->p < z->end && *z->p == ')')
+    {
+        z->p++;
+    }
+    else
+    {
+        z->bad = 1;
+        return 0;
+    }
+    return ar__mcmp(ar__mhave(f, z->m), op, want);
+}
+
+static int ar__mcondition(ar__mscan *z, ar_i32 depth);
+
+/* `not X`, `( ... )`, or one bracketed feature test. */
+static int ar__mcond_unit(ar__mscan *z, ar_i32 depth)
+{
+    ar__msp(z);
+    if (depth >= AR__COND_MAX_DEPTH || z->p >= z->end)
+    {
+        z->bad = 1;
+        return 0;
+    }
+    if (z->end - z->p >= 3 && ar__same(z->p, 3, "not") &&
+        (z->p + 3 >= z->end || ar__is_space(z->p[3]) || z->p[3] == '('))
+    {
+        z->p += 3;
+        return !ar__mcond_unit(z, depth + 1);
+    }
+    /* `(` may open a nested condition or a feature test. A nested one has
+       another `(` or a `not` inside it. */
+    if (*z->p == '(')
+    {
+        const char *look = z->p + 1;
+
+        while (look < z->end && ar__is_space(*look))
+        {
+            look++;
+        }
+        if (look < z->end &&
+            (*look == '(' || (z->end - look >= 3 && ar__same(look, 3, "not") &&
+                              (look + 3 >= z->end || ar__is_space(look[3]) || look[3] == '('))))
+        {
+            int r;
+
+            z->p++;
+            r = ar__mcondition(z, depth + 1);
+            ar__msp(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            else
+            {
+                z->bad = 1;
+            }
+            return r;
+        }
+    }
+    return ar__mcond_parens(z);
+}
+
+/*
+ * A chain of `and` or `or`, which cannot be mixed without brackets -- the
+ * same rule `@supports` follows, and for the same reason: a condition that
+ * mixes them has no meaning in CSS, so it is malformed and therefore false.
+ */
+static int ar__mcondition(ar__mscan *z, ar_i32 depth)
+{
+    int    result = ar__mcond_unit(z, depth);
+    char   joiner = 0;
+    ar_i32 guard = 0;
+
+    for (;;)
+    {
+        const char *kw;
+        ar_i32      len;
+        int         rhs;
+
+        ar__msp(z);
+        if (z->p >= z->end || !ar__is_ident(*z->p) || ++guard > AR_MAX_SEL_LIST)
+        {
+            break;
+        }
+        len = ar__mword(z, &kw);
+        if (len == 3 && ar__same(kw, len, "and"))
+        {
+            if (joiner == 'o')
+            {
+                z->bad = 1;
+                return 0;
+            }
+            joiner = 'a';
+        }
+        else if (len == 2 && ar__same(kw, len, "or"))
+        {
+            if (joiner == 'a')
+            {
+                z->bad = 1;
+                return 0;
+            }
+            joiner = 'o';
+        }
+        else
+        {
+            z->bad = 1;
+            return 0;
+        }
+        rhs = ar__mcond_unit(z, depth + 1);
+        result = joiner == 'a' ? (result && rhs) : (result || rhs);
+    }
+    return result;
+}
+
+/*
+ * One query: an optional `not` or `only`, a media type, and any number of
+ * `and` conditions -- or no type at all and just a condition.
+ *
+ * `only` exists to hide a query from a parser too old to know the syntax, and
+ * means nothing to one that does; it is read and discarded. A media type this
+ * engine does not have is false, and `print` is one of them until 0.5.2 brings
+ * the fragmentation model with it.
+ */
+static int ar__mquery(ar__mscan *z)
+{
+    int         negate = 0;
+    int         result;
+    const char *word;
+    ar_i32      len;
+
+    ar__msp(z);
+    if (z->p < z->end && *z->p != '(')
+    {
+        ar__mscan save = *z;
+
+        len = ar__mword(z, &word);
+        if (len == 3 && ar__same(word, len, "not"))
+        {
+            negate = 1;
+            ar__msp(z);
+            len = ar__mword(z, &word);
+        }
+        else if (len == 4 && ar__same(word, len, "only"))
+        {
+            ar__msp(z);
+            len = ar__mword(z, &word);
+        }
+
+        if (len > 0)
+        {
+            /* `not (width: 0)` has no type: what followed was a condition. */
+            if (negate && len == 0)
+            {
+                *z = save;
+            }
+            result = ar__same(word, len, "all") || ar__same(word, len, "screen");
+            ar__msp(z);
+            if (z->p < z->end && z->end - z->p >= 3 && ar__same(z->p, 3, "and"))
+            {
+                z->p += 3;
+                result = ar__mcondition(z, 0) && result;
+            }
+            if (z->bad)
+            {
+                return 0;
+            }
+            return negate ? !result : result;
+        }
+        if (negate)
+        {
+            /* `not` with no type after it: the rest is a condition. */
+            result = ar__mcondition(z, 0);
+            return z->bad ? 0 : !result;
+        }
+        *z = save;
+    }
+
+    result = ar__mcondition(z, 0);
+    return z->bad ? 0 : result;
+}
+
+/*
+ * A media query list, which is a comma-separated disjunction.
+ *
+ * A malformed query in the list is false and costs only itself, which is what
+ * the specification asks for: `@media (min-width: 600px), (nonsense` still
+ * applies at 600 pixels.
+ *
+ * `used` comes back as the features the list consulted, so a resize can
+ * re-evaluate only the queries that could have changed their answer.
+ */
+static int ar_media_eval(const char *text, const char *end, const ar_media *m, ar_u32 *used)
+{
+    ar__mscan z;
+    int       result = 0;
+
+    z.p = text;
+    z.end = end;
+    z.m = m;
+    z.used = 0;
+    z.bad = 0;
+
+    for (;;)
+    {
+        int one;
+
+        z.bad = 0;
+        one = ar__mquery(&z);
+        result = result || one;
+        while (z.p < z.end && *z.p != ',')
+        {
+            z.p++;
+        }
+        if (z.p >= z.end)
+        {
+            break;
+        }
+        z.p++; /* the comma */
+    }
+    if (used)
+    {
+        *used = z.used;
+    }
+    return result;
+}
+
+/*
+ * @supports, answered from the parser and never from a table.
+ *
+ * A property is supported when this engine's own declaration parser accepts
+ * it and sets something. That is the only answer that cannot drift: a table
+ * saying `grid` is supported is a claim maintained by hand, and `@supports`
+ * is precisely the tool a page uses to decide whether to trust us. Claiming
+ * something parsed and ignored would be the most damaging lie available here.
+ *
+ * The probe runs the real `ar__parse_decl` over the text between the
+ * parentheses, on a scanner bounded there so it stops at the closing bracket
+ * rather than running into the rest of the sheet. Its bookkeeping is put back
+ * afterwards: asking whether something is supported is not an error when the
+ * answer is no, and a track consumed by a probe is a track a real rule cannot
+ * have.
+ */
+/* From the opening bracket to the one that closes it, or null. Brackets inside
+   strings do not count, and neither does the one in `url("a)b")`. */
+static const char *ar__match_paren(const char *p, const char *end)
+{
+    ar_i32 depth = 0;
+
+    while (p < end)
+    {
+        if (*p == '"' || *p == '\'')
+        {
+            char quote = *p++;
+
+            while (p < end && *p != quote)
+            {
+                if (*p == '\\' && p + 1 < end)
+                {
+                    p++;
+                }
+                p++;
+            }
+            if (p >= end)
+            {
+                return 0;
+            }
+        }
+        else if (*p == '(')
+        {
+            depth++;
+        }
+        else if (*p == ')')
+        {
+            if (--depth == 0)
+            {
+                return p;
+            }
+        }
+        p++;
+    }
+    return 0;
+}
+
+/* Does this engine act on `prop: value`? The parser is asked, not a list. */
+static int ar__supports_decl(ar_sheet *sheet, const char *text, const char *end)
+{
+    ar__scan sub;
+    ar_rule  scratch;
+    ar_u32   errors = sheet->errors;
+    ar_u32   refused = sheet->rules_refused;
+    ar_u32   offset = sheet->first_error_offset;
+    ar_u16   tracks = sheet->track_count;
+    int      ok;
+
+    memset(&scratch, 0, sizeof scratch);
+    ar_style_defaults(&scratch.style);
+    scratch.set = ar_pset_none();
+
+    sub.base = text;
+    sub.p = text;
+    sub.end = end;
+    sub.sheet = sheet;
+    ar__parse_decl(&sub, &scratch, sheet);
+    ok = ar_pset_any(scratch.set);
+
+    sheet->errors = errors;
+    sheet->rules_refused = refused;
+    sheet->first_error_offset = offset;
+    sheet->track_count = tracks;
+    return ok;
+}
+
+/* Does this engine's selector parser accept it? Same principle. */
+static int ar__supports_selector(ar_sheet *sheet, const char *text, const char *end)
+{
+    ar__scan sub;
+    ar_rule  scratch;
+    ar_u32   errors = sheet->errors;
+    ar_u32   refused = sheet->rules_refused;
+    ar_u32   offset = sheet->first_error_offset;
+    int      ok;
+
+    memset(&scratch, 0, sizeof scratch);
+    ar_style_defaults(&scratch.style);
+    scratch.set = ar_pset_none();
+
+    sub.base = text;
+    sub.p = text;
+    sub.end = end;
+    sub.sheet = sheet;
+    ok = ar__parse_selector(&sub, &scratch);
+    if (ok)
+    {
+        /* Trailing rubbish means the parser stopped early rather than
+           understood the whole thing: `selector(.a !!)` is not support. */
+        ar__skip_ws(&sub);
+        ok = sub.p >= sub.end;
+    }
+
+    sheet->errors = errors;
+    sheet->rules_refused = refused;
+    sheet->first_error_offset = offset;
+    return ok;
+}
+
+static int ar__supports_condition(ar__scan *z, ar_sheet *sheet, ar_i32 depth);
+
+/*
+ * One `( ... )`, which is a nested condition, a declaration, or something
+ * this engine has never heard of.
+ *
+ * General enclosed -- an unknown function, or brackets holding something that
+ * is not a declaration -- is false rather than an error, which is what the
+ * specification asks for and what makes a stylesheet written for a browser
+ * degrade here instead of breaking.
+ */
+static int ar__supports_in_parens(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+{
+    const char *close;
+    const char *kw;
+    ar_i32      klen;
+    int         result;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end || depth >= AR__COND_MAX_DEPTH)
+    {
+        return 0;
+    }
+
+    /* `selector(...)`, and any other function, which is general enclosed. */
+    if (ar__is_ident(*z->p))
+    {
+        const char *save = z->p;
+
+        klen = ar__ident(z, &kw);
+        if (z->p >= z->end || *z->p != '(')
+        {
+            z->p = save;
+            return 0; /* a bare identifier is not a condition */
+        }
+        close = ar__match_paren(z->p, z->end);
+        if (!close)
+        {
+            z->p = z->end;
+            return 0;
+        }
+        result = klen > 0 && ar__same(kw, klen, "selector") &&
+                 ar__supports_selector(sheet, z->p + 1, close);
+        z->p = close + 1;
+        return result;
+    }
+
+    if (*z->p != '(')
+    {
+        return 0;
+    }
+    close = ar__match_paren(z->p, z->end);
+    if (!close)
+    {
+        z->p = z->end;
+        return 0;
+    }
+
+    {
+        const char *inner = z->p + 1;
+
+        while (inner < close && ar__is_space(*inner))
+        {
+            inner++;
+        }
+        /* `( ( ... ) ...)` and `( not ... )` are conditions; anything else in
+           brackets is a declaration, which is the common case by far. */
+        if (inner < close &&
+            (*inner == '(' || (close - inner >= 3 && ar__same(inner, 3, "not") &&
+                               (inner + 3 == close || ar__is_space(inner[3]) || inner[3] == '('))))
+        {
+            ar__scan sub;
+
+            sub.base = z->base;
+            sub.p = inner;
+            sub.end = close;
+            sub.sheet = sheet;
+            result = ar__supports_condition(&sub, sheet, depth + 1);
+        }
+        else
+        {
+            result = ar__supports_decl(sheet, inner, close);
+        }
+    }
+    z->p = close + 1;
+    return result;
+}
+
+/*
+ * A condition: `not X`, or a chain of `and` or `or`.
+ *
+ * The two cannot be mixed without brackets -- `(a) and (b) or (c)` has no
+ * meaning in CSS -- and a condition that mixes them is invalid, which makes
+ * the whole `@supports` false and its block skipped. Refusing it is safer
+ * than picking an associativity nobody wrote down.
+ */
+static int ar__supports_condition(ar__scan *z, ar_sheet *sheet, ar_i32 depth)
+{
+    int    result;
+    char   joiner = 0;
+    ar_i32 guard = 0;
+
+    ar__skip_ws(z);
+    if (depth >= AR__COND_MAX_DEPTH)
+    {
+        return 0;
+    }
+    if (z->end - z->p >= 3 && ar__same(z->p, 3, "not") &&
+        (z->p + 3 >= z->end || ar__is_space(z->p[3]) || z->p[3] == '('))
+    {
+        z->p += 3;
+        return !ar__supports_in_parens(z, sheet, depth + 1);
+    }
+
+    result = ar__supports_in_parens(z, sheet, depth + 1);
+    for (;;)
+    {
+        const char *kw;
+        ar_i32      klen;
+        int         rhs;
+
+        ar__skip_ws(z);
+        if (z->p >= z->end || !ar__is_ident(*z->p) || ++guard > AR_MAX_SEL_LIST)
+        {
+            break;
+        }
+        klen = ar__ident(z, &kw);
+        if (klen == 3 && ar__same(kw, klen, "and"))
+        {
+            if (joiner == 'o')
+            {
+                return 0;
+            }
+            joiner = 'a';
+        }
+        else if (klen == 2 && ar__same(kw, klen, "or"))
+        {
+            if (joiner == 'a')
+            {
+                return 0;
+            }
+            joiner = 'o';
+        }
+        else
+        {
+            return 0; /* an identifier that is neither: the condition is junk */
+        }
+        rhs = ar__supports_in_parens(z, sheet, depth + 1);
+        result = joiner == 'a' ? (result && rhs) : (result || rhs);
+    }
+    return result;
+}
+
+/*
+ * Re-evaluate the queries a change could have moved, and nothing else.
+ *
+ * `changed` is which parts of ar_media are different from last time. A query
+ * whose `used` mask does not intersect it cannot have changed its answer, so
+ * it is not asked -- which is the whole of acceptance criterion 4, and the
+ * counter beside it is the evidence.
+ *
+ * `active` is computed in table order because a nested block is always stored
+ * after the one around it, so a parent's answer is settled before its child
+ * needs it.
+ */
+static void ar__mq_refresh(ar_sheet *sheet, ar_u32 changed)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->query_count; ++i)
+    {
+        ar_mq *q = &sheet->queries[i];
+
+        if ((q->used & changed) != 0)
+        {
+            ar_u32 used = 0;
+
+            q->result = (ar_u8)ar_media_eval(sheet->qtext + q->at, sheet->qtext + q->at + q->len,
+                                             &sheet->media, &used);
+            q->used = used;
+            sheet->queries_evaluated++;
+        }
+        q->active = (ar_u8)(q->result && (q->parent == 0 || sheet->queries[q->parent - 1].active));
+    }
+}
+
+/* Copy a prelude into the sheet and evaluate it once. 0 if there is no room,
+   which refuses the rules it guards rather than admitting them unguarded. */
+static ar_u16 ar__mq_intern(ar_sheet *sheet, const char *text, const char *end, ar_u16 parent)
+{
+    ar_i32 len = (ar_i32)(end - text);
+    ar_mq *q;
+    ar_u32 used = 0;
+    ar_i32 i;
+
+    if (!sheet->queries || !sheet->qtext || sheet->query_count >= sheet->query_cap || len < 0 ||
+        (ar_i32)sheet->qtext_used + len > (ar_i32)sheet->qtext_cap)
+    {
+        return 0;
+    }
+    q = &sheet->queries[sheet->query_count];
+    q->at = sheet->qtext_used;
+    q->len = (ar_u16)len;
+    q->parent = parent;
+    for (i = 0; i < len; ++i)
+    {
+        sheet->qtext[sheet->qtext_used + i] = text[i];
+    }
+    sheet->qtext_used = (ar_u16)(sheet->qtext_used + len);
+
+    q->result = (ar_u8)ar_media_eval(text, end, &sheet->media, &used);
+    q->used = used;
+    sheet->queries_evaluated++;
+    q->active = (ar_u8)(q->result && (parent == 0 || sheet->queries[parent - 1].active));
+    sheet->query_count++;
+    return sheet->query_count;
+}
+
+void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media)
+{
+    ar_u32 changed = 0;
+
+    if (!media)
     {
         return;
     }
+    if (media->width != sheet->media.width)
+    {
+        changed |= AR__MM_W;
+    }
+    if (media->height != sheet->media.height)
+    {
+        changed |= AR__MM_H;
+    }
+    if (media->resolution != sheet->media.resolution)
+    {
+        changed |= AR__MM_RES;
+    }
+    sheet->media = *media;
+    if (changed && sheet->query_count)
+    {
+        ar__mq_refresh(sheet, changed);
+        ar_sheet_cache_clear(sheet);
+    }
+}
 
-    /* New rules can change any answer already cached, and there is no cheap
-       way to know which. Dropping all of it is correct and costs nothing,
-       because adding a stylesheet is a startup operation. */
-    ar_sheet_cache_clear(sheet);
+/* Is this rule's guard satisfied right now? */
+static int ar__rule_on(const ar_sheet *sheet, const ar_rule *r)
+{
+    return r->query == 0 || (r->query <= sheet->query_count && sheet->queries[r->query - 1].active);
+}
 
-    z.base = css;
-    z.p = css;
-    z.end = css + strlen(css);
-    z.sheet = sheet;
-
+static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 query)
+{
     for (;;)
     {
         /*
@@ -3359,28 +4623,94 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         ar_i32  sel_count = 0;
         ar_i32  k;
 
-        ar__skip_ws(&z);
-        if (z.p >= z.end)
+        ar__skip_ws(z);
+        if (z->p >= z->end)
         {
             break;
+        }
+
+        /* A nested call ends at the brace that closes the block it was
+           entered for. At the top level a stray `}` is not ours, and falls
+           through to the selector parser to be counted as the error it is. */
+        if (depth > 0 && *z->p == '}')
+        {
+            z->p++;
+            return;
+        }
+
+        /* An at-rule is not a selector and must not be recovered from as
+           though it were one. A conditional one whose condition holds is
+           descended into; everything else is skipped whole. */
+        if (*z->p == '@')
+        {
+            const char *at = z->p;
+            ar_i32      klen;
+            const char *kw;
+
+            z->p++;
+            klen = ar__ident(z, &kw);
+            if (klen > 0 && ar__same(kw, klen, "media") && depth < AR__COND_MAX_DEPTH)
+            {
+                /* The prelude runs to the brace that opens the block. The
+                   evaluator is given exactly that span so it cannot run on
+                   into the rules the query guards. */
+                const char *pre = z->p;
+
+                while (z->p < z->end && *z->p != '{')
+                {
+                    z->p++;
+                }
+                {
+                    ar_u16 inner = ar__mq_intern(sheet, pre, z->p, query);
+
+                    /* Descended into whatever the answer is, because the
+                       rules inside have to exist for a resize to turn them
+                       on. Without storage there is nowhere to put the guard,
+                       so the block is skipped and its rules never appear --
+                       refused rather than admitted unguarded. */
+                    if (inner != 0 && z->p < z->end)
+                    {
+                        z->p++;
+                        ar__parse_rules(z, sheet, depth + 1, inner);
+                        continue;
+                    }
+                }
+                z->p = at;
+                ar__skip_at_rule(z);
+                continue;
+            }
+            if (klen > 0 && ar__same(kw, klen, "supports") && depth < AR__COND_MAX_DEPTH &&
+                ar__supports_condition(z, sheet, 0))
+            {
+                ar__skip_ws(z);
+                if (z->p < z->end && *z->p == '{')
+                {
+                    z->p++;
+                    ar__parse_rules(z, sheet, depth + 1, query);
+                    continue;
+                }
+            }
+            z->p = at;
+            ar__skip_at_rule(z);
+            continue;
         }
 
         memset(&rule[0], 0, sizeof rule[0]);
         ar_style_defaults(&rule[0].style);
         rule[0].set = ar_pset_none();
 
-        if (!ar__parse_selector(&z, &rule[0]))
+        if (!ar__parse_selector(z, &rule[0]))
         {
-            ar__fail(&z);
+            ar__fail(z);
             /* Resynchronise on the next block, so one bad selector costs one
                rule rather than the remainder of the stylesheet. */
-            while (z.p < z.end && *z.p != '}')
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
@@ -3390,16 +4720,16 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
            its own rule; they differ in nothing else. */
         for (;;)
         {
-            ar__skip_ws(&z);
-            if (z.p >= z.end || *z.p != ',')
+            ar__skip_ws(z);
+            if (z->p >= z->end || *z->p != ',')
             {
                 break;
             }
-            z.p++;
+            z->p++;
             /* ar__parse_compound starts on the first character of a compound,
                not on the whitespace before one -- the main loop above has
                always skipped it for the first selector. */
-            ar__skip_ws(&z);
+            ar__skip_ws(z);
             if (sel_count >= AR_MAX_SEL_LIST)
             {
                 sel_count = 0; /* longer than the array holds; refuse the lot */
@@ -3408,7 +4738,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             memset(&rule[sel_count], 0, sizeof rule[0]);
             ar_style_defaults(&rule[sel_count].style);
             rule[sel_count].set = ar_pset_none();
-            if (!ar__parse_selector(&z, &rule[sel_count]))
+            if (!ar__parse_selector(z, &rule[sel_count]))
             {
                 sel_count = 0;
                 break;
@@ -3417,46 +4747,46 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         }
         if (sel_count == 0)
         {
-            ar__fail_rule(&z);
-            while (z.p < z.end && *z.p != '}')
+            ar__fail_rule(z);
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
 
-        ar__skip_ws(&z);
-        if (z.p >= z.end || *z.p != '{')
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p != '{')
         {
-            ar__fail_rule(&z);
-            while (z.p < z.end && *z.p != '}')
+            ar__fail_rule(z);
+            while (z->p < z->end && *z->p != '}')
             {
-                z.p++;
+                z->p++;
             }
-            if (z.p < z.end)
+            if (z->p < z->end)
             {
-                z.p++;
+                z->p++;
             }
             continue;
         }
-        z.p++;
+        z->p++;
 
         for (;;)
         {
-            ar__skip_ws(&z);
-            if (z.p >= z.end || *z.p == '}')
+            ar__skip_ws(z);
+            if (z->p >= z->end || *z->p == '}')
             {
                 break;
             }
-            ar__parse_decl(&z, &rule[0], sheet);
+            ar__parse_decl(z, &rule[0], sheet);
         }
-        if (z.p < z.end)
+        if (z->p < z->end)
         {
-            z.p++; /* the closing brace */
+            z->p++; /* the closing brace */
         }
 
         if (!ar_pset_any(rule[0].set))
@@ -3484,7 +4814,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
                  * least common elements. Exactly the failure that looks like
                  * everything working.
                  */
-                ar__fail_rule(&z);
+                ar__fail_rule(z);
                 break;
             }
             /* Everything except the selector is the same, and rule[0] is the
@@ -3496,10 +4826,33 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
                place every rule passes through: the selector list is parsed
                into its own slots and each of them is zeroed on the way in. */
             rule[k].origin = (ar_u8)(sheet->in_ua ? 0 : 1);
+            rule[k].query = query;
             rule[k].order = sheet->count;
             sheet->rules[sheet->count++] = rule[k];
         }
     }
+}
+
+void ar_sheet_parse(ar_sheet *sheet, const char *css)
+{
+    ar__scan z;
+
+    if (!css)
+    {
+        return;
+    }
+
+    /* New rules can change any answer already cached, and there is no cheap
+       way to know which. Dropping all of it is correct and costs nothing,
+       because adding a stylesheet is a startup operation. */
+    ar_sheet_cache_clear(sheet);
+
+    z.base = css;
+    z.p = css;
+    z.end = css + strlen(css);
+    z.sheet = sheet;
+
+    ar__parse_rules(&z, sheet, 0, 0);
 
     ar__sort_rules(sheet);
     ar__note_contextual(sheet);
@@ -3599,6 +4952,12 @@ static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_class
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         if (!ar_pset_any(r->important) || r->nctx > 0)
         {
             continue;
@@ -3641,6 +5000,12 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         /*
          * A rule with a combinator is the contextual pass's business alone.
          *
@@ -3900,6 +5265,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /* A rule inside a `@media` that does not hold is stored but
+           does not apply. It exists so a resize can turn it on. */
+        if (!ar__rule_on(sheet, r))
+        {
+            continue;
+        }
         if (r->nctx == 0)
         {
             continue;
