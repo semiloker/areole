@@ -400,6 +400,7 @@ toolkit breaks that circle.
 - **0.9.1** *It agrees with a browser* — every element's defaults, presentational hints, quirks mode, and a demo gallery measured against Chrome ✅
 - **0.9.2** *It adapts* — `@media` with Media Queries Level 4, and `@supports` answered from the implementation ✅
 - **0.9.3** *It parses the awkward third* — the stack of template insertion modes, foster parenting, and twenty insertion-mode rules ✅
+- **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant — **landed, version stamp pending**
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -635,6 +636,93 @@ and the current specification disagree: `<textarea>` inside a select fragment, w
 expects the element to be inserted and the rule that covers `input`, `keygen` *and* `textarea` says
 to ignore it. That one is written down rather than papered over by special-casing a tag to match a
 test.
+
+### 0.9.4, landed — with its version stamp still to come
+
+**This is the content the roadmap files under 0.4.1**, and it ships under 0.9.4's number for the
+same reason 0.4.2's content shipped as 0.9.2: a version may not move backwards. The roadmap number
+says what the work is; the version says when it landed.
+
+**`AR_VERSION_STRING` is still 0.9.3, deliberately, and this is the honest half of the release.**
+The version and `bench/baseline.json` move together — `gen_perf_doc.py --check` ties them, so that
+no published number can be labelled with an engine it was not measured on. Regenerating the
+baseline needs a quiet machine, and the one this was written on was not: three attempts came in at
+**21.9%** and **16.3%** median stability, with 47 of 52 and 21 of 23 scenes past the 3% a gate
+needs. 0.9.3's baseline was taken at 3.8%.
+
+Those are the numbers 0.9.2 discarded rather than published, and for the reason it gave: a baseline
+is the gate every later change is judged against, and one made of noise quietly fails everything or
+nothing. So the release is complete and the stamp waits. One command finishes it:
+
+```sh
+./build/ar_bench --all --iters 150 --repeat 3 --json > bench/baseline.json
+python tools/gen_perf_doc.py            # then bump AR_VERSION_* to 0.9.4
+```
+
+The release that was skipped. 0.4.2 was built out of order because 0.9.2 turned out to be blocked
+on media queries, and 0.4.1 -- the units underneath them -- stayed unbuilt. So the engine had `px`
+and `%` and nothing else: `width: 2em` did not become two pixels, it was **dropped whole** and the
+box fell back to `auto`, and `@media (min-width: 40em)` matched at no width at all.
+
+| | |
+| --- | --- |
+| Media queries vs Edge | **1,200 of 1,200 — 100%**, from 624 of 624 |
+| Units corpus vs Edge | **35 of 35 — 100%** computed values |
+| Element defaults vs Edge | **1,066 of 1,071**, unchanged |
+| Demos | **20 new**, 17 gated against the browser |
+| Checks | **1,590** in `ar_test`, from 1,573 |
+| Binary | `ar_css.c.obj` **+2,152 bytes** of a 14 KB budget |
+| Layout cost | none measurable |
+
+**Every unit CSS Values Level 4 defines a length in**, in one table -- because the suffix after a
+number is read in four places, and four copies of a unit list is four places for a unit to be
+missing from. The absolute seven convert where they are parsed, since their ratio to a pixel is a
+constant CSS states; `em`, `rem`, the four font metrics and their root-relative twins, and all
+twenty-four viewport spellings carry their unit to resolution instead.
+
+**The two moments they resolve at are the design, and neither can be moved.** A font-relative unit
+has to resolve while the tree is being declared, interleaved with inheritance: `font-size: 2em` on
+a parent must become a number before the child that inherits font-size copies it, or the child
+inherits the *unit* and resolves it a second time against its own parent -- four times the font
+rather than twice. A viewport unit must **not** resolve there, because the surface for this frame
+is not known until `ar_frame_end`. Resolving it against the previous frame is what a media query
+does and is documented as doing; a length cannot afford it, because on the very first frame there
+is no previous one and `height: 50vh` drew nothing at all.
+
+**The user-agent stylesheet says `em` now**, which is what the HTML rendering section always
+specified and what its own comment had been asking for since 0.9.1. A page that sets
+`html { font-size: 20px }` gets a 40px `h1` instead of the 32px one it got at every root.
+
+One line did not come along, and the number is the interesting part. Every heading rounds its font
+size to a whole pixel -- `h6` is 0.67em of 16, so 10.72 becomes 11 -- and a margin in `em` then
+multiplies that rounding. At 2.33em the 0.28 of a pixel becomes 1.02, which is 26px against a
+browser's 24.9776 and just past the one-pixel criterion the corpus is scored on. So `h6`'s margin
+stays in pixels: the sheet is converted exactly as far as integer font sizes allow, and `h3`'s
+margin actually got *closer* than the pixel value it replaced.
+
+**The media corpus had been written entirely in pixels.** It scored 624 of 624 against Chrome while
+`40em` matched nothing, because every length in all 156 of its queries was a `px`. Agreeing
+perfectly about the queries it asked said nothing about the ones it did not -- which is the failure
+mode a corpus exists to be immune to. It is 300 queries now, and 1,200 of 1,200 agree.
+
+**What this release does not do.** Its fourth acceptance criterion was that a percentage resolve
+against the correct reference for every property, and it does not: `padding: 10%` is stored with
+its unit and then read as a raw number, so ten per cent of a 400px containing block comes out ten
+pixels. `width` and `height` are correct. It is not a units change -- block flow, flex, grid and
+the table each resolve sizes in their own code and there is no one place a padding becomes a
+number -- and `css/units/percentage-references` is in the gallery, red, as the thing that will go
+green.
+
+Angle, time and frequency units are not shipped either, and the reason is not effort: no property
+in this engine takes one. There is no `transform` to turn by a `deg` and no `transition` to run for
+an `ms`, so the parser could accept them tomorrow and nothing would read the number. They ship with
+their consumers.
+
+**And a length is a whole number of pixels.** `0.9em` at a 16px font is 14.4 in a browser and 14
+here, which is invariant 2 rather than a rounding bug. The number is carried in hundredths of its
+unit through resolution and rounded once at the end, so the error is never more than half a pixel
+and never accumulates -- but it is why `h6` kept its margin, and it is the same residual the table
+corpus and the gallery's text demos are down to.
 
 ## Building
 
