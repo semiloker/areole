@@ -506,6 +506,15 @@ typedef enum ar_unit
      */
     AR_UNIT_CALC,
 
+    /*
+     * `var(--name)`, as an index into the sheet's reference pool.
+     *
+     * Below AR_UNIT_REL_FIRST for the reason AR_UNIT_CALC is, and resolved in
+     * the same pass: the value a name has depends on where the box sits, so
+     * it is not knowable until there is a box.
+     */
+    AR_UNIT_VAR,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -1310,6 +1319,11 @@ typedef struct ar_rule
        query says right now, because a resize can turn it on. */
     ar_u16 query;
 
+    /* The custom properties this rule declares: a run in the sheet's pool.
+       Zero count is the common case and costs the matcher nothing. */
+    ar_u16 var_first;
+    ar_u8  var_count;
+
     ar_pset set; /* which properties this rule sets */
 
     /* Which of them were marked !important. Per declaration rather than per
@@ -1393,6 +1407,63 @@ typedef struct ar_track
 #define AR_TRACK_POOL 512
 
 /* ------------------------------------------------------------------------
+ * Custom properties
+ *
+ * `--brand: #c02` is not a property in the sense the table above means: the
+ * names are the page's, not CSS's, so they cannot each have a slot. They live
+ * in a pool on the stylesheet, keyed by the hash of the name, and a rule says
+ * which run of the pool it declared.
+ *
+ * **A custom property here holds a value, not a token sequence.** CSS says it
+ * holds whatever was written and validates it only where it is used, so
+ * `--x: 3px solid red` is legal and becomes a border when substituted. That
+ * needs the value parser to run again at frame time, over text, and this one
+ * parses declarations once when the sheet is read. So a custom property whose
+ * text is not a single value is stored with `ok` clear, and a `var()` naming
+ * it is invalid -- which is the same answer CSS arrives at for every use
+ * except the one that was going to work.
+ *
+ * The ceiling that leaves, stated because it is the one somebody will hit:
+ * `--pad: 4px 8px` and `--font: bold 12px/1.4` do not work, and the shorthand
+ * they would have fed does not either.
+ * ------------------------------------------------------------------------ */
+typedef struct ar_var_decl
+{
+    ar_u32 name; /* hash of the name, `--` and all */
+    ar_i16 v;
+    ar_u8  unit;
+    ar_u8  ok; /* clear when the text was not a single value */
+} ar_var_decl;
+
+/* A `var()` in a value position: which name, and what to use when the name
+   has no value. The fallback is a parsed value like any other, so
+   `var(--gap, 1rem)` keeps its unit and resolves with everything else. */
+typedef struct ar_var_ref
+{
+    ar_u32 name;
+    ar_i16 fallback_v;
+    ar_u8  fallback_unit;
+    ar_u8  has_fallback;
+} ar_var_ref;
+
+/* Both pools are small: the busiest of the ten documents in examples/15_real
+   declares twenty-seven names, and the three that use the most `var()` between
+   them reference about forty. */
+#define AR_VAR_POOL    256
+#define AR_VARREF_POOL 256
+
+/* How many custom properties one rule may declare. The generated ones a build
+   tool emits come one or two to a rule; a hand-written `:root` block is the
+   case that goes wide, and this is past every one measured. */
+#define AR_RULE_VARS 16
+
+/* How many boxes may declare custom properties, and how many declarations
+   they may make between them. Sized for the busiest page measured and not for
+   an imagined one: twenty-seven names over about forty rules. */
+#define AR_VAR_SCOPES  256
+#define AR_VAR_ENTRIES 512
+
+/* ------------------------------------------------------------------------
  * calc(), as a program
  *
  * A maths expression is compiled once, into postfix, into a pool on the
@@ -1420,7 +1491,11 @@ enum
     AR_CALC_MAX,
     AR_CALC_CLAMP,
     AR_CALC_ABS,
-    AR_CALC_SIGN
+    AR_CALC_SIGN,
+    /* `var(--name)` as an operand: `v` is the reference pool index. Resolved
+       when the expression is, because the name means different things to
+       different boxes. */
+    AR_CALC_PUSH_VAR
 };
 
 typedef struct ar_calc_op
@@ -1509,6 +1584,19 @@ typedef struct ar_sheet
     ar_calc_op *calcs;
     ar_u16      calc_count;
     ar_u16      calc_cap;
+
+    /* Every `--name: value` in every rule, and every `var()` that names one. */
+    ar_var_decl *vars;
+    ar_u16       var_count;
+    ar_u16       var_cap;
+    ar_var_ref  *varrefs;
+    ar_u16       varref_count;
+    ar_u16       varref_cap;
+
+    /* Whether any rule declares a custom property. A sheet without one never
+       runs the pass that matches them, which is most sheets: seven of the ten
+       documents in examples/15_real declare none at all. */
+    int has_vars;
 
     /* Whether any declaration in this sheet is a maths function, on the same
        terms as has_grid and has_rel_units: a sheet with no `calc()` in it
@@ -1654,6 +1742,25 @@ void            ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 c
 
 void ar_sheet_set_calcs(ar_sheet *sheet, ar_calc_op *storage, ar_u16 capacity);
 
+void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_var_ref *refs,
+                       ar_u16 ref_cap);
+
+/*
+ * The custom properties this box declares, in cascade order.
+ *
+ * A separate pass from ar_sheet_resolve and deliberately so: it walks only
+ * the rules that declare one, which is a handful in the sheets that have any
+ * and none at all in the sheets that do not. Threading them through the main
+ * resolve would have put the cost on every box in every document.
+ *
+ * Returns how many were written, up to `cap`.
+ */
+ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, ar_var_decl *out, ar_i32 cap);
+
+/* The reference at `index`, or 0 if there is none. */
+const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
+
 /*
  * What a compiled expression needs to know before it can be a number.
  *
@@ -1661,6 +1768,13 @@ void ar_sheet_set_calcs(ar_sheet *sheet, ar_calc_op *storage, ar_u16 capacity);
  * the time ar_frame_end runs the evaluation -- which is why that is where it
  * runs rather than during style resolution, where the surface is a frame old.
  */
+/* How the evaluator asks what a custom property means here. Returns 0 when
+   the name has no usable value, which makes the whole expression invalid --
+   CSS says a `var()` that cannot be substituted poisons the declaration and
+   not merely the term it stood in. */
+typedef int (*ar_calc_var_fn)(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+                              ar_u8 *out_unit);
+
 typedef struct ar_calc_env
 {
     ar_i32 font_px;  /* the element's own, for em/ex/ch/cap/ic */
@@ -1669,6 +1783,13 @@ typedef struct ar_calc_env
     ar_i32 rline_px; /* the root's, for rlh */
     ar_i32 view_w;
     ar_i32 view_h;
+
+    /* Opaque to the evaluator on purpose. Handing it the context would make
+       the CSS parser depend on the box tree, which is the one direction this
+       codebase does not let dependencies run. */
+    ar_calc_var_fn var_lookup;
+    const void    *ud;
+    const void    *ctx;
 } ar_calc_env;
 
 /*

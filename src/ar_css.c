@@ -1501,15 +1501,49 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
         const ar_calc_op *op = &sheet->calcs[index + i];
         ar__calc_val      a, b, c;
 
-        if (op->op == AR_CALC_PUSH)
+        if (op->op == AR_CALC_PUSH || op->op == AR_CALC_PUSH_VAR)
         {
-            int len = 0;
+            ar_calc_op resolved = *op;
+            int        len = 0;
 
             if (sp >= AR_CALC_STACK)
             {
                 return 0;
             }
-            st[sp].v = ar__calc_push(op, env, &len);
+            if (op->op == AR_CALC_PUSH_VAR)
+            {
+                const ar_var_ref *ref = ar_sheet_varref(sheet, op->v);
+                ar_i16            vv = 0;
+                ar_u8             uu = AR_UNIT_PX;
+
+                if (!ref || !env->var_lookup)
+                {
+                    return 0;
+                }
+                if (env->var_lookup(env->ctx, env->ud, ref->name, &vv, &uu))
+                {
+                    resolved.v = vv;
+                    resolved.unit = uu;
+                }
+                else if (ref->has_fallback)
+                {
+                    resolved.v = ref->fallback_v;
+                    resolved.unit = ref->fallback_unit;
+                }
+                else
+                {
+                    /* A name with no value and no fallback makes the whole
+                       expression invalid, not merely this term. */
+                    return 0;
+                }
+                if (resolved.unit == AR_UNIT_CALC || resolved.unit == AR_UNIT_VAR)
+                {
+                    return 0; /* a custom property holding another expression
+                                 would need a second evaluation here, and the
+                                 pool index it carries is not a number */
+                }
+            }
+            st[sp].v = ar__calc_push(&resolved, env, &len);
             st[sp].is_len = len;
             ++sp;
             continue;
@@ -2130,6 +2164,16 @@ static int ar__prop_is_length(ar_u8 prop)
     }
 }
 
+/*
+ * Forward declarations, because custom properties and values are mutually
+ * recursive: a `--name` declaration parses a value, and a value may be a
+ * `var()` naming one. Both definitions sit beside the resolver that reads
+ * them, which is after this.
+ */
+static int    ar__is_custom(const char *name, ar_u32 len);
+static void   ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, ar_u32 len);
+static ar_i32 ar__parse_var(ar__scan *z);
+
 /* ------------------------------------------------------------------------
  * calc(), compiled
  *
@@ -2289,6 +2333,20 @@ static int ar__calc_factor(ar__scan *z, ar_i32 depth)
             return 0;
         }
         z->p++;
+
+        /* `calc(var(--gap) * 2)`, which is how the two features are actually
+           written together -- five of the nine expressions in the ten real
+           documents are this shape. */
+        if (ar__same_fold(name, len, "var"))
+        {
+            ar_i32 ref = ar__parse_var(z);
+
+            if (ref <= 0)
+            {
+                return 0;
+            }
+            return ar__calc_emit(z, AR_CALC_PUSH_VAR, 0, (ar_i16)ref);
+        }
 
         if (ar__same_fold(name, len, "calc"))
         {
@@ -2607,6 +2665,32 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
      * hundred -- not dropped, not an error, just quietly the first term.
      * There is a check for that in ar_test named after it.
      */
+    /*
+     * `var(--name)`, before the identifier path reads `var` as a keyword.
+     *
+     * Same reason the maths branch is above: every branch below commits to a
+     * prefix, and a name that starts with an identifier and continues with a
+     * paren is not a keyword.
+     */
+    if (z->p + 4 <= z->end && ar__same_fold(z->p, 3, "var") && z->p[3] == '(')
+    {
+        const char *start = z->p;
+        ar_i32      ref;
+
+        z->p += 4;
+        ref = ar__parse_var(z);
+        if (ref <= 0)
+        {
+            z->p = start;
+            ar__skip_maths(z);
+            return out;
+        }
+        out.v = ref;
+        out.unit = AR_UNIT_VAR;
+        out.ok = 1;
+        return out;
+    }
+
     if (ar__at_maths(z))
     {
         const char *start = z->p;
@@ -3242,6 +3326,18 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         return;
     }
     z->p++;
+
+    /*
+     * A custom property, which has no slot and no place in the property
+     * table: the name belongs to the page. Handled before the lookup, because
+     * the lookup would fail and the failure path would report an error for a
+     * declaration that is perfectly valid.
+     */
+    if (ar__is_custom(name, len))
+    {
+        ar__parse_custom_decl(z, rule, name, len);
+        return;
+    }
 
     prop = ar__lookup_prop(name, len);
     if (prop < 0)
@@ -5905,9 +6001,19 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             z->p++; /* the closing brace */
         }
 
-        if (!ar_pset_any(rule[0].set))
+        /*
+         * An empty block is legal and has no effect -- but a block that
+         * declares only custom properties is not empty, and its property set
+         * is, because a custom property has no slot to set.
+         *
+         * `:root { --brand: #c02 }` is the commonest way anyone writes one,
+         * and it was being thrown away here before it reached the table: the
+         * declaration parsed, the pool entry was written, and the rule that
+         * pointed at it never existed.
+         */
+        if (!ar_pset_any(rule[0].set) && rule[0].var_count == 0)
         {
-            continue; /* an empty block is legal and simply has no effect */
+            continue;
         }
 
         for (k = 0; k < sel_count; ++k)
@@ -5938,6 +6044,11 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             rule[k].style = rule[0].style;
             rule[k].set = rule[0].set;
             rule[k].important = rule[0].important;
+            /* And the custom properties, for the same reason and with the
+               same consequence: `:root, .page { --gap: 1rem }` declares it
+               twice, and only the first selector carried it. */
+            rule[k].var_first = rule[0].var_first;
+            rule[k].var_count = rule[0].var_count;
             /* Stamped where the rule is stored, because that is the one
                place every rule passes through: the selector list is parsed
                into its own slots and each of them is zeroed on the way in. */
@@ -6100,6 +6211,244 @@ static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_class
         }
         ar_style_merge(out, &r->style, r->important);
     }
+}
+
+/* ------------------------------------------------------------------------
+ * Custom properties
+ * ------------------------------------------------------------------------ */
+
+void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_var_ref *refs,
+                       ar_u16 ref_cap)
+{
+    sheet->vars = decls;
+    sheet->var_cap = decl_cap;
+    sheet->var_count = 0;
+    sheet->varrefs = refs;
+    sheet->varref_cap = ref_cap;
+    /* Index zero is spent, so a slot holding zero means "no reference" -- the
+       same sentinel the track and calc pools use. */
+    sheet->varref_count = 1;
+}
+
+const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index)
+{
+    if (!sheet || !sheet->varrefs || index <= 0 || index >= (ar_i32)sheet->varref_count)
+    {
+        return 0;
+    }
+    return &sheet->varrefs[index];
+}
+
+/* Whether an identifier is a custom property name: two dashes and something
+   after them. `--` alone is not one, and `-webkit-x` is a vendor prefix. */
+static int ar__is_custom(const char *name, ar_u32 len)
+{
+    return len > 2 && name[0] == '-' && name[1] == '-';
+}
+
+/*
+ * `--name: value`, stored on the rule.
+ *
+ * The value is parsed here, once, like any other. A text that is not a single
+ * value is kept with `ok` clear rather than dropped, because the name still
+ * exists and still shadows an inherited one -- CSS says a custom property
+ * holding nonsense is a custom property, and only the `var()` that reads it
+ * becomes invalid.
+ */
+static void ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, ar_u32 len)
+{
+    ar_sheet    *sheet = z->sheet;
+    ar__value    val;
+    ar_var_decl *d;
+    const char  *save;
+
+    if (!sheet->vars || sheet->var_count >= sheet->var_cap || rule->var_count >= AR_RULE_VARS)
+    {
+        goto skip;
+    }
+
+    save = z->p;
+    val = ar__parse_value(z, AR_P_WIDTH);
+
+    d = &sheet->vars[sheet->var_count];
+    d->name = ar_hash(name, len);
+    d->ok = 0;
+    d->v = 0;
+    d->unit = AR_UNIT_PX;
+
+    if (val.ok)
+    {
+        /* One value and then the end of the declaration. `--pad: 4px 8px`
+           parses a first value and leaves the second, and taking the first
+           would make it silently mean something narrower than it says. */
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p == ';' || *z->p == '}')
+        {
+            d->v = (ar_i16)val.v;
+            d->unit = val.unit;
+            d->ok = 1;
+        }
+    }
+    if (!d->ok)
+    {
+        z->p = save; /* let the skip below take the whole text */
+    }
+
+    if (rule->var_count == 0)
+    {
+        rule->var_first = sheet->var_count;
+    }
+    rule->var_count++;
+    sheet->var_count++;
+    sheet->has_vars = 1;
+
+skip:
+    while (z->p < z->end && *z->p != ';' && *z->p != '}')
+    {
+        z->p++;
+    }
+    if (z->p < z->end && *z->p == ';')
+    {
+        z->p++;
+    }
+}
+
+/*
+ * `var(--name)` or `var(--name, fallback)`.
+ *
+ * Returns the pool index, or 0. The fallback is parsed as an ordinary value
+ * and keeps its unit, so `var(--gap, 1rem)` resolves with everything else
+ * rather than being a special case downstream.
+ */
+static ar_i32 ar__parse_var(ar__scan *z)
+{
+    ar_sheet   *sheet = z->sheet;
+    const char *name;
+    ar_u32      len;
+    ar_var_ref *r;
+
+    if (!sheet->varrefs || sheet->varref_count >= sheet->varref_cap)
+    {
+        return 0;
+    }
+
+    ar__skip_ws(z);
+    len = ar__ident(z, &name);
+    if (!ar__is_custom(name, len))
+    {
+        return 0;
+    }
+
+    r = &sheet->varrefs[sheet->varref_count];
+    r->name = ar_hash(name, len);
+    r->has_fallback = 0;
+    r->fallback_v = 0;
+    r->fallback_unit = AR_UNIT_PX;
+
+    ar__skip_ws(z);
+    if (z->p < z->end && *z->p == ',')
+    {
+        ar__value fb;
+
+        z->p++;
+        fb = ar__parse_value(z, AR_P_WIDTH);
+        if (!fb.ok)
+        {
+            return 0;
+        }
+        r->fallback_v = (ar_i16)fb.v;
+        r->fallback_unit = fb.unit;
+        r->has_fallback = 1;
+        ar__skip_ws(z);
+    }
+
+    if (z->p >= z->end || *z->p != ')')
+    {
+        return 0;
+    }
+    z->p++;
+    return (ar_i32)sheet->varref_count++;
+}
+
+ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, ar_var_decl *out, ar_i32 cap)
+{
+    ar_i32 i, n = 0;
+
+    if (!sheet || !sheet->has_vars || !sheet->vars)
+    {
+        return 0;
+    }
+    /*
+     * Source order, which is cascade order for these: the rules are already
+     * sorted by origin then specificity then position, so walking forwards
+     * and letting a later write overwrite an earlier one lands on the winner
+     * without a second sort.
+     */
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+        ar_i32         k;
+
+        /* The cheap test first: almost every rule declares nothing, so this
+           loop costs a load and a branch per rule in a sheet that has any,
+           and is not entered at all in a sheet that has none. */
+        if (r->var_count == 0)
+        {
+            continue;
+        }
+        if (!ar__rule_on(sheet, r))
+        {
+            continue; /* inside an `@media` that does not hold */
+        }
+        if (r->nctx > 0)
+        {
+            continue; /* ponytail: a combinator selector cannot be matched
+                         here, because this pass has no tree to walk. A
+                         `.dark p { --c: white }` declares nothing as far as
+                         this is concerned. Lifting it means handing this the
+                         same walker ar_sheet_resolve_contextual gets. */
+        }
+        if (r->tag && r->tag != tag)
+        {
+            continue;
+        }
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
+        {
+            continue;
+        }
+        if (r->id && r->id != id)
+        {
+            continue;
+        }
+        if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
+        for (k = 0; k < (ar_i32)r->var_count; ++k)
+        {
+            const ar_var_decl *d = &sheet->vars[r->var_first + k];
+            ar_i32             j;
+
+            for (j = 0; j < n; ++j)
+            {
+                if (out[j].name == d->name)
+                {
+                    out[j] = *d; /* a later rule wins */
+                    break;
+                }
+            }
+            if (j == n && n < cap)
+            {
+                out[n++] = *d;
+            }
+        }
+    }
+    return n;
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
