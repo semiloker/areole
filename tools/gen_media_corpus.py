@@ -119,6 +119,51 @@ def queries():
     q.append('(flibbertigibbet: 3px)')
     q.append('(flibbertigibbet: 3px), (min-width: 1px)')
 
+    #
+    # Lengths that are not pixels.
+    #
+    # This corpus was every bit of it `px` until 0.4.1, which is why it scored
+    # 624 of 624 while `@media (min-width: 40em)` matched at no width at all:
+    # a length feature took `px` and a bare zero and refused the rest, and a
+    # feature that will not parse is false. Agreeing perfectly about the
+    # queries it asked said nothing about the ones it did not.
+    #
+    # `em` and `rem` are the interesting pair. Both are the *initial* font
+    # size in a media query -- there is no element to ask, so 40em is 640px in
+    # every browser -- and they are also the two a responsive stylesheet is
+    # most likely to be written in.
+    #
+    for u in ['em', 'rem', 'ex', 'ch', 'pt', 'pc', 'in', 'cm', 'mm', 'Q']:
+        for n in ['0', '10', '20', '40']:
+            q.append('(min-width: %s%s)' % (n, u))
+            q.append('(max-width: %s%s)' % (n, u))
+        q.append('(width >= 30%s)' % u)
+
+    # The viewport units, which in a query about the viewport are a share of
+    # the answer -- so these are arithmetic on the number being asked about
+    # rather than breakpoints, and true or false at every size alike.
+    for u in ['vw', 'vh', 'vmin', 'vmax', 'vi', 'vb', 'svw', 'svh', 'lvw', 'lvh', 'dvw', 'dvh']:
+        q.append('(min-width: 50%s)' % u)
+        q.append('(min-height: 50%s)' % u)
+        q.append('(max-width: 150%s)' % u)
+
+    # Fractions, which is where hundredths either survive the slot or do not.
+    for v in ['1.5em', '2.5rem', '0.5em', '37.5em', '12.5pt', '0.75in']:
+        q.append('(min-width: %s)' % v)
+        q.append('(max-width: %s)' % v)
+
+    # Case, which CSS does not care about and a hand-written comparison does.
+    q.append('(min-width: 40EM)')
+    q.append('(min-width: 600PX)')
+    q.append('(min-width: 10Rem)')
+
+    # A number that is not a length, and a unit that is not a unit. Both are
+    # malformed, so both are false -- which is the difference between a
+    # breakpoint that never fires and one that always does.
+    q.append('(min-width: 600)')
+    q.append('(min-width: 40zz)')
+    q.append('(min-width: 40em), (min-width: 1px)')
+
     return q
 
 
