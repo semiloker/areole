@@ -1492,6 +1492,12 @@ enum
     AR_CALC_CLAMP,
     AR_CALC_ABS,
     AR_CALC_SIGN,
+    /* round(), and the strategy in the op's own `v`: 0 nearest, 1 up,
+       2 down, 3 to-zero. A field on the op rather than a fourth operand,
+       because the strategy is a keyword and the stack holds numbers. */
+    AR_CALC_ROUND,
+    AR_CALC_MOD,
+    AR_CALC_REM,
     /* `var(--name)` as an operand: `v` is the reference pool index. Resolved
        when the expression is, because the name means different things to
        different boxes. */

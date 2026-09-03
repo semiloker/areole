@@ -16629,6 +16629,58 @@ static void test_ua_sheet_scales_with_the_root(void)
 }
 
 /*
+ * round(), mod() and rem().
+ *
+ * The signs are the reason these are checked at all. `round()` has four
+ * strategies and three of them differ only when the quotient is negative, and
+ * `mod` and `rem` differ *only* in whose sign the answer takes -- the divisor
+ * for one, the dividend for the other. A implementation that derived both
+ * from C's `/` would be right on this compiler and wrong on one that
+ * truncates the other way, which the C89 gate cannot see.
+ */
+static void test_calc_round_mod_rem(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div><div id=\"e\"></div><div id=\"f\"></div>"
+                    "<div id=\"g\"></div><div id=\"h\"></div>"
+                    "</body></html>",
+                    "#a { width:round(105px, 25px); }"
+                    "#b { width:round(up, 101px, 25px); }"
+                    "#c { width:round(down, 124px, 25px); }"
+                    "#d { width:round(to-zero, 124px, 25px); }"
+                    "#e { width:mod(118px, 25px); }"
+                    "#f { width:rem(118px, 25px); }"
+                    "#g { width:calc(200px + mod(-30px, 25px)); }"
+                    "#h { width:calc(200px + rem(-30px, 25px)); }");
+
+    /* 105/25 is 4.2, so the nearest multiple is four of them. */
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 100, "round: nearest is nearest");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 125, "round: up goes up");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 100, "round: down goes down");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_WIDTH] == 100,
+          "round: and to-zero agrees with down while both are positive");
+
+    CHECK(ar__box_style(ar__first_tag_id("e"))->v[AR_P_WIDTH] == 18, "round: mod of a positive");
+    CHECK(ar__box_style(ar__first_tag_id("f"))->v[AR_P_WIDTH] == 18,
+          "round: and rem agrees with it, while the signs agree");
+
+    /*
+     * The pair that earns both functions. `-30 mod 25` takes the sign of the
+     * divisor and is +20; `-30 rem 25` takes the sign of the dividend and is
+     * -5. Added to 200 so the difference is a width rather than a negative
+     * number layout would clamp away.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("g"))->v[AR_P_WIDTH] == 220,
+          "round: mod follows the divisor's sign");
+    CHECK(ar__box_style(ar__first_tag_id("h"))->v[AR_P_WIDTH] == 195,
+          "round: and rem follows the dividend's");
+}
+
+/*
  * Custom properties, through a document.
  *
  * Through a document and not through the parser, because three of the four
@@ -20088,6 +20140,7 @@ int main(void)
     test_an_interface_stylesheet_is_not_a_document();
     test_a_table_does_not_inherit_its_font_in_quirks();
     test_ua_sheet_scales_with_the_root();
+    test_calc_round_mod_rem();
     test_custom_properties();
     test_custom_properties_in_calc();
     test_the_elements_the_corpus_found();

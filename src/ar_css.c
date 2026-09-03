@@ -1629,6 +1629,77 @@ ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env,
             }
             a.v = (ar_i32)((a.v * 1000) / b.v);
             break;
+        /*
+         * round(A, B) is A snapped to a multiple of B, and mod/rem differ
+         * only in whose sign the answer takes -- mod follows the divisor and
+         * rem follows the dividend, which is the whole reason CSS has both.
+         *
+         * The quotient is computed by hand rather than with `/`, because C89
+         * leaves the sign of integer division to the implementation for
+         * negative operands. Deriving floor and trunc from a truncating
+         * divide would be correct on this compiler and silently wrong on
+         * another, which is exactly the kind of thing the C89 gate cannot
+         * see.
+         */
+        case AR_CALC_ROUND:
+        case AR_CALC_MOD:
+        case AR_CALC_REM:
+        {
+            ar_i32 q, r;
+
+            if (a.is_len != b.is_len || b.v == 0)
+            {
+                return 0;
+            }
+            q = a.v / b.v;
+            r = a.v - q * b.v;
+            if (op->op == AR_CALC_ROUND)
+            {
+                switch (op->v)
+                {
+                case 1: /* up: toward positive infinity */
+                    if (r != 0 && ((r > 0) == (b.v > 0)))
+                    {
+                        ++q;
+                    }
+                    break;
+                case 2: /* down: toward negative infinity */
+                    if (r != 0 && ((r > 0) != (b.v > 0)))
+                    {
+                        --q;
+                    }
+                    break;
+                case 3: /* to-zero, which a truncating divide already is */
+                    break;
+                default:
+                { /* nearest, halves away from zero as CSS says */
+                    ar_i32 twice = (r < 0 ? -r : r) * 2;
+                    ar_i32 mag = b.v < 0 ? -b.v : b.v;
+
+                    if (twice >= mag)
+                    {
+                        q += ((r > 0) == (b.v > 0)) ? 1 : -1;
+                    }
+                    break;
+                }
+                }
+                a.v = q * b.v;
+            }
+            else if (op->op == AR_CALC_REM)
+            {
+                a.v = r; /* the sign of the dividend, which `r` already has */
+            }
+            else
+            {
+                /* mod: the sign of the divisor. */
+                if (r != 0 && ((r > 0) != (b.v > 0)))
+                {
+                    r += b.v;
+                }
+                a.v = r;
+            }
+            break;
+        }
         case AR_CALC_MIN:
             if (a.is_len != b.is_len)
             {
@@ -2392,6 +2463,90 @@ static int ar__calc_factor(ar__scan *z, ar_i32 depth)
                 return 0; /* min() with one argument is not min() */
             }
         }
+        else if (ar__same_fold(name, len, "round"))
+        {
+            ar_i16 strategy = 0;
+            ar_i32 k;
+
+            /* The strategy is optional and comes first, which makes this the
+               one maths function whose argument count is not fixed. */
+            ar__skip_ws(z);
+            {
+                const char *save = z->p;
+                const char *kw;
+                ar_u32      klen = ar__ident(z, &kw);
+
+                if (klen && ar__same_fold(kw, klen, "up"))
+                {
+                    strategy = 1;
+                }
+                else if (klen && ar__same_fold(kw, klen, "down"))
+                {
+                    strategy = 2;
+                }
+                else if (klen && ar__same_fold(kw, klen, "to-zero"))
+                {
+                    strategy = 3;
+                }
+                else if (klen && ar__same_fold(kw, klen, "nearest"))
+                {
+                    strategy = 0;
+                }
+                else
+                {
+                    z->p = save; /* no strategy; the first argument is a value */
+                    klen = 0;
+                }
+                if (klen)
+                {
+                    ar__skip_ws(z);
+                    if (z->p >= z->end || *z->p != ',')
+                    {
+                        return 0;
+                    }
+                    z->p++;
+                }
+            }
+            for (k = 0; k < 2; ++k)
+            {
+                if (k > 0)
+                {
+                    ar__skip_ws(z);
+                    if (z->p >= z->end || *z->p != ',')
+                    {
+                        return 0;
+                    }
+                    z->p++;
+                }
+                if (!ar__calc_expr(z, depth + 1))
+                {
+                    return 0;
+                }
+            }
+            if (!ar__calc_emit(z, AR_CALC_ROUND, 0, strategy))
+            {
+                return 0;
+            }
+        }
+        else if (ar__same_fold(name, len, "mod") || ar__same_fold(name, len, "rem"))
+        {
+            ar_u8 op = ar__same_fold(name, len, "mod") ? (ar_u8)AR_CALC_MOD : (ar_u8)AR_CALC_REM;
+
+            if (!ar__calc_expr(z, depth + 1))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p >= z->end || *z->p != ',')
+            {
+                return 0;
+            }
+            z->p++;
+            if (!ar__calc_expr(z, depth + 1) || !ar__calc_emit(z, op, 0, 0))
+            {
+                return 0;
+            }
+        }
         else if (ar__same_fold(name, len, "clamp"))
         {
             ar_i32 k;
@@ -2541,7 +2696,8 @@ static int ar__calc_expr(ar__scan *z, ar_i32 depth)
  */
 static int ar__at_maths(const ar__scan *z)
 {
-    static const char *const NAMES[] = {"calc", "min", "max", "clamp", "abs", "sign"};
+    static const char *const NAMES[] = {"calc", "min",   "max", "clamp", "abs",
+                                        "sign", "round", "mod", "rem"};
     const char              *p = z->p;
     ar_i32                   i;
 
