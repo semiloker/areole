@@ -211,6 +211,12 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
+    s->v[AR_P_LINE_HEIGHT] = 0;
+    s->unit[AR_P_LINE_HEIGHT] = AR_UNIT_KEYWORD; /* `normal` */
+    s->v[AR_P_FONT_WEIGHT] = AR_WEIGHT_NORMAL;
+    s->unit[AR_P_FONT_WEIGHT] = AR_UNIT_NUMBER;
+    s->v[AR_P_FONT_STYLE] = AR_FONT_STYLE_NORMAL;
+    s->unit[AR_P_FONT_STYLE] = AR_UNIT_KEYWORD;
 
     /*
      * The offsets default to `auto`, not to zero.
@@ -400,6 +406,9 @@ int ar_prop_inherits(ar_i32 prop)
     {
     case AR_P_COLOR:
     case AR_P_FONT_SIZE:
+    case AR_P_LINE_HEIGHT:
+    case AR_P_FONT_WEIGHT:
+    case AR_P_FONT_STYLE:
     /* `visibility` inherits, and that is what makes `collapse` on a row worth
        writing: the row goes and every cell in it goes too, without any of them
        being named. A cell can say `visibility: visible` to come back, which is
@@ -425,8 +434,9 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR, AR_P_FONT_SIZE, AR_P_VISIBILITY, AR_P_EMPTY_CELLS,
-                                      AR_P_CAPTION_SIDE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,  AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -728,6 +738,9 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
+                                          {"line-height", AR_P_LINE_HEIGHT},
+                                          {"font-weight", AR_P_FONT_WEIGHT},
+                                          {"font-style", AR_P_FONT_STYLE},
                                           {"overflow", AR_SH_OVERFLOW},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
@@ -828,6 +841,7 @@ typedef struct ar__kw
 static const ar__kw AR_KEYWORDS[] = {
     {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
+    {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
@@ -991,6 +1005,15 @@ static const ar__kw AR_KEYWORDS[] = {
     {"end", AR_P_SCROLL_SNAP_ALIGN, AR_SNAP_ALIGN_END},
 
     {"normal", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_NORMAL},
+    /* `line-height: normal` -- the initial value, and the one that keeps the
+       face's own arithmetic. Zero, because the property is a length or a
+       multiplier everywhere else and neither can be zero. */
+    {"normal", AR_P_LINE_HEIGHT, 0},
+    {"normal", AR_P_FONT_WEIGHT, AR_WEIGHT_NORMAL},
+    {"bold", AR_P_FONT_WEIGHT, AR_WEIGHT_BOLD},
+    {"normal", AR_P_FONT_STYLE, AR_FONT_STYLE_NORMAL},
+    {"italic", AR_P_FONT_STYLE, AR_FONT_STYLE_ITALIC},
+    {"oblique", AR_P_FONT_STYLE, AR_FONT_STYLE_ITALIC},
     {"always", AR_P_SCROLL_SNAP_STOP, AR_SNAP_STOP_ALWAYS},
 
     {"auto", AR_P_SCROLLBAR_WIDTH, AR_SCROLLBAR_AUTO},
@@ -1488,6 +1511,83 @@ static ar_i32 ar__parse_track_list(ar__scan *z, ar_sheet *sheet)
     return header;
 }
 
+/*
+ * Whether the number just read is followed by a unit.
+ *
+ * Only `line-height` needs to ask -- every other property that accepts a bare
+ * number accepts nothing else -- but the question is about the syntax rather
+ * than the property, so it lives here with the scanner.
+ */
+static int ar__number_has_unit(const ar__scan *z)
+{
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+    if (*z->p == '%')
+    {
+        return 1;
+    }
+    return z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x';
+}
+
+/*
+ * Properties whose value is a length and nothing but a length.
+ *
+ * A bare number is not one of those in standards mode: `width: 100` is an
+ * invalid declaration and a browser drops it. Zero is the exception CSS makes
+ * everywhere, and `line-height` is missing from this list on purpose -- a bare
+ * number there is legal and means a multiplier.
+ *
+ * Listed rather than derived because there is nothing to derive it from: the
+ * property table carries a name and an index and says nothing about what kind
+ * of value the property takes. A list that is wrong in one direction rejects a
+ * declaration a browser keeps, and in the other keeps one a browser drops;
+ * both are visible, which is why it is written out.
+ */
+static int ar__prop_is_length(ar_u8 prop)
+{
+    switch (prop)
+    {
+    case AR_P_WIDTH:
+    case AR_P_HEIGHT:
+    case AR_P_MIN_WIDTH:
+    case AR_P_MIN_HEIGHT:
+    case AR_P_MAX_HEIGHT:
+    case AR_P_PAD_TOP:
+    case AR_P_PAD_RIGHT:
+    case AR_P_PAD_BOTTOM:
+    case AR_P_PAD_LEFT:
+    case AR_P_MARGIN_TOP:
+    case AR_P_MARGIN_RIGHT:
+    case AR_P_MARGIN_BOTTOM:
+    case AR_P_MARGIN_LEFT:
+    case AR_P_TOP:
+    case AR_P_RIGHT:
+    case AR_P_BOTTOM:
+    case AR_P_LEFT:
+    case AR_P_GAP:
+    case AR_P_ROW_GAP:
+    case AR_P_COL_GAP:
+    case AR_P_BORDER_WIDTH:
+    case AR_P_BORDER_RADIUS:
+    case AR_P_BORDER_SPACING:
+    case AR_P_FONT_SIZE:
+    case AR_P_FLEX_BASIS:
+    case AR_P_SCROLL_PAD_TOP:
+    case AR_P_SCROLL_PAD_RIGHT:
+    case AR_P_SCROLL_PAD_BOTTOM:
+    case AR_P_SCROLL_PAD_LEFT:
+    case AR_P_SCROLL_MARGIN_TOP:
+    case AR_P_SCROLL_MARGIN_RIGHT:
+    case AR_P_SCROLL_MARGIN_BOTTOM:
+    case AR_P_SCROLL_MARGIN_LEFT:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -1622,7 +1722,20 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
                 }
             }
 
-            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK)
+            /*
+             * `line-height` joins the flex factors, but only when the number
+             * is bare.
+             *
+             * A flex factor has no units and never did, so those two can take
+             * this branch on sight. `line-height` takes both forms, and they
+             * mean different things -- `1.5` is a multiplier of the font size
+             * and `1.5px` is a length -- so the unit has to be looked at
+             * first. Taking it on sight turned `line-height: 40px` into a
+             * multiplier of forty thousand, which clamped to 32767 and gave a
+             * sixteen-pixel paragraph a five-hundred-pixel line.
+             */
+            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK ||
+                (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
             {
                 out.v = sign * (n * 1000 + milli);
                 out.ok = 1;
@@ -1634,6 +1747,22 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         out.v = sign * n;
         out.ok = 1;
         out.unit = AR_UNIT_PX;
+
+        /*
+         * A length with no unit, which is quirks mode and nothing else.
+         *
+         * Zero is exempt in every mode, because CSS says so: `margin: 0` is
+         * legal everywhere and is most of what anyone writes. Everything else
+         * is dropped, and dropping it is the point -- the declaration does not
+         * become zero, it stops existing, and the property keeps whatever the
+         * cascade gave it.
+         */
+        if (z->sheet->strict_lengths && n != 0 && ar__prop_is_length(prop) &&
+            !ar__number_has_unit(z))
+        {
+            out.ok = 0;
+            return out;
+        }
 
         if (z->p < z->end && *z->p == '%')
         {
@@ -2523,6 +2652,24 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
             break;
         }
 
+        if (*p == '*')
+        {
+            /*
+             * The universal selector: matches anything, sets no tag, and adds
+             * nothing to specificity.
+             *
+             * Handled here because it cannot be handled below. `*` is not an
+             * identifier character, so the loop that reads a tag name stopped
+             * on it immediately and the compound was refused as malformed --
+             * which meant `* { box-sizing: border-box }`, and every other rule
+             * written with a universal selector, was dropped whole. The test
+             * for it after that loop could never fire and is gone.
+             */
+            ++p;
+            any = 1;
+            continue;
+        }
+
         start = p;
         while (*p && ar__is_ident(*p))
         {
@@ -2532,10 +2679,7 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
         {
             return 0;
         }
-        if (!(p - start == 1 && *start == '*'))
-        {
-            *tag = ar_hash(start, (ar_u32)(p - start));
-        }
+        *tag = ar_hash(start, (ar_u32)(p - start));
         any = 1;
     }
     return any;
@@ -2889,6 +3033,22 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
             continue;
         }
 
+        /*
+         * The universal selector: matches anything, sets no tag, and adds
+         * nothing to specificity -- which is exactly why it is worth having
+         * and why it has to be its own branch. `*` is not an identifier
+         * character, so the branch below never saw it and `* { ... }` was
+         * refused as a malformed selector: every rule written with one was
+         * dropped whole, silently, and `* { box-sizing: border-box }` is in a
+         * large fraction of the stylesheets on the web.
+         */
+        if (*z->p == '*')
+        {
+            z->p++;
+            any = 1;
+            continue;
+        }
+
         if (ar__is_ident(*z->p))
         {
             len = ar__ident(z, &name);
@@ -3087,9 +3247,12 @@ void ar_sheet_cache_clear(ar_sheet *sheet)
     }
 }
 
-/* Ascending specificity, ties broken by source order, so resolution can apply
-   rules front to back and let the last writer win. Insertion sort because the
-   input is nearly sorted already and this runs once. */
+/* Ascending origin, then specificity, then source order, so resolution can
+   apply rules front to back and let the last writer win. Origin first because
+   it outranks specificity: everything the page says comes after everything the
+   user agent says, which also puts the presentational-hint boundary at a fixed
+   index. Insertion sort because the input is nearly sorted already and this
+   runs once. */
 static void ar__note_contextual(ar_sheet *sheet)
 {
     ar_i32 i;
@@ -3137,14 +3300,29 @@ static void ar__sort_rules(ar_sheet *sheet)
     {
         ar_rule tmp = sheet->rules[i];
         j = i;
-        while (j > 0 && (sheet->rules[j - 1].specificity > tmp.specificity ||
-                         (sheet->rules[j - 1].specificity == tmp.specificity &&
-                          sheet->rules[j - 1].order > tmp.order)))
+        while (j > 0 && (sheet->rules[j - 1].origin > tmp.origin ||
+                         (sheet->rules[j - 1].origin == tmp.origin &&
+                          (sheet->rules[j - 1].specificity > tmp.specificity ||
+                           (sheet->rules[j - 1].specificity == tmp.specificity &&
+                            sheet->rules[j - 1].order > tmp.order)))))
         {
             sheet->rules[j] = sheet->rules[j - 1];
             j--;
         }
         sheet->rules[j] = tmp;
+    }
+
+    /* Where the page's rules begin, which is where a presentational hint goes.
+       Recomputed here rather than remembered, because every added stylesheet
+       sorts the whole array again. */
+    sheet->ua_count = sheet->count;
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        if (sheet->rules[i].origin != 0)
+        {
+            sheet->ua_count = (ar_u16)i;
+            break;
+        }
     }
 }
 
@@ -3290,7 +3468,23 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         {
             if (sheet->count >= sheet->capacity)
             {
-                ar__fail(&z);
+                /*
+                 * The table is full, so this rule does not exist. That is a
+                 * refusal and not merely an error, and calling it an error was
+                 * wrong in the direction that matters: `rules_refused` is the
+                 * number a caller is told to assert on -- "a rule areole threw
+                 * away entire, so nothing it said happened" -- and a rule with
+                 * nowhere to be stored is the most complete example there is.
+                 * It was counted only in `errors`, beside the harmless ones,
+                 * where an assertion on refusals could never see it.
+                 *
+                 * A stylesheet that outgrows its table is silent otherwise:
+                 * the page lays out, and the rules that fell off the end are
+                 * the last ones written, which in a user-agent sheet are the
+                 * least common elements. Exactly the failure that looks like
+                 * everything working.
+                 */
+                ar__fail_rule(&z);
                 break;
             }
             /* Everything except the selector is the same, and rule[0] is the
@@ -3298,6 +3492,10 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             rule[k].style = rule[0].style;
             rule[k].set = rule[0].set;
             rule[k].important = rule[0].important;
+            /* Stamped where the rule is stored, because that is the one
+               place every rule passes through: the selector list is parsed
+               into its own slots and each of them is zeroed on the way in. */
+            rule[k].origin = (ar_u8)(sheet->in_ua ? 0 : 1);
             rule[k].order = sheet->count;
             sheet->rules[sheet->count++] = rule[k];
         }
@@ -3375,8 +3573,63 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
     return 1;
 }
 
+/*
+ * The important band: a second cascade over only the `!important` declarations.
+ *
+ * CSS resolves `!important` by running the cascade twice, so an important
+ * declaration of low specificity beats a normal one of high specificity. A
+ * second pass in the same order is exactly what the specification describes,
+ * and is cheaper than sorting on a compound key -- the rules are already in
+ * the right order for both.
+ *
+ * Its own function because an inline style has to be able to run it again.
+ * Inline declarations sit above every selector and below `!important`, so a
+ * box with a `style=""` attribute resolves in three merges rather than one:
+ * the cached cascade, then inline's normal declarations, then this band on top
+ * of them, then inline's own important ones last. Without the third merge a
+ * plain `style="color:red"` would beat `p { color: blue !important }`, which
+ * is the one thing authors write `!important` to prevent.
+ */
+static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
+                               ar_u32 id, ar_u16 state, ar_style *out)
+{
+    ar_i32 i;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+
+        if (!ar_pset_any(r->important) || r->nctx > 0)
+        {
+            continue;
+        }
+        if (r->tag && r->tag != tag)
+        {
+            continue;
+        }
+        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
+        {
+            continue;
+        }
+        if (r->id && r->id != id)
+        {
+            continue;
+        }
+        if (r->state && (state & r->state) != r->state)
+        {
+            continue;
+        }
+        if (!ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
+        ar_style_merge(out, &r->style, r->important);
+    }
+}
+
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop)
+                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop,
+                                 const ar_rule *hints)
 {
     ar_i32 i;
 
@@ -3397,6 +3650,18 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * combinators also had a second rule that overwrote the wrong answer,
          * which is exactly the shape of bug that survives a test suite.
          */
+        /*
+         * The presentational-hint band, between the user agent's rules and the
+         * author's. `<font color=red>` beats what html.css says about `font`
+         * and loses to anything the page's own stylesheet says -- which is the
+         * order HTML gives these attributes, and the reason they are a band
+         * rather than a declaration list like `style="..."`.
+         */
+        if (hints && i == (ar_i32)sheet->ua_count)
+        {
+            ar_style_merge(out, &hints->style, hints->set);
+        }
+
         if (r->nctx > 0)
         {
             continue;
@@ -3434,45 +3699,109 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
         ar_style_merge(out, &r->style, ar_pset_minus(r->set, r->important));
     }
 
-    /*
-     * The important band, after everything normal.
-     *
-     * CSS resolves !important by running a second cascade over only the
-     * important declarations, so an important rule of low specificity beats a
-     * normal rule of high specificity. A second pass in the same order is
-     * exactly what the specification describes, and is cheaper than sorting on
-     * a compound key -- the rules are already in the right order for both.
-     */
-    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    /* A sheet whose rules are all the user agent's -- or one with no rules at
+       all -- never reaches the boundary inside the loop. */
+    if (hints && (ar_i32)sheet->ua_count >= (ar_i32)sheet->count)
     {
-        const ar_rule *r = &sheet->rules[i];
-
-        if (!ar_pset_any(r->important) || r->nctx > 0)
-        {
-            continue;
-        }
-        if (r->tag && r->tag != tag)
-        {
-            continue;
-        }
-        if (r->klass.n && !ar_classes_contains(klass, &r->klass))
-        {
-            continue;
-        }
-        if (r->id && r->id != id)
-        {
-            continue;
-        }
-        if (r->state && (state & r->state) != r->state)
-        {
-            continue;
-        }
-        if (!ar__functional_matches(r, tag, klass, id, state))
-        {
-            continue;
-        }
-        ar_style_merge(out, &r->style, r->important);
+        ar_style_merge(out, &hints->style, hints->set);
     }
+
+    /*
+     * The important band, after everything normal. See ar__important_band.
+     */
+    ar__important_band(sheet, tag, klass, id, state, out);
+}
+
+void ar_sheet_begin_ua(ar_sheet *sheet)
+{
+    if (sheet)
+    {
+        sheet->in_ua = 1;
+    }
+}
+
+void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on)
+{
+    if (sheet)
+    {
+        sheet->strict_lengths = (ar_u8)(on ? 1 : 0);
+    }
+}
+
+void ar_sheet_mark_ua(ar_sheet *sheet)
+{
+    if (sheet)
+    {
+        sheet->in_ua = 0;
+    }
+}
+
+void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, const ar_rule *hints, ar_style *out)
+{
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, hints);
+}
+
+void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                              ar_u16 state, ar_style *out)
+{
+    if (!sheet || !klass || !out)
+    {
+        return;
+    }
+    ar__important_band(sheet, tag, klass, id, state, out);
+}
+
+/*
+ * A declaration list with no selector and no braces -- what a `style=""`
+ * attribute holds, and what the presentational-hint mapping builds.
+ *
+ * The same `ar__parse_decl` the block parser uses, so `style="color:red"` and
+ * `p { color: red }` cannot disagree about what red is, about shorthands, or
+ * about what a malformed value does. Errors land in the sheet's tally like any
+ * other, which is how a document with broken inline CSS is diagnosable at all.
+ *
+ * The rule it fills in has no selector: it is a carrier for `set`,
+ * `important` and `style`, and the caller merges those three in the order the
+ * cascade wants. Returns non-zero if anything at all was set.
+ */
+int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule)
+{
+    ar__scan z;
+
+    if (!sheet || !rule)
+    {
+        return 0;
+    }
+    memset(rule, 0, sizeof *rule);
+    ar_style_defaults(&rule->style);
+    rule->set = ar_pset_none();
+    rule->important = ar_pset_none();
+
+    if (!decls || !*decls)
+    {
+        return 0;
+    }
+
+    z.base = decls;
+    z.p = decls;
+    z.end = decls + strlen(decls);
+    z.sheet = sheet;
+
+    for (;;)
+    {
+        ar__skip_ws(&z);
+        if (z.p >= z.end)
+        {
+            break;
+        }
+        /* A stray `}` is the shape a truncated attribute leaves behind. The
+           block parser stops at one; here there is no block to end, so it is
+           skipped like any other character that cannot start a property --
+           ar__parse_decl guarantees progress on anything. */
+        ar__parse_decl(&z, rule, sheet);
+    }
+    return ar_pset_any(rule->set);
 }
 
 int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klass, ar_u32 id)
@@ -3611,7 +3940,7 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
                                ar_u32 id, ar_u16 state, ar_style *out)
 {
-    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 1, 0);
 }
 
 void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
@@ -3621,7 +3950,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
     if (!sheet->cache_cap)
     {
-        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+        ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
         return;
     }
 
@@ -3636,7 +3965,7 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
 
         if (!e->used)
         {
-            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+            ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
             e->tag = tag;
             e->klass = klass->combined;
             e->id = id;
@@ -3659,6 +3988,6 @@ void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u
        is slower than evicting something, and simpler than deciding what; an
        interface with that many colliding selectors has not been seen, and if
        one appears the counters say so. */
-    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0);
+    ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, 0);
     ++sheet->cache_misses;
 }

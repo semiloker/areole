@@ -63,6 +63,33 @@ ar_i32 ar_inline_baseline(const ar_node *n)
     return n->rect.h + n->style.v[AR_P_MARGIN_BOTTOM];
 }
 
+/*
+ * One line's worth of a box, which is emphatically not `n->rect.h`.
+ *
+ * `n->rect` is *grown* into the union of a box's fragments as they are
+ * emitted -- that is what makes a wrapped box report one truthful rectangle to
+ * hit testing and damage tracking. Reading the height back out of it while it
+ * is still growing made every fragment after the first as tall as all the
+ * fragments before it, so the second line was two lines tall, the third was
+ * four, and a sixty-character sentence in a 200px box came out 880 pixels
+ * where a browser gives 64. The narrower the box, the worse it got.
+ *
+ * A text box's line is `text_h` -- the height of the text itself, which is
+ * what `rect.h` held before the first union and what every single-line box was
+ * therefore already using. `line_h` is the wrong one: it carries the face's
+ * line gap, and adding that here makes every line taller than the box a
+ * browser draws. An atomic item is one fragment and its whole box sits on the
+ * line, so `rect.h` is right for it and never grows.
+ */
+static ar_i32 ar__frag_h(const ar_node *n)
+{
+    if (n->text && n->text[0])
+    {
+        return n->style.v[AR_P_PAD_TOP] + n->text_h + n->style.v[AR_P_PAD_BOTTOM];
+    }
+    return n->rect.h;
+}
+
 /* The horizontal space an atomic item takes on a line, margins included. */
 static ar_i32 ar__outer_w(const ar_node *n)
 {
@@ -134,6 +161,22 @@ typedef struct ar__liner
     /* How many runs of the current node have been placed, so its rectangle is
        written the first time and widened afterwards. */
     ar_i32 pieces_placed;
+
+    /*
+     * The strut: what the containing block's own font contributes to every
+     * line, whether or not anything on that line is text.
+     *
+     * CSS 2.1 10.8.1. A line box begins with a zero-width inline box carrying
+     * the block's font and line-height, and its ascent and descent join the
+     * maxima like any other item's. Without it a line is only as tall as the
+     * tallest thing actually on it: a line holding one 30px inline-block came
+     * out 30 where a browser gives 33, the three being the half-leading the
+     * block's own text would have had, and the last line of every paragraph
+     * was short by the same amount.
+     *
+     * Computed once, because it is a property of the block and not of a line.
+     */
+    ar_i32 strut_asc, strut_desc;
 } ar__liner;
 
 static ar_frag *ar__emit(ar__liner *L)
@@ -171,7 +214,7 @@ static void ar__flush_open(ar__liner *L)
     r.x = L->left + L->line_off + L->open_x;
     r.y = L->top + L->y; /* provisional; closing the line fixes it */
     r.w = L->open_w;
-    r.h = n->rect.h;
+    r.h = ar__frag_h(n);
 
     if (L->pieces_placed == 0)
     {
@@ -221,10 +264,16 @@ static ar_i32 ar__close_line(ar__liner *L)
         return 0;
     }
 
+    /* The strut first, so a line is never shorter than the block's own font
+       would make it even when nothing on it is text. */
+    max_ascent = L->strut_asc;
+    max_descent = L->strut_desc;
+
     for (i = L->line_frag0; i < env->frag_used; ++i)
     {
         const ar_node *n = &L->nodes[env->frags[i].node];
-        ar_i32 outer_h = n->rect.h + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
+        ar_i32         outer_h =
+            ar__frag_h(n) + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
         ar_i32 ascent = ar_inline_baseline(n) + n->style.v[AR_P_MARGIN_TOP];
         ar_i32 descent = outer_h - ascent;
 
@@ -258,7 +307,13 @@ static ar_i32 ar__close_line(ar__liner *L)
         ar_node *n = &L->nodes[f->node];
         ar_i32   was_y = f->rect.y;
         ar_i32   valign = n->style.v[AR_P_VERTICAL_ALIGN];
-        ar_i32   outer_h = n->rect.h + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
+        /* One line's worth, for the same reason the line's own height is: this
+           runs while `n->rect` is still being grown into the union of the
+           fragments, so `rect.h` here is every line already emitted and not
+           this one. `vertical-align: bottom` on a wrapped box pushed every
+           line after the first off the bottom of its own line. */
+        ar_i32 outer_h =
+            ar__frag_h(n) + n->style.v[AR_P_MARGIN_TOP] + n->style.v[AR_P_MARGIN_BOTTOM];
 
         f->rect.x += shift;
 
@@ -341,6 +396,23 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
     L.y = 0;
     L.x = 0;
     L.line_frag0 = env->frags ? env->frag_used : 0;
+
+    /*
+     * The block is the run's parent: the box whose font every line here is
+     * measured against. Its `ascent` and `text_h` already carry the
+     * half-leading that `line-height` asked for, so the strut needs no
+     * arithmetic of its own.
+     */
+    {
+        ar_i32 block = first >= 0 ? nodes[first].parent : -1;
+
+        L.strut_asc = block >= 0 ? nodes[block].ascent : 0;
+        L.strut_desc = block >= 0 ? nodes[block].text_h - nodes[block].ascent : 0;
+        if (L.strut_desc < 0)
+        {
+            L.strut_desc = 0;
+        }
+    }
     L.open_node = -1;
     L.open_from = 0;
     L.open_to = 0;

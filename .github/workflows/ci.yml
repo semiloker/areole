@@ -208,6 +208,78 @@ jobs:
           ./build/example_html.exe --html > /tmp/cases.html
           diff -u examples/12_html/cases.html /tmp/cases.html
 
+      # 0.9.1 acceptance criterion 2: what HTML's legacy attributes compute to.
+      # The browser half of it needs a browser and runs locally, the way every
+      # other corpus comparison does. What runs here is the half that can: the
+      # dump has to be produced without crashing, and the twin has to still be
+      # the twin -- a generated file that drifts is a corpus reporting
+      # agreement about cases that are no longer the same cases.
+      - name: Presentational hint dumps
+        run: ./build/ar_hints.exe > /dev/null
+
+      - name: The hint twin is up to date
+        run: |
+          ./build/ar_hints.exe --html > /tmp/hints.html
+          diff -u tests/hints.html /tmp/hints.html
+
+      # 0.9.1 acceptance criterion 1: every element's defaults. Same split as
+      # the hints corpus -- the browser half runs locally, the dump and the
+      # twin's freshness run here. The twin is generated from the selectors in
+      # src/ar_ua_css.c, so an element added to the sheet and not to the corpus
+      # fails this step rather than going unchecked.
+      - name: User-agent stylesheet dumps
+        run: ./build/ar_elements.exe > /dev/null
+
+      - name: The element corpus is generated from the sheet
+        run: |
+          python tools/gen_element_corpus.py
+          git diff --exit-code tests/ar_elements.c
+
+      - name: The element twin is up to date
+        run: |
+          ./build/ar_elements.exe --html > /tmp/elements.html
+          diff -u tests/elements.html /tmp/elements.html
+
+      # 0.9.1 acceptance criterion 3: what a document with no doctype does
+      # differently. Its twin has no doctype either -- that is what puts it in
+      # quirks mode -- and the twin reports document.compatMode so a page that
+      # quietly slipped into standards fails loudly rather than agreeing about
+      # the wrong thing.
+      - name: Quirks-mode dumps
+        run: ./build/ar_quirks.exe > /dev/null
+
+      - name: The quirks twin is up to date
+        run: |
+          ./build/ar_quirks.exe --html > /tmp/quirks.html
+          diff -u tests/quirks.html /tmp/quirks.html
+
+      # 0.9.1 acceptance criterion 4: the gallery harness, end to end. The
+      # browser half needs a browser and runs locally like every other
+      # comparison; what runs here is the half that can, which is that every
+      # demo still renders and still draws exactly what was blessed. A change
+      # to any pixel of any demo fails this step until somebody blesses it on
+      # purpose.
+      - name: Every gallery demo renders
+        run: |
+          for f in $(find examples/gallery -name '*.html'); do
+            ./build/ar_gallery.exe "$f" --geometry > /dev/null || exit 1
+          done
+
+      - name: The gallery draws what was blessed
+        run: python tools/gallery.py run --all --golden-only --gate
+
+      # 0.9.1 acceptance criterion 5: every catalogue row marked shipped has a
+      # demo. The demo id is a column in the matrix and the path of the file,
+      # which is what lets the two be compared -- and the note at the top of
+      # support-matrix-css.md is the record of what happens when they are not:
+      # six releases of rows that had gone stale in both directions.
+      #
+      # Only shipped rows are required. A partial row names its limitation and
+      # a planned row is not built, and requiring demos for those would make
+      # this red for the two states the catalogue uses to be honest.
+      - name: Every shipped catalogue row has a demo
+        run: python tools/check_gallery.py --check
+
       # 0.9.0 acceptance criterion 3: the full named character reference table
       # round-trips against the specification's own JSON. It regenerates
       # src/ar_html_entity.c from the vendored tools/entities.json and compares,

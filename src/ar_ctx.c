@@ -303,6 +303,22 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void))
     c->clock = clock_us;
 }
 
+void ar_set_stylesheet_loader(ar_ctx *c, const char *(*load)(void *user, const char *href),
+                              void   *user)
+{
+    if (!c)
+    {
+        return;
+    }
+    c->link_load = load;
+    c->link_user = user;
+}
+
+ar_i32 ar_doc_links_skipped(const ar_ctx *c)
+{
+    return c ? c->links_skipped : 0;
+}
+
 void ar_stylesheet(ar_ctx *c, const char *css)
 {
     ar_sheet_parse(&c->sheet, css);
@@ -330,6 +346,8 @@ ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
 #define AR_GLYPH_PTS    2048
 #define AR_GLYPH_POINTS 512
 #define AR_SHAPE_RUN    192
+
+static void ar__rebuild_chains(ar_ctx *c);
 
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px)
 {
@@ -403,7 +421,20 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     ar_glyph_cache_init(&c->glyphs, slots, AR_GLYPH_SLOTS, atlas, (ar_i32)atlas_bytes);
 
     c->chain.face[0] = &c->face[0];
+    c->chain.id[0] = 0;
     c->chain.count = 1;
+
+    {
+        ar_i32 st;
+
+        for (st = 0; st < 4; ++st)
+        {
+            c->style_face[st] = -1;
+        }
+    }
+    c->style_face[0] = 0; /* the primary face is the regular one */
+    c->face_used = 1;
+    ar__rebuild_chains(c);
 
     /* Ligatures and kerning are on when the face has the tables, because a
        font that ships them means them. */
@@ -412,9 +443,104 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     return 1;
 }
 
+/*
+ * Rebuild all four style chains from the pool.
+ *
+ * Called whenever a face is added, because a fallback belongs to every style
+ * and a styled face changes exactly one of them. Cheap -- four chains of at
+ * most eight pointers -- and doing it in one place is what stops the four
+ * drifting apart.
+ *
+ * A style with no face of its own leads with the regular one. That is not a
+ * fallback in the coverage sense: the glyph is there, it is simply not the
+ * weight that was asked for, and drawing it is what a browser does with a
+ * family that has no bold.
+ */
+static void ar__rebuild_chains(ar_ctx *c)
+{
+    ar_i32 st, k;
+
+    for (st = 0; st < 4; ++st)
+    {
+        ar_font_chain *ch = &c->style_chain[st];
+        ar_i32         lead = c->style_face[st] >= 0 ? c->style_face[st] : c->style_face[0];
+
+        ch->count = 0;
+        if (lead < 0)
+        {
+            continue;
+        }
+        ch->face[0] = &c->face[lead];
+        ch->id[0] = (ar_u8)lead;
+        ch->count = 1;
+
+        /* Then the coverage fallbacks, which every style shares: a face that
+           has no CJK has none in bold either. */
+        for (k = 1; k < c->chain.count && ch->count < AR_MAX_FACES; ++k)
+        {
+            ch->face[ch->count] = c->chain.face[k];
+            ch->id[ch->count] = c->chain.id[k];
+            ch->count++;
+        }
+    }
+}
+
+/* Which of the four a resolved style asks for. 600 is the boundary CSS Fonts 4
+   draws between "use the regular face" and "use the bold one". */
+static ar_i32 ar__style_slot(const ar_style *st)
+{
+    ar_i32 slot = st->v[AR_P_FONT_WEIGHT] >= 600 ? 1 : 0;
+
+    if (st->v[AR_P_FONT_STYLE] == AR_FONT_STYLE_ITALIC)
+    {
+        slot |= 2;
+    }
+    return slot;
+}
+
+/* The chain a box's text is measured and drawn through. */
+const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
+{
+    ar_i32 slot = ar__style_slot(&n->style);
+
+    if (c->style_chain[slot].count > 0)
+    {
+        return &c->style_chain[slot];
+    }
+    return &c->chain;
+}
+
+int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic)
+{
+    ar_i32 slot = (weight >= 600 ? 1 : 0) | (italic ? 2 : 0);
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || n <= 0 || n >= AR_MAX_FACES)
+    {
+        return 0;
+    }
+    if (c->style_face[slot] >= 0)
+    {
+        return 0; /* that style already has a face; loading twice is a caller bug */
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    c->style_face[slot] = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
+
+    /* Nothing cached becomes wrong -- the face index is part of every glyph
+       key -- but text that was drawn in the regular face because there was no
+       bold one is now drawn in the bold one, so the window has to repaint. */
+    ar_invalidate_all(c);
+    return 1;
+}
+
 int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
 {
-    ar_i32 n = c->chain.count;
+    ar_i32 n = c->face_used;
 
     if (!c->have_face || n <= 0 || n >= AR_MAX_FACES)
     {
@@ -424,8 +550,11 @@ int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
-    c->chain.face[n] = &c->face[n];
-    c->chain.count = n + 1;
+    c->chain.face[c->chain.count] = &c->face[n];
+    c->chain.id[c->chain.count] = (ar_u8)n;
+    c->chain.count++;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
 
     /* The chain is part of every cache key by way of the face index, so
        nothing already cached becomes wrong. But a codepoint that fell back to
@@ -970,7 +1099,7 @@ static ar_i32 ar__measure(ar_ctx *c, const ar_node *n)
         return slot->text_px;
     }
 
-    w = ar_text_measure_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+    w = ar_text_measure_chain(n->text, ar_chain_for(c, n), n->style.v[AR_P_FONT_SIZE], &c->glyphs,
                               &c->glyph_scratch);
     w = (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
     if (slot)
@@ -1049,13 +1178,72 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
 {
     ar_node *n = &c->nodes[i];
 
-    ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+    if (n->hints && *n->hints)
+    {
+        /*
+         * Presentational hints -- `<td bgcolor=red>`, `<font size=5>` -- are a
+         * band of the cascade between the user agent's rules and the author's,
+         * not a declaration list on top of everything the way `style=""` is.
+         * So they cannot be merged onto a resolved style; the cascade has to
+         * be walked with them in the middle of it, which also means it cannot
+         * be cached. A page whose markup carries no legacy attributes never
+         * takes this path.
+         */
+        ar_rule hint;
+
+        if (ar_decls_parse(&c->sheet, n->hints, &hint))
+        {
+            ar_sheet_resolve_hinted(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                    &hint, &n->style);
+        }
+        else
+        {
+            ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+        }
+    }
+    else
+    {
+        ar_sheet_resolve(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state, &n->style);
+    }
 
     /* Rules with a combinator, which the cache cannot hold because their
        answer depends on where this box sits rather than only on what it is.
        A stylesheet without combinators skips this entirely. */
     ar_sheet_resolve_contextual(&c->sheet, i, n->sel_tag, &n->sel_class, n->sel_id, n->state,
                                 ar__sel_walk, c, &n->style);
+
+    /*
+     * An inline style, which is the box's own declaration list rather than
+     * anything a selector said about it.
+     *
+     * Here rather than in the cache for the same reason env() is: the cache
+     * key is tag, class, id and state, and this depends on none of them. Two
+     * boxes with the same selector and different `style` attributes have to
+     * get different answers, and a cache that could not tell them apart would
+     * hand the second one the first one's colour.
+     *
+     * Three merges, because the cascade has three bands here. Inline's normal
+     * declarations sit above every selector; every `!important` sits above
+     * them; inline's own `!important` sits above that. Merging the lot in one
+     * go would let `style="color:red"` beat `p { color: blue !important }`,
+     * which is the single thing an author writes `!important` to stop.
+     *
+     * The rule is on the stack and is not small, so it is built only for a box
+     * that has an inline style at all -- which in an interface is none of
+     * them, and in a document is a few.
+     */
+    if (n->inline_at && n->hints[n->inline_at])
+    {
+        ar_rule inl;
+
+        if (ar_decls_parse(&c->sheet, n->hints + n->inline_at, &inl))
+        {
+            ar_style_merge(&n->style, &inl.style, ar_pset_minus(inl.set, inl.important));
+            ar_sheet_apply_important(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                     &n->style);
+            ar_style_merge(&n->style, &inl.style, inl.important);
+        }
+    }
 
     /*
      * env(), after the cache for exactly the reason inheritance is.
@@ -1177,8 +1365,8 @@ static ar_i32 ar__wrap_bitmap(void *ud, const char *t, ar_i32 from, ar_i32 to)
     return ar_text_width_range(t, from, to, ((ar__bmp_ud *)ud)->scale) * AR_ONE_PIXEL;
 }
 
-static ar_i32 ar__wrap_lines(ar_ctx *c, const char *text, ar_i32 font_px, ar_i32 scale,
-                             ar_i32 max_w, ar_i32 *starts, ar_i32 cap)
+static ar_i32 ar__wrap_lines(ar_ctx *c, const ar_node *n, const char *text, ar_i32 font_px,
+                             ar_i32 scale, ar_i32 max_w, ar_i32 *starts, ar_i32 cap)
 {
     if (!text || max_w <= 0)
     {
@@ -1186,8 +1374,11 @@ static ar_i32 ar__wrap_lines(ar_ctx *c, const char *text, ar_i32 font_px, ar_i32
     }
     if (c->have_face)
     {
-        return ar_text_wrap_chain(text, &c->chain, font_px, max_w, &c->glyphs, &c->glyph_scratch,
-                                  starts, cap);
+        /* Through the style's chain: a bold run wraps at different points
+           because bold glyphs are wider, and wrapping it on the regular
+           face's advances gives lines that do not fit. */
+        return ar_text_wrap_chain(text, ar_chain_for(c, n), font_px, max_w, &c->glyphs,
+                                  &c->glyph_scratch, starts, cap);
     }
     {
         ar__bmp_ud ud;
@@ -1214,23 +1405,98 @@ static ar_i32 ar__round_px(ar_i32 v)
     return (v + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
 }
 
+/*
+ * What `line-height` asks the line box to be, or zero for `normal`.
+ *
+ * A multiplier is against the **computed font-size**, and not against whatever
+ * the face managed to draw. Those are the same number on the outline path and
+ * they are not on the bitmap one: `n->scale` is `font-size / 8` in integers, so
+ * a 19-pixel heading draws in a 16-pixel cell, and resolving `line-height: 1.4`
+ * against the cell gave that heading a 22-pixel line where CSS asks for 27.
+ *
+ * The glyphs are still 16 pixels tall -- that is what a bitmap face is -- but
+ * the line box is the size the page asked for, so everything below the heading
+ * lands where a browser puts it. Getting the box right is separable from
+ * getting the glyphs right, and only one of the two is waiting on 0.2.1.
+ *
+ * `em` is still taken for the `normal` case's callers, which want the face's
+ * own arithmetic and not the page's.
+ */
+static ar_i32 ar__asked_line_height(const ar_node *n, ar_i32 em)
+{
+    (void)em;
+    if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_PX)
+    {
+        return n->style.v[AR_P_LINE_HEIGHT] > 0 ? n->style.v[AR_P_LINE_HEIGHT] : 1;
+    }
+    if (n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
+    {
+        ar_i32 h = (n->style.v[AR_P_FONT_SIZE] * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000;
+
+        return h > 0 ? h : 1;
+    }
+    return 0; /* `normal` */
+}
+
+/*
+ * Half-leading: the difference between the line box and the text is split
+ * evenly above and below, which is what puts the baseline where CSS says.
+ *
+ * Applied only when a line height was actually asked for. `normal` deliberately
+ * keeps the face's own arithmetic untouched -- ascent for the baseline, ascent
+ * plus descent plus gap for the box -- because that is what every line box in
+ * this engine already was, and CSS lets a user agent choose `normal` from the
+ * font's metrics however it likes. Centring `normal` too would move every line
+ * in every document by half a line gap for no reason anybody asked for.
+ */
+static void ar__apply_line_height(ar_node *n, ar_i32 asked, ar_i32 asc, ar_i32 desc)
+{
+    if (asked <= 0)
+    {
+        return;
+    }
+    n->text_h = asked;
+    n->line_h = asked;
+    n->ascent = asc + (asked - (asc + desc)) / 2;
+    if (n->ascent < 0)
+    {
+        n->ascent = 0;
+    }
+}
+
 static void ar__text_metrics(ar_ctx *c, ar_node *n)
 {
     if (!c->have_face)
     {
-        n->text_h = ar_text_height(n->scale);
+        ar_i32 cell = ar_text_height(n->scale);
+        ar_i32 asked = ar__asked_line_height(n, cell);
+
+        n->text_h = cell;
         n->line_h = ar_text_line_height(n->scale);
         /* The bitmap face draws from the top rather than from a baseline, and
             painting still does. But a line box needs a baseline to align
             against, and for a face with no descender the baseline is the
             bottom of the cell. Painting reads n->ascent only on the outline
             path, so this is free there and correct here. */
-        n->ascent = ar_text_height(n->scale);
+        n->ascent = cell;
+        /* No descender to speak of, so the whole cell is above the baseline
+           and the leading is shared around it. */
+        ar__apply_line_height(n, asked, cell, 0);
         return;
     }
     {
-        const ar_face *f = &c->face[0];
-        ar_i32         ppem = n->style.v[AR_P_FONT_SIZE];
+        /*
+         * The face the style asked for, not face zero.
+         *
+         * A bold face is not a wider drawing of the regular one: it has its
+         * own ascent, descent and line gap, and taking the metrics from face
+         * zero while drawing through the bold chain gives a line box sized
+         * for the wrong font. That is the shape of bug that looks like a
+         * baseline problem and is really a bookkeeping one.
+         */
+        const ar_font_chain *ch = ar_chain_for(c, n);
+        const ar_face       *f = ch->count > 0 ? ch->face[0] : &c->face[0];
+        ar_i32               ppem = n->style.v[AR_P_FONT_SIZE];
 
         /*
          * Ascent, descent and gap are each rounded to a whole pixel and then
@@ -1243,14 +1509,17 @@ static void ar__text_metrics(ar_ctx *c, ar_node *n)
          * baseline and the line box disagreeing by a fraction, and the
          * disagreement accumulates down a paragraph.
          */
+        ar_i32 desc = ar__round_px(-ar_face_scale(f, f->descender, ppem));
+
         n->ascent = ar__round_px(ar_face_scale(f, f->ascender, ppem));
-        n->text_h = n->ascent + ar__round_px(-ar_face_scale(f, f->descender, ppem)) +
-                    ar__round_px(ar_face_scale(f, f->line_gap, ppem));
+        n->text_h = n->ascent + desc + ar__round_px(ar_face_scale(f, f->line_gap, ppem));
         if (n->text_h < 1)
         {
             n->text_h = 1;
         }
         n->line_h = n->text_h;
+
+        ar__apply_line_height(n, ar__asked_line_height(n, ppem), n->ascent, desc);
     }
 }
 
@@ -1296,7 +1565,7 @@ static ar_i32 ar__min_width_uncached(ar_ctx *c, const ar_node *n)
 {
     if (c->have_face)
     {
-        ar_i32 w = ar_text_min_width_chain(n->text, &c->chain, n->style.v[AR_P_FONT_SIZE],
+        ar_i32 w = ar_text_min_width_chain(n->text, ar_chain_for(c, n), n->style.v[AR_P_FONT_SIZE],
                                            &c->glyphs, &c->glyph_scratch);
 
         return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
@@ -1328,7 +1597,7 @@ static ar_i32 ar__range_px(void *ud, const ar_node *n, ar_i32 from, ar_i32 to)
     }
     if (c->have_face)
     {
-        w = ar_text_range_chain(n->text, from, to, &c->chain, n->style.v[AR_P_FONT_SIZE],
+        w = ar_text_range_chain(n->text, from, to, ar_chain_for(c, n), n->style.v[AR_P_FONT_SIZE],
                                 &c->glyphs, &c->glyph_scratch);
         return (w + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
     }
@@ -1367,8 +1636,8 @@ static ar_i32 ar__wrap_cb(void *ud, const ar_node *n, ar_i32 max_w)
 {
     ar_ctx *c = (ar_ctx *)ud;
     ar_i32  starts[AR_MAX_LINES];
-    ar_i32  lines = ar__wrap_lines(c, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, max_w, starts,
-                                   AR_MAX_LINES);
+    ar_i32  lines = ar__wrap_lines(c, n, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, max_w,
+                                   starts, AR_MAX_LINES);
 
     if (lines < 1)
     {
@@ -1847,7 +2116,54 @@ static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
 /* ------------------------------------------------------------------------
  * Tree building
  * ------------------------------------------------------------------------ */
-static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
+/*
+ * A copy of a declaration list in the frame arena, or null.
+ *
+ * Copied rather than kept by pointer so `ar_begin_styled` can be handed a
+ * stack buffer -- which is what building one from an element's attributes
+ * produces, and requiring the caller to keep it alive for the frame would be a
+ * lifetime rule nobody reads until it is already wrong.
+ *
+ * From the frame end of the arena, so it is released with the tree by the one
+ * integer store in ar_frame_begin. Running out drops the style rather than
+ * anything worse: the box renders with what its selectors said, which is the
+ * same thing that happens when the tree itself runs out of room, and the arena
+ * counters say so.
+ */
+static const char *ar__keep(ar_ctx *c, const char *hints, const char *style, ar_u16 *at)
+{
+    ar_u32 a, b;
+    char  *dst;
+
+    *at = 0;
+    a = hints ? (ar_u32)strlen(hints) : 0u;
+    b = style ? (ar_u32)strlen(style) : 0u;
+    if (a + b == 0)
+    {
+        return 0;
+    }
+    dst = (char *)ar_arena_frame(&c->arena, a + b + 2u);
+    if (!dst)
+    {
+        c->overflowed = 1;
+        return 0;
+    }
+    if (a)
+    {
+        memcpy(dst, hints, a);
+    }
+    dst[a] = 0;
+    if (b)
+    {
+        memcpy(dst + a + 1, style, b);
+    }
+    dst[a + 1 + b] = 0;
+    *at = (ar_u16)(a + 1);
+    return dst;
+}
+
+static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, const char *hints,
+                            const char *decls)
 {
     ar_i32     idx, parent;
     ar_node   *n;
@@ -1924,6 +2240,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     n->sel_class = klass;
     n->prev_sibling = parent >= 0 ? c->nodes[parent].last_child : -1;
     n->text = text;
+    n->hints = ar__keep(c, hints, decls, &n->inline_at);
     n->fit[0] = 0;
     n->fit[1] = 0;
     /* The arena hands back memory it does not clear, so a box that never
@@ -2087,7 +2404,7 @@ static ar_i32 ar__peek_display(ar_ctx *c, const char *selector)
 
 static ar_i32 ar__push_anon(ar_ctx *c, ar_i32 display)
 {
-    ar_i32 idx = ar__push_node(c, "", 0);
+    ar_i32 idx = ar__push_node(c, "", 0, 0, 0);
 
     if (idx < 0 || c->depth >= AR_MAX_DEPTH)
     {
@@ -2213,6 +2530,16 @@ static void ar__open_anon_for(ar_ctx *c, ar_i32 disp)
 
 void ar_begin(ar_ctx *c, const char *selector)
 {
+    ar_begin_styled(c, selector, 0);
+}
+
+void ar_begin_styled(ar_ctx *c, const char *selector, const char *style)
+{
+    ar_begin_hinted(c, selector, 0, style);
+}
+
+void ar_begin_hinted(ar_ctx *c, const char *selector, const char *hints, const char *style)
+{
     ar_i32 idx;
 
     /* A sheet that never mentions a table cannot need an anonymous one, and
@@ -2226,7 +2553,7 @@ void ar_begin(ar_ctx *c, const char *selector)
         ar__open_anon_for(c, disp);
     }
 
-    idx = ar__push_node(c, selector, 0);
+    idx = ar__push_node(c, selector, 0, hints, style);
 
     if (c->depth >= AR_MAX_DEPTH)
     {
@@ -2269,12 +2596,17 @@ void ar_end(ar_ctx *c)
 
 void ar_text(ar_ctx *c, const char *selector, const char *text)
 {
-    ar__push_node(c, selector, text);
+    ar__push_node(c, selector, text, 0, 0);
+}
+
+void ar_text_styled(ar_ctx *c, const char *selector, const char *text, const char *style)
+{
+    ar__push_node(c, selector, text, 0, style);
 }
 
 int ar_button(ar_ctx *c, const char *selector, const char *label)
 {
-    ar_i32 idx = ar__push_node(c, selector, label);
+    ar_i32 idx = ar__push_node(c, selector, label, 0, 0);
 
     if (idx < 0)
     {
@@ -2353,8 +2685,9 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         /* A font puts the baseline below the top of the line box; the bitmap
            face has no baseline and draws from the top, so the two paths take
            different y values for the same text. */
-        ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, &c->chain, c->shaping ? &c->shaper : 0,
-                            n->style.v[AR_P_FONT_SIZE], col, &c->glyphs, &c->glyph_scratch, 0);
+        ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, ar_chain_for(c, n),
+                            c->shaping ? &c->shaper : 0, n->style.v[AR_P_FONT_SIZE], col,
+                            &c->glyphs, &c->glyph_scratch, 0);
     }
     else
     {
@@ -2676,8 +3009,8 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                for something only the painted boxes need. */
             ar_i32 starts[AR_MAX_LINES];
             ar_i32 inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
-            ar_i32 lines = ar__wrap_lines(c, n->text, n->style.v[AR_P_FONT_SIZE], n->scale, inner_w,
-                                          starts, AR_MAX_LINES);
+            ar_i32 lines = ar__wrap_lines(c, n, n->text, n->style.v[AR_P_FONT_SIZE], n->scale,
+                                          inner_w, starts, AR_MAX_LINES);
             ar_i32 advance = n->line_h;
             ar_i32 li;
 

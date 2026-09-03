@@ -75,6 +75,45 @@ typedef enum ar_prop
 
     AR_P_FONT_SIZE,
 
+    /*
+     * `line-height`, which is the distance between baselines and not the
+     * height of anything you can see.
+     *
+     * `normal` is the keyword and the initial value, and it means the face's
+     * own ascent + descent + line gap -- exactly what every line box in this
+     * engine was before the property existed, so a document that does not
+     * mention it lays out to the same pixel.
+     *
+     * A unitless number is the form authors actually write, and it is a
+     * multiplier of `font-size` rather than a length, which is why it
+     * inherits usefully: `body { line-height: 1.5 }` gives a 32px heading a
+     * 48px line and a 16px paragraph a 24px one. A length inherits as the
+     * length and gives both 24. That difference is the whole reason CSS has
+     * the unitless form, so it is carried as AR_UNIT_NUMBER in thousandths,
+     * the same convention the flex factors use.
+     */
+    AR_P_LINE_HEIGHT,
+
+    /*
+     * `font-weight` as a number from 1 to 1000, which is what CSS Fonts 4
+     * made the property: `normal` is 400 and `bold` is 700, and the keywords
+     * are spellings of numbers rather than a separate kind of value. Storing
+     * the number means `font-weight: 600` needs no new machinery the day a
+     * variable face arrives.
+     *
+     * `bolder` and `lighter` are relative to the parent's computed value and
+     * are not here: they need the cascade to resolve against an inherited
+     * number rather than against a keyword, which is a different shape from
+     * everything else in this table.
+     */
+    AR_P_FONT_WEIGHT,
+
+    /* `font-style`: normal or italic. `oblique` is a synonym here, as it is
+       in most faces -- a real oblique is a synthesised slant of the upright,
+       and choosing between a designed italic and a slanted roman is a font
+       database's job. */
+    AR_P_FONT_STYLE,
+
     /* AR_P_OVERFLOW is the block axis, which is the one that existed when
        there was only one: the scroll range has always been vertical. The
        shorthand `overflow` sets both, and ar_overflow_x/ar_overflow_y apply the
@@ -340,6 +379,20 @@ typedef enum ar_prop
    box and every rule -- so this is one of the more expensive constants in
    the file, and the assertion below is what makes the cost visible rather
    than letting a property silently fall off the end of the mask. */
+/* Weight is a number; these two are the names CSS gives the ones people
+   write. */
+enum
+{
+    AR_WEIGHT_NORMAL = 400,
+    AR_WEIGHT_BOLD = 700
+};
+
+enum
+{
+    AR_FONT_STYLE_NORMAL = 0,
+    AR_FONT_STYLE_ITALIC = 1
+};
+
 #define AR_PSET_WORDS 3
 
 typedef struct ar_pset
@@ -561,6 +614,21 @@ enum
      * no box.
      */
     AR_DISPLAY_CONTENTS,
+
+    /*
+     * `display: list-item`: a block box that also generates a marker.
+     *
+     * The box is the whole of it here. A marker needs `list-style`, `::marker`
+     * and counters, which are 0.5.3 -- so an `<li>` lays out exactly as a
+     * block and shows no bullet, which is what it did before this value
+     * existed. What the value buys is that it is no longer a *lie*: `<li>` and
+     * `<summary>` are list items in every browser and were `block` here, and a
+     * corpus that compares computed values against one said so.
+     *
+     * After AR_DISPLAY_CONTENTS so the table-internal range above stays
+     * contiguous -- that range is compared as a range in three places.
+     */
+    AR_DISPLAY_LIST_ITEM,
 
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
@@ -1104,9 +1172,24 @@ typedef struct ar_rule
     ar_i32        nalt;
     ar_u16        state; /* required state bits, 0 means any */
 
-    ar_u16  specificity;
-    ar_u16  order; /* source position, to break specificity ties */
-    ar_pset set;   /* which properties this rule sets */
+    ar_u16 specificity;
+    ar_u16 order; /* source position, to break specificity ties */
+
+    /*
+     * 0 for the user agent's rules, 1 for the page's.
+     *
+     * The first sort key, ahead of specificity, because an origin outranks it:
+     * `td { padding: 0 }` written by a page beats `td { padding: 1px }`
+     * written by html.css whatever the two selectors look like. Sorting on it
+     * rather than checking it per box means the array is UA rules and then
+     * author rules, which is what lets a presentational hint be an index.
+     *
+     * In practice it reorders nothing today -- every rule in the UA sheet is a
+     * type selector and is parsed first, so it already lost every tie. What it
+     * buys is the boundary.
+     */
+    ar_u8   origin;
+    ar_pset set; /* which properties this rule sets */
 
     /* Which of them were marked !important. Per declaration rather than per
        rule, because that is what CSS says and because a rule mixing the two is
@@ -1204,6 +1287,42 @@ typedef struct ar_sheet
     ar_rule *rules;
     ar_u16   count;
     ar_u16   capacity;
+
+    /*
+     * How many of those rules came from the user-agent stylesheet, which is
+     * the boundary a presentational hint sits on.
+     *
+     * `<td bgcolor=red>` loses to `td { background: blue }` written by the
+     * author and beats `td { background: blue }` written by the user agent --
+     * that is the whole of what the "presentational hints origin" means, and
+     * it is expressible here as an index because rules are stored in source
+     * order and the UA sheet is loaded first.
+     *
+     * Zero when nobody called ar_sheet_mark_ua, which puts hints below
+     * everything and is the right answer for a sheet with no UA half.
+     */
+    ar_u16 ua_count;
+
+    /* Whether rules parsed right now belong to the user agent. Set for the
+       length of ar_ua_stylesheet and at no other time. */
+    ar_u8 in_ua;
+
+    /*
+     * Whether a length in the sheets parsed from here on must carry its unit.
+     *
+     * `width: 100` is a hundred pixels in quirks mode and is *invalid* in
+     * standards, where the declaration is dropped and the width stays `auto`.
+     * A page with a doctype and a unitless width lays out one way in every
+     * browser, and this engine laid it out the other way.
+     *
+     * Off by default, and that is deliberate rather than lazy. An interface's
+     * stylesheet is not a document: it has no doctype to read a mode from,
+     * nobody validates it, and `gap: 8` there is what somebody meant. Only
+     * ar_doc_stylesheets turns this on, and only for a document whose doctype
+     * asked for standards mode -- so the strictness lands exactly where the
+     * distinction is observable and nowhere else.
+     */
+    ar_u8 strict_lengths;
 
     /* Every track list every rule in this sheet declared, laid end to end.
        See the comment beside AR_P_GRID_COLS. */
@@ -1369,6 +1488,45 @@ int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *
  */
 typedef int (*ar_sel_walk)(void *ud, ar_i32 from, ar_i32 comb, ar_i32 *out_index, ar_u32 *tag,
                            ar_classes *klass, ar_u32 *id);
+
+/*
+ * The `!important` band on its own, for a box that has an inline style.
+ *
+ * Inline declarations outrank every selector and are outranked by every
+ * `!important`, so they cannot simply be merged on top of a resolved style:
+ * the band has to run again above them. See ar__important_band.
+ */
+/*
+ * Brackets the user-agent stylesheet: every rule parsed between these two
+ * calls is the user agent's, and every other rule is the page's. Called by
+ * ar_ua_stylesheet and by nobody else.
+ */
+void ar_sheet_begin_ua(ar_sheet *sheet);
+void ar_sheet_mark_ua(ar_sheet *sheet);
+
+/*
+ * Resolve with a presentational-hint rule merged at the UA/author boundary.
+ *
+ * Never cached: the cache key is tag, classes, id and state, and a hint is
+ * none of those. A box without hints goes through ar_sheet_resolve and is
+ * cached exactly as before.
+ */
+void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                             ar_u16 state, const ar_rule *hints, ar_style *out);
+
+void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                              ar_u16 state, ar_style *out);
+
+/*
+ * Parse a declaration list -- `color:red; width:4px` -- into a selectorless
+ * rule. Returns non-zero if anything was set. The caller merges
+ * `set - important` and then `important` in cascade order.
+ */
+int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule);
+
+/* Whether lengths in the sheets parsed from here on must carry their unit.
+   See ar_sheet.strict_lengths. */
+void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
                                  const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,

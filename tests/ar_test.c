@@ -1054,6 +1054,13 @@ static void test_selector_split(void)
     CHECK(ar_selector_split(".card", &tag, &klass, &id), "selector: a bare class splits");
     CHECK(tag == 0 && id == 0, "selector: absent parts come back as zero");
 
+    /* `*` is a selector and not a typo. It sets no tag, which is exactly what
+       it means -- but it has to be *accepted*, and it was not: `*` is not an
+       identifier character, so the compound came out empty and was refused.
+       The guard written to allow it sat after the loop that had already
+       failed and could never fire. */
+    CHECK(ar_selector_split("*", &tag, &klass, &id), "selector: a universal selector splits");
+    CHECK(tag == 0 && klass.n == 0 && id == 0, "selector: and names nothing in particular");
     CHECK(!ar_selector_split("", &tag, &klass, &id), "selector: an empty selector is rejected");
     CHECK(!ar_selector_split(".", &tag, &klass, &id), "selector: a lone dot is rejected");
     CHECK(!ar_selector_split(0, &tag, &klass, &id), "selector: a null selector is rejected");
@@ -1128,6 +1135,18 @@ static ar_u32 ar__box_bg(ar_i32 index)
         return 0;
     }
     return (ar_u32)AR_WIDE(&g_ui->nodes[index].style, AR_P_BACKGROUND);
+}
+
+/* The resolved style, for checks about the cascade rather than geometry. */
+static const ar_style *ar__box_style(ar_i32 index)
+{
+    static ar_style empty;
+
+    if (!g_ui || index < 0 || index >= g_ui->node_count)
+    {
+        return &empty;
+    }
+    return &g_ui->nodes[index].style;
 }
 
 static int ar__box_is(ar_i32 index, ar_i32 x, ar_i32 y, ar_i32 w, ar_i32 h)
@@ -6698,23 +6717,45 @@ static void test_a_rowspan_holds_its_column_open(void)
     CHECK(ar__box(6).x > ar__box(3).x, "table: which is not the one the spanning cell holds");
 }
 
-static void test_fixed_layout_ignores_what_cells_want(void)
+static void test_fixed_layout_reads_the_first_row_and_nothing_else(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
 
-    /* `fixed` is the affordable option on a slow machine precisely because it
-       does not look at the cells: equal columns, one pass, whatever they say
-       they need. */
+    /*
+     * What `table-layout: fixed` saves is looking past the first row -- not
+     * looking at all.
+     *
+     * CSS 2.1 17.5.2.1: a column that states a width gets it, and the rest
+     * share what is left equally. This engine gave every column `avail / ncol`
+     * and ignored a stated width outright, so `<td width=250>` in a 300px
+     * table came out 100 and a fixed-layout table could not be laid out at
+     * all -- which is the one thing anybody chooses `fixed` in order to do.
+     *
+     * The test that stood here asserted the wrong behaviour in as many words:
+     * "equal columns whatever a cell asks for". It was written from the
+     * implementation rather than from the specification, and it kept the bug
+     * alive through four releases. A demo in the gallery, compared against a
+     * browser, disagreed on the first run.
+     */
     ar__table_scene(&s,
                     ".t { table-layout: fixed; }"
-                    ".k0 { width:250px; }",
+                    ".k0 { width:150px; }",
                     2, 3);
-    CHECK(ar__box(3).w == 100 && ar__box(4).w == 100 && ar__box(5).w == 100,
-          "table: fixed layout gives equal columns whatever a cell asks for");
+    CHECK(ar__box(3).w == 150, "table: fixed layout gives a column the width it stated");
+    CHECK(ar__box(4).w == ar__box(5).w,
+          "table: and the columns that stated none share what is left, equally");
+    CHECK(ar__box(3).w + ar__box(4).w + ar__box(5).w == 300,
+          "table: and the three of them come to the table's width exactly");
 
-    /* And the control: the same sheet on automatic honours the request. */
+    /* With nothing stated it is equal columns, which is what it always was. */
+    ar__table_scene(&s, ".t { table-layout: fixed; }", 2, 3);
+    CHECK(ar__box(3).w == 100 && ar__box(4).w == 100 && ar__box(5).w == 100,
+          "table: a fixed table that is told nothing divides itself evenly");
+
+    /* And the control: the same request on automatic is honoured too, by a
+       different route -- the constraint solve rather than the first row. */
     ar__table_scene(&s, ".k0 { width:250px; }", 2, 3);
-    CHECK(ar__box(3).w >= 250, "table: automatic layout does not ignore it");
+    CHECK(ar__box(3).w >= 250, "table: automatic layout does not ignore it either");
 }
 
 static void test_a_table_stacks_like_any_other_box(void)
@@ -7349,6 +7390,550 @@ static void test_a_collapsed_edge_is_in_the_paint_digest(void)
     CHECK(before != after, "collapse: but its digest did, because its neighbour's border did");
 }
 
+static void test_a_collapsed_tables_outer_line_is_inside_its_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Where a collapsed table's grid starts, and how wide its box is.
+     *
+     * In the collapsed model a border is a line *between* two boxes, split in
+     * half between them. The table's outermost lines are shared with nothing,
+     * so each is split the same way anyway: the near half lies inside the
+     * table and pushes the grid in, and the far half is the table's own outer
+     * edge. `width` on the table sets the grid -- the content -- and the box
+     * comes out wider by both halves.
+     *
+     * Nothing here did any of that. Rows, groups and cells all began at the
+     * padding edge and the box was exactly its columns, so **every one of the
+     * 208 disagreeing boxes in the table corpus was this**, on all twenty-six
+     * pages that set `border-collapse: collapse`. Fixing it left 81.
+     *
+     * A 300px grid with a 6px collapsed border: the first cell starts at
+     * half_near(6) = 3, and the box is 300 + 3 + half_far(6) = 306.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; border:6px #b03030; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == 3, "table: the grid starts at the near half of the leading line");
+    CHECK(ar__box(1).w == 306, "table: and the box is wider than the grid by both outer halves");
+    CHECK(ar__box(3).w + ar__box(4).w == 300,
+          "table: while the columns still share exactly the width that was asked for");
+    CHECK(ar__box(2).x == 3, "table: a row starts where its cells do");
+}
+
+static void test_a_middle_columns_border_is_not_the_tables_edge(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * Three columns, and only the middle one has a thick border.
+     *
+     * The table's left and right edges are conflicts between the table, the
+     * row, the row group, the first or last column and the cells *in that
+     * column* -- CSS 17.6.2 lists exactly those, and a cell in the middle of
+     * the row is in none of them. It touches the two lines beside it and
+     * neither side of the table.
+     *
+     * One function was answering two questions. The row's contribution to the
+     * *horizontal* lines does include its cells -- every cell in a row sits on
+     * the line above it and the line below -- and the same function was being
+     * asked for the vertical edges, so a wide border anywhere in the row
+     * widened the table on both sides. `col-one-wider` in the table corpus put
+     * five pixels on one column of a pair and the table came out five wider on
+     * the far side, where the browser adds one.
+     *
+     * The middle cell here is 9px against 1px neighbours: the table's edges
+     * should be the 1px lines, so the grid starts at half_near(1) = 1 and the
+     * box is 300 + 1 + half_far(1) = 301. If the edges took the middle
+     * column's border the box would be 300 + 5 + 4 = 309.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; border:1px #b03030; }"
+                 ".mid { display:table-cell; border:9px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mid"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 301,
+          "table: a middle column's border does not widen the table's own edges");
+    CHECK(ar__box(3).x == 1, "table: so the grid starts at the near half of the *edge* line");
+}
+
+static void test_a_row_groups_border_is_its_own_two_edges(void)
+{
+    ar_surface s = ar__ui_surface(500, 500);
+    ar_i32     gap;
+
+    /*
+     * A `tbody` with a border draws it around the *group*, not around every
+     * row in it.
+     *
+     * So it meets the horizontal line above its first row and the one below
+     * its last, and none of the lines in between. Counting it on every row
+     * turned a nine-pixel group border into a nine-pixel line between each of
+     * its rows, and the rows in `col-group-alone` came out two pixels taller
+     * apiece than a browser makes them, with the table five taller.
+     *
+     * The same shape as the fix beside it -- a border belongs to the edges the
+     * box actually has -- and the opposite answer on the other axis: a group
+     * spans the whole width, so it *does* meet both of the table's side edges,
+     * which is why `ar__row_frame_border` keeps it and `ar__row_border_max`
+     * does not.
+     *
+     * The check is the gap between two rows inside the group. The cells carry
+     * no border, so the line between them is nothing at all and the second row
+     * begins exactly where the first one ends.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; border-collapse:collapse; }"
+                 ".g { display:table-row-group; border:9px #6a4080; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.g"); /* 2 */
+    ar_begin(g_ui, "div.r"); /* 3 */
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r"); /* 5 */
+    ar_begin(g_ui, "div.c"); /* 6 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /*
+     * Each row is its content plus a share of the group's border, not its
+     * content plus the whole of it. With the group counted on every row both
+     * came to 20 + 9.
+     *
+     * Each is 25: its twenty of content and five, which is the half of nine
+     * that the row's own box rounds up to. The *pitch* is not 25 -- the first
+     * row's next-row-starts-here is 24, four of the line above it and twenty
+     * of content and none of the nothing below -- and the two numbers being
+     * different is the point. A row's box rounds its two halves together;
+     * the tiling adds them apart.
+     */
+    gap = ar__box(5).y - ar__box(3).y;
+    CHECK(gap == 4 + 20, "table: a row's pitch is the far half above it and its content");
+    CHECK(ar__box(3).h == 20 + 5 && ar__box(5).h == 20 + 5,
+          "table: and its box is its content and the halves rounded together");
+    CHECK(ar__box(2).h == 9 + 20 + 20 + 9 - 5 - 4,
+          "table: the group is the grid between the table's two outer halves");
+}
+
+static void test_a_collapsed_table_is_its_lines_and_its_rows(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * A 4px table around 1px cells: three lines of 4, 1, 4 and two rows of 10.
+     *
+     * Every one of those eleven pixels is somewhere, and the table is 29 tall.
+     * It used to be 27, because the first line was opened with its near half
+     * and then never closed: the second row was started by adding the whole
+     * line between the rows to a `y` that was still short of the far half of
+     * the line above it. Two pixels, on every collapsed table whose outer
+     * border is wider than its cells' -- which is most of them.
+     *
+     * The three numbers below are three different sums and have to stay that
+     * way:
+     *
+     *   - the first row's top is the table's own outer half, 2 of the 4.
+     *   - the pitch to the next row is the *far* half above (2), the content
+     *     (10), and the near half below (1) -- 13. Rows tile.
+     *   - the row's own box is the content and the two halves rounded
+     *     together: 10 + ceil((1 + 4) / 2) = 13 for the second row, where
+     *     adding the halves apart gives 12. The pixel of difference is the
+     *     one the row overlaps the row below it by, and a browser reports the
+     *     same overlap.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:200px; border-collapse:collapse; border:4px #806040; }"
+                 ".g { display:table-row-group; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; height:10px; border:1px #b03030; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.g"); /* 2 */
+    ar_begin(g_ui, "div.r"); /* 3 */
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r"); /* 5 */
+    ar_begin(g_ui, "div.c"); /* 6 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).h == 4 + 10 + 1 + 10 + 4,
+          "collapse: a table is its lines and its rows, all of both");
+    CHECK(ar__box(3).y - ar__box(1).y == 2,
+          "collapse: the first row opens inside the table's own outer half");
+    CHECK(ar__box(5).y - ar__box(3).y == 2 + 10 + 1,
+          "collapse: and the next row begins exactly where that one's band ends");
+    CHECK(ar__box(5).h == 10 + 3,
+          "collapse: a row's box rounds its two halves together, not one at a time");
+    CHECK(ar__box(2).h == 4 + 10 + 1 + 10 + 4 - 2 - 2,
+          "collapse: and the group is the grid, without the table's outer halves");
+}
+
+static void test_a_cells_two_half_lines_are_one_number(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+    ar_i32     a, b;
+
+    /*
+     * Two columns holding the same thing, in a table with room to spare.
+     *
+     * A cell's box has to hold half of the line at each of its two ends, and
+     * that is *one* number -- half of the sum -- not two numbers rounded
+     * apart. Here the row's 7px border is the line at each outer edge and
+     * there is nothing between the columns, so each cell's two halves are
+     * seven and nothing: four, both times.
+     *
+     * Rounded apart they are three and four, and that pixel does not stay a
+     * pixel. The surplus a roomy table hands out is shared in proportion to
+     * what the columns claim to want, so a claim that is one bigger comes back
+     * several bigger: `col-row-alone` in the corpus is two identical cells and
+     * a 3px row border, and rounding its halves apart made it 118 and 122
+     * where a browser gives 120 and 120.
+     *
+     * Equality is the check, not a tolerance. Identical content in a table
+     * with room to spare gets identical columns whatever the borders around
+     * them are doing, and if that stops being exactly true it is worth
+     * knowing.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:300px; border-collapse:collapse; }"
+                 ".r { display:table-row; border:7px #40806a; }"
+                 ".c { display:table-cell; }"
+                 ".x { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_text(g_ui, "span.x", "same");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 5 */
+    ar_text(g_ui, "span.x", "same");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    a = ar__box(3).w;
+    b = ar__box(5).w;
+
+    CHECK(a + b == 300, "table: the two columns partition the width they were given");
+    CHECK(a == b, "table: and identical content gets identical columns, borders regardless");
+}
+
+static void test_the_columns_hold_every_pixel_of_every_line(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * A table with no width of its own is as wide as it needs to be, and what
+     * it needs is both cells and all three lines.
+     *
+     * Two 44px cells, a 5px border on the left column and a 1px border on the
+     * right: the outer line on the left is 5, the line between them is 5
+     * (the wider of the two borders that meet there), the outer line on the
+     * right is 1. 99 across, and every one of those eleven border pixels is
+     * somewhere exactly once -- eight of them inside the columns, as each
+     * cell's two halves, and three outside them in the table's own box.
+     *
+     * That is the sum the two half-lines are for. With the columns claiming
+     * only their content the table came out 91 and the borders drew over the
+     * cells beside them.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:44px; height:10px; }"
+                 ".a { border:5px #b03030; }"
+                 ".b { border:1px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");   /* 1 */
+    ar_begin(g_ui, "div.r");   /* 2 */
+    ar_begin(g_ui, "div.c.a"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.b"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 44 + 44 + 5 + 5 + 1,
+          "table: a shrunk collapsed table holds both its cells and all three lines");
+    CHECK(ar__box(4).x - ar__box(3).x == ar__box(3).w,
+          "table: and the second column starts where the first one ends");
+}
+
+static void test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel(void)
+{
+    ar_surface s = ar__ui_surface(500, 400);
+
+    /*
+     * The same table, given 240 to fill.
+     *
+     * Each column wants its 44 and its half-lines: 49 for the left one and 47
+     * for the right, 96 between them, so there are 144 pixels of surplus to
+     * hand out in proportion. The left column's share is 49 * 144 / 96, which
+     * is 73.5 exactly, and the columns come out 123 and 117.
+     *
+     * Truncating that share puts them at 122 and 118 -- a whole pixel wrong in
+     * both directions, from half a pixel of arithmetic. The last column takes
+     * whatever is left rather than its own quotient, so the two still fill the
+     * 240 exactly whichever way the rounding goes; rounding only decides where
+     * the boundary between them falls, and a browser puts it at 125.5.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; width:240px; border-collapse:collapse; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:44px; height:10px; }"
+                 ".a { border:5px #b03030; }"
+                 ".b { border:1px #3060b0; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t");   /* 1 */
+    ar_begin(g_ui, "div.r");   /* 2 */
+    ar_begin(g_ui, "div.c.a"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c.b"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).w + ar__box(4).w == 240,
+          "table: the columns fill the width they were given, to the pixel");
+    CHECK(ar__box(3).w == 123 && ar__box(4).w == 117,
+          "table: and a half-pixel share rounds up, not away");
+}
+
+/* ------------------------------------------------------------------------
+ * Inline styles
+ *
+ * A declaration list belonging to one box rather than to a selector, which is
+ * what HTML's `style=""` attribute is. Its whole meaning is where it sits in
+ * the cascade: above every selector, below every `!important`.
+ * ------------------------------------------------------------------------ */
+static void test_an_inline_style_outranks_every_selector(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `#a.b.c` is as specific as this engine's selectors get, and it loses.
+     * That is not a tie broken by source order -- inline declarations are a
+     * band of their own above the whole selector cascade, and no number of
+     * classes reaches it.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "div { width:10px; }"
+                 "#a.b.c { width:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div.b.c#a", "width:30px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b.c#a"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 30, "inline: a declaration list beats the most specific selector");
+    CHECK(ar__box(2).w == 20, "inline: and the box beside it, with no style, is unaffected");
+}
+
+static void test_important_outranks_an_inline_style_and_inline_important_outranks_that(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The three bands, in one scene.
+     *
+     * `!important` is what an author writes to stop a `style` attribute
+     * winning, and it is the one thing that does. An `!important` inside the
+     * attribute beats it back again, which is the order CSS gives and the
+     * reason the inline style is applied in three merges rather than one:
+     * normal declarations, then the sheet's important band on top of them,
+     * then the attribute's own important declarations last.
+     *
+     * A single merge over the resolved style passes the first check here and
+     * fails the second, which is why the second exists.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".q { width:10px !important; }"
+                 ".p { width:11px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div.p", "width:30px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div.q", "width:30px"); /* 2 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div.q", "width:30px !important"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 30, "inline: it beats an ordinary rule");
+    CHECK(ar__box(2).w == 10, "inline: and loses to an important one");
+    CHECK(ar__box(3).w == 30, "inline: unless it is important itself, which beats both");
+}
+
+static void test_two_boxes_with_one_selector_keep_their_own_inline_styles(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The style cache is keyed on tag, class, id and state, and an inline
+     * style is none of those.
+     *
+     * These three boxes are identical to the cache and different on the page.
+     * If the inline style were resolved inside the cache the second and third
+     * would be handed the first one's answer, which is the failure mode the
+     * cache's key has to be complete to avoid -- and the one that fails
+     * silently, because the page still renders.
+     */
+    ar__ui_reset("#root { display:block; } div { width:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div", "width:21px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div", "width:22px"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 21 && ar__box(2).w == 22,
+          "inline: two boxes the cache cannot tell apart keep their own styles");
+    CHECK(ar__box(3).w == 10, "inline: and the one without a style still gets the cached answer");
+}
+
+static void test_an_inline_style_survives_the_late_state_pass(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * :last-child is not known until the parent closes, so a box that has it
+     * is resolved a second time -- from the cascade, which knows nothing about
+     * the box's own declaration list.
+     *
+     * That is why the string is kept on the node rather than passed in and
+     * forgotten. Without it the second resolve throws the inline style away,
+     * and only for the last child of something, and only in a sheet that asks
+     * about it -- which is exactly the shape of bug that ships.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "div { width:10px; }"
+                 "div:last-child { width:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div", "width:31px"); /* 1 */
+    ar_end(g_ui);
+    ar_begin_styled(g_ui, "div", "width:32px"); /* 2, the last child */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).w == 32, "inline: a box re-resolved for :last-child keeps its inline style");
+    CHECK(ar__box(1).w == 31, "inline: and so does the one that was not");
+}
+
+static void test_an_inline_style_is_read_by_the_same_parser_as_a_sheet(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_u32     errors;
+
+    /*
+     * Two declarations, a shorthand, a colour and a comment, in the syntax a
+     * stylesheet body uses -- because it is the same function reading it. A
+     * second parser for `style=""` would be a second place for `#f00` to mean
+     * something slightly different.
+     *
+     * The trailing garbage is here on purpose: a malformed declaration costs
+     * itself and not the ones beside it, and it is counted, so a document with
+     * broken inline CSS is diagnosable rather than merely wrong.
+     *
+     * 46 rather than 40 because `width` is the content box and the padding is
+     * outside it -- which is the point of asking for both in one list.
+     */
+    ar__ui_reset("#root { display:block; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin_styled(g_ui, "div",
+                    "width:40px; /* a comment */ padding:3px; background:#ff0000;"); /* 1 */
+    ar_end(g_ui);
+    errors = g_ui->sheet.errors;
+    ar_begin_styled(g_ui, "div", "width:41px; !!!"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 40 + 3 + 3, "inline: a declaration list is read the way a rule body is");
+    CHECK(ar__box_style(1)->v[AR_P_PAD_LEFT] == 3 && ar__box_style(1)->v[AR_P_PAD_TOP] == 3,
+          "inline: shorthands included");
+    CHECK(ar__box_bg(1) == 0xffff0000u, "inline: and colours");
+    CHECK(ar__box(2).w == 41, "inline: garbage costs its own declaration and no other");
+    CHECK(g_ui->sheet.errors > errors, "inline: and is counted, not swallowed");
+}
+
 static void test_a_collapsed_line_is_drawn_once(void)
 {
     ar_surface s = ar__ui_surface(400, 400);
@@ -7369,19 +7954,42 @@ static void test_a_collapsed_line_is_drawn_once(void)
      */
     ar__collapse_scene(&s, "#root { background:#ffffff; } .b { border:2px #0000ff; }");
 
-    /* 3=a at x 0..149, 4=b at x 150..299, both 2px wide at the outer edges and
-       sharing one 2px line down the middle. */
-    CHECK(ar__box(3).x == 0 && ar__box(3).w == 150 && ar__box(4).x == 150,
+    /*
+     * 3=a at x 1..150, 4=b at x 151..300, both 2px at the outer edges and
+     * sharing one 2px line down the middle.
+     *
+     * **Every coordinate here moved right by one when the table's own outer
+     * line was put inside its box**, which is a change of geometry and not of
+     * painting: the grid starts at the near half of the leading line -- one
+     * pixel for a 2px border -- and the table's box is two pixels wider than
+     * its columns. A browser reports the same, and the change took the table
+     * corpus from 208 disagreeing boxes to 81.
+     *
+     * The pattern below is untouched and is what this test is actually for: a
+     * shared line drawn once, as two halves, by the two cells that meet at it,
+     * with nothing either side.
+     */
+    CHECK(ar__box(3).x == 1 && ar__box(3).w == 150 && ar__box(4).x == 151,
           "collapse: the pixel test's cells are where it thinks they are");
 
-    CHECK(ar__pixel_at(0, 6) == 0xFF0000u,
+    CHECK(ar__pixel_at(1, 6) == 0xFF0000u,
           "collapse: the end cell draws its half of the outer line");
-    CHECK(ar__pixel_at(1, 6) == 0xFFFFFFu, "collapse: and stops there");
+    CHECK(ar__pixel_at(2, 6) == 0xFFFFFFu, "collapse: and stops there");
 
-    CHECK(ar__pixel_at(148, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
-    CHECK(ar__pixel_at(149, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
-    CHECK(ar__pixel_at(150, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
-    CHECK(ar__pixel_at(151, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+    CHECK(ar__pixel_at(149, 6) == 0xFFFFFFu, "collapse: nothing is drawn before the shared line");
+    CHECK(ar__pixel_at(150, 6) == 0xFF0000u, "collapse: the left cell draws its half of it");
+    CHECK(ar__pixel_at(151, 6) == 0x0000FFu, "collapse: the right cell draws the other half");
+    CHECK(ar__pixel_at(152, 6) == 0xFFFFFFu, "collapse: and nothing is drawn after it");
+
+    /*
+     * Not asserted, and named instead: the table's own outermost pixel, x=0,
+     * is not painted by anything. The cells draw the halves they own and the
+     * table draws no border of its own, so the far half of the outer line is
+     * missing. It was missing before this change too -- the cells simply
+     * started at x=0 and covered it up -- and it is a paint gap rather than a
+     * geometry one, which is why the browser comparison, which reads
+     * rectangles, cannot see it.
+     */
 }
 
 static void test_a_roomy_table_gives_the_surplus_to_the_wide_column(void)
@@ -8684,11 +9292,84 @@ static void test_a_wrapped_paragraph_tells_its_sibling_how_tall_it_is(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    /* 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after. */
-    CHECK(ar__box(2).h > 20, "wrap: the paragraph is taller than one line");
+    /*
+     * 1 = .w, 2 = the paragraph, 3 = its text, 4 = .after.
+     *
+     * Against the text's own single-line height and not against a number.
+     * `> 20` was what stood here, and it passed for the wrong reason: a
+     * fragment used to take its height from a rectangle that was still being
+     * grown into the union of the fragments before it, so the second line was
+     * two lines tall and the third was four. Twenty was comfortably clear of
+     * a correct two-line paragraph and comfortably inside a compounding one.
+     */
+    CHECK(ar__box(2).h > g_ui->nodes[3].text_h,
+          "wrap: the paragraph is taller than one line of its own text");
+    CHECK(ar__box(2).h == 2 * g_ui->nodes[3].text_h,
+          "wrap: and exactly two lines tall, not two lines plus the first one again");
     CHECK(ar__box(4).y >= ar__box(2).y + ar__box(2).h,
           "wrap: and the block after it starts below it rather than on top of it");
     CHECK(ar__box(1).h >= ar__box(2).h + 20, "wrap: the container is as tall as what it holds");
+
+    {
+        /*
+         * And the same text in half the width is at most twice as tall.
+         *
+         * Two lines is not enough to catch the compounding -- the first line
+         * was right and the second took the first one's height, which is the
+         * same answer. It needs a third line to diverge, and by six lines the
+         * paragraph was eleven lines tall. Halving the width and bounding the
+         * height is the invariant that says so without pinning a line count
+         * that depends on what the face measures.
+         */
+        ar_i32 wide = ar__box(2).h;
+        ar_i32 line = g_ui->nodes[3].text_h;
+
+        ar__ui_reset("#root { display:block; }"
+                     ".w { display:block; width:150px; }"
+                     ".p { display:block; }"
+                     ".t { display:inline; }");
+        ar__ui_begin();
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.w");
+        ar_begin(g_ui, "div.p");
+        ar_text(g_ui, "span.t", "a sentence long enough that it has to break across two lines");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+
+        CHECK(ar__box(2).h <= 2 * wide + line,
+              "wrap: and half the width is at most twice the height, plus a line");
+
+        /*
+         * And every line of it is the same height, which is the property that
+         * actually broke.
+         *
+         * A fragment took its height from `n->rect.h` while that field was
+         * being grown into the union of the fragments already emitted, so each
+         * line was as tall as all the lines above it: 1, 1, 2, 4, 8. Two lines
+         * cannot see it -- the second takes the first one's height and that is
+         * the right answer -- and a bound on the total is too loose to catch
+         * three. Comparing the fragments to each other needs neither a line
+         * count nor a threshold.
+         */
+        {
+            ar_i32 k, n = ar_node_frag_count(g_ui, 3);
+            ar_i32 from, to;
+            ar_i32 first = n > 0 ? ar_node_frag(g_ui, 3, 0, &from, &to).h : 0;
+            int    same = 1;
+
+            for (k = 1; k < n; ++k)
+            {
+                if (ar_node_frag(g_ui, 3, k, &from, &to).h != first)
+                {
+                    same = 0;
+                }
+            }
+            CHECK(n >= 3, "wrap: the narrow paragraph is at least three lines");
+            CHECK(same, "wrap: and every one of them is the same height");
+        }
+    }
 }
 
 static void test_a_block_of_blocks_is_as_tall_as_the_blocks_in_it(void)
@@ -12015,6 +12696,47 @@ static void test_line_height_comes_from_the_baselines(void)
     CHECK(ar__box(2).y == 2, "baseline: the shallower one drops to meet it");
 }
 
+/*
+ * The strut: the block's own font is on every line, whether or not text is.
+ *
+ * CSS 2.1 10.8.1. A line box starts with a zero-width inline box carrying the
+ * containing block's font and line-height, and its ascent and descent join the
+ * maxima like any item's. Leave it out and a line is only as tall as the
+ * tallest thing actually on it -- which is right until nothing on the line is
+ * text, and then the half-leading below the baseline goes missing.
+ *
+ * Here the item is taller than the strut's ascent, so the line's top comes
+ * from the item and its bottom comes from the strut. That is the arrangement
+ * that separates this from the two implementations that look the same on
+ * easier input: without a strut the line is 40, and with the line merely
+ * floored at `line-height` it is also 40, because the item is taller than 32.
+ * Only a strut that contributes a descent gets 48.
+ */
+static void test_a_line_is_never_shorter_than_the_block_s_own_font(void)
+{
+    ar_surface s = ar__ui_surface(300, 200);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".p { display:block; font-size:16px; line-height:32px; }"
+                 ".i { display:inline-block; width:20px; height:40px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.p");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* The face is 16 tall at this size, so a 32px line leaves 8 of leading
+       above the ascent and 8 below the baseline. The item has no text and so
+       sits with its bottom edge on the baseline: 40 above it, and the strut's
+       8 below. */
+    CHECK(ar__box(2).h == 40, "strut: the item is the tallest thing above the baseline");
+    CHECK(ar__box(1).h == 48, "strut: and the block's own font is still under it");
+}
+
 /* vertical-align:top ignores the baseline and pins to the line's top edge. */
 static void test_vertical_align_top_and_bottom(void)
 {
@@ -13905,6 +14627,1138 @@ static void ar__render_html(ar_surface *s, const char *src, const char *author)
     ar_frame_end(g_ui, s);
 }
 
+/*
+ * Every box declared with this tag, in tree order.
+ *
+ * Not `first + n`: ar_dom_build gives an element's text a box of its own, so
+ * two adjacent `<td>a</td>` cells are four boxes and the second cell is not
+ * the one after the first.
+ */
+static ar_i32 ar__tags(const char *tag, ar_i32 *out, ar_i32 cap)
+{
+    ar_u32 h = ar_hash(tag, (ar_u32)strlen(tag));
+    ar_i32 i, n = 0;
+
+    for (i = 0; i < g_ui->node_count && n < cap; ++i)
+    {
+        if (g_ui->nodes[i].sel_tag == h)
+        {
+            out[n++] = i;
+        }
+    }
+    return n;
+}
+
+static ar_i32 ar__first_tag(const char *tag)
+{
+    ar_i32 one[1];
+
+    return ar__tags(tag, one, 1) == 1 ? one[0] : -1;
+}
+
+static void test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `<td bgcolor>` and `<table cellspacing>` are not a `style` attribute.
+     * They are a band of the cascade between the user agent's stylesheet and
+     * the page's own, and the two directions are separate failures.
+     *
+     * Below the UA sheet they do nothing at all: html.css already says
+     * `table { border-spacing: 2px }` and `td { padding: 1px }`, so a hint
+     * that loses to it is a hint that never applies to anything.
+     *
+     * Above the author's they make a restyled page impossible: a document
+     * written in 1998 and given a stylesheet in 2010 has to be able to say
+     * `td { padding: 0 }` and be obeyed. That is the whole reason these are a
+     * band and `style=""` is not.
+     */
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    0);
+    {
+        ar_i32 t = ar__first_tag("table");
+        ar_i32 c = ar__first_tag("td");
+
+        CHECK(t >= 0 && c >= 0, "hints: the table and its cell came out of the markup");
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 9,
+              "hints: cellspacing beats the user agent's border-spacing");
+        CHECK(ar__box_style(c)->v[AR_P_PAD_LEFT] == 8,
+              "hints: and cellpadding, written on the table, beats its padding");
+    }
+
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    "table { border-spacing:4px; } td { padding:3px; }");
+    {
+        ar_i32 t = ar__first_tag("table");
+        ar_i32 c = ar__first_tag("td");
+
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 4,
+              "hints: and the page's own stylesheet beats the hint");
+        CHECK(ar__box_style(c)->v[AR_P_PAD_LEFT] == 3, "hints: on the cell too");
+    }
+
+    /*
+     * And once more with a stylesheet that says nothing about tables.
+     *
+     * The two checks above pass whether the hint goes in at the boundary or in
+     * front of every rule in the sheet, because in the first render there are
+     * no author rules at all and in the second the author rule wins either
+     * way. This is the case that separates them: a page that has a stylesheet
+     * and does not mention `table`, where the hint still has to beat html.css.
+     */
+    ar__render_html(&s,
+                    "<table border=\"1\" cellspacing=\"9\" cellpadding=\"8\">"
+                    "<tr><td>a</td></tr></table>",
+                    "p { color:#123456; }");
+    {
+        ar_i32 t = ar__first_tag("table");
+
+        CHECK(ar__box_style(t)->v[AR_P_BORDER_SPACING] == 9,
+              "hints: a hint goes in at the boundary, not in front of the whole sheet");
+    }
+}
+
+static void test_a_style_attribute_beats_a_hint_on_the_same_element(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Two bands on one element, and the order between them is the order they
+     * are written in the specification rather than the order they are written
+     * in the tag: an inline style wins wherever it appears.
+     */
+    ar__render_html(&s, "<img width=\"200\" height=\"90\" style=\"width:50px\">", 0);
+    {
+        ar_i32 i = ar__first_tag("img");
+
+        CHECK(i >= 0 && ar__box(i).w == 50,
+              "hints: a style attribute beats width= on the same tag");
+        CHECK(ar__box(i).h == 90, "hints: and leaves the attribute it says nothing about alone");
+    }
+}
+
+static void test_the_two_attributes_that_belong_to_body_alone(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `bgcolor` and `text` on `<body>`, which are the two hints the corpus in
+     * tests/ar_hints.c cannot check.
+     *
+     * Forty-three cases share one page there, and a document has one body. Put
+     * in a div instead -- which the first version of that corpus did -- a
+     * browser correctly ignores both, because they are body's alone, and the
+     * case reports a disagreement about the twin rather than about areole.
+     * Here every scene is its own document and the question can be asked
+     * directly.
+     *
+     * `text` is `color` and not `background`, which is the whole reason it has
+     * a name of its own rather than being a third spelling of `bgcolor`.
+     */
+    ar__render_html(&s, "<html><body bgcolor=\"red\" text=\"blue\"><p>t</p></body></html>", 0);
+    {
+        ar_i32 b = ar__first_tag("body");
+        ar_i32 p = ar__first_tag("p");
+
+        CHECK(b >= 0 && p >= 0, "hints: the body and its paragraph came out of the markup");
+        CHECK(ar__box_bg(b) == 0xffff0000u, "hints: bgcolor on body is a background");
+        CHECK((ar_u32)AR_WIDE(ar__box_style(b), AR_P_COLOR) == 0xff0000ffu,
+              "hints: and text on body is a colour");
+        /* Inherited rather than set: the attribute is on the body and the
+           paragraph is what has words in it. */
+        CHECK(AR_WIDE(ar__box_style(p), AR_P_COLOR) == AR_WIDE(ar__box_style(b), AR_P_COLOR),
+              "hints: which the paragraph inside it inherits");
+    }
+
+    /* And an author rule still beats both, the way it beats every hint. */
+    ar__render_html(&s, "<html><body bgcolor=\"red\"><p>t</p></body></html>",
+                    "body { background:#00ff00; }");
+    CHECK(ar__box_bg(ar__first_tag("body")) == 0xff00ff00u,
+          "hints: and the page's own stylesheet beats bgcolor like any other hint");
+}
+
+static void test_a_legacy_colour_is_not_a_css_colour(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `bgcolor="red"`, `bgcolor="#ff0000"` and `bgcolor="ff0000"` are three
+     * spellings of one colour and all three are in real markup. The third is
+     * the one CSS has no syntax for at all -- a bare hex triple, no hash --
+     * and passing it through unchanged makes it a parse error rather than a
+     * colour.
+     *
+     * `bgcolor="chartreuse"` is a fourth spelling nothing here knows: HTML
+     * names sixteen colours and CSS in this engine names none, so the mapping
+     * carries the sixteen itself. A name outside them has to write nothing at
+     * all rather than write something the style parser will refuse -- a
+     * refusal would be counted in the sheet's error tally, and that tally is
+     * what tells anyone whether a page's CSS is broken. It must also not cost
+     * the declaration beside it.
+     */
+    ar__render_html(&s,
+                    "<table><tr>"
+                    "<td bgcolor=\"red\">a</td>"
+                    "<td bgcolor=\"#ff0000\">b</td>"
+                    "<td bgcolor=\"ff0000\">c</td>"
+                    "<td bgcolor=\"chartreuse\" width=\"70\">d</td>"
+                    "</tr></table>",
+                    0);
+    {
+        ar_i32 c[4];
+
+        CHECK(ar__tags("td", c, 4) == 4, "hints: four cells came out of the markup");
+        CHECK(ar__box_bg(c[0]) == 0xffff0000u, "hints: bgcolor=red is a colour");
+        CHECK(ar__box_bg(c[1]) == 0xffff0000u, "hints: and so is the same colour with a hash");
+        CHECK(ar__box_bg(c[2]) == 0xffff0000u,
+              "hints: and a bare hex triple, which CSS cannot spell");
+        /* The style rather than the rectangle: four cells in one auto-sized
+           table share the width between them, so what the fourth one *asked*
+           for is the question here and what it got is the table's business. */
+        CHECK(ar__box_style(c[3])->v[AR_P_WIDTH] == 70,
+              "hints: a colour this engine does not know costs its own declaration and no other");
+    }
+}
+
+static void test_a_legacy_length_is_pixels_or_a_percentage_or_nothing(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    ar_u32     errors;
+
+    /*
+     * `width="200"` is 200 pixels, `width="50%"` is half the parent, and
+     * `width="auto"` is markup a browser ignores.
+     *
+     * The third is why this is its own function rather than a `strcat`.
+     * Writing `width:auto px` and letting the CSS parser refuse it would give
+     * the same rectangle and a false entry in the error tally -- and the tally
+     * is what tells anyone whether a page's CSS is broken.
+     */
+    ar__render_html(&s, "<div style=\"width:400px\"><img width=\"50%\"></div>", 0);
+    CHECK(ar__box(ar__first_tag("img")).w == 200, "hints: width=50% is half the parent");
+
+    ar__render_html(&s, "<img width=\"200\">", 0);
+    CHECK(ar__box(ar__first_tag("img")).w == 200, "hints: and width=200 is pixels");
+
+    errors = g_ui->sheet.errors;
+    ar__render_html(&s, "<img width=\"auto\" height=\"77\">", 0);
+    {
+        ar_i32 i = ar__first_tag("img");
+
+        CHECK(ar__box(i).h == 77, "hints: a value that is not a length is skipped");
+        /* The unit rather than the number: writing `width:0px` for it would
+           give the same rectangle here and a stated width of nothing, which is
+           not what `width="auto"` means and is not what a browser does. */
+        CHECK(ar__box_style(i)->unit[AR_P_WIDTH] != AR_UNIT_PX,
+              "hints: and leaves the property unstated rather than stating zero");
+        CHECK(g_ui->sheet.errors == errors, "hints: and is not counted as a parse error");
+    }
+}
+
+/*
+ * A document with a doctype and one without, whole.
+ *
+ * The author's CSS goes *inside* the document rather than beside it, which is
+ * the difference from ar__render_html and the reason this exists: the doctype
+ * decides how a page's own stylesheets are read, and only ar_doc_stylesheets
+ * is in a position to know both. A sheet handed to ar_stylesheet before the
+ * parse has no document behind it and is read the lenient way, which is
+ * correct for an interface and would have made every check below pass for the
+ * wrong reason.
+ */
+static void ar__render_modes(ar_surface *s, const char *body, const char *author, int quirks)
+{
+    char     buf[900];
+    ar_input in;
+
+    strcpy(buf, quirks ? "" : "<!doctype html>");
+    strcat(buf, "<html><head><style>");
+    strcat(buf, author ? author : "");
+    strcat(buf, "</style></head><body>");
+    strcat(buf, body);
+    strcat(buf, "</body></html>");
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse(buf);
+    ar_doc_stylesheets(g_ui, &g_doc);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_the_universal_selector(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `*` matches anything, sets no tag, and adds nothing to specificity.
+     *
+     * It did not parse at all. `*` is not an identifier character, so the
+     * branch that reads a tag name never saw it and the whole compound was
+     * refused as malformed -- which means every rule written with a universal
+     * selector was dropped whole and silently, and
+     * `* { box-sizing: border-box }` is in a large fraction of the stylesheets
+     * on the web. The check that was supposed to catch it sat *after* the loop
+     * that had already failed, so it could never fire.
+     *
+     * The specificity is the half worth checking as well as the matching: a
+     * universal selector has to lose to a type selector, which is what makes
+     * it usable as a reset.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 "* { width:30px; height:10px; }"
+                 "span { width:50px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div"); /* 1 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "span"); /* 2 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->sheet.errors == 0, "css: a universal selector parses");
+    CHECK(ar__box(1).w == 30, "css: and matches a box no other rule names");
+    CHECK(ar__box(2).w == 50, "css: and loses to a type selector, which is what a reset needs");
+}
+
+static void test_a_length_needs_its_unit_in_standards_mode(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `width: 100` is a hundred pixels in quirks mode and an *invalid*
+     * declaration in standards, where a browser drops it and the width stays
+     * `auto`. This engine took it as pixels in both, which is the wrong half
+     * of the two to be lenient in: a page with a doctype and a unitless width
+     * lays out one way in every browser and another way here.
+     *
+     * The declaration is dropped rather than zeroed. That distinction is the
+     * whole of it -- the property keeps what the cascade gave it, so a rule
+     * before this one still holds and the box is not suddenly nothing wide.
+     */
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "div { width:200px; } #x { width:100; }", 0);
+    CHECK(ar__box(ar__first_tag("div")).w == 200,
+          "quirks: a unitless length is dropped with a doctype, not taken as pixels");
+
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "div { width:200px; } #x { width:100; }", 1);
+    CHECK(ar__box(ar__first_tag("div")).w == 100, "quirks: and taken as pixels without one");
+
+    /* Zero is exempt in both, because CSS says so everywhere and it is most
+       of what anybody writes. */
+    ar__render_modes(&s, "<div id=\"x\">t</div>", "#x { margin:0; width:70px; }", 0);
+    CHECK(ar__box_style(ar__first_tag("div"))->v[AR_P_MARGIN_TOP] == 0 &&
+              ar__box(ar__first_tag("div")).w == 70,
+          "quirks: zero needs no unit in either mode");
+}
+
+static void test_an_interface_stylesheet_is_not_a_document(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The strictness above applies to documents and to nothing else, and that
+     * is deliberate rather than an oversight.
+     *
+     * An interface's stylesheet has no doctype to read a mode from, nobody
+     * validates it, and `gap: 8` in one is what somebody meant -- which is
+     * the argument the original code made for taking a bare number as pixels,
+     * and it is still right for the case it was made about. What changed is
+     * that areole now reads documents, where the distinction is observable.
+     */
+    ar__ui_reset("#root { display:block; } .a { width:60; height:20; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 60 && ar__box(1).h == 20,
+          "quirks: an interface stylesheet still takes a bare number as pixels");
+}
+
+static void test_a_table_does_not_inherit_its_font_in_quirks(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * What browsers did before CSS and still do for a page that asks for
+     * quirks: a table starts its font again rather than inheriting the one
+     * around it. A page that says `body { font-size:30px }` gets a table at
+     * sixteen, and a page written that way rendered with the table inheriting
+     * is wrong everywhere there is a table -- which on the old web is most
+     * pages.
+     */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; }", 1);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 16,
+          "quirks: a table starts its font again rather than inheriting");
+
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; }", 0);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 30,
+          "quirks: and with a doctype it inherits like anything else");
+
+    /* A default, so the page can still say otherwise. */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; } table { font-size:24px; }", 1);
+    CHECK(ar__box_style(ar__first_tag("td"))->v[AR_P_FONT_SIZE] == 24,
+          "quirks: and a page that says otherwise is obeyed");
+
+    /*
+     * And obeyed even when what it says is *less specific* than the rule it
+     * is overruling, which is the half that needs the origin.
+     *
+     * `table { font-size:16px }` is a type selector and beats a universal one
+     * on specificity alone. It has to lose anyway, because it is the user
+     * agent's and the other is the page's -- an origin outranks specificity.
+     * With the two in one origin the check above passes on source order and
+     * says nothing, which is what the first version of it did.
+     */
+    ar__render_modes(&s, "<div id=\"w\"><table><tr><td id=\"x\">t</td></tr></table></div>",
+                     "#w { font-size:30px; } * { font-size:21px; }", 1);
+    /*
+     * On the *table*, which is the only box both rules reach.
+     *
+     * The cell is set directly by the universal rule and would say 21 whatever
+     * the origins were, so asking it proves nothing -- which is what the first
+     * version of this check did, and it stayed green with the origin taken
+     * out. The table is where `table { font-size:16px }` and
+     * `* { font-size:21px }` both apply and the order has to decide.
+     */
+    CHECK(ar__box_style(ar__first_tag("table"))->v[AR_P_FONT_SIZE] == 21,
+          "quirks: even by a rule less specific than the default it overrules");
+}
+
+/* What the loader below was asked for, in the order it was asked. */
+static char   g_link_asked[8][64];
+static ar_i32 g_link_count;
+
+static const char *ar__link_loader(void *user, const char *href)
+{
+    (void)user;
+    if (g_link_count < 8)
+    {
+        strncpy(g_link_asked[g_link_count], href, 63);
+        g_link_asked[g_link_count][63] = 0;
+    }
+    ++g_link_count;
+
+    if (strcmp(href, "a.css") == 0)
+    {
+        return "p { width:40px; height:11px; }";
+    }
+    if (strcmp(href, "b.css") == 0)
+    {
+        return "p { width:70px; }";
+    }
+    return 0; /* the loader declines, which is a link that did not arrive */
+}
+
+static void ar__render_linked(ar_surface *s, const char *src, int with_loader)
+{
+    ar_input in;
+
+    ar__ui_reset("");
+    g_link_count = 0;
+    ar_set_stylesheet_loader(g_ui, with_loader ? ar__link_loader : 0, 0);
+    ar_ua_stylesheet(g_ui);
+    ar__parse(src);
+    ar_doc_stylesheets(g_ui, &g_doc);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_an_external_stylesheet_comes_from_the_embedder(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * areole does no networking and no file IO, in this release or any other,
+     * so `<link rel=stylesheet>` is the one thing a document can ask for that
+     * this library cannot go and get. The embedder can: it knows the base URL,
+     * the cache, and what is allowed.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 1 && strcmp(g_link_asked[0], "a.css") == 0,
+          "link: the loader is asked for the href the document wrote");
+    CHECK(ar__box(ar__first_tag("p")).w == 40 && ar__box(ar__first_tag("p")).h == 11,
+          "link: and what it hands back is a stylesheet");
+}
+
+static void test_external_sheets_arrive_in_document_order(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Order is the cascade. `<link>` then `<style>` then `<link>` is three
+     * sheets in that order, and a sheet that arrives out of order wins the
+     * wrong arguments -- which is why links are collected in the same walk as
+     * `<style>` rather than in a pass of their own before or after it.
+     *
+     * All three rules here have the same specificity, so the last one wins and
+     * the answer says which one that was.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "<style>p { width:55px; }</style>"
+                      "<link rel=\"stylesheet\" href=\"b.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar__box(ar__first_tag("p")).w == 70,
+          "link: the last sheet in document order wins, whichever kind it is");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"b.css\">"
+                      "<style>p { width:55px; }</style>"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar__box(ar__first_tag("p")).w == 55, "link: and a <style> after a <link> beats it");
+}
+
+static void test_a_link_that_did_not_arrive_is_counted(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * A page whose whole design is in one external sheet renders as unstyled
+     * text whether the sheet was declined or the page never had one, and the
+     * difference between those two is the first question anybody asks. So it
+     * is a number rather than a silence.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"missing.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar_doc_links_skipped(g_ui) == 1, "link: a loader that declines is counted");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      0);
+    CHECK(ar_doc_links_skipped(g_ui) == 1 && g_link_count == 0,
+          "link: and so is a document with links and no loader at all");
+
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(ar_doc_links_skipped(g_ui) == 0, "link: a sheet that arrived is not counted as missing");
+}
+
+static void test_only_a_stylesheet_link_is_a_stylesheet(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `rel` is a space-separated list of keywords, and most of what is in it
+     * on a real page is not a stylesheet: `icon`, `preconnect`, `canonical`.
+     * Asking the embedder to fetch every one of them would be a request per
+     * link on every page.
+     *
+     * `alternate stylesheet` *is* a stylesheet and is still not loaded: it is
+     * one the reader may choose, and nothing has chosen it.
+     */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"icon\" href=\"a.css\">"
+                      "<link rel=\"preconnect\" href=\"a.css\">"
+                      "<link rel=\"alternate stylesheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 0, "link: a link that is not a stylesheet is not fetched");
+    CHECK(ar_doc_links_skipped(g_ui) == 0, "link: nor counted as one that failed to arrive");
+
+    /* And the spelling does not have to match: HTML keywords are ASCII
+       case-insensitive and real markup uses every casing there is. */
+    ar__render_linked(&s,
+                      "<!doctype html><html><head>"
+                      "<link rel=\"StyleSheet\" href=\"a.css\">"
+                      "</head><body><p>t</p></body></html>",
+                      1);
+    CHECK(g_link_count == 1, "link: and `StyleSheet` is `stylesheet`");
+}
+
+static void test_a_drawing_states_its_own_size(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `<svg width="120" height="40">` had no rule in the user-agent sheet and
+     * no entry in the attribute mapping, so it fell to the initial display --
+     * a flex container -- and came out the full width of the page and none of
+     * its height. A drawing on a page was a full-width nothing.
+     *
+     * Two halves and both were missing: a display, because `svg` is a replaced
+     * element that sits on a line, and the size, because a drawing states it
+     * in attributes exactly as an image does.
+     */
+    ar__render_html(&s, "<p>a</p><svg width=\"120\" height=\"40\"></svg><p>b</p>", 0);
+    {
+        ar_i32 g = ar__first_tag("svg");
+
+        CHECK(g >= 0, "svg: the element came out of the markup");
+        CHECK(ar__box(g).w == 120 && ar__box(g).h == 40,
+              "svg: and is the size its attributes asked for");
+        CHECK(ar__box_style(g)->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK,
+              "svg: on a line rather than as a flex container");
+    }
+}
+
+static void test_auto_margins_centre_a_block(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `margin: 0 auto` on a box with a width, which is how every centred page
+     * on the web is centred, and which did nothing at all: an auto margin was
+     * read as zero and the box stayed against the left edge.
+     *
+     * CSS 2.1 10.3.3. Two auto margins take equal shares of what is left; one
+     * takes all of it, which is how a box is pushed right.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".w { display:block; width:400px; }"
+                 ".both { display:block; width:100px; height:10px; margin:0px auto; }"
+                 ".right { display:block; width:100px; height:10px;"
+                 "         margin-left:auto; margin-right:0px; }"
+                 ".plain { display:block; width:100px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");    /* 1 */
+    ar_begin(g_ui, "div.both"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.right"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.plain"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(2).x - ar__box(1).x == 150, "margin: two auto margins centre the box");
+    CHECK(ar__box(3).x - ar__box(1).x == 300, "margin: one pushes it all the way over");
+    CHECK(ar__box(4).x == ar__box(1).x, "margin: and a box with neither stays where it was");
+}
+
+static void test_a_span_attribute_reaches_the_cell(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `colspan` and `rowspan` are structure rather than style -- they say
+     * which cells of the grid a cell occupies -- and no stylesheet has ever
+     * been able to say it. areole carries both as properties, and nothing
+     * mapped the attributes onto them, so a `<table>` written in HTML had
+     * every span silently ignored: a two-row `rowspan` laid out as one cell of
+     * one row, and the row below it started in the column the span was still
+     * holding.
+     *
+     * The mapping writes `colspan:2` and not `colspan:2px`, which is a matter
+     * of the declaration saying what it means rather than of anything
+     * breaking: the parser stores the number and the layout reads it without
+     * asking what unit came with it, so both spellings happen to work today.
+     */
+    ar__render_html(&s,
+                    "<table><tr><td rowspan=\"2\" id=\"s\"></td><td></td></tr>"
+                    "<tr><td></td></tr></table>",
+                    "td { width:40px; height:20px; padding:0px; }"
+                    "table { border-collapse:separate; border-spacing:0px; }");
+    {
+        ar_i32 c[4];
+        ar_i32 n = ar__tags("td", c, 4);
+
+        CHECK(n == 3, "html: three cells came out of the markup");
+        CHECK(ar__box_style(c[0])->v[AR_P_ROWSPAN] == 2,
+              "html: a rowspan attribute reaches the cell as a property");
+        CHECK(ar__box(c[0]).h == 40, "html: so the cell is as tall as the rows it covers");
+        CHECK(ar__box(c[2]).x == ar__box(c[1]).x,
+              "html: and the row below starts in the column the span left free");
+    }
+
+    ar__render_html(&s,
+                    "<table><tr><td colspan=\"2\" id=\"s\"></td></tr>"
+                    "<tr><td></td><td></td></tr></table>",
+                    "td { width:40px; height:20px; padding:0px; }"
+                    "table { border-collapse:separate; border-spacing:0px; }");
+    {
+        ar_i32 c[4];
+
+        ar__tags("td", c, 4);
+        CHECK(ar__box_style(c[0])->v[AR_P_COLSPAN] == 2,
+              "html: and a colspan attribute reaches it too");
+        CHECK(ar__box(c[0]).w == ar__box(c[1]).w + ar__box(c[2]).w,
+              "html: so the cell is as wide as the columns it covers");
+    }
+}
+
+static void test_a_wrapping_flex_container_has_a_gap_between_its_lines(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * `gap: 10px` is `row-gap: 10px; column-gap: 10px`, and a flex container
+     * has two axes to spend them on: in a row, the column gap separates the
+     * items and the row gap separates the wrapped lines.
+     *
+     * Only the first was applied. The comment in the line loop said `gap` was
+     * main-axis only "until row-gap exists, at 0.8.1" -- and row-gap has
+     * existed since 0.8.1, resolved correctly by the grid two files over the
+     * whole time. A wrapping container put its second line flush against its
+     * first and came out one gap short for every line it wrapped.
+     *
+     * Four 130px items in a 300px container: two lines of two.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".f { display:flex; flex-wrap:wrap; width:300px; gap:10px; }"
+                 ".i { width:130px; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.f"); /* 1 */
+    ar_begin(g_ui, "div.i"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 5 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == ar__box(2).x + 130 + 10, "flex: the gap separates two items on a line");
+    CHECK(ar__box(4).y == ar__box(2).y + 30 + 10,
+          "flex: and separates the line below from the one above it");
+    CHECK(ar__box(1).h == 30 + 10 + 30,
+          "flex: and the container is as tall as both lines and the gap between");
+    /* Before the first line and after the last, there is none. */
+    CHECK(ar__box(2).y == ar__box(1).y, "flex: with no gap before the first line");
+
+    /*
+     * And the two gaps are not interchangeable. `gap` sets both to the same
+     * number, so a container written that way cannot tell which axis got
+     * which -- it passes whichever way round the two are read. Stated
+     * separately, it can: in a row, `column-gap` is between the items and
+     * `row-gap` is between the lines.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".f { display:flex; flex-wrap:wrap; width:300px;"
+                 "     column-gap:10px; row-gap:24px; }"
+                 ".i { width:130px; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.f"); /* 1 */
+    ar_begin(g_ui, "div.i"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(3).x == ar__box(2).x + 130 + 10,
+          "flex: in a row it is column-gap that separates the items");
+    CHECK(ar__box(4).y == ar__box(2).y + 30 + 24, "flex: and row-gap that separates the lines");
+}
+
+static void test_a_collapsed_table_shrinks_to_its_grid(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * A collapsed table with no width of its own.
+     *
+     * `border-spacing` has no meaning in the collapsed model -- the gap
+     * between two cells is the shared line and nothing else -- and the solve
+     * has always known that. `ar_table_measure`, which answers what the table
+     * wants *before* it has a width, did not: it read the property straight
+     * off the style. So the intrinsic width carried a gap per column that the
+     * laid-out width did not, and a shrink-to-fit table came out wider than
+     * its own cells.
+     *
+     * The user-agent sheet is what made it matter: `table { border-spacing:2px }`
+     * applies to every table in every document, whether or not the page ever
+     * mentions spacing. Two 80px cells came to 166 where a browser gives 160.
+     *
+     * The table corpus could not see it, because every table in it is given a
+     * width -- the intrinsic number is computed and then thrown away.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".t { display:table; border-collapse:collapse; border-spacing:2px; }"
+                 ".r { display:table-row; }"
+                 ".c { display:table-cell; width:80px; height:30px; padding:0px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.t"); /* 1 */
+    ar_begin(g_ui, "div.r"); /* 2 */
+    ar_begin(g_ui, "div.c"); /* 3 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c"); /* 4 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 160, "table: a collapsed table shrinks to its columns");
+    CHECK(ar__box(3).w == 80 && ar__box(4).w == 80,
+          "table: and its cells are the width they asked for");
+    CHECK(ar__box(4).x == ar__box(3).x + 80,
+          "table: with nothing between them, because a collapsed line is nothing");
+}
+
+static void test_a_document_reads_at_sixteen_pixels(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * areole's own default font-size is eight -- one face height, meaning
+     * scale 1 -- because areole began as a UI library where that is the useful
+     * size. A document is not a UI, and every browser's root is sixteen.
+     *
+     * The two numbers were each internally consistent and wrong together.
+     * `h1 { font-size:32px }` in the user-agent sheet was chosen to be twice a
+     * browser's root; against a root of eight it was *four* times the body
+     * text. Every heading on every page was too big by a factor of two
+     * relative to the words under it, and nothing said so until a corpus asked
+     * a browser what the numbers should be.
+     *
+     * In the sheet rather than in ar_style_defaults, which is the whole point:
+     * a document gets sixteen and an interface that never asks for the sheet
+     * still gets eight.
+     */
+    ar__render_html(&s, "<html><body><p>t</p><h1>h</h1></body></html>", 0);
+    {
+        ar_i32 p = ar__first_tag("p");
+        ar_i32 h = ar__first_tag("h1");
+
+        CHECK(ar__box_style(p)->v[AR_P_FONT_SIZE] == 16,
+              "ua: a document's text is sixteen pixels, as a browser's is");
+        CHECK(ar__box_style(h)->v[AR_P_FONT_SIZE] == 2 * ar__box_style(p)->v[AR_P_FONT_SIZE],
+              "ua: and a first-level heading is twice it, not four times");
+    }
+
+    /* And an interface, which never loads the sheet, still gets eight. */
+    ar__ui_reset("#root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box_style(1)->v[AR_P_FONT_SIZE] == 8,
+          "ua: an interface that never asks for the sheet keeps its own default");
+}
+
+static void test_the_elements_the_corpus_found(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * Six defaults that were wrong, each found by asking a browser rather than
+     * by reading the specification -- which is the argument for the corpus in
+     * tests/ar_elements.c and not for these checks, since a check can only ask
+     * what somebody already thought to ask.
+     *
+     * They are here because each is a rule a later edit could quietly undo,
+     * and because two of them were wrong in a way that looked right: `dfn` and
+     * `hgroup` both *had* rules, and both were in a selector list that gave
+     * them something they should not have had.
+     */
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<dfn>a</dfn><hgroup>b</hgroup><noscript>c</noscript>"
+                    "<ul><li>d</li></ul>"
+                    "<table><thead><tr><td>e</td></tr></thead>"
+                    "<tfoot><tr><td>f</td></tr></tfoot></table>"
+                    "</body></html>",
+                    0);
+    {
+        /* `dfn` was in a rule for its slant and in none for its display, so it
+           fell to the initial one: a defined term was a flex container in the
+           middle of a sentence. */
+        CHECK(ar__box_style(ar__first_tag("dfn"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+              "ua: a defined term is inline, not a flex container");
+        /* `hgroup` shared `pre`'s selector list and took its margins with it.
+           It contributes nothing of its own in any browser. */
+        CHECK(ar__box_style(ar__first_tag("hgroup"))->v[AR_P_MARGIN_TOP] == 0,
+              "ua: a heading group adds no margin of its own");
+        /* Hidden only when scripting is *enabled*, and there is none here at
+           all -- so its content is the fallback that should be shown. This
+           engine had it backwards and hid the one thing written for a reader
+           with no script engine. */
+        CHECK(ar__box_style(ar__first_tag("noscript"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+              "ua: an engine with no scripting shows what noscript holds");
+        CHECK(ar__box_style(ar__first_tag("li"))->v[AR_P_DISPLAY] == AR_DISPLAY_LIST_ITEM,
+              "ua: a list item is a list item, which is a block that wants a marker");
+        /* Three groups, not one: a table that puts its footer first still
+           draws it last, which is the only reason the distinction exists. */
+        CHECK(ar__box_style(ar__first_tag("thead"))->v[AR_P_DISPLAY] ==
+                  AR_DISPLAY_TABLE_HEADER_GROUP,
+              "ua: a table head is a header group");
+        CHECK(ar__box_style(ar__first_tag("tfoot"))->v[AR_P_DISPLAY] ==
+                  AR_DISPLAY_TABLE_FOOTER_GROUP,
+              "ua: and a table foot is a footer group");
+    }
+}
+
+static void test_a_list_item_lays_out_as_a_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The value is new and the behaviour is not: `display: list-item` is a
+     * block box that also draws a marker, and the marker is 0.5.3's. Every
+     * question the layout asks -- does it stack, does it take the width, does
+     * it collapse margins -- has the same answer for both, and `ar_is_block`
+     * is the one place that has to say so.
+     *
+     * Two items in a row would be a flex line and are not; they are two lines.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".i { display:list-item; }"
+                 ".k { display:block; width:20px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.i"); /* 1 */
+    ar_begin(g_ui, "div.k"); /* 2 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.k"); /* 3 */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == ar__box(0).w,
+          "list-item: takes the width of its container, as a block does");
+    /*
+     * And its *children* stack, which is the half that ar_is_block decides.
+     *
+     * A box this engine does not recognise as a block is a flex container --
+     * that is the initial display -- so its two children would sit side by
+     * side. Checking the item's own rectangle does not catch that: the item
+     * is inside a block either way and stacks either way. The first version
+     * of this check tested the wrong box and stayed green when the rule was
+     * taken out.
+     */
+    CHECK(ar__box(3).y == ar__box(2).y + ar__box(2).h,
+          "list-item: and what is inside it stacks, so it is a block box");
+    CHECK(ar__box(3).x == ar__box(2).x, "list-item: rather than a flex line");
+}
+
+static void test_the_style_attribute_reaches_the_box(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * The whole path, from bytes to a rectangle: the tokenizer keeps the
+     * attribute, the DOM walk copies its value out of the span it lives in,
+     * and the style engine reads it as a declaration list.
+     *
+     * Real documents are full of these, and until now every one of them was
+     * dropped on the floor -- silently, because the page still rendered, just
+     * not the way it was written.
+     *
+     * The second paragraph is the same element with no attribute, so the two
+     * differ only by the thing being tested. The third has a `style` the
+     * author sheet contradicts with `!important`, which is the one case a
+     * document can rely on to win.
+     */
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<p style=\"width:40px; height:11px\">a</p>"
+                    "<p>b</p>"
+                    "<p class=\"pin\" style=\"width:40px\">c</p>"
+                    "</body></html>",
+                    "p { width:100px; } .pin { width:70px !important; }");
+
+    {
+        ar_i32 a = -1, b = -1, c = -1, i;
+
+        for (i = 0; i < g_ui->node_count; ++i)
+        {
+            if (g_ui->nodes[i].sel_tag != ar_hash("p", 1u))
+            {
+                continue;
+            }
+            if (a < 0)
+            {
+                a = i;
+            }
+            else if (b < 0)
+            {
+                b = i;
+            }
+            else if (c < 0)
+            {
+                c = i;
+            }
+        }
+        CHECK(a >= 0 && b >= 0 && c >= 0, "html: three paragraphs came out of the markup");
+        CHECK(ar__box(a).w == 40 && ar__box(a).h == 11,
+              "html: a style attribute reaches the box it was written on");
+        CHECK(ar__box(b).w == 100, "html: and the paragraph beside it keeps the sheet's width");
+        CHECK(ar__box(c).w == 70, "html: and an important rule still beats it");
+    }
+}
+
+static void test_font_weight_and_style_are_properties_that_inherit(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    /*
+     * The two properties the real corpus made obvious: nothing on a page was
+     * bold or italic, and the user-agent stylesheet had no way to say it
+     * should be.
+     *
+     * `font-weight` is a number from 1 to 1000 rather than a pair of keywords,
+     * because that is what CSS Fonts 4 made it -- `normal` is 400 and `bold`
+     * is 700, and the keywords are spellings of numbers. Storing the number
+     * means `font-weight: 600` needs nothing new the day a variable face
+     * arrives.
+     *
+     * Both inherit, and that is the whole reason they are properties rather
+     * than a call into the context: `font-weight: bold` on a heading has to
+     * reach the `<code>` inside it without naming it, exactly as `visibility`
+     * had to reach a collapsed row's cells.
+     *
+     * Whether a page *looks* bold is a separate question and a separate
+     * commit: it needs a face for the weight. With one face loaded the cascade
+     * is right and the text is roman, which is what a browser does with a
+     * family that has no bold.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".b { display:block; font-weight:bold; }"
+                 ".six { display:block; font-weight:600; }"
+                 ".i { display:block; font-style:italic; }"
+                 ".plain { display:block; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.b");     /* 1 */
+    ar_begin(g_ui, "div.plain"); /* 2, inherits bold */
+    ar_text(g_ui, "span.t", "x");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.six"); /* 4 */
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");     /* 5 */
+    ar_begin(g_ui, "div.plain"); /* 6, inherits italic */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box_style(1)->v[AR_P_FONT_WEIGHT] == AR_WEIGHT_BOLD,
+          "font: `bold` is the number 700");
+    CHECK(ar__box_style(4)->v[AR_P_FONT_WEIGHT] == 600,
+          "font: and a number is itself, so 600 survives");
+    CHECK(ar__box_style(2)->v[AR_P_FONT_WEIGHT] == AR_WEIGHT_BOLD,
+          "font: weight inherits, which is the point of it being a property");
+    CHECK(ar__box_style(5)->v[AR_P_FONT_STYLE] == AR_FONT_STYLE_ITALIC,
+          "font: `italic` is a style");
+    CHECK(ar__box_style(6)->v[AR_P_FONT_STYLE] == AR_FONT_STYLE_ITALIC,
+          "font: and it inherits too");
+}
+
+static void test_line_height_is_a_length_or_a_multiplier(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    ar_i32     normal_h;
+
+    /*
+     * `line-height` in its three forms, and the one that matters is which of
+     * them a bare number is.
+     *
+     * `1.5` is a multiplier of the font size and `1.5px` is a length, and they
+     * are different declarations -- which is the entire reason CSS has the
+     * unitless form: it inherits as a ratio, so `body { line-height: 1.5 }`
+     * gives a 32px heading a 48px line and a 16px paragraph a 24px one, where
+     * a length would give both the same. Taking the number branch on sight,
+     * before looking for a unit, turned `line-height: 40px` into a multiplier
+     * of forty thousand; it clamped to 32,767 and gave a sixteen-pixel
+     * paragraph a five-hundred-pixel line.
+     *
+     * Against Edge on the same markup: 40 and 32, exactly. `normal` is the
+     * face's own ascent, descent and line gap and is deliberately left alone,
+     * so it differs between engines and is checked here only as "not the
+     * others".
+     */
+    ar__ui_reset("#root { display:block; font-size:16px; }"
+                 ".w { display:block; width:500px; }"
+                 ".p { display:block; }"
+                 ".px { display:block; line-height:40px; }"
+                 ".mu { display:block; line-height:2; }"
+                 ".t { display:inline; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.w");
+
+    ar_begin(g_ui, "div.p"); /* 2: normal */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.px"); /* 4: a length */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mu"); /* 6: a multiplier */
+    ar_text(g_ui, "span.t", "one line");
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    normal_h = ar__box(2).h;
+
+    CHECK(ar__box(4).h == 40, "line-height: a length is the line box, exactly");
+    CHECK(ar__box(6).h == 32, "line-height: and a bare number multiplies the font size");
+    CHECK(normal_h != 40 && normal_h > 0,
+          "line-height: `normal` is still the face's own metrics and was not disturbed");
+
+    /* The boxes stack on the heights they were given, which is the thing a
+       wrong line height actually breaks. */
+    CHECK(ar__box(4).y == ar__box(2).y + normal_h,
+          "line-height: and the next block starts where the last one ended");
+    CHECK(ar__box(6).y == ar__box(4).y + 40, "line-height: including after the tall one");
+}
+
 static void test_the_ua_stylesheet_parses(void)
 {
     /* Every part of it, and none may have a syntax error -- a UA sheet with a
@@ -13930,6 +15784,68 @@ static void test_the_ua_stylesheet_parses(void)
     ar__ui_reset("");
     ar_ua_stylesheet(g_ui);
     CHECK(ar_stylesheet_errors(g_ui) == 0, "ua: and the whole sheet at once");
+}
+
+static void test_a_stylesheet_that_outgrows_its_table_says_so(void)
+{
+    /*
+     * The rule table is fixed at init and a stylesheet can be longer than it.
+     *
+     * When that happens the rules that do not fit simply are not there: the
+     * page lays out, nothing crashes, and the missing rules are the *last*
+     * ones written -- which in a user-agent sheet are the least common
+     * elements, the ones nobody looks at first. It is the exact shape of
+     * failure this project keeps finding, and it was reported only in
+     * `errors`, beside the harmless "this property is not implemented".
+     *
+     * `rules_refused` is the number callers are told to assert on. A rule with
+     * nowhere to be stored is the most complete refusal there is, and it now
+     * counts as one.
+     *
+     * Deliberately not routed through ar_init_ex: that clamps `max_rules` up
+     * to AR_MAX_RULES, so a small table cannot be asked for through the public
+     * entry point. The sheet is driven directly, which is the only way to make
+     * the table overflow at all.
+     */
+    ar_sheet       sheet;
+    static ar_rule storage[4];
+
+    ar_sheet_init(&sheet, storage, 4);
+    ar_sheet_parse(&sheet, ".a{color:#111}.b{color:#222}.c{color:#333}.d{color:#444}"
+                           ".e{color:#555}.f{color:#666}.g{color:#777}.h{color:#888}"
+                           ".i{color:#999}.j{color:#aaa}");
+
+    CHECK(sheet.count == 4, "rules: the table took as many as it had room for");
+    CHECK(sheet.rules_refused == 6,
+          "rules: and the six with nowhere to go are refused, not warned");
+}
+
+static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
+{
+    /*
+     * `ar_init_ex` will not give a caller fewer than AR_MAX_RULES, which is
+     * 256, so that is the smallest table the user-agent sheet ever lands in.
+     * It comes to 142 rules, and the check is that it still fits with room --
+     * because the failure if it stops fitting is silent and takes the last
+     * elements in the sheet with it.
+     *
+     * Stated as a bound rather than as the exact number so that adding a rule
+     * does not fail a test for no reason, and as a *headroom* rather than
+     * `< 256` so there is warning before the wall.
+     */
+    ar_sheet       sheet;
+    static ar_rule storage[512];
+    ar_i32         i;
+
+    ar_sheet_init(&sheet, storage, 512);
+    for (i = 0; i < ar_ua_stylesheet_parts(); ++i)
+    {
+        ar_sheet_parse(&sheet, ar_ua_stylesheet_part(i));
+    }
+
+    CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
+    CHECK(sheet.count <= 200,
+          "ua: and it fits the 256 every caller gets, with fifty-odd rules to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)
@@ -14058,11 +15974,13 @@ static void test_a_table_from_markup_uses_the_table_model(void)
         ar_i32 cells[8];
         ar_i32 n = 0;
 
+        /* Found by what they are rather than by how big they are. Sized 40
+           by 10 was the first version, and it stopped finding anything the
+           day the user-agent sheet gave documents a 16px root: a cell is as
+           tall as the words in it, and the words got taller. */
         for (i = 0; i < ar_node_count(g_ui) && n < 8; ++i)
         {
-            ar_rect r = ar_node_rect(g_ui, i);
-
-            if (r.w == 40 && r.h == 10)
+            if (g_ui->nodes[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_TABLE_CELL)
             {
                 cells[n++] = i;
             }
@@ -16617,7 +18535,7 @@ int main(void)
     test_rows_stack_and_the_table_is_as_tall_as_them();
     test_a_colspan_covers_its_columns();
     test_a_rowspan_holds_its_column_open();
-    test_fixed_layout_ignores_what_cells_want();
+    test_fixed_layout_reads_the_first_row_and_nothing_else();
     test_a_table_stacks_like_any_other_box();
     test_cell_padding_is_not_counted_twice();
     test_a_rowspan_cell_is_as_tall_as_the_rows_it_spans();
@@ -16634,6 +18552,18 @@ int main(void)
     test_border_spacing_means_nothing_when_collapsed();
     test_a_separate_table_is_untouched_by_any_of_this();
     test_a_collapsed_edge_is_in_the_paint_digest();
+    test_a_collapsed_tables_outer_line_is_inside_its_box();
+    test_a_middle_columns_border_is_not_the_tables_edge();
+    test_a_row_groups_border_is_its_own_two_edges();
+    test_a_collapsed_table_is_its_lines_and_its_rows();
+    test_a_cells_two_half_lines_are_one_number();
+    test_an_inline_style_outranks_every_selector();
+    test_important_outranks_an_inline_style_and_inline_important_outranks_that();
+    test_two_boxes_with_one_selector_keep_their_own_inline_styles();
+    test_an_inline_style_survives_the_late_state_pass();
+    test_an_inline_style_is_read_by_the_same_parser_as_a_sheet();
+    test_the_columns_hold_every_pixel_of_every_line();
+    test_a_columns_share_of_the_surplus_rounds_to_the_nearest_pixel();
     test_a_collapsed_line_is_drawn_once();
     test_a_roomy_table_gives_the_surplus_to_the_wide_column();
     test_vertical_align_puts_a_cells_contents_where_it_says();
@@ -16780,6 +18710,7 @@ int main(void)
     test_inline_wraps_to_a_new_line();
     test_inline_margins_take_room_on_the_line();
     test_line_height_comes_from_the_baselines();
+    test_a_line_is_never_shorter_than_the_block_s_own_font();
     test_vertical_align_top_and_bottom();
     test_text_align_moves_the_line();
     test_an_inline_run_takes_its_place_in_the_stack();
@@ -16890,7 +18821,33 @@ int main(void)
     test_rawtext_content_is_not_markup();
     test_the_tree_builder_survives_anything();
 
+    test_a_drawing_states_its_own_size();
+    test_auto_margins_centre_a_block();
+    test_a_span_attribute_reaches_the_cell();
+    test_a_wrapping_flex_container_has_a_gap_between_its_lines();
+    test_a_collapsed_table_shrinks_to_its_grid();
+    test_a_document_reads_at_sixteen_pixels();
+    test_an_external_stylesheet_comes_from_the_embedder();
+    test_external_sheets_arrive_in_document_order();
+    test_a_link_that_did_not_arrive_is_counted();
+    test_only_a_stylesheet_link_is_a_stylesheet();
+    test_the_universal_selector();
+    test_a_length_needs_its_unit_in_standards_mode();
+    test_an_interface_stylesheet_is_not_a_document();
+    test_a_table_does_not_inherit_its_font_in_quirks();
+    test_the_elements_the_corpus_found();
+    test_a_list_item_lays_out_as_a_block();
+    test_the_style_attribute_reaches_the_box();
+    test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author();
+    test_a_style_attribute_beats_a_hint_on_the_same_element();
+    test_the_two_attributes_that_belong_to_body_alone();
+    test_a_legacy_colour_is_not_a_css_colour();
+    test_a_legacy_length_is_pixels_or_a_percentage_or_nothing();
+    test_font_weight_and_style_are_properties_that_inherit();
+    test_line_height_is_a_length_or_a_multiplier();
     test_the_ua_stylesheet_parses();
+    test_a_stylesheet_that_outgrows_its_table_says_so();
+    test_the_ua_stylesheet_fits_the_table_every_caller_gets();
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
