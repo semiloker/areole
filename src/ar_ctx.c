@@ -259,6 +259,19 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     }
 
     {
+        /* Where every `calc()` in every stylesheet is compiled to. Persistent
+           and bounded on the same terms as the track pool above: an
+           expression is read every frame and compiled once. */
+        ar_calc_op *calcs =
+            (ar_calc_op *)ar_arena_persist(&c->arena, AR_CALC_POOL * (ar_u32)sizeof(ar_calc_op));
+        if (!calcs)
+        {
+            return 0;
+        }
+        ar_sheet_set_calcs(&c->sheet, calcs, AR_CALC_POOL);
+    }
+
+    {
         /* Where `@media` preludes live. Persistent and given here rather than
            left to the caller, because a sheet without it refuses every
            guarded rule -- correct, and not a thing to discover in a page. */
@@ -1480,6 +1493,22 @@ static ar_i32 ar__resolve_one(const ar_ctx *c, const ar_node *n, ar_u8 u, ar_i32
  * So this runs from ar_frame_end with the real viewport, before layout reads a
  * single rectangle, and only for a sheet that has a viewport unit in it.
  */
+/* One line box in whole pixels: a multiplier when line-height is a number and
+   a length when it is not, which is the same question ar__font_basis asks and
+   the same answer. */
+static ar_i32 ar__line_px(const ar_style *st, ar_i32 font_px)
+{
+    if (st->unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
+    {
+        return (font_px * st->v[AR_P_LINE_HEIGHT] + 500) / 1000;
+    }
+    if (st->unit[AR_P_LINE_HEIGHT] >= AR_UNIT_REL_FIRST)
+    {
+        return font_px; /* still unresolved; an em is the honest stand-in */
+    }
+    return st->v[AR_P_LINE_HEIGHT];
+}
+
 static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
 {
     ar_i32 i;
@@ -1503,6 +1532,48 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                 continue;
             }
             u = st->unit[p];
+
+            /*
+             * A maths expression, evaluated here for the reason the pass
+             * exists: this is the one moment both halves are known. The font
+             * size was settled during style resolution and the surface is the
+             * argument to this function, so `calc(2.75rem + 2px)` and
+             * `min(50vw, 600px)` are answerable in the same walk.
+             *
+             * A refused expression -- a bare number where a length was
+             * wanted, a division by zero -- leaves the property alone rather
+             * than writing a wrong number into it. `auto` is what the slot
+             * was before the cascade reached it, and that is what CSS asks
+             * for when a declaration is invalid at computed-value time.
+             */
+            if (u == AR_UNIT_CALC)
+            {
+                ar_calc_env ce;
+                int         ok = 0;
+                ar_i32      got;
+
+                ce.font_px = st->v[AR_P_FONT_SIZE];
+                ce.root_px = c->node_count > 0 ? c->nodes[0].style.v[AR_P_FONT_SIZE] : AR_FONT_H;
+                ce.line_px = ar__line_px(st, ce.font_px);
+                ce.rline_px =
+                    c->node_count > 0 ? ar__line_px(&c->nodes[0].style, ce.root_px) : ce.root_px;
+                ce.view_w = view.w;
+                ce.view_h = view.h;
+
+                got = ar_calc_eval(&c->sheet, ar_style_get(st, p), &ce, &ok);
+                if (ok)
+                {
+                    ar_style_put(st, p, got);
+                    st->unit[p] = AR_UNIT_PX;
+                }
+                else
+                {
+                    ar_style_put(st, p, 0);
+                    st->unit[p] = AR_UNIT_AUTO;
+                }
+                continue;
+            }
+
             if (u < AR_UNIT_VIEW_FIRST)
             {
                 continue;
@@ -4412,7 +4483,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* The viewport lengths, which needed this frame's surface and so could not
        be done with the rest of style. Still style time as far as the phase
        counters are concerned, because that is what it is. */
-    if (c->sheet.has_view_units)
+    if (c->sheet.has_view_units || c->sheet.has_calc)
     {
         ar__resolve_view_units(c, viewport);
     }

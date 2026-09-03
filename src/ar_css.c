@@ -1370,6 +1370,291 @@ static ar_i32 ar__unit_value(ar_i32 milli, const ar__unit_row *row)
 }
 
 /* ------------------------------------------------------------------------
+ * calc(), evaluated
+ *
+ * A stack machine over the postfix program the parser wrote. Everything is in
+ * **thousandths of a pixel** until the last line, so `0.9 * 30em` at a
+ * sixteen-pixel font is 432.0 rather than 432 arrived at through two
+ * roundings -- which is the whole argument for evaluating the expression
+ * rather than folding it term by term.
+ *
+ * A value on the stack is a length or a plain number, and the difference is
+ * load-bearing rather than bookkeeping: CSS says `calc(100px + 2)` is
+ * invalid, and a length times a length is not a length either. Getting that
+ * wrong produces an answer instead of a dropped declaration, and an answer is
+ * the failure that survives.
+ * ------------------------------------------------------------------------ */
+typedef struct ar__calc_val
+{
+    ar_i32 v; /* thousandths of a pixel, or thousandths of a bare number */
+    int    is_len;
+} ar__calc_val;
+
+/* One PUSH, in thousandths of a pixel. Mirrors ar__font_basis in ar_ctx.c and
+   deliberately does not share code with it: that one answers in 26.6 for the
+   layout, this one in thousandths for arithmetic, and a single function
+   serving both was tried and needed a scale argument at every call. */
+static ar_i32 ar__calc_push(const ar_calc_op *op, const ar_calc_env *env, int *is_len)
+{
+    ar_i32 hund = op->v; /* relative units are carried in hundredths */
+    ar_i32 basis;
+
+    *is_len = 1;
+    switch (op->unit)
+    {
+    case AR_UNIT_PX:
+        return op->v * 1000;
+    case AR_UNIT_NUMBER:
+        *is_len = 0;
+        return op->v; /* already thousandths */
+    default:
+        break;
+    }
+
+    if (op->unit >= AR_UNIT_VIEW_FIRST)
+    {
+        ar_i32 k = (ar_i32)op->unit - AR_UNIT_VIEW_FIRST;
+        ar_i32 axis = k % AR_UNIT_VIEW_AXES;
+        ar_i32 w = env->view_w < 0 ? 0 : env->view_w;
+        ar_i32 h = env->view_h < 0 ? 0 : env->view_h;
+
+        basis = axis == 0 || axis == 4   ? w
+                : axis == 1 || axis == 5 ? h
+                : axis == 2              ? (w < h ? w : h)
+                                         : (w > h ? w : h);
+        /*
+         * `hund` is hundredths of a viewport unit and a viewport unit is one
+         * per cent of the axis, so the pixels are hund * basis / 10000 -- and
+         * this returns thousandths, which cancels three of those zeros.
+         */
+        return hund * basis / 10;
+    }
+    if (op->unit >= AR_UNIT_EM)
+    {
+        ar_i32 k = (ar_i32)op->unit - AR_UNIT_EM;
+        ar_i32 metric = k % AR_UNIT_METRIC_COUNT;
+        ar_i32 rooted = k / AR_UNIT_METRIC_COUNT;
+        ar_i32 em = rooted ? env->root_px : env->font_px;
+
+        if (em > 512)
+        {
+            em = 512; /* the same clamp ar__font_basis makes, and for the
+                         same overflow reason */
+        }
+        if (em < 0)
+        {
+            em = 0;
+        }
+        switch (metric)
+        {
+        case 1:
+        case 2:
+            basis = em * 500; /* ex and ch: half an em, in thousandths */
+            break;
+        case 3:
+            basis = em * 700; /* cap */
+            break;
+        case 5:
+            basis = (rooted ? env->rline_px : env->line_px) * 1000;
+            break;
+        default:
+            basis = em * 1000; /* em and ic */
+            break;
+        }
+        /*
+         * `basis` is thousandths of a pixel for one whole unit and `hund` is
+         * hundredths of a unit, so the answer is hund * basis / 100. Split,
+         * because it is not: a 512-pixel em is 512,000 thousandths and
+         * multiplying that by 32,767 hundredths overflows a signed int by an
+         * order of magnitude.
+         */
+        return (hund / 100) * basis + ((hund % 100) * basis) / 100;
+    }
+
+    *is_len = 0;
+    return 0;
+}
+
+ar_i32 ar_calc_eval(const ar_sheet *sheet, ar_i32 index, const ar_calc_env *env, int *ok)
+{
+    ar__calc_val st[AR_CALC_STACK];
+    ar_i32       sp = 0;
+    ar_i32       n, i;
+
+    *ok = 0;
+    if (!sheet || !sheet->calcs || index <= 0 || index >= (ar_i32)sheet->calc_count)
+    {
+        return 0;
+    }
+    if (sheet->calcs[index].op != AR_CALC_LEN)
+    {
+        return 0;
+    }
+    n = sheet->calcs[index].v;
+    if (index + n >= (ar_i32)sheet->calc_count)
+    {
+        return 0;
+    }
+
+    for (i = 1; i <= n; ++i)
+    {
+        const ar_calc_op *op = &sheet->calcs[index + i];
+        ar__calc_val      a, b, c;
+
+        if (op->op == AR_CALC_PUSH)
+        {
+            int len = 0;
+
+            if (sp >= AR_CALC_STACK)
+            {
+                return 0;
+            }
+            st[sp].v = ar__calc_push(op, env, &len);
+            st[sp].is_len = len;
+            ++sp;
+            continue;
+        }
+
+        if (op->op == AR_CALC_CLAMP)
+        {
+            if (sp < 3)
+            {
+                return 0;
+            }
+            c = st[--sp];
+            b = st[--sp];
+            a = st[--sp];
+            /* `max(MIN, min(VAL, MAX))`, in that order, which is what makes
+               crossed bounds resolve to the minimum rather than to the
+               maximum. The other order is a different function. */
+            if (b.v > c.v)
+            {
+                b = c;
+            }
+            if (b.v < a.v)
+            {
+                b = a;
+            }
+            st[sp++] = b;
+            continue;
+        }
+
+        if (op->op == AR_CALC_ABS || op->op == AR_CALC_SIGN)
+        {
+            if (sp < 1)
+            {
+                return 0;
+            }
+            a = st[sp - 1];
+            if (op->op == AR_CALC_ABS)
+            {
+                st[sp - 1].v = a.v < 0 ? -a.v : a.v;
+            }
+            else
+            {
+                st[sp - 1].v = a.v > 0 ? 1000 : (a.v < 0 ? -1000 : 0);
+                st[sp - 1].is_len = 0; /* sign() is a number whatever it read */
+            }
+            continue;
+        }
+
+        if (sp < 2)
+        {
+            return 0;
+        }
+        b = st[--sp];
+        a = st[--sp];
+
+        switch (op->op)
+        {
+        case AR_CALC_ADD:
+        case AR_CALC_SUB:
+            /* CSS: both sides of a sum must be the same kind. A length plus a
+               number is invalid, and saying so is the whole reason is_len is
+               carried. */
+            if (a.is_len != b.is_len)
+            {
+                return 0;
+            }
+            a.v = op->op == AR_CALC_ADD ? a.v + b.v : a.v - b.v;
+            break;
+        case AR_CALC_MUL:
+            /* At most one side may be a length: `2px * 3px` is an area. */
+            if (a.is_len && b.is_len)
+            {
+                return 0;
+            }
+            a.v = (ar_i32)((a.v * (ar_i32)b.v) / 1000);
+            a.is_len = a.is_len || b.is_len;
+            break;
+        case AR_CALC_DIV:
+            /* Only by a number, and never by zero. */
+            if (b.is_len || b.v == 0)
+            {
+                return 0;
+            }
+            a.v = (ar_i32)((a.v * 1000) / b.v);
+            break;
+        case AR_CALC_MIN:
+            if (a.is_len != b.is_len)
+            {
+                return 0;
+            }
+            if (b.v < a.v)
+            {
+                a = b;
+            }
+            break;
+        case AR_CALC_MAX:
+            if (a.is_len != b.is_len)
+            {
+                return 0;
+            }
+            if (b.v > a.v)
+            {
+                a = b;
+            }
+            break;
+        default:
+            return 0;
+        }
+        st[sp++] = a;
+    }
+
+    if (sp != 1)
+    {
+        return 0;
+    }
+    *ok = 1;
+    {
+        /* One rounding, at the end, and away from zero so that -0.5 is -1
+           rather than 0 -- the same nearest-integer rule every other length
+           in this engine takes. */
+        ar_i32 v = st[0].v;
+
+        v = v < 0 ? -((-v + 500) / 1000) : (v + 500) / 1000;
+        if (v > 32767)
+        {
+            v = 32767;
+        }
+        if (v < -32768)
+        {
+            v = -32768;
+        }
+        return v;
+    }
+}
+
+void ar_sheet_set_calcs(ar_sheet *sheet, ar_calc_op *storage, ar_u16 capacity)
+{
+    sheet->calcs = storage;
+    sheet->calc_cap = capacity;
+    /* Index zero is spent so that zero can mean "no expression", the same
+       sentinel the track pool uses. */
+    sheet->calc_count = 1;
+}
+
+/* ------------------------------------------------------------------------
  * Track lists
  *
  * `grid-template-columns: repeat(3, minmax(100px, 1fr)) auto` is nine numbers
@@ -1845,6 +2130,447 @@ static int ar__prop_is_length(ar_u8 prop)
     }
 }
 
+/* ------------------------------------------------------------------------
+ * calc(), compiled
+ *
+ * Recursive descent over the ordinary grammar, emitting postfix straight into
+ * the sheet's pool. The recursion happens here, once, where the depth is
+ * bounded by the text; nothing recurses at frame time.
+ *
+ * The one rule worth stating is the one CSS is strict about and everybody
+ * gets wrong: **`+` and `-` must be surrounded by whitespace.** `calc(1px -2px)`
+ * is not a subtraction, it is two values and an error, because `-2px` is a
+ * single token. Without that rule there is no way to tell it from
+ * `calc(1px - 2px)`, and a parser that guesses will silently accept one and
+ * mean the other.
+ * ------------------------------------------------------------------------ */
+
+/* Room for one more operation, checked before every emit rather than once:
+   an expression is compiled incrementally and a pool that filled halfway
+   through would leave a program that reads as valid and is truncated. */
+static int ar__calc_room(const ar__scan *z, ar_i32 want)
+{
+    return z->sheet->calcs && (ar_i32)z->sheet->calc_count + want <= (ar_i32)z->sheet->calc_cap;
+}
+
+static int ar__calc_emit(ar__scan *z, ar_u8 op, ar_u8 unit, ar_i16 v)
+{
+    ar_calc_op *e;
+
+    if (!ar__calc_room(z, 1))
+    {
+        return 0;
+    }
+    e = &z->sheet->calcs[z->sheet->calc_count++];
+    e->op = op;
+    e->unit = unit;
+    e->v = v;
+    return 1;
+}
+
+static int ar__calc_expr(ar__scan *z, ar_i32 depth);
+
+/* A number with a unit, or a parenthesised expression, or a nested function. */
+static int ar__calc_factor(ar__scan *z, ar_i32 depth)
+{
+    ar__skip_ws(z);
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+
+    if (*z->p == '(')
+    {
+        z->p++;
+        if (!ar__calc_expr(z, depth + 1))
+        {
+            return 0;
+        }
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p != ')')
+        {
+            return 0;
+        }
+        z->p++;
+        return 1;
+    }
+
+    if (ar__is_digit(*z->p) || *z->p == '.' || *z->p == '-' || *z->p == '+')
+    {
+        ar_i32 sign = 1;
+        ar_i32 n = 0;
+        ar_i32 milli = 0;
+        ar_i32 digits = 0;
+        ar_i32 u;
+
+        if (*z->p == '-' || *z->p == '+')
+        {
+            sign = *z->p == '-' ? -1 : 1;
+            z->p++;
+        }
+        if (z->p >= z->end || (!ar__is_digit(*z->p) && *z->p != '.'))
+        {
+            return 0;
+        }
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            if (n < 100000)
+            {
+                n = n * 10 + (*z->p - '0');
+            }
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == '.')
+        {
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                if (digits < 3)
+                {
+                    milli = milli * 10 + (*z->p - '0');
+                    ++digits;
+                }
+                z->p++;
+            }
+            while (digits < 3)
+            {
+                milli *= 10;
+                ++digits;
+            }
+        }
+
+        u = ar__unit_at(z->p, z->end);
+        if (u >= 0)
+        {
+            const ar__unit_row *row = &AR__UNITS[u];
+
+            z->p += row->len;
+            return ar__calc_emit(z, AR_CALC_PUSH, row->unit,
+                                 (ar_i16)ar__unit_value(sign * (n * 1000 + milli), row));
+        }
+        if (z->p < z->end && *z->p == '%')
+        {
+            /*
+             * ponytail: a percentage inside calc() is refused.
+             *
+             * `calc(50% - 5px)` is a real thing real pages write -- three of
+             * the nine expressions in examples/15_real are this shape -- and
+             * it cannot be a number here. A percentage resolves against a
+             * containing block that layout knows and this evaluator does not,
+             * so the honest answer is a length *and* a percentage, and a
+             * style slot holds one sixteen-bit number.
+             *
+             * Refused rather than approximated: the declaration is dropped and
+             * the cascade keeps what it had. That is a visible gap, where
+             * quietly treating it as `50%` and losing the `- 5px` is the kind
+             * of answer nobody notices is wrong.
+             *
+             * Lifting it means a pair -- (px, per cent) -- reaching layout,
+             * which is the same change a percentage padding needs.
+             */
+            return 0;
+        }
+        /* No unit: a bare number, which multiplication and division accept
+           and a sum does not. */
+        return ar__calc_emit(z, AR_CALC_PUSH, AR_UNIT_NUMBER, (ar_i16)(sign * (n * 1000 + milli)));
+    }
+
+    {
+        const char *name;
+        ar_u32      len = ar__ident(z, &name);
+
+        if (len == 0)
+        {
+            return 0;
+        }
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p != '(')
+        {
+            return 0;
+        }
+        z->p++;
+
+        if (ar__same_fold(name, len, "calc"))
+        {
+            if (!ar__calc_expr(z, depth + 1))
+            {
+                return 0;
+            }
+        }
+        else if (ar__same_fold(name, len, "abs") || ar__same_fold(name, len, "sign"))
+        {
+            ar_u8 op = ar__same_fold(name, len, "abs") ? (ar_u8)AR_CALC_ABS : (ar_u8)AR_CALC_SIGN;
+
+            if (!ar__calc_expr(z, depth + 1) || !ar__calc_emit(z, op, 0, 0))
+            {
+                return 0;
+            }
+        }
+        else if (ar__same_fold(name, len, "min") || ar__same_fold(name, len, "max"))
+        {
+            ar_u8  op = ar__same_fold(name, len, "min") ? (ar_u8)AR_CALC_MIN : (ar_u8)AR_CALC_MAX;
+            ar_i32 seen = 1;
+
+            if (!ar__calc_expr(z, depth + 1))
+            {
+                return 0;
+            }
+            for (;;)
+            {
+                ar__skip_ws(z);
+                if (z->p >= z->end || *z->p != ',')
+                {
+                    break;
+                }
+                z->p++;
+                if (!ar__calc_expr(z, depth + 1) || !ar__calc_emit(z, op, 0, 0))
+                {
+                    return 0;
+                }
+                ++seen;
+            }
+            if (seen < 2)
+            {
+                return 0; /* min() with one argument is not min() */
+            }
+        }
+        else if (ar__same_fold(name, len, "clamp"))
+        {
+            ar_i32 k;
+
+            for (k = 0; k < 3; ++k)
+            {
+                if (k > 0)
+                {
+                    ar__skip_ws(z);
+                    if (z->p >= z->end || *z->p != ',')
+                    {
+                        return 0;
+                    }
+                    z->p++;
+                }
+                if (!ar__calc_expr(z, depth + 1))
+                {
+                    return 0;
+                }
+            }
+            if (!ar__calc_emit(z, AR_CALC_CLAMP, 0, 0))
+            {
+                return 0;
+            }
+        }
+        else
+        {
+            return 0; /* not a maths function this engine knows */
+        }
+
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p != ')')
+        {
+            return 0;
+        }
+        z->p++;
+        return 1;
+    }
+}
+
+static int ar__calc_term(ar__scan *z, ar_i32 depth)
+{
+    if (!ar__calc_factor(z, depth))
+    {
+        return 0;
+    }
+    for (;;)
+    {
+        const char *save = z->p;
+        char        c;
+
+        /*
+         * The whitespace is put back when this is not a product, and that is
+         * not tidiness -- the sum above reads it.
+         *
+         * CSS requires a `+` or `-` to be surrounded by space, so
+         * ar__calc_expr decides whether it is looking at an operator by
+         * asking whether a space came first. Consuming the space here to peek
+         * for a `*` destroyed exactly the byte it needed, so every sum was
+         * refused: `calc(100px + 50px)` came out fifty, because the whole
+         * expression failed and the declaration parser recovered by reading
+         * the next number it could find.
+         */
+        ar__skip_ws(z);
+        if (z->p >= z->end)
+        {
+            z->p = save;
+            return 1;
+        }
+        c = *z->p;
+        if (c != '*' && c != '/')
+        {
+            z->p = save;
+            return 1;
+        }
+        z->p++;
+        if (!ar__calc_factor(z, depth))
+        {
+            return 0;
+        }
+        if (!ar__calc_emit(z, c == '*' ? (ar_u8)AR_CALC_MUL : (ar_u8)AR_CALC_DIV, 0, 0))
+        {
+            return 0;
+        }
+    }
+}
+
+static int ar__calc_expr(ar__scan *z, ar_i32 depth)
+{
+    if (depth > 8)
+    {
+        return 0; /* nesting deeper than any stylesheet, and a bound on the
+                     recursion rather than a hope about it */
+    }
+    if (!ar__calc_term(z, depth))
+    {
+        return 0;
+    }
+    for (;;)
+    {
+        char c;
+
+        /*
+         * The whitespace rule. A `+` or `-` that is not surrounded by space is
+         * part of the number that follows it, so the loop stops and the caller
+         * decides whether what is left is an error. Checked before the sign is
+         * consumed, because consuming it is what makes the two cases
+         * indistinguishable.
+         */
+        if (z->p >= z->end || !ar__is_space(*z->p))
+        {
+            return 1;
+        }
+        ar__skip_ws(z);
+        if (z->p >= z->end)
+        {
+            return 1;
+        }
+        c = *z->p;
+        if (c != '+' && c != '-')
+        {
+            return 1;
+        }
+        if (z->p + 1 >= z->end || !ar__is_space(z->p[1]))
+        {
+            return 0; /* `1px -2px`: a sum was meant and a token was written */
+        }
+        z->p++;
+        if (!ar__calc_term(z, depth))
+        {
+            return 0;
+        }
+        if (!ar__calc_emit(z, c == '+' ? (ar_u8)AR_CALC_ADD : (ar_u8)AR_CALC_SUB, 0, 0))
+        {
+            return 0;
+        }
+    }
+}
+
+/*
+ * Whether the value starts with a maths function.
+ *
+ * A peek and not a parse: it consumes nothing, because the caller has other
+ * branches to try and every one of them starts from the same byte. The name
+ * has to be followed by `(` -- `min-content` begins with `min` and is a
+ * keyword, and reading it as a function would refuse a value that works.
+ */
+static int ar__at_maths(const ar__scan *z)
+{
+    static const char *const NAMES[] = {"calc", "min", "max", "clamp", "abs", "sign"};
+    const char              *p = z->p;
+    ar_i32                   i;
+
+    for (i = 0; i < (ar_i32)(sizeof NAMES / sizeof NAMES[0]); ++i)
+    {
+        ar_u32 n = (ar_u32)strlen(NAMES[i]);
+
+        if (p + n < z->end && ar__same_fold(p, n, NAMES[i]) && p[n] == '(')
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Steps over a whole maths function, however malformed its inside was.
+ *
+ * A refused expression must take its own text with it. Without this the
+ * scanner is left standing in the middle of one, and the declaration parser
+ * -- which recovers by looking for a value it *can* read -- finds one:
+ * `calc(50% - 10px)` came out ten pixels, and `calc(1px -2px)` came out zero.
+ * Neither is a dropped declaration, and both look like the engine understood
+ * something.
+ *
+ * Balanced, because `min(a, calc(b))` has more than one close paren and
+ * stopping at the first leaves the same mess one level up.
+ */
+static void ar__skip_maths(ar__scan *z)
+{
+    ar_i32 depth = 0;
+
+    while (z->p < z->end)
+    {
+        char c = *z->p++;
+
+        if (c == '(')
+        {
+            ++depth;
+        }
+        else if (c == ')')
+        {
+            if (--depth <= 0)
+            {
+                return;
+            }
+        }
+        else if (depth == 0 && (c == ';' || c == '}'))
+        {
+            --z->p; /* the declaration ended before the function closed */
+            return;
+        }
+    }
+}
+
+/*
+ * A whole maths function, from the name to its closing paren.
+ *
+ * Returns the pool index of the program's header, or 0. On failure the pool
+ * is rewound, so a refused expression costs nothing and cannot leave a
+ * half-written program for a later one to run into.
+ */
+static ar_i32 ar__parse_calc(ar__scan *z)
+{
+    ar_u16 mark = z->sheet->calc_count;
+    ar_i32 header;
+
+    if (!ar__calc_room(z, 1))
+    {
+        return 0;
+    }
+    header = (ar_i32)z->sheet->calc_count;
+    z->sheet->calc_count++; /* reserved; filled in once the length is known */
+
+    if (!ar__calc_factor(z, 0))
+    {
+        z->sheet->calc_count = mark;
+        return 0;
+    }
+
+    z->sheet->calcs[header].op = AR_CALC_LEN;
+    z->sheet->calcs[header].unit = 0;
+    z->sheet->calcs[header].v = (ar_i16)((ar_i32)z->sheet->calc_count - header - 1);
+    z->sheet->has_calc = 1;
+    return header;
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -1868,6 +2594,34 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
         out.v = (ar_i32)color;
         out.unit = AR_UNIT_COLOR;
+        out.ok = 1;
+        return out;
+    }
+
+    /*
+     * A maths function, before anything else looks at the text.
+     *
+     * Before, because every branch below reads a prefix and commits to it:
+     * the number path would take the `1` out of `calc(1px + 2px)` and leave
+     * the rest, which is exactly how `calc(100px + 50px)` used to come out a
+     * hundred -- not dropped, not an error, just quietly the first term.
+     * There is a check for that in ar_test named after it.
+     */
+    if (ar__at_maths(z))
+    {
+        const char *start = z->p;
+        ar_i32      idx = ar__parse_calc(z);
+
+        if (idx <= 0)
+        {
+            /* Refused. Take the whole function with it, or the declaration
+               parser recovers by reading a number out of the middle of it. */
+            z->p = start;
+            ar__skip_maths(z);
+            return out;
+        }
+        out.v = idx;
+        out.unit = AR_UNIT_CALC;
         out.ok = 1;
         return out;
     }
