@@ -107,3 +107,49 @@ css/table/collapse       engine: half-pixels, the same ones the table corpus has
 
 css/display/contents     engine: a display:contents box still has a rectangle here, and generates none in a browser
 html/elements/pre        engine: `font-family: monospace` is 0.2.1, so pre is drawn in the one face there is
+
+# ---- a face that states no metrics --------------------------------------
+#
+# `ex`, `ch`, `cap` and `ic` are metrics a font supplies, and areole draws
+# these demos with its built-in bitmap face, which is not a TrueType file and
+# carries no OS/2 table to state them in. So this engine takes the fallbacks
+# CSS names -- half an em for ex and ch, seven tenths for cap -- while the
+# browser reads the real numbers out of the gallery face.
+#
+# The gallery face is a transcription of that same bitmap design and states
+# them truthfully: sxHeight 512 and sCapHeight 640 of 1024, so a cap is
+# 0.625em where the fallback guesses 0.7, and "0" advances a whole em where
+# the fallback guesses half of one. Both engines are right about the face
+# each can see.
+#
+# `css/units/ex` is **not** on this list and that is a coincidence worth
+# knowing: the face's x-height is exactly the half em the fallback assumes,
+# so the two agree by arithmetic rather than because areole read anything.
+# It would come off the moment the design's x-height changed.
+#
+# The fix is not a units fix. It is for areole's built-in face to carry the
+# metrics it has always had, or for the gallery renderer to load the TrueType
+# twin the browser is already given.
+
+css/units/cap            engine: the built-in face states no cap height, so 0.7em is the fallback rather than the design's 0.625
+css/units/ch             engine: the built-in face states no advance for "0", so half an em is the fallback rather than the design's whole one
+
+# ---- a percentage padding is read as pixels ------------------------------
+#
+# **This one is a bug and not a difference.** `padding: 10%` is stored with
+# its unit and then read as a raw number by every one of the fourteen places
+# that want a padding, so ten per cent of a 400px containing block comes out
+# ten pixels. `width` and `height` resolve their percentages correctly, which
+# is why the first two boxes of that demo agree and the last two do not.
+#
+# It is 0.4.1's fourth acceptance criterion and 0.4.1 did not meet it. The
+# reason it was not fixed with the units is that it is not a units change:
+# block flow, flex, grid and the table each resolve sizes in their own code,
+# there is no one place a padding becomes a number, and all four are the
+# hottest loops in the engine. Doing it properly also means deciding what a
+# percentage padding contributes to an intrinsic size, which CSS answers with
+# zero and this engine has no path for.
+#
+# The demo stays, red, because it is the thing that will go green.
+
+css/units/percentage-references  engine: a percentage padding is read as pixels -- see 0.4.1's stated debt
