@@ -1404,9 +1404,13 @@ static int ar__parse_track_size(ar__scan *z, ar_i16 *out_v, ar_u8 *out_u, int al
         ar_i32 milli = 0;
         ar_i32 digits = 0;
 
+        /* Clamped as it is read; see the same loop in ar__value. */
         while (z->p < z->end && ar__is_digit(*z->p))
         {
-            n = n * 10 + (*z->p - '0');
+            if (n < 100000)
+            {
+                n = n * 10 + (*z->p - '0');
+            }
             z->p++;
         }
         if (z->p < z->end && *z->p == '.')
@@ -1939,9 +1943,22 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             sign = -1;
             z->p++;
         }
+        /*
+         * Clamped while it is read, not after.
+         *
+         * `n` is a signed 32-bit int and a stylesheet is a text file, so
+         * `width: 99999999999px` overflows it -- which is undefined behaviour
+         * rather than a large number, and the C89 gate cannot see it. Two
+         * million is past every length a sixteen-bit slot can hold and past
+         * every conversion in the unit table, so stopping there costs nothing
+         * a real declaration would notice.
+         */
         while (z->p < z->end && ar__is_digit(*z->p))
         {
-            n = n * 10 + (*z->p - '0');
+            if (n < 100000)
+            {
+                n = n * 10 + (*z->p - '0');
+            }
             z->p++;
         }
         /*
@@ -2075,7 +2092,10 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             ar__skip_ws(z);
             while (z->p < z->end && ar__is_digit(*z->p))
             {
-                n = n * 10 + (*z->p - '0');
+                if (n < 100000)
+                {
+                    n = n * 10 + (*z->p - '0');
+                }
                 z->p++;
             }
             out.v = -(n > 0 ? n : 1);
