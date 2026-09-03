@@ -1259,9 +1259,31 @@ static ar_i32 ar__font_basis(const ar_ctx *c, const ar_node *n, ar_i32 metric, a
          * line-height is a multiplier when its unit is a number and a length
          * when it is not, which is the same question ar__line_height asks.
          */
-        ar_i32 lh = n->style.unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER
-                        ? (font_px * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000
-                        : n->style.v[AR_P_LINE_HEIGHT];
+        ar_u8  lu = n->style.unit[AR_P_LINE_HEIGHT];
+        ar_i32 lh;
+
+        /*
+         * A line-height still carrying a relative unit is the one slot this
+         * function must not read as a number.
+         *
+         * The pass above resolves line-height before anything measures against
+         * it, so ordinarily this cannot happen -- except for a line-height in a
+         * *viewport* unit, which waits for the surface and is still hundredths
+         * of a vh when a sibling `lh` on the same box is resolved. Reading it
+         * would not be slightly wrong, it would be a pixel count of whatever
+         * hundredths were in the slot.
+         *
+         * `2lh` on a box with `line-height: 5vh` is a combination nobody has
+         * written yet, and this is a guard rather than a fix: an em is what a
+         * line box is when nothing better is known, and it is the value
+         * `normal` would give within a rounding.
+         */
+        if (lu >= AR_UNIT_REL_FIRST)
+        {
+            return em;
+        }
+        lh = lu == AR_UNIT_NUMBER ? (font_px * n->style.v[AR_P_LINE_HEIGHT] + 500) / 1000
+                                  : n->style.v[AR_P_LINE_HEIGHT];
 
         return lh << 6;
     }
