@@ -239,6 +239,19 @@ typedef struct ar_node
    markup decides rather than the ones input does. */
 void ar_state_next(ar_ctx *c, ar_u32 bits);
 
+/* What kind of control the next box is. `group` is the hash of a radio's
+   `name` and is ignored for everything else. */
+void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group);
+
+enum
+{
+    AR_CTL_NONE = 0,
+    AR_CTL_CHECKBOX,
+    AR_CTL_RADIO,
+    AR_CTL_BUTTON,
+    AR_CTL_SUMMARY
+};
+
 typedef struct ar_slot
 {
     ar_u32  key;
@@ -266,7 +279,29 @@ typedef struct ar_slot
        caught it being paid every frame. */
     ar_i32 text_min_px;
     ar_u32 seen; /* frame this box last appeared in the tree */
+
+    /*
+     * What the user has done to this control, as opposed to what the markup
+     * said.
+     *
+     * `checked` in the markup is the default checkedness; a click changes the
+     * state and not the attribute. So the state has to outlive the frame and
+     * cannot come from the document, and the slot is where per-box memory
+     * already lives.
+     *
+     * TOUCHED is the half that is easy to forget: without it there is no way
+     * to tell "unchecked because the user unchecked it" from "unchecked
+     * because nobody has been here yet", and a box with `checked` in the
+     * markup would spring back on every frame.
+     */
+    ar_u8 flags;
 } ar_slot;
+
+enum
+{
+    AR_SLOT_CHECKED = 1 << 0,
+    AR_SLOT_TOUCHED = 1 << 1
+};
 
 /* ------------------------------------------------------------------------
  * Damage
@@ -495,6 +530,12 @@ struct ar_ctx
      */
     ar_u32 next_state;
 
+    /* And what kind of control it is, for the same reason and taken the same
+       way. A radio also carries the hash of its `name`, which is the whole of
+       what makes a group a group. */
+    ar_u8  next_kind;
+    ar_u32 next_group;
+
     ar_u32 focus_key;
     /* Where it landed in this frame's tree, or -1. Recorded in ar_begin so
        the ancestor chain costs a walk up rather than a search over every
@@ -525,6 +566,19 @@ struct ar_ctx
        document that stops at whatever box is open. */
     ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
     ar_i32 focusable_prev_n;
+
+    /*
+     * The controls of the frame just built.
+     *
+     * Activation is settled at frame end, when the tree is complete and the
+     * click is known, and takes effect on the next frame -- the same one-frame
+     * model hover and focus already use, and for the same reason: the state a
+     * box is styled with has to be settled before the box is styled.
+     */
+    ar_u32 control_key[AR_MAX_FOCUSABLES];
+    ar_u32 control_group[AR_MAX_FOCUSABLES];
+    ar_u8  control_kind[AR_MAX_FOCUSABLES];
+    ar_i32 control_n;
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame

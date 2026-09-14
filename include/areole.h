@@ -308,7 +308,17 @@ enum
      * the core never learns what a modifier is.
      */
     AR_KEY_TAB = 1u << 9,
-    AR_KEY_TAB_BACK = 1u << 10
+    AR_KEY_TAB_BACK = 1u << 10,
+
+    /*
+     * Enter, which activates the focused control.
+     *
+     * Space activates too and already has a bit, because it pages down when
+     * nothing is focused. That is not a conflict to resolve, it is the rule: a
+     * browser pages with Space until the focus is on something that consumes
+     * it, and then the control wins. The focus decides, here as there.
+     */
+    AR_KEY_ENTER = 1u << 11
 };
 
 
@@ -644,8 +654,21 @@ typedef ar_i32 ar_scroll_pos;
  *
  * The assertion now names it. Measured: 217,601 of 221,184, which keeps the
  * same uncomfortable four kilobytes 0.4.3 left and for the same reason.
+ *
+ * 216 KB -> 220 KB at 0.10.0, for the frame's control list: a key, a group
+ * hash and a kind for each of 256 controls, which is 2,304 bytes, and the
+ * focus machinery's own arrays beside them.
+ *
+ * On the context rather than in the slot, which is the trade worth naming.
+ * Per-box it would have been three more fields on every box in the interface
+ * for the sake of the handful that are controls at any moment -- the same
+ * argument ar_slot's own comment makes about the scroll positions, and the
+ * same one AR_STATE_COLLAPSED makes about finding a spare bit instead of a
+ * byte. A document with more than 256 controls is a document nobody fills in.
+ *
+ * Measured: 221,304 of 225,280.
  */
-#define AR_MEM_FIXED  221184u
+#define AR_MEM_FIXED  225280u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
