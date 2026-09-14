@@ -5370,6 +5370,189 @@ static void test_units_resolve(void)
 }
 
 /*
+ * `calc()` and the maths functions, end to end.
+ *
+ * Through a laid-out box rather than through the parser, because an
+ * expression is not a number until a frame knows the font and the surface --
+ * which is the whole design, and a check that stopped at the parse would not
+ * have caught either bug that shipped in the first version of it.
+ */
+static void test_calc_arithmetic(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:16px; }"
+                 ".sum  { width:calc(100px + 50px); }"
+                 ".dif  { width:calc(100px - 40px); }"
+                 ".mul  { width:calc(2 * 100px); }"
+                 ".mul2 { width:calc(100px * 2); }"
+                 ".div  { width:calc(300px / 2); }"
+                 ".nest { width:calc((10px + 5px) * 4); }"
+                 ".mix  { width:calc(2.75rem + 2px); }"
+                 ".frac { width:calc(0.9 * 30em); }"
+                 ".vp   { width:calc(50vw - 100px); }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.sum");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dif");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mul");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mul2");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.div");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.nest");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mix");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.frac");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.vp");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /*
+     * The sum is first because it is the one that was wrong, and wrong in the
+     * way that matters: `calc(100px + 50px)` came out **fifty**. The term
+     * loop consumed the whitespace before a `+` while peeking for a `*`, so
+     * every sum was refused -- and a refused value is not a dropped
+     * declaration here, the declaration parser recovers by reading the next
+     * number it can find. Fifty is the second operand.
+     */
+    CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] == 150, "calc: a sum is a sum, not its last term");
+    CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 60, "calc: and a difference");
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] == 200, "calc: a number times a length");
+    CHECK(g_ui->nodes[4].style.v[AR_P_WIDTH] == 200, "calc: either way round");
+    CHECK(g_ui->nodes[5].style.v[AR_P_WIDTH] == 150, "calc: a length over a number");
+    CHECK(g_ui->nodes[6].style.v[AR_P_WIDTH] == 60, "calc: parentheses bind before the product");
+    /* 2.75rem of 16 is 44, and the whole point of the pool is that this
+       cannot be folded at parse time. */
+    CHECK(g_ui->nodes[7].style.v[AR_P_WIDTH] == 46, "calc: a relative unit and an absolute one");
+    /*
+     * 0.9 * 30em is 432 exactly, and it is the check that the arithmetic runs
+     * in thousandths. Folding 30em to 480 and then multiplying by a rounded
+     * 0.9 gives 432 too; folding term by term with a rounding each time is
+     * what this is written to forbid.
+     */
+    CHECK(g_ui->nodes[8].style.v[AR_P_WIDTH] == 432, "calc: the fraction survives the multiply");
+    /* 400 wide, so half of it less a hundred. */
+    CHECK(g_ui->nodes[9].style.v[AR_P_WIDTH] == 100, "calc: a viewport unit, against this frame");
+}
+
+static void test_calc_functions(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; font-size:16px; }"
+                 ".mn { width:min(200px, 300px); }"
+                 ".mx { width:max(200px, 300px); }"
+                 ".m3 { width:min(300px, 150px, 250px); }"
+                 ".cl { width:clamp(100px, 250px, 300px); }"
+                 ".lo { width:clamp(260px, 250px, 300px); }"
+                 ".xd { width:clamp(400px, 250px, 300px); }"
+                 ".ab { width:abs(-120px); }"
+                 ".sg { width:calc(100px * sign(-4px)); }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.mn");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.mx");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.m3");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.cl");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.lo");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.xd");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.ab");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.sg");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_WIDTH] == 200, "calc: min takes the smaller");
+    CHECK(g_ui->nodes[2].style.v[AR_P_WIDTH] == 300, "calc: max the larger");
+    CHECK(g_ui->nodes[3].style.v[AR_P_WIDTH] == 150, "calc: min takes as many as it is given");
+    CHECK(g_ui->nodes[4].style.v[AR_P_WIDTH] == 250, "calc: clamp leaves a value between alone");
+    CHECK(g_ui->nodes[5].style.v[AR_P_WIDTH] == 260, "calc: and raises one below the floor");
+    /*
+     * The one everybody gets wrong. `clamp()` is `max(MIN, min(VAL, MAX))`
+     * *in that order*, so when the bounds cross the minimum wins -- 400, not
+     * 300. Clamping in the other order gives 300 and looks just as
+     * reasonable.
+     */
+    CHECK(g_ui->nodes[6].style.v[AR_P_WIDTH] == 400, "calc: crossed bounds resolve to the minimum");
+    CHECK(g_ui->nodes[7].style.v[AR_P_WIDTH] == 120, "calc: abs has no sign");
+    CHECK(g_ui->nodes[8].style.v[AR_P_WIDTH] == -100, "calc: sign is a number, so it may multiply");
+}
+
+/*
+ * What is refused, and why refusing beats answering.
+ *
+ * Every one of these has an answer that would look plausible. A length plus a
+ * number could be "add the number as pixels"; a percentage could be "ignore
+ * the rest of the expression", which is what the engine did before `calc()`
+ * existed and is how `calc(50% - 10px)` came out a flat fifty per cent.
+ */
+static void test_calc_refuses(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:flex; flex-direction:column; }"
+                 ".a { height:20px; width:calc(100px + 2); }"
+                 ".b { height:20px; width:calc(100px * 2px); }"
+                 ".c { height:20px; width:calc(100px / 0); }"
+                 ".d { height:20px; width:calc(50% - 10px); }"
+                 ".e { height:20px; width:calc(1px -2px); }"
+                 ".f { height:20px; width:200px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.d");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.e");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.f");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* A stretched child of a column flex container fills it, so a refused
+       width is 400 and a kept one is not. */
+    CHECK(g_ui->nodes[1].rect.w == 400, "calc: a length plus a number is refused");
+    CHECK(g_ui->nodes[2].rect.w == 400, "calc: a length times a length is an area, not a length");
+    CHECK(g_ui->nodes[3].rect.w == 400, "calc: division by zero is refused, not infinite");
+    /* Named rather than approximated: a percentage needs a containing block
+       this evaluator does not have. */
+    CHECK(g_ui->nodes[4].rect.w == 400, "calc: a per cent inside calc is refused for now");
+    /*
+     * CSS requires whitespace around `+` and `-`, because `-2px` is one
+     * token. Accepting `1px -2px` as a subtraction would make it impossible
+     * to write two values, and a parser that guesses picks wrong half the
+     * time.
+     */
+    CHECK(g_ui->nodes[5].rect.w == 400,
+          "calc: a sign needs space around it or it is not an operator");
+    /* And the rule after the refused ones is still read, which is what makes
+       a dropped declaration cost only itself. */
+    CHECK(g_ui->nodes[6].rect.w == 200, "calc: a refused expression costs one declaration");
+}
+
+/*
  * The viewport family, against a viewport this test states.
  *
  * Here rather than in the units corpus, and the reason is worth keeping: that
@@ -15532,6 +15715,23 @@ static ar_i32 ar__first_tag(const char *tag)
     return ar__tags(tag, one, 1) == 1 ? one[0] : -1;
 }
 
+/* The box carrying `id="..."`, or -1. `ar__tags` cannot answer this: a
+   document's boxes are mostly divs and the id is what tells them apart. */
+static ar_i32 ar__first_tag_id(const char *id)
+{
+    ar_u32 h = ar_hash(id, (ar_u32)strlen(id));
+    ar_i32 i;
+
+    for (i = 0; i < g_ui->node_count; ++i)
+    {
+        if (g_ui->nodes[i].sel_id == h)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void test_a_presentational_hint_beats_the_user_agent_and_loses_to_the_author(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -16426,6 +16626,149 @@ static void test_ua_sheet_scales_with_the_root(void)
         CHECK(h6->v[AR_P_MARGIN_TOP] == 24,
               "ua-em: and keeps a stated margin, because 2.33em of the rounded font is 26");
     }
+}
+
+/*
+ * round(), mod() and rem().
+ *
+ * The signs are the reason these are checked at all. `round()` has four
+ * strategies and three of them differ only when the quotient is negative, and
+ * `mod` and `rem` differ *only* in whose sign the answer takes -- the divisor
+ * for one, the dividend for the other. A implementation that derived both
+ * from C's `/` would be right on this compiler and wrong on one that
+ * truncates the other way, which the C89 gate cannot see.
+ */
+static void test_calc_round_mod_rem(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div><div id=\"e\"></div><div id=\"f\"></div>"
+                    "<div id=\"g\"></div><div id=\"h\"></div>"
+                    "</body></html>",
+                    "#a { width:round(105px, 25px); }"
+                    "#b { width:round(up, 101px, 25px); }"
+                    "#c { width:round(down, 124px, 25px); }"
+                    "#d { width:round(to-zero, 124px, 25px); }"
+                    "#e { width:mod(118px, 25px); }"
+                    "#f { width:rem(118px, 25px); }"
+                    "#g { width:calc(200px + mod(-30px, 25px)); }"
+                    "#h { width:calc(200px + rem(-30px, 25px)); }");
+
+    /* 105/25 is 4.2, so the nearest multiple is four of them. */
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 100, "round: nearest is nearest");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 125, "round: up goes up");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 100, "round: down goes down");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_WIDTH] == 100,
+          "round: and to-zero agrees with down while both are positive");
+
+    CHECK(ar__box_style(ar__first_tag_id("e"))->v[AR_P_WIDTH] == 18, "round: mod of a positive");
+    CHECK(ar__box_style(ar__first_tag_id("f"))->v[AR_P_WIDTH] == 18,
+          "round: and rem agrees with it, while the signs agree");
+
+    /*
+     * The pair that earns both functions. `-30 mod 25` takes the sign of the
+     * divisor and is +20; `-30 rem 25` takes the sign of the dividend and is
+     * -5. Added to 200 so the difference is a width rather than a negative
+     * number layout would clamp away.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("g"))->v[AR_P_WIDTH] == 220,
+          "round: mod follows the divisor's sign");
+    CHECK(ar__box_style(ar__first_tag_id("h"))->v[AR_P_WIDTH] == 195,
+          "round: and rem follows the dividend's");
+}
+
+/*
+ * Custom properties, through a document.
+ *
+ * Through a document and not through the parser, because three of the four
+ * bugs in the first version of this were nowhere near the parser: a rule that
+ * declared only custom properties was discarded before it reached the table,
+ * the pass that substitutes them was gated on flags that did not include
+ * them, and the scope arrays were never allocated at all.
+ */
+static void test_custom_properties(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div>"
+                    "<div class=\"scope\"><div id=\"e\"></div></div>"
+                    "</body></html>",
+                    "html { font-size:16px; }"
+                    ":root { --w: 300px; --gap: 2rem; }"
+                    "#a { width:var(--w); }"
+                    "#b { width:var(--gap); }"
+                    "#c { width:var(--nope, 120px); }"
+                    "#d { width:var(--nope); }"
+                    ".scope { --w: 90px; }"
+                    "#e { width:var(--w); }");
+
+    /*
+     * `:root { --w: 300px }` is the commonest way anyone declares one, and it
+     * was the case that did not work: a rule whose only declarations are
+     * custom properties sets no property bits, and the parser threw away
+     * every rule with an empty property set before storing it. The
+     * declaration parsed, the pool entry was written, and the rule pointing
+     * at it never existed.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 300,
+          "var: a custom property declared on :root reaches a box");
+    /* Holding a relative unit, which is resolved in a different pass from the
+       one that substitutes it -- so this is the check that the substitution
+       hands its result on rather than stopping. */
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 32,
+          "var: and one holding 2rem is still two rem");
+    /* The fallback is most of what var() does on real pages: half the
+       references in the Wikipedia documents under examples/15_real name a
+       property defined in a stylesheet that was never saved. */
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 120,
+          "var: an undefined name takes its fallback");
+    /* No value and no fallback is invalid at computed-value time, which is
+       not the same as zero. */
+    CHECK(ar__box_style(ar__first_tag_id("d"))->unit[AR_P_WIDTH] == AR_UNIT_AUTO,
+          "var: an undefined name with no fallback is invalid, not zero");
+    /* And the reason a scope chain exists at all: the inner box sees the
+       nearer declaration. */
+    CHECK(ar__box_style(ar__first_tag_id("e"))->v[AR_P_WIDTH] == 90,
+          "var: a nearer declaration shadows the root's");
+}
+
+/* `calc(var(--x) * 2)` -- the two features as they are actually written
+   together. Five of the nine calc expressions in the ten documents under
+   examples/15_real name a custom property inside one. */
+static void test_custom_properties_in_calc(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div><div id=\"b\"></div><div id=\"c\"></div>"
+                    "<div id=\"d\"></div>"
+                    "</body></html>",
+                    "html { font-size:16px; }"
+                    ":root { --size: 40px; --half: 0.5; }"
+                    "#a { width:calc(var(--size) * 2); }"
+                    "#b { width:calc(var(--size) / 2); }"
+                    "#c { width:calc(var(--size) + 10px); }"
+                    "#d { width:calc(var(--missing) + 10px); }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 80,
+          "var: a custom property multiplies inside calc");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 20, "var: and divides");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 50, "var: and adds");
+    /*
+     * A name with no value and no fallback poisons the whole expression
+     * rather than just its own term. CSS is explicit about that, and the
+     * tempting alternative -- treat the missing term as zero -- turns a page
+     * that is missing a stylesheet into a page that is subtly mis-sized.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("d"))->unit[AR_P_WIDTH] == AR_UNIT_AUTO,
+          "var: an unresolvable name invalidates the expression, not just the term");
 }
 
 static void test_the_elements_the_corpus_found(void)
@@ -19714,6 +20057,9 @@ int main(void)
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
     test_units_resolve();
+    test_calc_arithmetic();
+    test_calc_functions();
+    test_calc_refuses();
     test_units_viewport_family();
     test_units_font_metrics();
     test_units_line_height_relative();
@@ -19794,6 +20140,9 @@ int main(void)
     test_an_interface_stylesheet_is_not_a_document();
     test_a_table_does_not_inherit_its_font_in_quirks();
     test_ua_sheet_scales_with_the_root();
+    test_calc_round_mod_rem();
+    test_custom_properties();
+    test_custom_properties_in_calc();
     test_the_elements_the_corpus_found();
     test_a_list_item_lays_out_as_a_block();
     test_the_style_attribute_reaches_the_box();

@@ -89,16 +89,27 @@ ENTITY_OBJECT = "ar_html_entity.c"
 # exists to prevent, and it had one.
 #
 # 60 KB against 56,504 measured at 0.4.2's close -- ar_css.c 52,400 and
-# ar_ua_css.c 4,104. Just under four kilobytes of headroom, which is meant to
-# be uncomfortable: 0.4.3 is custom properties and maths and its own document
-# already asks for 20 KB, so it will raise this figure and has to say why. A
-# budget with the next two releases already inside it is not a budget, which is
-# the mistake the HTML one above was raised twice to correct.
+# ar_ua_css.c 4,104. Just under four kilobytes of headroom, which was meant to
+# be uncomfortable, and was: 0.4.1's units spent 2,152 of it and 0.4.3's
+# `calc()` went 1,484 past the line.
+#
+# **Raised to 80 KB, which is 0.4.3's own allowance and not a round number.**
+# Its document asks for 20 KB -- 8 of that the fixed-point maths primitives it
+# shares with 0.17.0 -- and 60 + 20 is where that lands. `calc()` and the five
+# maths functions cost 4,332 of it; custom properties and `var()` are the rest
+# of the release and have not been written yet.
+#
+# The figure this replaces said the mistake to avoid is "a budget with the next
+# two releases already inside it". This is one release's worth, stated by that
+# release, and 0.4.4's colour work must move it again and say so -- which is
+# the whole point of the gate firing here rather than after the fact. It fired
+# on the commit that spent the money, which is the first time either CSS or
+# HTML budget has done that.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
 ]
-CSS_BUDGET = 60 * 1024
+CSS_BUDGET = 80 * 1024
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
