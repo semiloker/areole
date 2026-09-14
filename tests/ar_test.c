@@ -14,6 +14,7 @@
 #include "ar_shape.h"
 #include "ar_indic.h"
 #include "ar_css.h"
+#include "ar_color.h"
 #include "ar_supports_props.h"
 #include "ar_node.h"
 #include "ar_html.h"
@@ -964,6 +965,406 @@ static void test_css_colors(void)
     CHECK((ar_u32)ar__css_value(".l", 0, AR_P_BACKGROUND) == 0x44112233u,
           "css: eight digit hex carries alpha");
     CHECK((ar_u32)ar__css_value(".t", 0, AR_P_BACKGROUND) == 0u, "css: transparent is zero alpha");
+}
+
+/*
+ * The colour spaces, checked as arithmetic rather than through the parser.
+ *
+ * Through the parser they are checked too, by the corpus -- but a conversion
+ * only ever reached that way is a conversion whose failures arrive looking
+ * like parse failures. Both of the real bugs found here presented as the wrong
+ * colour and neither was in the colour code: one was a modulus taken over the
+ * wrong interval, the other was a measurement quantising its input twice.
+ */
+/*
+ * The notations, through the parser.
+ *
+ * Split across two sheets because C89 caps a string literal at 509 characters
+ * and the strict gate enforces it -- which is the kind of limit that only
+ * exists on the toolchains this project says it supports.
+ */
+static void test_css_color_notations(void)
+{
+    ar__sheet(".named{background:red}"
+              ".cased{background:RebeccaPurple}"
+              ".rgbm{background:rgb(255 0 0)}"
+              ".rgbl{background:rgb(255, 0, 0)}"
+              ".rgba{background:rgba(0, 0, 255, 0.5)}"
+              ".rgbs{background:rgb(0 0 255 / 50%)}"
+              ".pct{background:rgb(50% 0 0)}"
+              ".bare{background:rgb(50 0 0)}"
+              ".hsl{background:hsl(120 100% 50%)}"
+              ".turn{background:hsl(0.5turn 100% 50%)}"
+              ".hwb{background:hwb(0 0% 0%)}"
+              ".hwbw{background:hwb(0 100% 0%)}");
+
+    CHECK((ar_u32)ar__css_value(".named", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: a named colour");
+    CHECK((ar_u32)ar__css_value(".cased", 0, AR_P_BACKGROUND) == 0xFF663399u,
+          "css: a named colour folds case");
+
+    /* Both syntaxes, which differ only in their separators. */
+    CHECK((ar_u32)ar__css_value(".rgbm", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: rgb() modern syntax");
+    CHECK((ar_u32)ar__css_value(".rgbl", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: rgb() legacy syntax");
+    CHECK((ar_u32)ar__css_value(".rgba", 0, AR_P_BACKGROUND) == 0x800000FFu,
+          "css: rgba() carries alpha");
+    CHECK((ar_u32)ar__css_value(".rgbs", 0, AR_P_BACKGROUND) == 0x800000FFu,
+          "css: rgb() takes alpha after a slash");
+
+    /*
+     * A percentage and a bare number are measured against different things,
+     * and this pair is what proves it: in rgb() 50% is half of 255 while a
+     * bare 50 is fifty. Folding the two references into one parameter made
+     * `rgb(50% 0 0)` a very dark red, which is what the second one prevents.
+     */
+    CHECK((ar_u32)ar__css_value(".pct", 0, AR_P_BACKGROUND) == 0xFF800000u,
+          "css: rgb() per cent is half of 255");
+    CHECK((ar_u32)ar__css_value(".bare", 0, AR_P_BACKGROUND) == 0xFF320000u,
+          "css: rgb() a bare number is itself");
+
+    CHECK((ar_u32)ar__css_value(".hsl", 0, AR_P_BACKGROUND) == 0xFF00FF00u, "css: hsl()");
+    CHECK((ar_u32)ar__css_value(".turn", 0, AR_P_BACKGROUND) == 0xFF00FFFFu,
+          "css: hsl() in turns is half a wheel");
+    CHECK((ar_u32)ar__css_value(".hwb", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: hwb() with no white and no black");
+    CHECK((ar_u32)ar__css_value(".hwbw", 0, AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "css: hwb() all white");
+}
+
+static void test_css_wide_gamut_and_mixing(void)
+{
+    ar__sheet(".labw{background:lab(100 0 0)}"
+              ".oklabw{background:oklab(1 0 0)}"
+              ".lchw{background:lch(100 0 0)}"
+              ".oklchw{background:oklch(1 0 0)}"
+              ".labb{background:lab(0 0 0)}"
+              ".oklabb{background:oklab(0 0 0)}"
+              ".mix{background:color-mix(in srgb, black, white)}"
+              ".mix1{background:color-mix(in srgb, red 100%, blue)}"
+              ".mixn{background:color-mix(in srgb,color-mix(in srgb,red 100%,blue) 100%,lime)}"
+              ".brd{border:1px solid red}");
+
+    /* White and black are the two values every family agrees on, so they are
+       what catch a family whose scale is wrong -- Lab states its lightness
+       0..100 and Oklab states it 0..1, and getting that backwards still
+       produces a colour. */
+    CHECK((ar_u32)ar__css_value(".labw", 0, AR_P_BACKGROUND) == 0xFFFFFFFFu, "css: lab() white");
+    CHECK((ar_u32)ar__css_value(".oklabw", 0, AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "css: oklab() white");
+    CHECK((ar_u32)ar__css_value(".lchw", 0, AR_P_BACKGROUND) == 0xFFFFFFFFu, "css: lch() white");
+    CHECK((ar_u32)ar__css_value(".oklchw", 0, AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "css: oklch() white");
+    CHECK((ar_u32)ar__css_value(".labb", 0, AR_P_BACKGROUND) == 0xFF000000u, "css: lab() black");
+    CHECK((ar_u32)ar__css_value(".oklabb", 0, AR_P_BACKGROUND) == 0xFF000000u,
+          "css: oklab() black");
+
+    {
+        ar_u32 m = (ar_u32)ar__css_value(".mix", 0, AR_P_BACKGROUND);
+        int    r = (int)((m >> 16) & 0xFFu);
+
+        CHECK(r >= 127 && r <= 128, "css: color-mix() defaults to half and half");
+    }
+    CHECK((ar_u32)ar__css_value(".mix1", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: color-mix() with one share given");
+    CHECK((ar_u32)ar__css_value(".mixn", 0, AR_P_BACKGROUND) == 0xFFFF0000u,
+          "css: color-mix() nests");
+
+    /*
+     * A colour in the border shorthand, which is the case that decides where
+     * the named lookup goes. Those values are parsed as `border-width`, so
+     * gating colours on whether the property takes one gets the commonest way
+     * anybody writes a colour exactly backwards.
+     */
+    CHECK(ar__css_value(".brd", 0, AR_P_BORDER_WIDTH) == 1,
+          "css: a colour in the border shorthand does not eat the width");
+    CHECK((ar_u32)ar__css_value(".brd", 0, AR_P_BORDER_COLOR) == 0xFFFF0000u,
+          "css: the border shorthand finds the colour");
+}
+
+static void test_css_color_refusals_cost_only_themselves(void)
+{
+    /*
+     * A bad colour must be dropped and must cost only itself, and the witness
+     * beside each one is the point of the case: a refused value used to leave
+     * the scanner standing inside the parentheses, and the declaration parser
+     * recovers by reading the next number it finds. The failure then shows up
+     * as a plausible value somewhere else entirely, which is the lesson 0.4.3
+     * paid for twice.
+     */
+    ar__sheet(".b{background:notacolour; color:#0f0}"
+              ".c{background:color-mix(in nosuchspace, red, blue); color:#0f0}"
+              ".d{background:oklch(); color:#0f0}"
+              ".e{background:rgb(255 0); color:#0f0}"
+              ".f{background:color-mix(in srgb, red 0%, blue 0%); color:#0f0}");
+
+    CHECK((ar_u32)ar__css_value(".b", 0, AR_P_COLOR) == 0xFF00FF00u,
+          "css: an unknown name costs only itself");
+    CHECK((ar_u32)ar__css_value(".c", 0, AR_P_COLOR) == 0xFF00FF00u,
+          "css: an unknown interpolation space costs only itself");
+    CHECK((ar_u32)ar__css_value(".d", 0, AR_P_COLOR) == 0xFF00FF00u,
+          "css: a colour function with no components costs only itself");
+    CHECK((ar_u32)ar__css_value(".e", 0, AR_P_COLOR) == 0xFF00FF00u,
+          "css: rgb() with a component missing costs only itself");
+
+    /* Two shares of nothing is invalid rather than black, which is the one
+       place in color-mix() where a plausible answer exists and is wrong. */
+    CHECK((ar_u32)ar__css_value(".f", 0, AR_P_COLOR) == 0xFF00FF00u,
+          "css: color-mix() with both shares zero costs only itself");
+    CHECK((ar_u32)ar__css_value(".f", 0, AR_P_BACKGROUND) != 0xFF000000u,
+          "css: color-mix() with both shares zero is not black");
+}
+
+/*
+ * An unterminated function is a different animal from a refused one, and the
+ * difference is worth a test of its own because it looks like a bug.
+ *
+ * `background: rgb(` with no closing paren consumes the rest of the input --
+ * not the rest of the declaration, the rest of the *stylesheet*. That is what
+ * CSS says to do: an open parenthesis at end of input is closed there, and
+ * everything between is inside it. So there is no witness that can survive
+ * beside it, and a test that puts one there is testing its own expectation.
+ *
+ * This was found by writing exactly that test and watching three unrelated
+ * rules disappear with it.
+ */
+static void test_an_unterminated_colour_eats_the_rest_and_says_so(void)
+{
+    ar__sheet(".a{background:rgb(; color:#0f0}.later{width:10px}");
+
+    CHECK(g_sheet.errors > 0, "css: an unterminated function is reported");
+    CHECK((ar_u32)ar__css_value(".a", 0, AR_P_BACKGROUND) != 0xFFFF0000u,
+          "css: an unterminated rgb() sets no colour");
+    CHECK(ar__css_value(".later", 0, AR_P_WIDTH) != 10,
+          "css: an unterminated function takes the rest of the sheet with it");
+}
+
+static void test_color_transfer_round_trips_every_byte(void)
+{
+    int i;
+    int ok = 1;
+
+    /* All 256, not a sample. The encode bisects the decode table, so this
+       holds by construction -- which is the claim being checked. */
+    for (i = 0; i < 256; ++i)
+    {
+        if (ar_linear_to_srgb(ar_srgb_to_linear(i)) != i)
+        {
+            ok = 0;
+        }
+    }
+    CHECK(ok, "color: every one of 256 bytes survives sRGB decode and encode");
+
+    CHECK(ar_srgb_to_linear(0) == 0, "color: black is linear zero");
+    CHECK(ar_srgb_to_linear(255) == AR_CFIX, "color: white is linear one");
+    CHECK(ar_linear_to_srgb(-5) == 0, "color: negative linear clamps to black");
+    CHECK(ar_linear_to_srgb(AR_CFIX * 2) == 255, "color: linear past one clamps to white");
+}
+
+static void test_color_named_table_is_sorted_and_complete(void)
+{
+    ar_u32 c = 0;
+
+    CHECK(ar_color_named("black", 5, &c) && c == 0xFF000000u, "color: black");
+    CHECK(ar_color_named("white", 5, &c) && c == 0xFFFFFFFFu, "color: white");
+    CHECK(ar_color_named("rebeccapurple", 13, &c) && c == 0xFF663399u,
+          "color: rebeccapurple, the one added by acclamation");
+
+    {
+        ar_u32 a = 0, b = 0;
+
+        CHECK(ar_color_named("gray", 4, &a) && ar_color_named("grey", 4, &b) && a == b,
+              "color: gray and grey are one colour");
+    }
+
+    CHECK(ar_color_named("RED", 3, &c) && c == 0xFFFF0000u, "color: a name folds case");
+    CHECK(!ar_color_named("notacolour", 10, &c), "color: an unknown name is not a colour");
+
+    /* A prefix must not match the longer name it is a prefix of, and a name
+       with a tail must not match either. The comparison runs to the end of the
+       stored literal rather than to the end of the input, and getting that
+       backwards makes the bisection land on a neighbour. */
+    CHECK(!ar_color_named("re", 2, &c), "color: a prefix of a name is not a name");
+    CHECK(!ar_color_named("reddish", 7, &c), "color: a name with a tail is not a name");
+}
+
+static void test_color_hsl_hits_every_primary(void)
+{
+    static const struct
+    {
+        int         deg;
+        ar_u32      want;
+        const char *what;
+    } CASES[] = {{0, 0xFFFF0000u, "color: hsl 0 is red"},
+                 {60, 0xFFFFFF00u, "color: hsl 60 is yellow"},
+                 {120, 0xFF00FF00u, "color: hsl 120 is green"},
+                 {180, 0xFF00FFFFu, "color: hsl 180 is cyan"},
+                 {240, 0xFF0000FFu, "color: hsl 240 is blue"},
+                 {300, 0xFFFF00FFu, "color: hsl 300 is magenta"}};
+    ar_u32 n;
+
+    /*
+     * Yellow is the one that failed, and it failed by a whole primary rather
+     * than by a rounding. The x term is c * (1 - |(h/60 mod 2) - 1|) and that
+     * modulus is over two sixths; taken over one it falls to zero at the start
+     * of every sixth instead of every other one, and 60 degrees comes out
+     * green. Every other entry in this table passed while it was wrong, which
+     * is the argument for walking all six.
+     */
+    for (n = 0; n < sizeof(CASES) / sizeof(CASES[0]); ++n)
+    {
+        ar_i32       rgb[3];
+        ar_color_val v;
+
+        ar_hsl_to_rgb(CASES[n].deg * AR_CFIX, AR_CFIX, AR_CFIX / 2, rgb);
+        v.space = AR_CS_SRGB;
+        v.c[0] = rgb[0];
+        v.c[1] = rgb[1];
+        v.c[2] = rgb[2];
+        v.alpha = AR_CFIX;
+        CHECK(ar_color_pack(&v) == CASES[n].want, CASES[n].what);
+    }
+
+    {
+        ar_i32       rgb[3];
+        ar_color_val v;
+
+        ar_hsl_to_rgb(0, 0, AR_CFIX / 2, rgb);
+        v.space = AR_CS_SRGB;
+        v.c[0] = rgb[0];
+        v.c[1] = rgb[1];
+        v.c[2] = rgb[2];
+        v.alpha = AR_CFIX;
+        CHECK(ar_color_pack(&v) == 0xFF808080u, "color: hsl with no saturation is grey");
+    }
+
+    /* White and black summing past one is legal and means grey at the ratio
+       between them. Without that branch the expression goes negative and the
+       colour comes out inverted rather than dull. */
+    {
+        ar_i32       rgb[3];
+        ar_color_val v;
+
+        ar_hwb_to_rgb(0, AR_CFIX, AR_CFIX, rgb);
+        v.space = AR_CS_SRGB;
+        v.c[0] = rgb[0];
+        v.c[1] = rgb[1];
+        v.c[2] = rgb[2];
+        v.alpha = AR_CFIX;
+        CHECK(ar_color_pack(&v) == 0xFF808080u, "color: hwb with white and black over one is grey");
+    }
+}
+
+static void test_color_cube_root_and_the_spaces_that_need_it(void)
+{
+    CHECK(ar_cbrt_fix(0) == 0, "color: cbrt of nothing");
+    CHECK(ar_cbrt_fix(AR_CFIX) == AR_CFIX, "color: cbrt of one");
+
+    {
+        ar_i32 d = ar_cbrt_fix(8 * AR_CFIX) - 2 * AR_CFIX;
+
+        CHECK(d > -8 && d < 8, "color: cbrt of eight is two");
+    }
+    {
+        ar_i32 d = ar_cbrt_fix(AR_CFIX / 8) - AR_CFIX / 2;
+
+        CHECK(d > -8 && d < 8, "color: cbrt of an eighth is a half");
+    }
+
+    /* sRGB and its linear twin are exact both ways, so this is an equality
+       rather than a tolerance. */
+    {
+        ar_u32       c = 0xFF3366CCu;
+        ar_color_val v;
+
+        ar_color_unpack(c, AR_CS_SRGB, &v);
+        CHECK(ar_color_pack(&v) == c, "color: sRGB round trips exactly");
+        ar_color_unpack(c, AR_CS_SRGB_LINEAR, &v);
+        CHECK(ar_color_pack(&v) == c, "color: linear sRGB round trips exactly");
+    }
+
+    /* The wide-gamut four do not round trip exactly, and the bound they hold
+       is published rather than discovered later. Going out needs a cube root
+       and coming back needs a cube, and neither is exact at 1/4096. */
+    {
+        static const ar_u8 SPACES[4] = {AR_CS_OKLAB, AR_CS_OKLCH, AR_CS_LAB, AR_CS_LCH};
+        ar_u32             c[3];
+        int                i, sp, worst = 0;
+
+        c[0] = 0xFF3366CCu;
+        c[1] = 0xFF808080u;
+        c[2] = 0xFFFF8000u;
+
+        for (sp = 0; sp < 4; ++sp)
+        {
+            for (i = 0; i < 3; ++i)
+            {
+                ar_color_val v;
+                ar_u32       back;
+                int          ch;
+
+                ar_color_unpack(c[i], SPACES[sp], &v);
+                back = ar_color_pack(&v);
+                for (ch = 0; ch < 3; ++ch)
+                {
+                    int a = (int)((back >> (16 - 8 * ch)) & 0xFFu);
+                    int b = (int)((c[i] >> (16 - 8 * ch)) & 0xFFu);
+                    int d = a > b ? a - b : b - a;
+
+                    if (d > worst)
+                    {
+                        worst = d;
+                    }
+                }
+            }
+        }
+        CHECK(worst <= 20, "color: a wide-gamut round trip stays inside its published bound");
+    }
+}
+
+static void test_color_mix_takes_the_short_way_round(void)
+{
+    /* Half and half in sRGB is the arithmetic mean, which is the one case
+       whose answer can be checked without a reference. */
+    {
+        ar_u32 m = ar_color_mix(0xFF000000u, 0xFFFFFFFFu, AR_CFIX / 2, AR_CS_SRGB, AR_HUE_SHORTER);
+        int    r = (int)((m >> 16) & 0xFFu);
+
+        CHECK(r >= 127 && r <= 128, "color-mix: black and white meet in the middle");
+    }
+
+    CHECK(ar_color_mix(0xFF112233u, 0xFFAABBCCu, AR_CFIX, AR_CS_SRGB, AR_HUE_SHORTER) ==
+              0xFF112233u,
+          "color-mix: a full share is the colour itself");
+    CHECK(ar_color_mix(0xFF112233u, 0xFFAABBCCu, 0, AR_CS_SRGB, AR_HUE_SHORTER) == 0xFFAABBCCu,
+          "color-mix: an empty share is the other colour");
+
+    /*
+     * Red and magenta are sixty degrees apart one way round and three hundred
+     * the other. The short arc runs through the pinks and the long one runs
+     * through green, which is the visible difference the hue methods exist for
+     * and the reason a hue cannot be averaged arithmetically.
+     */
+    {
+        ar_u32 shorter =
+            ar_color_mix(0xFFFF0000u, 0xFFFF00FFu, AR_CFIX / 2, AR_CS_OKLCH, AR_HUE_SHORTER);
+        ar_u32 longer =
+            ar_color_mix(0xFFFF0000u, 0xFFFF00FFu, AR_CFIX / 2, AR_CS_OKLCH, AR_HUE_LONGER);
+        int sg = (int)((shorter >> 8) & 0xFFu);
+        int lg = (int)((longer >> 8) & 0xFFu);
+
+        CHECK(sg < lg, "color-mix: the long arc passes through green and the short one does not");
+    }
+
+    /* Alpha interpolates with everything else rather than being carried from
+       whichever side happened to be first. */
+    {
+        ar_u32 m = ar_color_mix(0x00FF0000u, 0xFFFF0000u, AR_CFIX / 2, AR_CS_SRGB, AR_HUE_SHORTER);
+        int    a = (int)((m >> 24) & 0xFFu);
+
+        CHECK(a >= 127 && a <= 128, "color-mix: alpha mixes too");
+    }
 }
 
 static void test_css_specificity(void)
@@ -19697,6 +20098,15 @@ int main(void)
     test_css_relative_units_parse();
     test_css_absurd_numbers();
     test_css_colors();
+    test_css_color_notations();
+    test_css_wide_gamut_and_mixing();
+    test_css_color_refusals_cost_only_themselves();
+    test_an_unterminated_colour_eats_the_rest_and_says_so();
+    test_color_transfer_round_trips_every_byte();
+    test_color_named_table_is_sorted_and_complete();
+    test_color_hsl_hits_every_primary();
+    test_color_cube_root_and_the_spaces_that_need_it();
+    test_color_mix_takes_the_short_way_round();
     test_css_specificity();
     test_css_source_order_breaks_ties();
     test_css_pseudo_states();
