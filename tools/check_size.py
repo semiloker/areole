@@ -77,7 +77,26 @@ OBJECTS = [
 # rest of 0.9.3 and nothing after it. Four of the thirteen failures left are
 # `<selectedcontent>`, which is an element that mirrors another element's
 # content and will not be free.
-TOTAL_BUDGET = 150 * 1024
+#
+# **Raised to 160 KB at 0.10.0, and the growth is not in the parser.**
+#
+# ar_dom.c went 15,552 -> 20,036. Every byte of that is the document walk
+# learning what a control is: which elements are tab stops and what their
+# `tabindex` says, which states the markup starts a checkbox or a `<details>`
+# in, which `<input>` types activate and how, the synthetic classes the
+# user-agent sheet needs because there are no attribute selectors, and the
+# child boxes a checkbox and a gauge are built from.
+#
+# That is interaction work sitting in a file the HTML budget measures, which is
+# the awkward half of this: the file is the boundary between the document and
+# the box tree, so it is the right place for the work and the wrong place for
+# the accounting. Named here rather than moved, because moving it would mean
+# splitting ar_dom.c along a line that exists only to satisfy a budget.
+#
+# 160 KB against 156,024 measured, which is 4,360 of headroom -- the same
+# uncomfortable margin this budget has always been kept at, and 0.10.0 still
+# owes `<select>` and the text field rendering.
+TOTAL_BUDGET = 160 * 1024
 ENTITY_BUDGET = 30 * 1024
 ENTITY_OBJECT = "ar_html_entity.c"
 
@@ -136,6 +155,27 @@ CSS_OBJECTS = [
 ]
 CSS_BUDGET = 96 * 1024
 
+# The interaction subsystem, added at 0.10.0 -- and added for the reason the CSS
+# one was. ar_css.c sat outside every size gate until 0.4.2 noticed, so a CSS
+# release could have spent any amount and passed; ar_edit.c and ar_a11y.c would
+# have sat outside for exactly as long. A file nothing measures is a file that
+# can spend anything.
+#
+# 0.10.0's own document sets no size figure at all, which is its own small gap.
+#
+# 32 KB against 23,366 measured at the first commit -- ar_edit.c 13,408 and
+# ar_a11y.c 9,958. That is not the uncomfortable margin the other two budgets
+# keep, and deliberately: text editing is about a third built. Selection
+# painting, the clipboard and IME are all still to come, and a budget set to
+# today's figure would fire on the next commit and tell nobody anything. This
+# one is set where the finished subsystem should land, so that overrunning it
+# means something.
+INTERACTION_OBJECTS = [
+    "ar_edit.c",
+    "ar_a11y.c",
+]
+INTERACTION_BUDGET = 32 * 1024
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -180,6 +220,8 @@ def main():
 
     css_rows = [(n, measure(object_path(args.build, n))) for n in CSS_OBJECTS]
     css_total = sum(n for _, n in css_rows)
+    ix_rows = [(n, measure(object_path(args.build, n))) for n in INTERACTION_OBJECTS]
+    ix_total = sum(n for _, n in ix_rows)
 
     width = max(len(n) for n, _ in rows)
     for name, n in sorted(rows, key=lambda r: -r[1]):
@@ -197,6 +239,10 @@ def main():
         "  css    %8d of %d  (%+d)"
         % (css_total, CSS_BUDGET, CSS_BUDGET - css_total)
     )
+    print(
+        "  ix     %8d of %d  (%+d)"
+        % (ix_total, INTERACTION_BUDGET, INTERACTION_BUDGET - ix_total)
+    )
 
     if not args.check:
         return 0
@@ -211,8 +257,14 @@ def main():
     if css_total > CSS_BUDGET:
         print("\nFAIL: the CSS subsystem is %d bytes over its budget" % (css_total - CSS_BUDGET))
         bad = 1
+    if ix_total > INTERACTION_BUDGET:
+        print(
+            "\nFAIL: the interaction subsystem is %d bytes over its budget"
+            % (ix_total - INTERACTION_BUDGET)
+        )
+        bad = 1
     if not bad:
-        print("\nall three budgets met")
+        print("\nall four budgets met")
     return bad
 
 

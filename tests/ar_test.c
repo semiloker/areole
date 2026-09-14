@@ -19,6 +19,7 @@
 #include "ar_node.h"
 #include "ar_html.h"
 #include "ar_a11y.h"
+#include "ar_edit.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -18101,6 +18102,213 @@ static void test_a11y_states(void)
     CHECK((ar_a11y_state(0, 1) & AR_A11Y_FOCUSED) != 0, "a11y: and focus is a state too");
 }
 
+/*
+ * Text editing, which is the part that is always underestimated -- and is
+ * underestimated because every mistake in it is invisible in English.
+ *
+ * A caret that steps by codepoint works perfectly on "hello" and cuts a family
+ * emoji in half. A word selection built on `isspace` takes "don" out of
+ * "don't". Both look right in a test written in English, which is why the
+ * corpus below is not.
+ */
+static const char *const AR__CLUSTERS[] = {
+    "hello",
+    "a\xCC\x80",                                 /* a + combining grave      */
+    "e\xCC\x81\xCC\xA7",                         /* e + acute + cedilla      */
+    "\xF0\x9F\x91\x8D",                          /* thumbs up                */
+    "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD",          /* thumbs up + skin tone    */
+    "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7", /* woman ZWJ girl        */
+    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8",          /* flag: two regionals      */
+    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", /* two flags */
+    "\xEA\xB0\x80",                              /* precomposed Hangul       */
+    "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xAB",      /* Hangul L + V + T         */
+    "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D",          /* Hebrew, right to left    */
+    "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85",          /* Arabic                   */
+    "\xE3\x81\x93\xE3\x82\x93",                  /* Japanese                 */
+    "x\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBDy",        /* an emoji between letters */
+    "caf\xC3\xA9",
+    "a\xCC\x80\xCC\x81\xCC\x82\xCC\x83"          /* four marks on one letter */
+};
+
+#define AR__CLUSTER_N ((ar_i32)(sizeof AR__CLUSTERS / sizeof AR__CLUSTERS[0]))
+
+/*
+ * The acceptance criterion, swept rather than sampled: walk the caret across
+ * every string in both directions and assert that every stop is a cluster
+ * boundary, and that the walk terminates.
+ */
+static void test_the_caret_never_lands_inside_a_cluster(void)
+{
+    ar_i32 i;
+    int    bad = 0;
+    int    stuck = 0;
+    ar_i32 stops = 0;
+
+    for (i = 0; i < AR__CLUSTER_N; ++i)
+    {
+        ar_edit e;
+        ar_u16  at;
+        ar_i32  guard;
+
+        ar_edit_init(&e, AR__CLUSTERS[i]);
+
+        at = 0;
+        for (guard = 0; guard < 64 && at < e.len; ++guard)
+        {
+            ar_u16 next = ar_edit_next(&e, at);
+
+            if (next <= at)
+            {
+                stuck = 1;
+                break;
+            }
+            at = next;
+            ++stops;
+            if (!ar_edit_is_boundary(&e, at))
+            {
+                bad = 1;
+            }
+        }
+        if (at != e.len)
+        {
+            stuck = 1;
+        }
+
+        at = e.len;
+        for (guard = 0; guard < 64 && at > 0; ++guard)
+        {
+            ar_u16 prev = ar_edit_prev(&e, at);
+
+            if (prev >= at)
+            {
+                stuck = 1;
+                break;
+            }
+            at = prev;
+            ++stops;
+            if (!ar_edit_is_boundary(&e, at))
+            {
+                bad = 1;
+            }
+        }
+        if (at != 0)
+        {
+            stuck = 1;
+        }
+    }
+
+    CHECK(!stuck, "edit: the caret reaches both ends of every string in the corpus");
+    CHECK(!bad, "edit: and every stop it makes is a cluster boundary");
+    CHECK(stops > 60, "edit: and the sweep actually walked");
+}
+
+static void test_a_cluster_is_one_backspace(void)
+{
+    ar_edit e;
+
+    /* The case everybody has hit: one press, one character gone, however many
+       codepoints that character happens to be. */
+    ar_edit_init(&e, "a\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 1, "edit: one backspace takes a whole ZWJ sequence");
+
+    ar_edit_init(&e, "e\xCC\x81\xCC\xA7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 0, "edit: and a letter with two marks on it");
+
+    ar_edit_init(&e, "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 0, "edit: and a flag, which is two regional indicators");
+
+    /* And half a flag is a flag again, not a flag and a half: the parity of
+       the run is what decides, not the pair. */
+    ar_edit_init(&e, "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 8, "edit: two flags lose one flag");
+}
+
+static void test_words_are_not_split_on_spaces(void)
+{
+    ar_edit e;
+    ar_u16  lo, hi;
+
+    ar_edit_init(&e, "I don't think so");
+
+    /* The apostrophe joins, which `isspace` cannot see: a double click in
+       "don't" selects the word and not "don". */
+    ar_edit_word_at(&e, 4, &lo, &hi);
+    CHECK(lo == 2 && hi == 7, "edit: an apostrophe is inside the word");
+
+    ar_edit_word_at(&e, 0, &lo, &hi);
+    CHECK(lo == 0 && hi == 1, "edit: and a one letter word is a word");
+
+    /* A trailing apostrophe is not inside anything. */
+    ar_edit_init(&e, "boys' toys");
+    ar_edit_word_at(&e, 1, &lo, &hi);
+    CHECK(hi == 4, "edit: an apostrophe with nothing after it is not");
+}
+
+static void test_selection_has_a_direction(void)
+{
+    ar_edit e;
+    ar_u16  lo, hi;
+
+    ar_edit_init(&e, "abcdef");
+    e.caret = 3;
+    e.anchor = 3;
+
+    /* Shift-left then shift-right gives the text back, which needs to know
+       which end is moving -- a start and a length cannot. */
+    ar_edit_move(&e, -2, 1);
+    CHECK(ar_edit_selection(&e, &lo, &hi) && lo == 1 && hi == 3, "edit: shift-left selects back");
+    ar_edit_move(&e, 2, 1);
+    CHECK(!ar_edit_selection(&e, &lo, &hi), "edit: and shift-right gives it back");
+
+    /* A plain arrow with a selection collapses to the near end rather than
+       moving from the caret, which is what every editor does. */
+    ar_edit_init(&e, "abcdef");
+    ar_edit_select_all(&e);
+    ar_edit_move(&e, -1, 0);
+    CHECK(e.caret == 0 && e.anchor == 0, "edit: a left arrow collapses a selection to its start");
+}
+
+static void test_undo_coalesces_a_typing_run(void)
+{
+    ar_edit e;
+
+    ar_edit_init(&e, "");
+    ar_edit_insert(&e, "h", 1);
+    ar_edit_insert(&e, "e", 1);
+    ar_edit_insert(&e, "l", 1);
+    ar_edit_insert(&e, "l", 1);
+    ar_edit_insert(&e, "o", 1);
+    CHECK(e.len == 5, "edit: five characters typed");
+
+    /* One step, not five: a word typed is one thing that happened. */
+    CHECK(ar_edit_undo(&e), "edit: undo has something to do");
+    CHECK(e.len == 0, "edit: and a typing run is one step");
+    CHECK(ar_edit_redo(&e), "edit: redo has something to do");
+    CHECK(e.len == 5, "edit: and puts it back");
+
+    /* A deletion breaks the run, so typing after it is a separate step. */
+    ar_edit_backspace(&e);
+    ar_edit_insert(&e, "p", 1);
+    CHECK(e.len == 5, "edit: backspace then a character");
+    ar_edit_undo(&e);
+    CHECK(e.len == 4, "edit: undo takes the character and not the deletion");
+}
+
+static void test_insert_replaces_a_selection(void)
+{
+    ar_edit e;
+
+    ar_edit_init(&e, "hello world");
+    ar_edit_select_word(&e, 0);
+    ar_edit_insert(&e, "goodbye", 7);
+    CHECK(e.len == 13, "edit: typing over a selection replaces it");
+    CHECK(memcmp(e.text, "goodbye world", 13) == 0, "edit: with what was typed");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21642,6 +21850,12 @@ int main(void)
     test_a11y_roles();
     test_a11y_the_name_algorithm_is_an_order();
     test_a11y_states();
+    test_the_caret_never_lands_inside_a_cluster();
+    test_a_cluster_is_one_backspace();
+    test_words_are_not_split_on_spaces();
+    test_selection_has_a_direction();
+    test_undo_coalesces_a_typing_run();
+    test_insert_replaces_a_selection();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
