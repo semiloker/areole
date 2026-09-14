@@ -18,6 +18,7 @@
 #include "ar_supports_props.h"
 #include "ar_node.h"
 #include "ar_html.h"
+#include "ar_a11y.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17933,6 +17934,173 @@ static void test_inert_traps_the_focus(void)
     }
 }
 
+/*
+ * The accessibility tree.
+ *
+ * A role is a lookup and a name is an algorithm, and the name is where every
+ * real failure lives: "button button button" is what a screen reader says when
+ * an engine gets the order wrong, and it cannot be debugged from the outside,
+ * because the page looks right.
+ */
+static ar_i32 ar__doc_id(const char *id)
+{
+    ar_i32 i;
+
+    for (i = 0; i < g_doc.node_count; ++i)
+    {
+        if (g_doc.nodes[i].kind == AR_DOM_ELEMENT)
+        {
+            ar_span a = ar_a11y_attr(&g_doc, i, "id");
+
+            if (a.p && a.n == (ar_u32)strlen(id) && memcmp(a.p, id, a.n) == 0)
+            {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+static const char *ar__name_of(const char *id)
+{
+    static char buf[128];
+
+    buf[0] = 0;
+    ar_a11y_name(&g_doc, ar__doc_id(id), buf, sizeof buf);
+    return buf;
+}
+
+static int ar__name_is(const char *id, const char *want)
+{
+    const char *got = ar__name_of(id);
+
+    /* No trimming here on purpose: a name with whitespace on it is a bug in
+       ar_a11y_name and not something a test should paper over. */
+    return strcmp(got, want) == 0;
+}
+
+static void test_a11y_roles(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<button id=\"b\">go</button>"
+                    "<a id=\"link\" href=\"#\">here</a>"
+                    "<a id=\"anchor\">not a link</a>"
+                    "<input id=\"cb\" type=\"checkbox\">"
+                    "<input id=\"tx\" type=\"text\">"
+                    "<input id=\"plain\">"
+                    "<input id=\"hid\" type=\"hidden\">"
+                    "<h2 id=\"h\">title</h2>"
+                    "<div id=\"fake\" role=\"button\">looks like one</div>"
+                    "<div id=\"plainbox\">nothing</div>"
+                    "</body></html>",
+                    "");
+
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("b")) == AR_ROLE_BUTTON, "a11y: a button is a button");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("link")) == AR_ROLE_LINK, "a11y: an anchor with href");
+
+    /* Without an href it is markup, not a control. Announcing it as a link
+       sends somebody to press Enter on nothing. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("anchor")) == AR_ROLE_NONE,
+          "a11y: and without one it is not a link");
+
+    /*
+     * `<input>` is not one element, it is fourteen. A checkbox and a text
+     * field share a tag and share nothing else, and a table keyed on the tag
+     * alone would call both of them a textbox.
+     */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("cb")) == AR_ROLE_CHECKBOX, "a11y: a checkbox");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("tx")) == AR_ROLE_TEXTBOX, "a11y: a text field");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("plain")) == AR_ROLE_TEXTBOX,
+          "a11y: an input with no type is a text field");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("hid")) == AR_ROLE_NONE, "a11y: a hidden input is not");
+
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("h")) == AR_ROLE_HEADING, "a11y: a heading");
+
+    /* `role=` wins over the tag, which is the entire point of the attribute. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("fake")) == AR_ROLE_BUTTON,
+          "a11y: role= beats the tag it is written on");
+
+    /* And a plain div has none, deliberately: a reader that announces "group"
+       for every wrapper buries the three things that mattered. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("plainbox")) == AR_ROLE_NONE,
+          "a11y: a div is not announced at all");
+}
+
+static void test_a11y_the_name_algorithm_is_an_order(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<span id=\"other\">from elsewhere</span>"
+                    "<button id=\"all\" aria-labelledby=\"other\" aria-label=\"ignored\">text</button>"
+                    "<button id=\"lbl\" aria-label=\"spoken\">text</button>"
+                    "<label for=\"f1\">Your name</label><input id=\"f1\" type=\"text\">"
+                    "<label>Wrapped <input id=\"f2\" type=\"text\"></label>"
+                    "<button id=\"content\">Save file</button>"
+                    "<button id=\"rich\">Save <b>now</b></button>"
+                    "<input id=\"btn\" type=\"submit\" value=\"Send\">"
+                    "<input id=\"bare\" type=\"text\" value=\"typed text\">"
+                    "</body></html>",
+                    "");
+
+    /*
+     * The order is the algorithm. `aria-labelledby` names another element and
+     * outranks everything local, including an `aria-label` on the same
+     * element -- taking these two in the other order is how the label somebody
+     * added to fix a bad name gets ignored.
+     */
+    CHECK(ar__name_is("all", "from elsewhere"), "a11y: labelledby outranks label and content");
+    CHECK(ar__name_is("lbl", "spoken"), "a11y: aria-label outranks content");
+
+    /* Both spellings of `<label>`, and the wrapping one is the commoner. */
+    CHECK(ar__name_is("f1", "Your name"), "a11y: a label naming a field by for=");
+    CHECK(ar__name_is("f2", "Wrapped"), "a11y: and a label wrapping one");
+
+    CHECK(ar__name_is("content", "Save file"), "a11y: an element's own text names it");
+    CHECK(ar__name_is("rich", "Save now"), "a11y: across child elements, with a space between");
+
+    /* `value` names a push button. */
+    CHECK(ar__name_is("btn", "Send"), "a11y: value names a submit button");
+
+    /*
+     * And never a text field, where `value` is what the user typed. Announcing
+     * that as the field's name is how a form comes to have five fields all
+     * called by whatever was last entered into them.
+     */
+    CHECK(!ar__name_is("bare", "typed text"), "a11y: but never a text field's contents");
+}
+
+static void test_a11y_states(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"on\" type=\"checkbox\" checked>"
+                    "<input id=\"off\" type=\"checkbox\">"
+                    "<input id=\"no\" type=\"text\" disabled>"
+                    "<details id=\"d\" open><summary>s</summary><p>x</p></details>"
+                    "</body></html>",
+                    "");
+
+    CHECK(ar_a11y_state(ar__box_style(ar__first_tag_id("on"))->set.w[0] ? AR_STATE_CHECKED : 0, 0) ==
+              AR_A11Y_CHECKED,
+          "a11y: a checked box reports checked");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("on")].state, 0) & AR_A11Y_CHECKED) != 0,
+          "a11y: from the box state");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("off")].state, 0) & AR_A11Y_CHECKED) == 0,
+          "a11y: and an unchecked one does not");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("no")].state, 0) & AR_A11Y_DISABLED) != 0,
+          "a11y: a disabled control reports disabled");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("d")].state, 0) & AR_A11Y_EXPANDED) != 0,
+          "a11y: an open details reports expanded");
+    CHECK((ar_a11y_state(0, 1) & AR_A11Y_FOCUSED) != 0, "a11y: and focus is a state too");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21471,6 +21639,9 @@ int main(void)
     test_a_gauge_is_a_track_with_a_bar();
     test_a_positive_tabindex_sorts_first();
     test_inert_traps_the_focus();
+    test_a11y_roles();
+    test_a11y_the_name_algorithm_is_an_order();
+    test_a11y_states();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
