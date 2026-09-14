@@ -38,6 +38,29 @@
  */
 typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES_PER_BOX) ? 1 : -1];
 
+/*
+ * The slack the assertion above carries, and why it is not 1,024.
+ *
+ * It was, and that hid a real overflow twice: once at 0.9.6, when the media
+ * query pool turned out never to have been counted, and once here, when two
+ * arrays of 256 shorts went onto ar_ctx and the assertion still passed while
+ * thirteen tests failed.
+ *
+ * The second time the sum was right and the slack was wrong, and the reason is
+ * the slot table. It is `ar__round_pow2(boxes * 2)` entries -- twice the box
+ * count, rounded *up to a power of two* -- while AR_BYTES_PER_BOX budgets one
+ * slot per box. So between one and four slots per box are allocated against a
+ * budget for one, and the difference lands in whatever slack is left over. A
+ * fixed slack cannot cover a term that scales with the box count.
+ *
+ * Bisected: the assertion was satisfied at 227,960 and the tests needed
+ * 230,113, so 2,153 bytes were invisible to it. Raised to 8 KB, which covers
+ * the rounding at every box count a static AR_MEM buffer is likely to ask for,
+ * and the real fix is named in the roadmap rather than done here: the per-box
+ * budget should count the slots the way they are allocated.
+ */
+#define AR_MEM_SLACK 8192
+
 #define AR_MAX_RULES 256
 
 /* Distinct selector-and-state tuples in an interface, not boxes: a thousand
@@ -59,7 +82,7 @@ typedef char ar__mem_fixed_holds
           AR_TRACK_POOL * sizeof(ar_track) + AR_CALC_POOL * sizeof(ar_calc_op) +
           AR_VAR_POOL * sizeof(ar_var_decl) + AR_VARREF_POOL * sizeof(ar_var_ref) +
           AR_VAR_SCOPES * sizeof(ar_var_scope) + AR_VAR_ENTRIES * sizeof(ar_var_decl) +
-          AR_QUERY_POOL * sizeof(ar_mq) + AR_QUERY_TEXT + 1024 <=
+          AR_QUERY_POOL * sizeof(ar_mq) + AR_QUERY_TEXT + AR_MEM_SLACK <=
       AR_MEM_FIXED)
          ? 1
          : -1];
@@ -3593,13 +3616,43 @@ void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group)
     }
 }
 
-void ar_focusable(ar_ctx *c)
+/* Does a stop with index `a` come after one with index `b`? Zero means
+   document order and sorts last; positives sort among themselves ascending. */
+static int ar__tab_after(ar_i16 a, ar_i16 b)
 {
-    if (!c || c->node_count <= 0 || c->focusable_n >= AR_MAX_FOCUSABLES)
+    if (a == b)
+    {
+        return 0;
+    }
+    if (a == 0)
+    {
+        return b > 0;
+    }
+    if (b == 0)
+    {
+        return 0;
+    }
+    return a > b;
+}
+
+void ar_focusable(ar_ctx *c, ar_i32 tabindex)
+{
+    if (!c || c->node_count <= 0 || c->focusable_n >= AR_MAX_FOCUSABLES || tabindex < 0)
     {
         return;
     }
-    c->focusables[c->focusable_n++] = c->nodes[c->node_count - 1].key;
+
+    /*
+     * The index and not the key, because the inert test cannot be made here.
+     *
+     * `inert` is settled by a late pass, after the tree is complete -- a modal
+     * makes everything outside it inert and there is no modal until the tree
+     * has one. So this records where the box is and the filtering happens when
+     * the list is published, which is after that pass. Indices are valid for
+     * exactly one frame, which is exactly how long this list lives.
+     */
+    c->focus_order[c->focusable_n] = (ar_i16)(tabindex > 32767 ? 32767 : tabindex);
+    c->focusables[c->focusable_n++] = (ar_u32)(c->node_count - 1);
 }
 
 int ar_focus_next(ar_ctx *c, int backwards)
@@ -5480,10 +5533,58 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     {
         ar_i32 fk;
 
-        c->focusable_prev_n = c->focusable_n;
+        /*
+         * Index to key, dropping anything inert on the way.
+         *
+         * An inert subtree is not in the tab order, and that is the whole of
+         * focus trapping: not a mode with a stack of its own, but the ordinary
+         * traversal refusing to enter a subtree that has been switched off.
+         * The top layer has marked everything outside a modal since 0.6.3 and
+         * nothing had ever asked.
+         */
+        c->focusable_prev_n = 0;
         for (fk = 0; fk < c->focusable_n; ++fk)
         {
-            c->focusables_prev[fk] = c->focusables[fk];
+            ar_i32 idx = (ar_i32)c->focusables[fk];
+
+            if (idx < 0 || idx >= c->node_count)
+            {
+                continue;
+            }
+            if (c->nodes[idx].state & AR_STATE_INERT)
+            {
+                continue;
+            }
+            c->focusables_prev[c->focusable_prev_n] = c->nodes[idx].key;
+            c->focus_order_prev[c->focusable_prev_n] = c->focus_order[fk];
+            c->focusable_prev_n++;
+        }
+
+        /*
+         * Sorted by tabindex, stably, so that equal indices keep document
+         * order. An insertion sort because the list is short and almost always
+         * already in order -- every stop with tabindex 0, which is every stop
+         * on a page that has not tried to be clever.
+         *
+         * A positive tabindex ahead of every zero is a rule that makes pages
+         * worse and has to be honoured regardless: an author who numbers three
+         * fields and leaves the rest alone expects those three first, and an
+         * engine that ignores it tabs somewhere else entirely.
+         */
+        for (fk = 1; fk < c->focusable_prev_n; ++fk)
+        {
+            ar_u32 key = c->focusables_prev[fk];
+            ar_i16 ord = c->focus_order_prev[fk];
+            ar_i32 j = fk - 1;
+
+            while (j >= 0 && ar__tab_after(c->focus_order_prev[j], ord))
+            {
+                c->focusables_prev[j + 1] = c->focusables_prev[j];
+                c->focus_order_prev[j + 1] = c->focus_order_prev[j];
+                --j;
+            }
+            c->focusables_prev[j + 1] = key;
+            c->focus_order_prev[j + 1] = ord;
         }
     }
 

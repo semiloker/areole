@@ -17236,10 +17236,10 @@ static void ar__focus_frame(ar_surface *s)
     ar__ui_begin();
     ar_begin(g_ui, "#root");
     ar_begin(g_ui, "div#a");
-    ar_focusable(g_ui);
+    ar_focusable(g_ui, 0);
     ar_end(g_ui);
     ar_begin(g_ui, "div#b");
-    ar_focusable(g_ui);
+    ar_focusable(g_ui, 0);
     ar_begin(g_ui, "span#inner");
     ar_end(g_ui);
     ar_end(g_ui);
@@ -17351,7 +17351,7 @@ static void test_a_click_focuses_without_a_ring(void)
     ar_frame_begin(g_ui, &in);
     ar_begin(g_ui, "#root");
     ar_begin(g_ui, "div#a");
-    ar_focusable(g_ui);
+    ar_focusable(g_ui, 0);
     ar_end(g_ui);
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
@@ -17361,7 +17361,7 @@ static void test_a_click_focuses_without_a_ring(void)
     ar_frame_begin(g_ui, &in);
     ar_begin(g_ui, "#root");
     ar_begin(g_ui, "div#a");
-    ar_focusable(g_ui);
+    ar_focusable(g_ui, 0);
     ar_end(g_ui);
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
@@ -17838,6 +17838,99 @@ static void test_the_focus_ring_is_drawn_for_a_key_and_not_a_click(void)
     CHECK(ar_has_focus(g_ui), "outline: a click focuses the button");
     CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
           "outline: and draws no ring");
+}
+
+/*
+ * Gauges, tab order and focus trapping -- the rest of what a form needs before
+ * anyone can type into it.
+ */
+static void test_a_gauge_is_a_track_with_a_bar(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<progress id=\"p\" value=\"0.25\" max=\"1\"></progress>"
+                    "<meter id=\"m\" min=\"10\" max=\"20\" value=\"15\"></meter>"
+                    "<progress id=\"e\"></progress>"
+                    "</body></html>",
+                    "body { margin:0 } progress, meter { display:block; width:200px }");
+
+    /* A quarter of 200 is 50, and `value="0.25"` is the common way to write
+       it -- an integer parse would make it zero, which is a full bar reading
+       empty rather than an error anybody notices. */
+    CHECK(ar__box(ar__first_tag_id("p") + 1).w == 50, "gauge: a progress bar is its value");
+
+    /* A meter has a `min` and a progress bar does not: a meter measures a
+       range, a progress bar counts up from nothing. Half of 10..20 is 100px. */
+    CHECK(ar__box(ar__first_tag_id("m") + 1).w == 100, "gauge: a meter measures from its min");
+
+    /* Indeterminate reads as empty, which is written down rather than
+       pretended about: there is no animation here to say "waiting". */
+    CHECK(ar__box(ar__first_tag_id("e") + 1).w == 0, "gauge: one with no value reads empty");
+}
+
+static void test_a_positive_tabindex_sorts_first(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    const char *DOC = "<html><body>"
+                      "<a href=\"#\" id=\"one\">a</a>"
+                      "<a href=\"#\" id=\"two\">b</a>"
+                      "<div id=\"first\" tabindex=\"1\">x</div>"
+                      "</body></html>";
+
+    ar__render_html(&s, DOC, "");
+
+    /*
+     * The div is last in the document and first in the tab order, which is the
+     * rule nobody should rely on and every engine has to honour: an author who
+     * numbers one field and leaves the rest alone expects that one first.
+     */
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[0], "tabindex: tab takes the first stop");
+    CHECK(g_ui->focus_order_prev[0] == 1, "tabindex: and a positive index is that stop");
+    CHECK(g_ui->focus_order_prev[1] == 0, "tabindex: with the document-order ones behind it");
+}
+
+static void test_inert_traps_the_focus(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"off\"><a href=\"#\" id=\"out\">outside</a></div>"
+                    "<a href=\"#\" id=\"in\">inside</a>"
+                    "</body></html>",
+                    "#off { inert:auto }");
+
+    /*
+     * An inert subtree is not in the tab order, and that is the whole of focus
+     * trapping: not a mode with a stack of its own, but the ordinary traversal
+     * refusing to enter a subtree that has been switched off. The top layer has
+     * set this bit for everything outside a modal since 0.6.3 and nothing had
+     * ever asked about it.
+     *
+     * Driven here through the `inert` property rather than through a modal,
+     * because `<dialog open>` is *not* modal -- only `showModal()` is, and that
+     * needs script. Writing the test the other way is how one ends up asserting
+     * that a non-modal dialog traps focus, which no engine does.
+     */
+    CHECK(g_ui->focusable_prev_n >= 1, "inert: a link outside the inert subtree is a stop");
+    {
+        ar_i32 i;
+        ar_i32 outside = ar__first_tag_id("out");
+        int    found = 0;
+
+        for (i = 0; i < g_ui->focusable_prev_n; ++i)
+        {
+            if (outside >= 0 && g_ui->focusables_prev[i] == g_ui->nodes[outside].key)
+            {
+                found = 1;
+            }
+        }
+        CHECK(!found, "inert: and a link outside it is not");
+    }
 }
 
 static void test_current_color(void)
@@ -18324,8 +18417,22 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
     }
 
     CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
-    CHECK(sheet.count <= 200,
-          "ua: and it fits the 256 every caller gets, with fifty-odd rules to spare");
+    /*
+     * Raised from 200 to 220 at 0.10.0, which spent 203 of it on controls.
+     *
+     * The wall is AR_MAX_RULES at 256 and this is the warning before it. The
+     * warning is now doing what it is for: text fields, `<select>` and the
+     * accessibility work still to land in this release will take the rest, and
+     * the release after that has to move the wall.
+     *
+     * Which has been priced so that nobody has to guess. `ar_rule` is 624
+     * bytes, so the table is 159,744 of AR_MEM_FIXED already -- by a long way
+     * the largest thing in it -- and sixty-four more rules cost 39,936 bytes.
+     * That is not the four bytes the property mask cost; it is a real decision
+     * and should be made with the number in front of whoever makes it.
+     */
+    CHECK(sheet.count <= 220,
+          "ua: and it fits the 256 every caller gets, with headroom to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)
@@ -21361,6 +21468,9 @@ int main(void)
     test_the_mark_is_a_box_that_appears();
     test_an_outline_costs_no_layout();
     test_the_focus_ring_is_drawn_for_a_key_and_not_a_click();
+    test_a_gauge_is_a_track_with_a_bar();
+    test_a_positive_tabindex_sorts_first();
+    test_inert_traps_the_focus();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
