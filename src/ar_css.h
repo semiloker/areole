@@ -1229,6 +1229,27 @@ enum
     AR_STATE_FLEX_FROZEN = 1 << 13,
 
     /* The ones that cannot be answered until the parent has closed. */
+    /*
+     * The two halves of focus that are not `:focus` itself.
+     *
+     * `:focus-visible` is the one that matters to anyone using a keyboard. A
+     * mouse click focuses a control and must not draw a ring; a Tab focuses it
+     * and must. The difference is not a property of the box, it is a property
+     * of how the focus arrived, so it is carried here rather than derived --
+     * and getting it wrong is the reason so many pages ship `outline: none`.
+     *
+     * `:focus-within` matches a box that contains the focused one, which is
+     * what lets a form group highlight while any field inside it is active.
+     * It is the same ancestor-chain trick `:hover` already uses.
+     *
+     * These are bits 14 and 15, and there are no more: `state` is an ar_u16 and
+     * this fills it. The next state bit widens the field, on every box and in
+     * every rule -- ar_test asserts the width so the build says so rather than
+     * a bit quietly falling off the end.
+     */
+    AR_STATE_FOCUS_VISIBLE = 1 << 14,
+    AR_STATE_FOCUS_WITHIN = 1 << 15,
+
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
 

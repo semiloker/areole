@@ -17219,6 +17219,157 @@ static void test_border_shorthand_takes_a_deferred_colour(void)
           "border: and follows the dark scheme");
 }
 
+/*
+ * Focus, which until now did not exist.
+ *
+ * `AR_STATE_FOCUS` has been a selector state since 0.4.0 and nothing ever set
+ * it, so `:focus` matched no box in any stylesheet. Keyboard scrolling followed
+ * the mouse cursor instead, and ar_ctx.c said so in a comment: "There is no
+ * focus in areole, so the honest answer is the cursor."
+ *
+ * Everything in 0.10.0 stands on this. A control that cannot be reached by Tab
+ * cannot be operated without a mouse, and an accessibility tree with no notion
+ * of where the user is has nothing to say about it.
+ */
+static void ar__focus_frame(ar_surface *s)
+{
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div#b");
+    ar_focusable(g_ui);
+    ar_begin(g_ui, "span#inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div#plain"); /* no ar_focusable: not a tab stop */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_focus_moves_by_tab_and_wraps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:block; } div { height:20px; }");
+
+    /* One frame to publish the tab stops: the list Tab walks is a property of
+       the tree, and the first frame is where the tree first exists. */
+    ar__focus_frame(&s);
+    CHECK(!ar_has_focus(g_ui), "focus: a document starts with nothing focused");
+
+    CHECK(ar_focus_next(g_ui, 0) == 1, "focus: tab moves");
+    ar__focus_frame(&s);
+    CHECK(ar_has_focus(g_ui), "focus: and something is focused after it");
+    CHECK(ar_focus_is_visible(g_ui), "focus: focus put there by a key is visible");
+
+    /* Two stops were declared, so a third tab wraps to the first. */
+    ar_focus_next(g_ui, 0);
+    ar__focus_frame(&s);
+    {
+        ar_u32 second = g_ui->focus_key;
+
+        ar_focus_next(g_ui, 0);
+        ar__focus_frame(&s);
+        CHECK(g_ui->focus_key != second, "focus: a third tab moved again");
+
+        ar_focus_next(g_ui, 1);
+        ar__focus_frame(&s);
+        CHECK(g_ui->focus_key == second, "focus: shift-tab goes back the way it came");
+    }
+
+    ar_focus_clear(g_ui);
+    ar__focus_frame(&s);
+    CHECK(!ar_has_focus(g_ui), "focus: and it can be dropped");
+}
+
+static void test_focus_within_matches_the_ancestors(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:block; }"
+                 "div { height:20px; }"
+                 "#b:focus { width:11px; }"
+                 "#inner:focus-within { width:22px; }"
+                 "#b:focus-visible { height:33px; }");
+
+    ar__focus_frame(&s);
+    ar_focus_next(g_ui, 0); /* #a */
+    ar__focus_frame(&s);
+    ar_focus_next(g_ui, 0); /* #b */
+    ar__focus_frame(&s);
+
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 11,
+          "focus: :focus matches the focused box");
+
+    /*
+     * The inner span is a *descendant* of the focused box, so :focus-within on
+     * it must not match -- the chain runs from the focused box up to the root,
+     * not down. Getting this backwards is easy and gives a rule that matches
+     * the whole subtree, which looks right on a one-deep tree and wrong on
+     * anything real.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("inner"))->v[AR_P_WIDTH] != 22,
+          "focus: :focus-within does not match a descendant of the focused box");
+
+    /* Put there by a key, so the ring is drawn. */
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_HEIGHT] == 33,
+          "focus: :focus-visible matches when a key moved the focus");
+}
+
+static void test_a_click_focuses_without_a_ring(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; } div { height:20px; }");
+    ar__focus_frame(&s);
+
+    /*
+     * The distinction the whole pseudo-class exists for: a click focuses so
+     * that typing arrives, and draws no ring; a Tab focuses the same box and
+     * draws one. Pages ship `outline: none` because engines used to draw a
+     * ring for both.
+     */
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 5;
+    in.mouse_y = 5; /* inside #a */
+    in.mouse_inside = 1;
+
+    /*
+     * One frame to put the cursor somewhere, and only then the press.
+     *
+     * Which box is under the cursor is settled by the previous frame's layout,
+     * exactly as `:hover` is and for the same reason -- so the first frame the
+     * mouse appears in has no box under it yet. A click delivered on that
+     * frame lands on nothing. This is not a quirk of the test; it is the one
+     * frame of lag the hover machinery has always had, and focus inherits it
+     * by using the same chain.
+     */
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    in.mouse_pressed = AR_MOUSE_LEFT;
+    in.mouse_down = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_has_focus(g_ui), "focus: a click on a tab stop focuses it");
+    CHECK(!ar_focus_is_visible(g_ui), "focus: and the ring is not drawn for a click");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20269,6 +20420,9 @@ int main(void)
     test_css_relative_units_parse();
     test_css_absurd_numbers();
     test_css_colors();
+    test_focus_moves_by_tab_and_wraps();
+    test_focus_within_matches_the_ancestors();
+    test_a_click_focuses_without_a_ring();
     test_sheet_init_leaves_no_field_behind();
     test_css_color_notations();
     test_css_wide_gamut_and_mixing();
