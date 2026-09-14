@@ -744,7 +744,7 @@ unit through resolution and rounded once at the end, so the error is never more 
 and never accumulates -- but it is why `h6` kept its margin, and it is the same residual the table
 corpus and the gallery's text demos are down to.
 
-### 0.9.5, landed — the second release waiting on a quiet machine
+### 0.9.5, complete
 
 **This is the roadmap's 0.4.3**, and it ships under 0.9.5's number for the reason 0.4.1's content
 ships under 0.9.4's: a version may not move backwards.
@@ -755,6 +755,8 @@ ships under 0.9.4's: a version may not move backwards.
 | Demos | **18 new**, 18 of 18 gated; 176 in the gallery |
 | Checks | **1,634**, from 1,594 |
 | Binary | `ar_css.c.obj` **+6,736 bytes** of the 20 KB this release asked for |
+| Baseline | **2.20%** median spread, 19 of 52 scenes above 3% — the best in the repository |
+| Regressed | **`html_malformed` +10%**, named below rather than absorbed |
 
 **`calc()` did not fail. It answered.** That is why it was the first thing this release did:
 
@@ -850,6 +852,39 @@ because the root element is not inside the case box.
 **A corpus that isolates its cases cannot ask anything about the thing that encloses them.** The
 declarations moved to a wrapper class, and `:root` is covered in `ar_test` and in the `vars/*`
 demos, where the document is a whole document.
+
+### The gate fired, and the release it fired on had not touched the code
+
+`--gate` flagged two scenes against 0.9.4's baseline, and the first answer -- that a 52-scene pass
+is noisy -- was wrong. Both binaries, alternating, three passes each, which is the method the 0.8.2
+hunt had to invent for exactly this:
+
+| scene | 0.9.4 | 0.9.5 | |
+| --- | --- | --- | --- |
+| `html_malformed` | 148.5, 149.2 | 162.9, 164.6 | **+10.0%** |
+| `html_malformed_2x` | 293.7, 295.0 | 320.1, 322.5 | **+9.2%** |
+| `html_page`, the same document well formed | 201.8, 203.4 | 206.1, 208.2 | +2.3% |
+| `html_render`, parse and style and layout | 1406.1, 1416.9 | 1408.6, 1424.2 | +0.3% |
+
+0.9.4 repeats to a third of a per cent across passes. This is real.
+
+**And this release did not touch the HTML parser.** The whole of 0.4.3 is five files --
+`ar_css.c`, `ar_css.h`, `ar_ctx.c`, `ar_node.h` and `include/areole.h`. `ar_html_tree.c`,
+`ar_html_token.c` and `ar_dom.c` are byte for byte what 0.9.4 shipped. Malformed parsing got ten
+per cent slower without a line of it changing.
+
+What is left is second-order: `AR_MEM_FIXED` grew 16 KB for the five new pools, and every box grew
+eight bytes for a two-byte `var_scope` field that 8-alignment rounds up -- the field whose width
+was already the subject of one wrong guess this release. The malformed path re-walks the open
+element stack on every implied end tag, so it is the scene most exposed to a working set that
+moved. **That is the surviving hypothesis and not a demonstrated cause**, and the way to settle it
+is to pad `AR_MEM_FIXED` on the 0.9.4 binary and see whether the regression appears with no 0.4.3
+code present at all. That has not been done.
+
+It is written down here rather than absorbed into the baseline silently, because the baseline is
+what every later release is judged against: a number that goes in unremarked is a number that can
+never fire again. `html_render` at +0.3% is the reason it is recorded rather than treated as
+blocking -- a real page parses, styles and lays out, and pays none of this.
 
 ## Building
 
