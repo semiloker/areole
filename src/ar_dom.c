@@ -901,6 +901,19 @@ static ar_u8 ar__control_kind(const ar_doc *d, ar_i32 node)
         {
             return AR_CTL_BUTTON;
         }
+        if (type.p && (ar_span_is(type, "hidden") || ar_span_is(type, "file") ||
+                       ar_span_is(type, "range") || ar_span_is(type, "color")))
+        {
+            return AR_CTL_NONE;
+        }
+        /* Everything else an `<input>` can be is a text field: text, password,
+           search, email, url, tel, number. They differ in what they accept and
+           in nothing this subsystem does. */
+        return AR_CTL_TEXT;
+    }
+    if (ar_span_is(name, "textarea"))
+    {
+        return AR_CTL_TEXT;
     }
     return AR_CTL_NONE;
 }
@@ -988,6 +1001,15 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
             ar_control_next(c, kind, (kind == AR_CTL_RADIO && nm.p)
                                          ? ar_hash(nm.p, nm.n)
                                          : (ar_u32)node);
+            if (kind == AR_CTL_TEXT)
+            {
+                /* `value` is where a text field starts, and the buffer is
+                   where it goes after anybody types. The attribute is read
+                   once, when the field is first focused. */
+                ar_span v = ar__attr_of(d, node, "value");
+
+                ar_value_next(c, v.p, v.n);
+            }
         }
         ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
     }

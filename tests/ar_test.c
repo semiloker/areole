@@ -18309,6 +18309,119 @@ static void test_insert_replaces_a_selection(void)
     CHECK(memcmp(e.text, "goodbye world", 13) == 0, "edit: with what was typed");
 }
 
+/*
+ * Typing into a field, end to end: a key event to a character to a buffer.
+ *
+ * Text and keys stay two different inputs all the way through. The platform
+ * turns a key event into a character, because the key that produced `@` is
+ * Shift and 2 on one layout and AltGr and Q on another, and no table in this
+ * engine could tell them apart.
+ */
+static void ar__type(ar_surface *s, const char *text, ar_u32 keys)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.text = text;
+    in.text_len = text ? (ar_u32)strlen(text) : 0;
+    in.keys_pressed = keys;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static int ar__field_is(const char *want)
+{
+    ar_u32      n = 0;
+    const char *t = ar_field_text(g_ui, &n);
+
+    if (!t)
+    {
+        return want == 0;
+    }
+    return n == (ar_u32)strlen(want) && memcmp(t, want, n) == 0;
+}
+
+static void test_typing_reaches_the_focused_field(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\">"
+                    "<input id=\"b\" type=\"text\" value=\"start\">"
+                    "</body></html>",
+                    "body { margin:0 }");
+
+    /* Nothing focused: typing goes nowhere rather than into the first field. */
+    ar__type(&s, "x", 0);
+    CHECK(ar_field_text(g_ui, 0) == 0, "field: typing with no focus goes nowhere");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is(""), "field: tab reaches the first field, which is empty");
+
+    ar__type(&s, "hi", 0);
+    CHECK(ar__field_is("hi"), "field: and typing lands in it");
+
+    ar__type(&s, 0, AR_KEY_BACKSPACE);
+    CHECK(ar__field_is("h"), "field: backspace takes a character");
+
+    /*
+     * Tab to the next field, which starts from its markup. Its `value` is the
+     * starting point and the buffer is where it goes after anybody types --
+     * the same relationship `checked` has with a checkbox.
+     */
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("start"), "field: the next field starts from its value attribute");
+
+    ar__type(&s, "!", 0);
+    CHECK(ar__field_is("start!"), "field: and takes typing of its own");
+
+    /*
+     * Back to the first, which must still hold what was typed into it. Losing
+     * that is not a trade-off, it is a bug -- which is why the text lives in a
+     * pool even though the undo history does not.
+     */
+    ar_focus_next(g_ui, 1);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("h"), "field: going back finds what was typed there");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("start!"), "field: and forward again finds the other");
+}
+
+static void test_shift_extends_and_typing_replaces(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"text\" value=\"hello\"></body></html>",
+                    "body { margin:0 }");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("hello"), "field: starts from its value");
+
+    /* Shift-Left twice selects two clusters back; typing replaces them. */
+    ar__type(&s, 0, AR_KEY_LEFT | AR_KEY_SHIFT);
+    ar__type(&s, 0, AR_KEY_LEFT | AR_KEY_SHIFT);
+    ar__type(&s, "p", 0);
+    CHECK(ar__field_is("help"), "field: shift-left selects and typing replaces the selection");
+
+    /* Select all and replace. */
+    ar__type(&s, 0, AR_KEY_SELECT_ALL);
+    ar__type(&s, "x", 0);
+    CHECK(ar__field_is("x"), "field: select all then type replaces everything");
+
+    /* And undo puts back what select-all replaced. */
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is("help"), "field: undo restores it");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21856,6 +21969,8 @@ int main(void)
     test_selection_has_a_direction();
     test_undo_coalesces_a_typing_run();
     test_insert_replaces_a_selection();
+    test_typing_reaches_the_focused_field();
+    test_shift_extends_and_typing_replaces();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
