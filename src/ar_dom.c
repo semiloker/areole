@@ -641,6 +641,60 @@ static const char *ar__inline_style(const ar_doc *d, ar_i32 node, char *buf)
     return used > 0 ? buf : 0;
 }
 
+/*
+ * Whether this element is a tab stop.
+ *
+ * Two ways in, and the specification gives them in this order. `tabindex`
+ * decides outright when it is present -- a negative value means focusable by
+ * script and by click but never by Tab, which is the whole reason the
+ * attribute takes a number rather than a boolean. Otherwise the element type
+ * decides, and the list is short because it is the list of things that do
+ * something when you press them.
+ *
+ * `<a>` without `href` is not a link and not a tab stop, which is an old rule
+ * that still catches people: an anchor used as a scroll target is markup, not
+ * a control, and putting it in the tab order makes a page unusable by keyboard
+ * long before it makes it accessible.
+ *
+ * Order within the document, not within `tabindex`. A positive tabindex is
+ * supposed to sort ahead of everything else and it does not here yet -- said
+ * plainly rather than left to be discovered, because a page that relies on it
+ * will Tab in the wrong order rather than not at all.
+ */
+static int ar__focusable_element(const ar_doc *d, ar_i32 node)
+{
+    ar_span ti = ar__attr_of(d, node, "tabindex");
+    ar_span name = d->nodes[node].name;
+
+    if (ti.p && ti.n > 0)
+    {
+        /* A leading `-` is the only part that matters: -1 and -37 mean the
+           same thing, and anything else is a stop. */
+        return ti.p[0] != '-';
+    }
+
+    if (ar_span_is(name, "a") || ar_span_is(name, "area"))
+    {
+        ar_span href = ar__attr_of(d, node, "href");
+
+        return href.p != 0;
+    }
+    if (ar_span_is(name, "button") || ar_span_is(name, "select") ||
+        ar_span_is(name, "textarea") || ar_span_is(name, "summary"))
+    {
+        return 1;
+    }
+    if (ar_span_is(name, "input"))
+    {
+        /* Every input but the hidden one, which has no box at all and would be
+           a tab stop nobody can see. */
+        ar_span type = ar__attr_of(d, node, "type");
+
+        return !(type.p && ar_span_is(type, "hidden"));
+    }
+    return 0;
+}
+
 static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 {
     char   sel[AR_DOM_SEL];
@@ -685,6 +739,13 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         const char *h = ar__hints(d, node, hints);
 
         ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
+    }
+
+    /* After the box exists, because ar_focusable marks the box most recently
+       begun -- and before the children, so the tab order is document order. */
+    if (ar__focusable_element(d, node))
+    {
+        ar_focusable(c);
     }
     for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {

@@ -17370,6 +17370,75 @@ static void test_a_click_focuses_without_a_ring(void)
     CHECK(!ar_focus_is_visible(g_ui), "focus: and the ring is not drawn for a click");
 }
 
+/*
+ * Tab order in a parsed document, which is where focus actually has to work.
+ *
+ * The immediate-mode tests above drive ar_focusable by hand. A document does
+ * not: the element type decides, and the list of types is the list of things
+ * that do something when you press them.
+ */
+/* The same document again, on the same context -- ar__render_html builds a
+   fresh one every call, which is right for every other test and wrong for this
+   one: focus is the state that has to survive a frame. */
+static void ar__reframe(ar_surface *s)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_tab_order_in_a_document(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+    const char *DOC =
+        "<html><body>"
+        "<a name=\"top\">not a link</a>"
+        "<a href=\"#x\" id=\"link\">a link</a>"
+        "<p id=\"para\">ordinary text</p>"
+        "<button id=\"btn\">press</button>"
+        "<input id=\"box\" type=\"checkbox\">"
+        "<input id=\"gone\" type=\"hidden\">"
+        "<div id=\"tabbed\" tabindex=\"0\">reachable</div>"
+        "<div id=\"untabbed\" tabindex=\"-1\">clickable only</div>"
+        "</body></html>";
+    ar_i32 stops;
+
+    ar__render_html(&s, DOC, "");
+    stops = g_ui->focusable_prev_n;
+
+    /*
+     * Five: the link, the button, the checkbox, and the div with tabindex=0.
+     * Not the anchor without href -- an anchor used as a scroll target is
+     * markup rather than a control, and putting it in the tab order is how a
+     * page becomes unusable by keyboard while looking more accessible. Not the
+     * hidden input, which has no box to focus. Not tabindex=-1, which means
+     * reachable by click and never by Tab -- the whole reason the attribute
+     * takes a number instead of a boolean. Not the paragraph.
+     */
+    CHECK(stops == 4, "focus: a document's tab stops are the things you can press");
+
+    /* And the order is the document's. */
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[0], "focus: tab takes the first stop");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[1], "focus: and then the second");
+
+    /* Shift-Tab from the first wraps to the last rather than falling off. */
+    ar_focus_clear(g_ui);
+    ar_focus_next(g_ui, 1);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[stops - 1],
+          "focus: shift-tab from nothing takes the last stop");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20879,6 +20948,7 @@ int main(void)
     test_calc_round_mod_rem();
     test_system_colors_and_color_scheme();
     test_border_shorthand_takes_a_deferred_colour();
+    test_tab_order_in_a_document();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
