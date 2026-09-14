@@ -4703,6 +4703,10 @@ static ar_u32 ar__state_keyword(const char *name, ar_u32 len)
     {
         return AR_STATE_ENABLED;
     }
+    if (ar__same(name, len, "open"))
+    {
+        return AR_STATE_OPEN;
+    }
     if (ar__same(name, len, "root"))
     {
         return AR_STATE_ROOT;
@@ -4985,6 +4989,10 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "enabled"))
                 {
                     *state |= AR_STATE_ENABLED;
+                }
+                else if (ar__same(name, len, "open"))
+                {
+                    *state |= AR_STATE_OPEN;
                 }
                 else if (ar__same(name, len, "root"))
                 {

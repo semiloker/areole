@@ -742,6 +742,10 @@ static ar_u32 ar__markup_state(const ar_doc *d, ar_i32 node)
     {
         st |= AR_STATE_CHECKED;
     }
+    if (ar_span_is(name, "details") && ar__attr_of(d, node, "open").p)
+    {
+        st |= AR_STATE_OPEN;
+    }
     return st;
 }
 
@@ -764,6 +768,10 @@ static ar_u8 ar__control_kind(const ar_doc *d, ar_i32 node)
     if (ar_span_is(name, "summary"))
     {
         return AR_CTL_SUMMARY;
+    }
+    if (ar_span_is(name, "details"))
+    {
+        return AR_CTL_DETAILS;
     }
     if (ar_span_is(name, "input"))
     {
@@ -857,9 +865,30 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     {
         ar_focusable(c);
     }
-    for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
     {
-        ar__walk(c, d, child, pre);
+        /*
+         * A closed `<details>` shows its summary and nothing else.
+         *
+         * Done by not building the boxes rather than by hiding them, which is
+         * the difference between a collapsed section costing nothing and
+         * costing a styled, laid-out subtree that is then not painted. A
+         * document whose every section is collapsed is the case this is for.
+         *
+         * `display:none` in the user-agent sheet would be the other way, and
+         * it cannot reach here: whether it is open is a state this frame
+         * settles, and the sheet is parsed once.
+         */
+        int closed = ar_span_is(d->nodes[node].name, "details") && !ar_box_is_open(c);
+
+        for (child = d->nodes[node].first_child; child >= 0; child = d->nodes[child].next_sibling)
+        {
+            if (closed && !(d->nodes[child].kind == AR_DOM_ELEMENT &&
+                            ar_span_is(d->nodes[child].name, "summary")))
+            {
+                continue;
+            }
+            ar__walk(c, d, child, pre);
+        }
     }
     ar_end(c);
 }

@@ -17651,6 +17651,65 @@ static void test_space_activates_the_focused_control(void)
     CHECK(ar__is_checked("a"), "control: space activates what the keyboard is on");
 }
 
+/*
+ * `<details>` and `<summary>`, which is a control whose activation acts on a
+ * different box from the one that was pressed.
+ *
+ * The summary is what takes the click and the details is what opens, so the
+ * summary carries its parent's key -- filled in where the parent is known,
+ * which is the box walk and not the document walk.
+ */
+static void test_details_opens_and_closes(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<details id=\"d\">"
+                    "<summary id=\"s\">head</summary>"
+                    "<p id=\"body\">contents</p>"
+                    "</details>"
+                    "</body></html>",
+                    "body { margin:0 } details, summary, p { display:block; margin:0 }"
+                    "summary { height:20px }");
+
+    /* Closed: the summary is built and the contents are not. Not built rather
+       than not painted -- a document of collapsed sections should cost
+       nothing for the parts nobody has opened. */
+    CHECK(ar__first_tag_id("s") >= 0, "details: a closed one still shows its summary");
+    CHECK(ar__first_tag_id("body") < 0, "details: and builds no box for its contents");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") >= 0, "details: a click on the summary opens it");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") < 0, "details: and another click closes it");
+}
+
+static void test_details_open_attribute_is_a_starting_point(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<details id=\"d\" open>"
+                    "<summary id=\"s\">head</summary>"
+                    "<p id=\"body\">contents</p>"
+                    "</details>"
+                    "</body></html>",
+                    "body { margin:0 } details, summary, p { display:block; margin:0 }"
+                    "summary { height:20px }");
+
+    CHECK(ar__first_tag_id("body") >= 0, "details: an open attribute starts it open");
+
+    /* And it must be possible to close it and have it stay closed, which is
+       the same TOUCHED question the checkbox asks. */
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") < 0, "details: a click closes it");
+    ar__reframe(&s);
+    CHECK(ar__first_tag_id("body") < 0, "details: and it stays closed the frame after");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21166,6 +21225,8 @@ int main(void)
     test_a_checked_attribute_is_a_starting_point();
     test_radios_of_one_name_exclude_each_other();
     test_space_activates_the_focused_control();
+    test_details_opens_and_closes();
+    test_details_open_attribute_is_a_starting_point();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
