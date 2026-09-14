@@ -1250,6 +1250,32 @@ enum
     AR_STATE_FOCUS_VISIBLE = 1 << 14,
     AR_STATE_FOCUS_WITHIN = 1 << 15,
 
+    /*
+     * The seventeenth state bit, and the one that widened the word.
+     *
+     * The comment above said the next bit past fifteen would cost an ar_u16 on
+     * every box and in every rule. This is it, and the bill came to nothing
+     * measurable: `ar_node` was already eight-aligned with two bytes of padding
+     * where `state` sits, so AR_BYTES_PER_BOX did not move at all.
+     *
+     * `:checked` is a real pseudo-class rather than an attribute selector
+     * because the checked-ness of a control is not what the markup said. The
+     * `checked` attribute is the *default*; what a user has since clicked is
+     * the state, and `[checked]` matching the first is a mistake people make
+     * once.
+     */
+    AR_STATE_CHECKED = 1 << 16,
+
+    /*
+     * `:disabled`, and its opposite.
+     *
+     * Two bits and not one, because `:enabled` is not simply "not disabled":
+     * neither matches an element that cannot be disabled at all. A paragraph
+     * is not an enabled paragraph.
+     */
+    AR_STATE_DISABLED = 1 << 17,
+    AR_STATE_ENABLED = 1 << 18,
+
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
 
@@ -1321,7 +1347,7 @@ typedef struct ar_sel_simple
     ar_u32 tag;   /* hash, 0 means any */
     ar_u32 klass; /* hash, 0 means any -- one class, not a set */
     ar_u32 id;    /* hash, 0 means any */
-    ar_u16 state; /* required state bits, 0 means any */
+    ar_u32 state; /* required state bits, 0 means any */
 } ar_sel_simple;
 
 typedef struct ar_sel_part
@@ -1375,7 +1401,7 @@ typedef struct ar_rule
        so by here they are the same thing. */
     ar_sel_simple alt[AR_MAX_ALTS];
     ar_i32        nalt;
-    ar_u16        state; /* required state bits, 0 means any */
+    ar_u32        state; /* required state bits, 0 means any */
 
     ar_u16 specificity;
     ar_u16 order; /* source position, to break specificity ties */
@@ -1461,7 +1487,7 @@ typedef struct ar_rule
 typedef struct ar_cache_entry
 {
     ar_u32   tag, klass, id;
-    ar_u16   state;
+    ar_u32   state;
     ar_u8    used;
     ar_style style;
 } ar_cache_entry;
@@ -1877,7 +1903,7 @@ void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_
  * Returns how many were written, up to `cap`.
  */
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, ar_var_decl *out, ar_i32 cap);
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap);
 
 /* The reference at `index`, or 0 if there is none. */
 const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
@@ -1964,9 +1990,9 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 void ar_sheet_note_tables(ar_sheet *sheet);
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out);
+                               ar_u32 id, ar_u32 state, ar_style *out);
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u32 state,
                       ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may
@@ -1991,7 +2017,7 @@ int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klas
 /* Does one simple selector describe this element? Used for the contents of
    :not(), :is() and :where(), which are lists of these and nothing else. */
 int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                          ar_u16 state);
+                          ar_u32 state);
 
 /*
  * The contextual pass.
@@ -2027,10 +2053,10 @@ void ar_sheet_mark_ua(ar_sheet *sheet);
  * cached exactly as before.
  */
 void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, const ar_rule *hints, ar_style *out);
+                             ar_u32 state, const ar_rule *hints, ar_style *out);
 
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                              ar_u16 state, ar_style *out);
+                              ar_u32 state, ar_style *out);
 
 /*
  * Parse a declaration list -- `color:red; width:4px` -- into a selectorless
@@ -2044,7 +2070,7 @@ int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule);
 void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 const ar_classes *klass, ar_u32 id, ar_u32 state, ar_sel_walk find,
                                  void *ud, ar_style *out);
 
 #endif /* AR_CSS_H */

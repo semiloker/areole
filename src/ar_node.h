@@ -53,7 +53,10 @@ typedef struct ar_node
     ar_i32 child_count;
 
     ar_u32 key;   /* stable across frames, for state and hit testing */
-    ar_u16 state; /* hover, active, focus, and the structural pseudo-classes */
+    /* Thirty-two bits as of 0.10.0. It was sixteen and `:checked` was the
+       seventeenth state, which is the widening the comment beside
+       AR_STATE_FOCUS_WITHIN said the next bit would force. */
+    ar_u32 state; /* hover, active, focus, checked, and the structural ones */
 
     /*
      * Where the inline declarations start inside `hints`, or 0 for none.
@@ -231,6 +234,11 @@ typedef struct ar_node
  * That is what this table is for: one slot per box, keyed by a hash that is
  * stable as long as the tree shape is.
  * ------------------------------------------------------------------------ */
+/* Set state bits on the next box to be opened. Internal: the public API has
+   no notion of a state bit, and the states this carries are the ones the
+   markup decides rather than the ones input does. */
+void ar_state_next(ar_ctx *c, ar_u32 bits);
+
 typedef struct ar_slot
 {
     ar_u32  key;
@@ -477,6 +485,16 @@ struct ar_ctx
      * one -- a document with nothing focused is where every document starts,
      * and Tab is what leaves it.
      */
+    /*
+     * State bits the next box opened will carry, set and then cleared.
+     *
+     * It has to arrive *before* the box, not after: `ar__push_node` resolves
+     * the style against the state, so a bit added afterwards would match no
+     * rule and the box would be styled as though it were not checked. That is
+     * why this is a pending value rather than a setter on the box.
+     */
+    ar_u32 next_state;
+
     ar_u32 focus_key;
     /* Where it landed in this frame's tree, or -1. Recorded in ar_begin so
        the ancestor chain costs a walk up rather than a search over every

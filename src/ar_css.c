@@ -4663,7 +4663,7 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
 
 /* One state keyword, or zero if the name is not one. Shared by the compound
    parser and the functional pseudo-classes, which accept the same set. */
-static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
+static ar_u32 ar__state_keyword(const char *name, ar_u32 len)
 {
     if (ar__same(name, len, "hover"))
     {
@@ -4690,6 +4690,18 @@ static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
     if (ar__same(name, len, "focus-within"))
     {
         return AR_STATE_FOCUS_WITHIN;
+    }
+    if (ar__same(name, len, "checked"))
+    {
+        return AR_STATE_CHECKED;
+    }
+    if (ar__same(name, len, "disabled"))
+    {
+        return AR_STATE_DISABLED;
+    }
+    if (ar__same(name, len, "enabled"))
+    {
+        return AR_STATE_ENABLED;
     }
     if (ar__same(name, len, "root"))
     {
@@ -4769,7 +4781,7 @@ static int ar__parse_simple(ar__scan *z, ar_sel_simple *out, ar_u16 *spec)
             }
             else
             {
-                ar_u16 st = ar__state_keyword(name, len);
+                ar_u32 st = ar__state_keyword(name, len);
 
                 if (!st)
                 {
@@ -4864,7 +4876,7 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
    Returns zero if there was nothing to read, which is how the caller knows a
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
-                              ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
+                              ar_u32 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
                               ar_sel_simple *alt, ar_i32 *nalt, ar_u8 *backdrop)
 {
     int any = 0;
@@ -4961,6 +4973,18 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "focus-within"))
                 {
                     *state |= AR_STATE_FOCUS_WITHIN;
+                }
+                else if (ar__same(name, len, "checked"))
+                {
+                    *state |= AR_STATE_CHECKED;
+                }
+                else if (ar__same(name, len, "disabled"))
+                {
+                    *state |= AR_STATE_DISABLED;
+                }
+                else if (ar__same(name, len, "enabled"))
+                {
+                    *state |= AR_STATE_ENABLED;
                 }
                 else if (ar__same(name, len, "root"))
                 {
@@ -6953,7 +6977,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
 
 /* The tuple is four small integers, so a multiplicative mix over them is both
    cheaper and better distributed than hashing their bytes. */
-static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
+static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u32 state)
 {
     ar_u32 h = 2166136261u;
     h = (h ^ tag) * 16777619u;
@@ -6964,7 +6988,7 @@ static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
 }
 
 int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                          ar_u16 state)
+                          ar_u32 state)
 {
     if (p->tag && p->tag != tag)
     {
@@ -6994,7 +7018,7 @@ int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *
  * silent wrong answer rather than a loud one.
  */
 static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                                  ar_u16 state)
+                                  ar_u32 state)
 {
     ar_i32 i;
 
@@ -7037,7 +7061,7 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
  * is the one thing authors write `!important` to prevent.
  */
 static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out)
+                               ar_u32 id, ar_u32 state, ar_style *out)
 {
     ar_i32 i;
 
@@ -7237,7 +7261,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
 }
 
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, ar_var_decl *out, ar_i32 cap)
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap)
 {
     ar_i32 i, n = 0;
 
@@ -7318,7 +7342,7 @@ ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop,
+                                 ar_u32 id, ar_u32 state, ar_style *out, int want_backdrop,
                                  const ar_rule *hints)
 {
     ar_i32 i;
@@ -7433,13 +7457,13 @@ void ar_sheet_mark_ua(ar_sheet *sheet)
 }
 
 void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, const ar_rule *hints, ar_style *out)
+                             ar_u32 state, const ar_rule *hints, ar_style *out)
 {
     ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, hints);
 }
 
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                              ar_u16 state, ar_style *out)
+                              ar_u32 state, ar_style *out)
 {
     if (!sheet || !klass || !out)
     {
@@ -7576,7 +7600,7 @@ static int ar__ctx_matches(const ar_rule *r, ar_i32 index, ar_sel_walk find, voi
 }
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 const ar_classes *klass, ar_u32 id, ar_u32 state, ar_sel_walk find,
                                  void *ud, ar_style *out)
 {
     ar_i32 i;
@@ -7640,12 +7664,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 }
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out)
+                               ar_u32 id, ar_u32 state, ar_style *out)
 {
     ar__resolve_uncached(sheet, tag, klass, id, state, out, 1, 0);
 }
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u32 state,
                       ar_style *out)
 {
     ar_u32 slot, probe;

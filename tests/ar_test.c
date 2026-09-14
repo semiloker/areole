@@ -17439,6 +17439,63 @@ static void test_tab_order_in_a_document(void)
           "focus: shift-tab from nothing takes the last stop");
 }
 
+/*
+ * `:checked`, `:disabled` and `:enabled` from the markup.
+ *
+ * These are the first state bits past the sixteenth, and adding the first of
+ * them is what widened `state` from an ar_u16 to an ar_u32 on every box and in
+ * every rule -- which the comment beside AR_STATE_FOCUS_WITHIN had said the
+ * next bit would cost. It cost nothing measurable: ar_node was already
+ * eight-aligned with two bytes of padding exactly where `state` sits.
+ */
+static void test_control_states_from_markup(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"on\" type=\"checkbox\" checked>"
+                    "<input id=\"off\" type=\"checkbox\">"
+                    "<input id=\"no\" type=\"text\" disabled>"
+                    "<input id=\"yes\" type=\"text\">"
+                    "<p id=\"para\">not a control</p>"
+                    "<input id=\"liar\" type=\"checkbox\" checked=\"false\">"
+                    "</body></html>",
+                    "#on:checked { width:11px }"
+                    "#off:checked { width:22px }"
+                    "#no:disabled { width:33px }"
+                    "#yes:enabled { width:44px }"
+                    "#para:enabled { width:55px }"
+                    "#liar:checked { width:66px }");
+
+    CHECK(ar__box_style(ar__first_tag_id("on"))->v[AR_P_WIDTH] == 11,
+          "control: a checked attribute is :checked");
+    CHECK(ar__box_style(ar__first_tag_id("off"))->v[AR_P_WIDTH] != 22,
+          "control: and one without it is not");
+    CHECK(ar__box_style(ar__first_tag_id("no"))->v[AR_P_WIDTH] == 33,
+          "control: a disabled attribute is :disabled");
+    CHECK(ar__box_style(ar__first_tag_id("yes"))->v[AR_P_WIDTH] == 44,
+          "control: and one without it is :enabled");
+
+    /*
+     * `:enabled` is not the absence of `:disabled`. Neither matches something
+     * that cannot be disabled at all -- a paragraph is not an enabled
+     * paragraph -- which is why both bits come from one short list of elements
+     * rather than one bit and its negation.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("para"))->v[AR_P_WIDTH] != 55,
+          "control: a paragraph is neither enabled nor disabled");
+
+    /*
+     * `checked="false"` checks the box. It is a boolean attribute: present
+     * means true whatever the value says. Writing this check any other way is
+     * how an engine ends up disagreeing with every browser about one line of
+     * somebody's markup.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("liar"))->v[AR_P_WIDTH] == 66,
+          "control: a boolean attribute is true when present, whatever it says");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20949,6 +21006,7 @@ int main(void)
     test_system_colors_and_color_scheme();
     test_border_shorthand_takes_a_deferred_colour();
     test_tab_order_in_a_document();
+    test_control_states_from_markup();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
