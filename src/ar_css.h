@@ -331,6 +331,13 @@ typedef enum ar_prop
      * compile-time constant, which -Warray-bounds reports, where an in-range
      * index would have quietly returned a neighbouring property.
      */
+    /*
+     * `color-scheme`, which is not a colour but a choice between two sets of
+     * them. It inherits, so declaring it on `:root` settles the document, and
+     * it is narrow because the value is a pair of flags.
+     */
+    AR_P_COLOR_SCHEME,
+
     AR_P_NARROW_COUNT,
 
     AR_P_MAX_WIDTH = AR_P_NARROW_COUNT,
@@ -391,6 +398,18 @@ enum
 {
     AR_FONT_STYLE_NORMAL = 0,
     AR_FONT_STYLE_ITALIC = 1
+};
+
+/* `color-scheme`. Four values and not two, because `normal` and `light` are
+   different declarations that happen to render the same: `normal` means the
+   author said nothing about schemes, and `light` means they said light. The
+   difference matters to a UA stylesheet deciding whether it may switch. */
+enum
+{
+    AR_SCHEME_NORMAL = 0,
+    AR_SCHEME_LIGHT,
+    AR_SCHEME_DARK,
+    AR_SCHEME_LIGHT_DARK
 };
 
 #define AR_PSET_WORDS 3
@@ -528,6 +547,18 @@ typedef enum ar_unit
      * `inherit`, and the parser writes that instead -- exact, and free.
      */
     AR_UNIT_CURRENTCOLOR,
+
+    /*
+     * A system colour -- `Canvas`, `ButtonFace`, `Highlight` and the rest --
+     * carried as an index into the theme rather than as the colour itself.
+     *
+     * It cannot resolve at parse time for a reason the other notations do not
+     * have: the answer depends on the operating system's theme, which can
+     * change while the program is running. A user switching Windows to dark
+     * mode has to repaint in the new colours without the stylesheet being
+     * parsed again, and a value baked in at parse time could not.
+     */
+    AR_UNIT_SYSCOLOR,
 
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
@@ -1642,6 +1673,20 @@ typedef struct ar_sheet
        terms as has_grid and has_rel_units: a sheet with no `calc()` in it
        never runs the pass that evaluates one. */
     int has_calc;
+
+    /*
+     * Whether any rule holds a colour that cannot resolve until frame end --
+     * `currentColor` or a system colour.
+     *
+     * A flag rather than a scan, and it exists because the pass those two need
+     * is gated: a sheet with no viewport units, no calc() and no var() skips
+     * it entirely. 0.4.3 shipped a bug of exactly this shape and wrote it down
+     * -- "a pass gated on flags that did not include the feature" -- and 0.4.4
+     * then reproduced it, with system colours arriving in a stylesheet that
+     * had none of the three older reasons to run the pass. The gate is the
+     * thing to check first when a new deferred value does nothing at all.
+     */
+    int has_late_color;
     /* Whether any rule says `display: grid`, on the same terms as has_table:
        a sheet without one never runs the grid pass. */
     int has_grid;

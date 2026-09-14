@@ -406,6 +406,9 @@ int ar_prop_inherits(ar_i32 prop)
     switch (prop)
     {
     case AR_P_COLOR:
+    /* `color-scheme` inherits, which is what makes declaring it once on
+       `:root` settle a whole document -- the same reason `color` does. */
+    case AR_P_COLOR_SCHEME:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -435,9 +438,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,  AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,        AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,  AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS,  AR_P_CAPTION_SIDE,
+                                      AR_P_COLOR_SCHEME};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -737,6 +741,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border", AR_SH_BORDER},
                                           {"border-width", AR_P_BORDER_WIDTH},
                                           {"border-color", AR_P_BORDER_COLOR},
+                                          {"color-scheme", AR_P_COLOR_SCHEME},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"line-height", AR_P_LINE_HEIGHT},
@@ -868,6 +873,18 @@ typedef struct ar__kw
 } ar__kw;
 
 static const ar__kw AR_KEYWORDS[] = {
+    /*
+     * `color-scheme`. `light dark` is two idents and the value loop keeps the
+     * first, which gives `light` -- and that is the right answer today rather
+     * than an approximation of one, because `prefers-color-scheme` is pinned
+     * to light until the OS hook lands at 0.16.1. When it is wired, this is
+     * the declaration that starts following the desktop, and the pair needs
+     * storing then rather than now.
+     */
+    {"normal", AR_P_COLOR_SCHEME, AR_SCHEME_NORMAL},
+    {"light", AR_P_COLOR_SCHEME, AR_SCHEME_LIGHT},
+    {"dark", AR_P_COLOR_SCHEME, AR_SCHEME_DARK},
+
     {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
     {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
@@ -3841,6 +3858,10 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             out.unit = (ar_u8)(prop == AR_P_COLOR ? AR_UNIT_INHERIT : AR_UNIT_CURRENTCOLOR);
             out.v = 0;
             out.ok = 1;
+            if (out.unit == AR_UNIT_CURRENTCOLOR)
+            {
+                z->sheet->has_late_color = 1;
+            }
             return out;
         }
 
@@ -4020,6 +4041,27 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
          * the whole class of collision rather than the instances of it anyone
          * happened to think of.
          */
+        /*
+         * A system colour, before the named table and after the keywords.
+         *
+         * Before the names because the two sets do not overlap and asking the
+         * shorter question first is free; after the keywords for the same
+         * reason the names are. `Canvas` and `Mark` are ordinary words and a
+         * property that defines either as a keyword must keep it.
+         */
+        {
+            int sys = ar_sys_color_by_name(name, len);
+
+            if (sys >= 0)
+            {
+                out.v = sys;
+                out.unit = AR_UNIT_SYSCOLOR;
+                out.ok = 1;
+                z->sheet->has_late_color = 1;
+                return out;
+            }
+        }
+
         {
             ar_u32 c = 0;
 
@@ -5135,6 +5177,14 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->first_error_offset = 0;
     sheet->has_contextual = 0;
     sheet->has_late_state = 0;
+
+    /* These three were never reset here, which was harmless only by luck: a
+       stale `1` costs an unnecessary pass and a stale `0` costs a feature.
+       ar_sheet_init sets every other field by name, so the omission read as
+       deliberate rather than as missing. */
+    sheet->has_calc = 0;
+    sheet->has_view_units = 0;
+    sheet->has_late_color = 0;
     sheet->cache = 0;
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;

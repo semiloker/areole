@@ -17100,6 +17100,61 @@ static void test_calc_round_mod_rem(void)
  * which is why the resolution sits at the end of that pass rather than in the
  * cascade.
  */
+/*
+ * System colours and `color-scheme`.
+ *
+ * These are the two that make a control look native on Windows 98 and on
+ * Windows 11 from one stylesheet, and they are the only colour values in 0.4.4
+ * that cannot be a literal: the theme they name can change while the program
+ * is running, so a value baked in at parse time would be stale the moment
+ * somebody switched their desktop.
+ *
+ * What is *not* here is the desktop. `prefers-color-scheme` is pinned to light
+ * until the OS hook lands at 0.16.1, so `color-scheme: dark` is what selects
+ * the dark set today. The mechanism is whole and the wire to the window manager
+ * is the part that is missing -- the same shape 0.4.1 shipped `dvh`, `lvh` and
+ * `svh` in, where all three resolve alike on a desktop and the three-way
+ * machinery is there for the backend that will report three rectangles.
+ */
+static void test_system_colors_and_color_scheme(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\"></div>"
+                    "<div id=\"b\"></div>"
+                    "<div id=\"c\"><div id=\"d\"></div></div>"
+                    "<div id=\"e\"></div>"
+                    "</body></html>",
+                    "#a { background:Canvas; color:CanvasText; }"
+                    "#b { color-scheme:dark; background:Canvas; color:CanvasText; }"
+                    "#c { color-scheme:dark; }"
+                    "#d { background:ButtonFace; }"
+                    "#e { background:canvas; }");
+
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "syscolor: Canvas is white under the light scheme");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_COLOR) == 0xFF000000u,
+          "syscolor: CanvasText is black under the light scheme");
+
+    /* The same two names, the other scheme, and they must not merely invert:
+       the dark set is stated rather than derived, because inverting the light
+       one gives grey on grey. */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("b")), AR_P_BACKGROUND) == 0xFF121212u,
+          "syscolor: Canvas follows color-scheme: dark");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("b")), AR_P_COLOR) == 0xFFFFFFFFu,
+          "syscolor: and CanvasText with it");
+
+    /* color-scheme inherits, which is what makes one declaration on :root
+       settle a document. The child never mentions it. */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("d")), AR_P_BACKGROUND) == 0xFF6B6B6Bu,
+          "syscolor: color-scheme inherits to a child that never names it");
+
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("e")), AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "syscolor: a system colour folds case");
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -20603,6 +20658,7 @@ int main(void)
     test_a_table_does_not_inherit_its_font_in_quirks();
     test_ua_sheet_scales_with_the_root();
     test_calc_round_mod_rem();
+    test_system_colors_and_color_scheme();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
