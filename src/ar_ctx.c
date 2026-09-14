@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ar_node.h"
+#include "ar_color.h"
 
 #include <string.h>
 
@@ -10,6 +11,31 @@
    which means the promise has to be checked rather than remembered. If a
    structure grows past it the build stops here instead of running out of
    arena at some unlucky tree depth in front of a user. */
+/*
+ * The media query pool and its text buffer were missing from the assertion
+ * below from 0.4.2 until 0.4.4, and the slack hid it.
+ *
+ * ar_init carves them like everything else; the check simply did not name
+ * them, so the number it verified was about six kilobytes under the number
+ * that was used. Nothing failed while the slack covered the difference. What
+ * exposed it was colour adding a ninety-fourth property, which grew ar_style
+ * and therefore the style cache, and pushed the real total past a budget the
+ * assertion still called comfortable.
+ *
+ * It surfaced as seven failures in inline styles and presentational hints --
+ * and got stranger from there, because raising the budget by a kilobyte made
+ * it eight. A budget that is short does not fail monotonically: ar_init carves
+ * the pools in order and returns what it can, so a different size starves a
+ * different pool and breaks a different feature. Non-monotonic failures under
+ * a size change are the signature of this and not of the code that appears to
+ * be failing.
+ *
+ * This is precisely what the note below means about a block that is checked
+ * and a block that is used being two different numbers. It was written at
+ * 0.8.0 and it described a real hazard; the hazard then happened anyway,
+ * because the way to keep the two numbers equal is to add every new pool here
+ * on the commit that adds it, and a comment cannot enforce that.
+ */
 typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES_PER_BOX) ? 1 : -1];
 
 #define AR_MAX_RULES 256
@@ -32,7 +58,8 @@ typedef char ar__mem_fixed_holds
     [(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) + AR_STYLE_CACHE * sizeof(ar_cache_entry) +
           AR_TRACK_POOL * sizeof(ar_track) + AR_CALC_POOL * sizeof(ar_calc_op) +
           AR_VAR_POOL * sizeof(ar_var_decl) + AR_VARREF_POOL * sizeof(ar_var_ref) +
-          AR_VAR_SCOPES * sizeof(ar_var_scope) + AR_VAR_ENTRIES * sizeof(ar_var_decl) + 1024 <=
+          AR_VAR_SCOPES * sizeof(ar_var_scope) + AR_VAR_ENTRIES * sizeof(ar_var_decl) +
+          AR_QUERY_POOL * sizeof(ar_mq) + AR_QUERY_TEXT + 1024 <=
       AR_MEM_FIXED)
          ? 1
          : -1];
@@ -1757,6 +1784,58 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                                                ar__viewport_axis(view, k % AR_UNIT_VIEW_AXES,
                                                                  k / AR_UNIT_VIEW_AXES)));
                 st->unit[p] = AR_UNIT_PX;
+            }
+        }
+
+        /*
+         * `currentColor`, last on this box, because it copies `color` and
+         * `color` may itself have been a var() that the loop above only just
+         * substituted.
+         *
+         * Four properties by name rather than a scan of all hundred-odd. A
+         * second full property walk per box is exactly the shape of the ten
+         * per cent 0.9.5 put into malformed parsing without touching the
+         * parser, and this one would run on every box of every frame. The
+         * colour properties are a closed set; when a fifth arrives it goes in
+         * this list and nothing will remind anyone, which is why the list sits
+         * beside the comment on AR_WIDE that names the same five.
+         */
+        {
+            static const ar_prop COLOR_PROPS[5] = {AR_P_BACKGROUND, AR_P_BORDER_COLOR,
+                                                   AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
+                                                   AR_P_COLOR};
+            ar_i32               k;
+            ar_i32               cur;
+            int                  dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
+
+            /*
+             * A system colour resolves before currentColor reads `color`,
+             * because `color: CanvasText` is the commonest way either is
+             * written and currentColor would otherwise copy the index rather
+             * than the colour it stands for.
+             */
+            for (k = 0; k < 5; ++k)
+            {
+                ar_prop cp = COLOR_PROPS[k];
+
+                if (st->unit[cp] == AR_UNIT_SYSCOLOR)
+                {
+                    ar_style_put(st, cp, (ar_i32)ar_sys_color_default(ar_style_get(st, cp), dark));
+                    st->unit[cp] = AR_UNIT_COLOR;
+                }
+            }
+
+            cur = ar_style_get(st, AR_P_COLOR);
+
+            for (k = 0; k < 4; ++k)
+            {
+                ar_prop cp = COLOR_PROPS[k];
+
+                if (st->unit[cp] == AR_UNIT_CURRENTCOLOR)
+                {
+                    ar_style_put(st, cp, cur);
+                    st->unit[cp] = AR_UNIT_COLOR;
+                }
             }
         }
     }
@@ -4709,7 +4788,8 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
      * declares. Half the `var()` in the Wikipedia pages under
      * examples/15_real are exactly that, and they resolve to their fallback.
      */
-    if (c->sheet.has_view_units || c->sheet.has_calc || c->sheet.varref_count > 1)
+    if (c->sheet.has_view_units || c->sheet.has_calc || c->sheet.varref_count > 1 ||
+        c->sheet.has_late_color)
     {
         ar__resolve_view_units(c, viewport);
     }

@@ -331,6 +331,13 @@ typedef enum ar_prop
      * compile-time constant, which -Warray-bounds reports, where an in-range
      * index would have quietly returned a neighbouring property.
      */
+    /*
+     * `color-scheme`, which is not a colour but a choice between two sets of
+     * them. It inherits, so declaring it on `:root` settles the document, and
+     * it is narrow because the value is a pair of flags.
+     */
+    AR_P_COLOR_SCHEME,
+
     AR_P_NARROW_COUNT,
 
     AR_P_MAX_WIDTH = AR_P_NARROW_COUNT,
@@ -393,6 +400,33 @@ enum
     AR_FONT_STYLE_ITALIC = 1
 };
 
+/* `color-scheme`. Four values and not two, because `normal` and `light` are
+   different declarations that happen to render the same: `normal` means the
+   author said nothing about schemes, and `light` means they said light. The
+   difference matters to a UA stylesheet deciding whether it may switch. */
+enum
+{
+    AR_SCHEME_NORMAL = 0,
+    AR_SCHEME_LIGHT,
+    AR_SCHEME_DARK,
+    AR_SCHEME_LIGHT_DARK
+};
+
+/*
+ * Three words, ninety-six properties, and ninety-four of them are spent.
+ *
+ * The next release to need a ninety-seventh must make this four, and the price
+ * has been measured so that it does not have to be guessed at: ar_style goes
+ * 316 -> 320 bytes, the ceiling goes 96 -> 128, and three benchmark passes
+ * against the 0.9.6 baseline flagged one scene once, which is the noise floor
+ * rather than a cost. AR_BYTES_PER_BOX at 560 absorbs it without moving.
+ *
+ * It is left at three anyway. Capacity added before it is needed is capacity
+ * nobody has to justify, and the two remaining slots are the thing that made
+ * 0.4.4 defer `accent-color` to the release that can actually use it --
+ * which was the right call for reasons that had nothing to do with room.
+ * ar__prop_mask_fits below stops the build when the ninety-seventh arrives.
+ */
 #define AR_PSET_WORDS 3
 
 typedef struct ar_pset
@@ -514,6 +548,32 @@ typedef enum ar_unit
      * it is not knowable until there is a box.
      */
     AR_UNIT_VAR,
+
+    /*
+     * `currentColor`, which is the value of `color` on the same box.
+     *
+     * A unit rather than a value, for the reason `inherit` is one: it says
+     * where the colour comes from and not what it is. It cannot resolve at
+     * parse time because `color` is not known then, and it cannot resolve
+     * during the cascade either, because `color` may itself be a `var()` that
+     * only settles at frame end.
+     *
+     * It never appears on `color` itself. CSS says currentColor there means
+     * `inherit`, and the parser writes that instead -- exact, and free.
+     */
+    AR_UNIT_CURRENTCOLOR,
+
+    /*
+     * A system colour -- `Canvas`, `ButtonFace`, `Highlight` and the rest --
+     * carried as an index into the theme rather than as the colour itself.
+     *
+     * It cannot resolve at parse time for a reason the other notations do not
+     * have: the answer depends on the operating system's theme, which can
+     * change while the program is running. A user switching Windows to dark
+     * mode has to repaint in the new colours without the stylesheet being
+     * parsed again, and a value baked in at parse time could not.
+     */
+    AR_UNIT_SYSCOLOR,
 
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
@@ -1430,7 +1490,23 @@ typedef struct ar_track
 typedef struct ar_var_decl
 {
     ar_u32 name; /* hash of the name, `--` and all */
-    ar_i16 v;
+
+    /*
+     * Thirty-two bits, and it was sixteen until 0.4.4 asked it to hold a
+     * colour.
+     *
+     * A length fits a signed sixteen-bit slot and every value in `ar_style`
+     * narrow enough to live in v[] does too, so this matched the rest of the
+     * engine and was wrong for one reason: a colour is 0xAARRGGBB and does not
+     * narrow. `--brand: #c02040` stored 0x2040, which is not a broken value
+     * but a different colour with no alpha -- transparent, and therefore
+     * invisible rather than wrong-looking.
+     *
+     * It shipped that way in 0.4.3 and was found by 0.4.4's currentColor test,
+     * which copied the truncated value faithfully and failed for what looked
+     * like an ordering bug in a different file.
+     */
+    ar_i32 v;
     ar_u8  unit;
     ar_u8  ok; /* clear when the text was not a single value */
 } ar_var_decl;
@@ -1441,7 +1517,11 @@ typedef struct ar_var_decl
 typedef struct ar_var_ref
 {
     ar_u32 name;
-    ar_i16 fallback_v;
+
+    /* Widened with ar_var_decl's, and for the same reason: `var(--brand,
+       #c02040)` is the commonest shape a fallback takes on a real page, and a
+       sixteen-bit fallback loses exactly what the declaration lost. */
+    ar_i32 fallback_v;
     ar_u8  fallback_unit;
     ar_u8  has_fallback;
 } ar_var_ref;
@@ -1608,6 +1688,20 @@ typedef struct ar_sheet
        terms as has_grid and has_rel_units: a sheet with no `calc()` in it
        never runs the pass that evaluates one. */
     int has_calc;
+
+    /*
+     * Whether any rule holds a colour that cannot resolve until frame end --
+     * `currentColor` or a system colour.
+     *
+     * A flag rather than a scan, and it exists because the pass those two need
+     * is gated: a sheet with no viewport units, no calc() and no var() skips
+     * it entirely. 0.4.3 shipped a bug of exactly this shape and wrote it down
+     * -- "a pass gated on flags that did not include the feature" -- and 0.4.4
+     * then reproduced it, with system colours arriving in a stylesheet that
+     * had none of the three older reasons to run the pass. The gate is the
+     * thing to check first when a new deferred value does nothing at all.
+     */
+    int has_late_color;
     /* Whether any rule says `display: grid`, on the same terms as has_table:
        a sheet without one never runs the grid pass. */
     int has_grid;

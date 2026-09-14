@@ -17,7 +17,7 @@ extern "C" {
 
 #define AR_VERSION_MAJOR 0
 #define AR_VERSION_MINOR 9
-#define AR_VERSION_PATCH 5
+#define AR_VERSION_PATCH 6
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.9.5"
+#define AR_VERSION_STRING "0.9.6"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -521,11 +521,25 @@ typedef ar_i32 ar_scroll_pos;
  *
  * The assertion in ar_ctx.c is what refused the first three attempts at this,
  * on the build rather than in review.
+ *
+ * 552 -> 560 at 0.4.4, and this one is not a field at all -- it is one more
+ * property.
+ *
+ * `color-scheme` is the ninety-fourth, and a property costs two bytes in
+ * ar_style's narrow array and one in its unit array whether or not any box
+ * ever sets it. Three bytes, rounded to eight by the same alignment that made
+ * 0.4.3's sixteen-bit field cost eight. Colour's own notations cost nothing
+ * here: they resolve to the 0xAARRGGBB the engine already had room for.
+ *
+ * Worth knowing before the next release adds one: 94 of the 96 the property
+ * set can hold. The ninety-seventh forces AR_PSET_WORDS to four, which is four
+ * more bytes on every style rather than on every box, and ar__prop_mask_fits
+ * will say so on the build.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 544u
-#else
 #define AR_BYTES_PER_BOX 552u
+#else
+#define AR_BYTES_PER_BOX 560u
 #endif
 
 /*
@@ -577,8 +591,49 @@ typedef ar_i32 ar_scroll_pos;
  * Four kilobytes of headroom, which is the same uncomfortable margin the CSS
  * size budget is kept at and for the same reason: the next release that needs
  * more has to say so here.
+ *
+ * 208 KB -> 216 KB at 0.4.4. Four of the eight are a bug fix, two are one more
+ * property, and two are a pool the check had never counted.
+ *
+ *     custom properties 256 x 4    1,024
+ *     var() references  256 x 4    1,024
+ *     scope entries     512 x 4    2,048
+ *
+ * Three pools and not two, which is the part that was got wrong first. The
+ * scope entries are ar_var_decl as well -- one per declaration a box makes --
+ * so widening the struct widens the largest of the three, and a bump of two
+ * kilobytes left the arena two short. Nothing said so: the pools are carved in
+ * order and the allocations that failed were the ones at the end, so it
+ * surfaced as thirteen unrelated failures in inline styles and presentational
+ * hints rather than as anything about a colour.
+ *
+ * Both pools carried their value in a signed sixteen-bit slot, which fits
+ * every length in the engine and does not fit a colour. `--brand: #c02040`
+ * stored 0x2040: not a broken value, a different colour with no alpha, and
+ * therefore invisible rather than visibly wrong. It shipped that way in 0.4.3.
+ *
+ * Widening them is the whole of the cost -- colour itself needed no memory at
+ * all, because every notation resolves to the eight bits per channel the
+ * engine already had room for.
+ *
+ * The other four kilobytes:
+ *
+ *     style cache       64 x 8     512   the 94th property, color-scheme
+ *     media query pool  64 x N   ~4,100  never counted until now
+ *
+ * The query pool is the interesting one. ar_init has carved it since 0.4.2 and
+ * the assertion in ar_ctx.c did not name it, so the number being checked was
+ * about six kilobytes under the number being used. The slack covered the
+ * difference for four releases and then stopped, and what surfaced was seven
+ * failures in inline styles and presentational hints -- nothing about colour,
+ * nothing about memory. Raising the budget by one kilobyte made it eight,
+ * which is the tell: a short arena starves whichever pool is carved when it
+ * runs out, so the symptom moves with the size instead of easing.
+ *
+ * The assertion now names it. Measured: 217,601 of 221,184, which keeps the
+ * same uncomfortable four kilobytes 0.4.3 left and for the same reason.
  */
-#define AR_MEM_FIXED  212992u
+#define AR_MEM_FIXED  221184u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
