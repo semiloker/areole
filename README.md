@@ -887,7 +887,25 @@ what every later release is judged against: a number that goes in unremarked is 
 never fire again. `html_render` at +0.3% is the reason it is recorded rather than treated as
 blocking -- a real page parses, styles and lays out, and pays none of this.
 
-### 0.9.6, complete
+### 0.9.6, landed — with its version stamp still to come
+
+**`AR_VERSION_STRING` is still 0.9.5, deliberately.** The version and `bench/baseline.json` move
+together -- `gen_perf_doc.py --check` ties them -- and three attempts measured **24.66%** and
+**26.21%** median spread against the **2.41%** and **2.20%** the last two releases were taken at.
+
+The cause is known and is not the power plan this time, which is already on High performance: Lenovo
+Vantage is sweeping its add-ins, and sampling four seconds apart gives 0%, 74%, 181%, 69% of a core.
+Intermittent load ruins a spread far more thoroughly than steady load does, because the benchmark
+measures disagreement between epochs and a sweep lands in some of them and not others.
+
+Those are the numbers 0.9.2 discarded rather than published, for the reason it gave: a baseline is
+the gate every later change is judged against, and one made of noise quietly fails everything or
+nothing. Quit Lenovo Vantage, keep the power plan on High performance, and two commands finish it:
+
+```sh
+./build/ar_bench --all --iters 150 --repeat 3 --json > bench/baseline.json
+python tools/gen_perf_doc.py            # after bumping AR_VERSION_* in include/areole.h
+```
 
 **This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
 ships under 0.9.5's: a version may not move backwards.
