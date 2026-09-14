@@ -577,8 +577,32 @@ typedef ar_i32 ar_scroll_pos;
  * Four kilobytes of headroom, which is the same uncomfortable margin the CSS
  * size budget is kept at and for the same reason: the next release that needs
  * more has to say so here.
+ *
+ * 208 KB -> 212 KB at 0.4.4, and the four kilobytes are a bug fix rather than
+ * a feature.
+ *
+ *     custom properties 256 x 4    1,024
+ *     var() references  256 x 4    1,024
+ *     scope entries     512 x 4    2,048
+ *
+ * Three pools and not two, which is the part that was got wrong first. The
+ * scope entries are ar_var_decl as well -- one per declaration a box makes --
+ * so widening the struct widens the largest of the three, and a bump of two
+ * kilobytes left the arena two short. Nothing said so: the pools are carved in
+ * order and the allocations that failed were the ones at the end, so it
+ * surfaced as thirteen unrelated failures in inline styles and presentational
+ * hints rather than as anything about a colour.
+ *
+ * Both pools carried their value in a signed sixteen-bit slot, which fits
+ * every length in the engine and does not fit a colour. `--brand: #c02040`
+ * stored 0x2040: not a broken value, a different colour with no alpha, and
+ * therefore invisible rather than visibly wrong. It shipped that way in 0.4.3.
+ *
+ * Widening them is the whole of the cost -- colour itself needed no memory at
+ * all, because every notation resolves to the eight bits per channel the
+ * engine already had room for. Measured: 213,064 of 217,088.
  */
-#define AR_MEM_FIXED  212992u
+#define AR_MEM_FIXED  217088u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property

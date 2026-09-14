@@ -1759,6 +1759,37 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                 st->unit[p] = AR_UNIT_PX;
             }
         }
+
+        /*
+         * `currentColor`, last on this box, because it copies `color` and
+         * `color` may itself have been a var() that the loop above only just
+         * substituted.
+         *
+         * Four properties by name rather than a scan of all hundred-odd. A
+         * second full property walk per box is exactly the shape of the ten
+         * per cent 0.9.5 put into malformed parsing without touching the
+         * parser, and this one would run on every box of every frame. The
+         * colour properties are a closed set; when a fifth arrives it goes in
+         * this list and nothing will remind anyone, which is why the list sits
+         * beside the comment on AR_WIDE that names the same five.
+         */
+        {
+            static const ar_prop COLOR_PROPS[4] = {AR_P_BACKGROUND, AR_P_BORDER_COLOR,
+                                                   AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK};
+            ar_i32               k;
+            ar_i32               cur = ar_style_get(st, AR_P_COLOR);
+
+            for (k = 0; k < 4; ++k)
+            {
+                ar_prop cp = COLOR_PROPS[k];
+
+                if (st->unit[cp] == AR_UNIT_CURRENTCOLOR)
+                {
+                    ar_style_put(st, cp, cur);
+                    st->unit[cp] = AR_UNIT_COLOR;
+                }
+            }
+        }
     }
 }
 
