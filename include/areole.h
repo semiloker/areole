@@ -553,15 +553,20 @@ typedef ar_i32 ar_scroll_pos;
  * 0.4.3's sixteen-bit field cost eight. Colour's own notations cost nothing
  * here: they resolve to the 0xAARRGGBB the engine already had room for.
  *
- * Worth knowing before the next release adds one: 94 of the 96 the property
- * set can hold. The ninety-seventh forces AR_PSET_WORDS to four, which is four
- * more bytes on every style rather than on every box, and ar__prop_mask_fits
- * will say so on the build.
+ * 560 -> 568 at 0.10.0, for `outline-width` and `outline-color` and the
+ * fourth word of the property mask that the second of them forced. The three
+ * together are ten bytes and alignment rounds them to sixteen; the assertion
+ * in ar_ctx.c refused 560 on the build, which is what it is there for.
+ *
+ * The ceiling is 96 of 128 now, not 94 of 96. The note that said the
+ * ninety-seventh property would force AR_PSET_WORDS to four was right, and
+ * this is the release that paid it -- priced at 0.9.6 before it was needed,
+ * which is the point of pricing things.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 552u
+#define AR_BYTES_PER_BOX 568u
 #else
-#define AR_BYTES_PER_BOX 560u
+#define AR_BYTES_PER_BOX 568u
 #endif
 
 /*
@@ -667,8 +672,12 @@ typedef ar_i32 ar_scroll_pos;
  * byte. A document with more than 256 controls is a document nobody fills in.
  *
  * Measured: 221,304 of 225,280.
+ *
+ * 220 KB -> 224 KB, still at 0.10.0, for `outline`. Two properties and a
+ * fourth word of the property mask grow ar_style, and the style cache holds
+ * sixty-four of those. Measured: 226,936 of 229,376.
  */
-#define AR_MEM_FIXED  225280u
+#define AR_MEM_FIXED  229376u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
