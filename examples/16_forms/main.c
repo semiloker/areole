@@ -198,6 +198,77 @@ static void dump(ar_ctx *c)
     }
 
     printf("\n  %d tab stops\n", (int)ar_tab_stops(c));
+
+    /*
+     * And the boxes, because a tree that reads correctly can still draw
+     * nothing -- which is what a picture showed and what no test did.
+     */
+    printf("\n  boxes (%d):\n", (int)ar_node_count(c));
+    for (i = 0; i < ar_node_count(c) && i < 70; ++i)
+    {
+        ar_rect r = ar_node_rect(c, i);
+
+        printf("    %-3d parent %-3d  %4d,%-4d %4dx%-4d\n", (int)i, (int)ar_node_parent(c, i),
+               (int)r.x, (int)r.y, (int)r.w, (int)r.h);
+    }
+}
+
+/*
+ * The form, rendered to a file, so it can be looked at.
+ *
+ * Every other check in this file is about behaviour -- what the focus does,
+ * what the buffer holds, what a reader would be told. None of them can see
+ * whether the checkbox has a mark in it or whether the text sits inside the
+ * field, and "the tests pass" is not an answer to "does it look right".
+ */
+static void ppm(ar_ctx *c, const char *path)
+{
+    FILE         *out;
+    ar_surface    surf;
+    ar_input      in;
+    static ar_u32 pixels[WIN_W * WIN_H];
+    ar_i32        i;
+
+    memset(&surf, 0, sizeof surf);
+    surf.pixels = pixels;
+    surf.w = WIN_W;
+    surf.h = WIN_H;
+    surf.stride = WIN_W;
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    /* Two frames, then a Tab, then two more: the first settles the tree, and
+       the Tab is there so the focus ring is in the picture -- a screenshot of
+       an untouched form cannot show the thing this release is about. */
+    frame(c, &in, &surf);
+    frame(c, &in, &surf);
+    in.keys_pressed = AR_KEY_TAB;
+    frame(c, &in, &surf);
+    in.keys_pressed = 0;
+    frame(c, &in, &surf);
+
+    /* "wb", and on this platform it decides whether the image is an image:
+       stdout in text mode turns every 0x0A inside a pixel into 0x0D 0x0A and
+       everything after walks one byte sideways -- which looks like rotated
+       colour channels rather than a corrupted file. */
+    out = fopen(path, "wb");
+    if (!out)
+    {
+        printf("cannot write %s\n", path);
+        return;
+    }
+    fprintf(out, "P6\n%d %d\n255\n", WIN_W, WIN_H);
+    for (i = 0; i < WIN_W * WIN_H; ++i)
+    {
+        ar_u32 px = pixels[i];
+
+        fputc((int)((px >> 16) & 0xFFu), out);
+        fputc((int)((px >> 8) & 0xFFu), out);
+        fputc((int)(px & 0xFFu), out);
+    }
+    fclose(out);
+    printf("wrote %s\n", path);
 }
 
 /*
@@ -296,7 +367,8 @@ static int selftest(ar_ctx *c, ar_surface *s)
 int main(int argc, char **argv)
 {
     ar_ctx *c;
-    int     want_dump = 0, want_selftest = 0, i;
+    int         want_dump = 0, want_selftest = 0, i;
+    const char *ppm_path = 0;
 
     for (i = 1; i < argc; ++i)
     {
@@ -307,6 +379,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--selftest") == 0)
         {
             want_selftest = 1;
+        }
+        else if (strcmp(argv[i], "--ppm") == 0 && i + 1 < argc)
+        {
+            ppm_path = argv[++i];
         }
     }
 
@@ -342,6 +418,12 @@ int main(int argc, char **argv)
         return 1;
     }
     ar_doc_stylesheets(c, g_doc);
+
+    if (ppm_path)
+    {
+        ppm(c, ppm_path);
+        return 0;
+    }
 
     if (want_dump || want_selftest)
     {

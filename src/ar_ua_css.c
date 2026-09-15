@@ -322,7 +322,6 @@ static const char *const AR__UA[] = {
        machinery that already does all three. Clipped, because a field does not
        grow to fit what is typed into it -- which is the one thing everybody
        knows about text fields and the first thing a naive one gets wrong. */
-    "input { overflow:hidden; }"
     /*
      * The field's text has no `white-space` rule, because there is no
      * `white-space` property in this engine at all -- `nowrap` here is
@@ -333,6 +332,7 @@ static const char *const AR__UA[] = {
      * nothing: the property belongs with the text work, and the field will
      * want horizontal scrolling of its own besides.
      */
+    "input { overflow:hidden; }"
     "ar-value { display:block; }",
 
     /* The tag still decides by default; an author can now say otherwise,
