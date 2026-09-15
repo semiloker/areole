@@ -61,12 +61,35 @@
 #include <string.h>
 
 #define WIN_W 520
-#define WIN_H 560
+#define WIN_H 780
 
 /* Boxes, plus room for the parsed document: AR_MEM alone budgets the box
    tree and a parsed page needs its own nodes, attributes and text on top --
    which is what AR_MEM_DOC adds and what ar_init_ex is told about. */
-static unsigned char g_mem[AR_MEM_DOC(1024, 64 * 1024)];
+/*
+ * A real face, because the built-in one is eight pixels tall and a form drawn
+ * in it is unreadable rather than merely plain.
+ *
+ * `font-family` is parsed and ignored by this engine, so the face is chosen
+ * here and everything on the page uses it -- which is the honest state of the
+ * text stack and not a shortcut taken for a demo.
+ */
+static const char *const FACES[] = {"C:/Windows/Fonts/segoeui.ttf",
+                                    "C:/Windows/Fonts/calibri.ttf",
+                                    "C:/Windows/Fonts/arial.ttf",
+                                    "C:/Windows/Fonts/DejaVuSans.ttf",
+                                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                    0};
+
+static unsigned char g_font[4 * 1024 * 1024];
+
+/* The atlas comes out of the same arena as everything else, so the block
+   has to be big enough for it -- a face that will not load is a face that
+   was never given room, which reads as "no font found" and is not. */
+#define ATLAS_BYTES (512u * 1024u)
+#define MAX_PX      48
+
+static unsigned char g_mem[AR_MEM_DOC(1024, 64 * 1024) + 2 * 1024 * 1024];
 static ar_doc       *g_doc;
 static int           g_dark = 0;
 
@@ -93,18 +116,18 @@ static const char *const DOC[] = {
     "<p><label for=\"note\">Note for the driver</label>"
     "<input id=\"note\" type=\"text\" value=\"leave at the door\"></p>"
     "<fieldset><legend>When</legend>"
-    "<p><input id=\"soon\" type=\"radio\" name=\"when\" checked>",
+    "<p class=\"check\"><input id=\"soon\" type=\"radio\" name=\"when\" checked>",
 
     "<label for=\"soon\">As soon as possible</label></p>"
-    "<p><input id=\"evening\" type=\"radio\" name=\"when\">"
+    "<p class=\"check\"><input id=\"evening\" type=\"radio\" name=\"when\">"
     "<label for=\"evening\">This evening</label></p>"
-    "<p><input id=\"weekend\" type=\"radio\" name=\"when\">"
+    "<p class=\"check\"><input id=\"weekend\" type=\"radio\" name=\"when\">"
     "<label for=\"weekend\">At the weekend</label></p>"
     "</fieldset>"
-    "<p><input id=\"gift\" type=\"checkbox\">"
+    "<p class=\"check\"><input id=\"gift\" type=\"checkbox\">"
     "<label for=\"gift\">Wrap it as a gift</label></p>",
 
-    "<p><input id=\"news\" type=\"checkbox\" checked>"
+    "<p class=\"check\"><input id=\"news\" type=\"checkbox\" checked>"
     "<label for=\"news\">Email me about offers</label></p>"
     "<details id=\"more\">"
     "<summary>Delivery instructions</summary>"
@@ -117,9 +140,9 @@ static const char *const DOC[] = {
     "<p><label for=\"fragile\">Fragility</label>"
     "<meter id=\"fragile\" min=\"0\" max=\"10\" value=\"7\"></meter></p>"
     "<p><button id=\"send\">Place order</button>"
-    "<input id=\"clear\" type=\"reset\" value=\"Start again\"></p>"
+    "<input id=\"clear\" class=\"button\" type=\"reset\" value=\"Start again\"></p>"
     "</form>"
-    "<p id=\"disabled-note\"><input id=\"off\" type=\"text\" value=\"not editable\" disabled>"
+    "<p class=\"note\" id=\"disabled-note\"><input id=\"off\" type=\"text\" value=\"not editable\" disabled>"
     "<label for=\"off\">A disabled field is not a tab stop</label></p>"
     "</body></html>",
 
@@ -127,25 +150,103 @@ static const char *const DOC[] = {
 
 #define DOC_N ((int)(sizeof DOC / sizeof DOC[0]))
 
-static const char *CSS_LIGHT =
-    "body { padding:16px; background:Canvas; color:CanvasText; }"
-    "h1 { font-size:20px; }"
-    "p { display:block; margin-top:6px; margin-bottom:6px; }"
-    "label { padding-left:6px; }"
-    "fieldset { display:block; padding-left:8px; padding-right:8px; }"
-    "legend { display:block; }"
-    "input { width:220px; }"
-    ".ar-checkbox, .ar-radio { width:13px; height:13px; }"
-    "summary { padding-top:4px; padding-bottom:4px; }"
-    "details { padding-left:4px; }";
+/*
+ * The sheet, and most of it is spacing.
+ *
+ * A form is mostly rhythm: one measure between a label and its field, a larger
+ * one between groups, and the same left edge down the page. Get those three
+ * wrong and every control can be pixel-perfect and the form still looks like a
+ * ransom note -- which is what the first version of this demo looked like, and
+ * why the sheet is longer than the markup.
+ *
+ * Labels sit *above* their fields rather than beside them. Beside is what the
+ * markup suggests and it is wrong for anything but a checkbox: the eye has to
+ * find the start of each label on a ragged left edge, and a long label pushes
+ * its field somewhere different from its neighbours.
+ */
+static const char *const CSS_LIGHT[] = {
+    "body { padding:28px; background:Canvas; color:CanvasText; font-size:15px;"
+    " line-height:1.45; }"
+    "h1 { font-size:24px; margin-bottom:4px; }",
+
+    /* A label above its field, and the two kept together: the gap below a
+       field is larger than the gap above it, so a label belongs to the field
+       under it rather than floating between two. */
+    "label { display:block; margin-bottom:3px; }"
+    "p { display:block; margin-top:0px; margin-bottom:16px; }"
+    "input { width:300px; height:30px; padding-left:8px; padding-right:8px; }",
+
+    /* A checkbox and its label do sit on one line, because the box is small
+       enough that the eye takes both as one thing. */
+    "p.check { margin-bottom:8px; }"
+    "p.check label { display:inline; padding-left:8px; }"
+    /* The padding has to go as well as the width. `input` gives every field
+       eight pixels either side so the text does not touch the border, and a
+       checkbox inherits that and comes out a rectangle twice as wide as it is
+       tall -- which is the shape of a text field, not a checkbox. */
+    "p.check input { width:16px; height:16px; padding-left:0px; padding-right:0px; }"
+    "p.check ar-mark { margin-left:3px; margin-top:3px; }",
+
+    "fieldset { display:block; margin-bottom:20px; padding-left:16px;"
+    " padding-right:16px; padding-top:4px; padding-bottom:4px;"
+    " border:1px solid ButtonBorder; }"
+    "legend { display:block; margin-top:8px; margin-bottom:8px; }",
+
+    "details { margin-bottom:20px; padding-left:12px;"
+    " border:1px solid ButtonBorder; }"
+    "summary { padding-top:8px; padding-bottom:8px; }"
+    "details p { margin-top:0px; margin-bottom:12px; }",
+
+    /* The gauges, wider and shorter than the default so they read as meters
+       rather than as empty fields. */
+    "progress, meter { width:300px; height:10px; }"
+    "button { height:32px; padding-left:18px; padding-right:18px; }"
+    "input.button { width:auto; padding-left:18px; padding-right:18px; }",
+
+    /* A disabled control says so in its colour, which is the one thing a
+       disabled control must do: `GrayText` is the system colour for exactly
+       this and follows the theme with everything else. */
+    "input:disabled { color:GrayText; background:ButtonFace; }"
+    "p.note { margin-top:24px; }",
+};
+
+#define CSS_N ((int)(sizeof CSS_LIGHT / sizeof CSS_LIGHT[0]))
 
 /* The whole of switching themes. Nothing in the markup knows about it. */
 static const char *CSS_DARK = ":root { color-scheme:dark; }";
 
+static int load_face(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = 0; FACES[i]; ++i)
+    {
+        FILE  *f = fopen(FACES[i], "rb");
+        ar_u32 n;
+
+        if (!f)
+        {
+            continue;
+        }
+        n = (ar_u32)fread(g_font, 1, sizeof g_font, f);
+        fclose(f);
+        if (n && ar_font_load(c, g_font, n, ATLAS_BYTES, MAX_PX))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void build(ar_ctx *c)
 {
+    int k;
+
     ar_ua_stylesheet(c);
-    ar_stylesheet(c, CSS_LIGHT);
+    for (k = 0; k < CSS_N; ++k)
+    {
+        ar_stylesheet(c, CSS_LIGHT[k]);
+    }
     if (g_dark)
     {
         ar_stylesheet(c, CSS_DARK);
@@ -387,6 +488,15 @@ int main(int argc, char **argv)
     }
 
     c = ar_init_ex(g_mem, (ar_u32)sizeof g_mem, 256, 64 * 1024);
+    if (!c)
+    {
+        printf("could not initialise\n");
+        return 1;
+    }
+    if (!load_face(c))
+    {
+        printf("no outline face found -- falling back to the built-in 8x8\n");
+    }
     if (!c)
     {
         printf("could not initialise\n");

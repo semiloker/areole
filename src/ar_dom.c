@@ -1055,6 +1055,25 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         ar_field_child(c, v.p, v.n);
     }
 
+    /*
+     * A push button's label is its `value`, and an `<input>` has no children
+     * to put it in.
+     *
+     * `<button>Send</button>` carries its label as content and needs nothing
+     * here; `<input type="submit" value="Send">` carries it as an attribute,
+     * and without this the button draws as an empty box. The two spellings are
+     * equally common and only one of them worked.
+     */
+    if (ar__control_kind(d, node) == AR_CTL_BUTTON && ar_span_is(d->nodes[node].name, "input"))
+    {
+        ar_span v = ar__attr_of(d, node, "value");
+
+        if (v.p && v.n > 0)
+        {
+            ar_field_child(c, v.p, v.n);
+        }
+    }
+
     if (ar__control_kind(d, node) == AR_CTL_CHECKBOX ||
         ar__control_kind(d, node) == AR_CTL_RADIO)
     {
