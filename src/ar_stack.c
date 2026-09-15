@@ -77,9 +77,33 @@ int ar_forms_stacking_context(const ar_node *n)
  * when a positioned descendant of a positioned box has to interleave with its
  * grandparent's siblings -- and is noted rather than hidden.
  */
+/*
+ * Is this box painted as one piece, with its whole subtree inside it?
+ *
+ * Positioned boxes and stacking contexts are the obvious two. The third is an
+ * **inline-block**, and leaving it out was a real bug rather than a missing
+ * refinement.
+ *
+ * Appendix E paints in-flow block descendants (bucket 3) before inline-level
+ * ones (bucket 5). An inline-block sits in bucket 5 and its block children sit
+ * in bucket 3 -- so without this test the children are painted *first* and the
+ * parent's own background is then painted over them. A checkbox drew its mark
+ * and then covered it with its own white square; a text field laid its value
+ * out correctly, painted it, and buried it. Every box was in the paint order
+ * and every rectangle was right, which is why it read as "nothing is drawn"
+ * and survived 1,860 assertions about state and geometry.
+ *
+ * CSS 2.1 says so in as many words -- step 7.2.1, "if the element is an
+ * inline-block, it is painted atomically" -- and this is what that sentence is
+ * for. It is not a stacking context: `z-index` on it still does nothing, and
+ * its descendants still take part in the parent context's z ordering. Only the
+ * painting is indivisible.
+ */
 static int ar__atomic(const ar_node *n)
 {
-    return n->parent >= 0 && (ar_is_positioned(n) || ar_forms_stacking_context(n));
+    return n->parent >= 0 &&
+           (ar_is_positioned(n) || ar_forms_stacking_context(n) ||
+            n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK);
 }
 
 /* Which of Appendix E's buckets a descendant belongs to. */
