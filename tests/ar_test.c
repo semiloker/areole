@@ -18422,6 +18422,59 @@ static void test_shift_extends_and_typing_replaces(void)
     CHECK(ar__field_is("help"), "field: undo restores it");
 }
 
+/*
+ * The field's text is on the screen, and the caret is in it.
+ *
+ * A box like any other text, so that it is measured, laid out and painted by
+ * the machinery that already does all three -- rather than by a special case
+ * that would have to learn them.
+ */
+static void test_a_field_shows_what_it_holds(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\" value=\"abc\">"
+                    "<input id=\"b\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:120px; margin:0 }");
+
+    /* The text child exists and carries the markup's value. */
+    {
+        ar_i32 f = ar__first_tag_id("a");
+
+        CHECK(f >= 0 && f + 1 < g_ui->node_count, "field: a field has a text box");
+        CHECK(g_ui->nodes[f + 1].text != 0, "field: which holds text");
+        CHECK(memcmp(g_ui->nodes[f + 1].text, "abc", 3) == 0, "field: and it is the value");
+    }
+
+    /*
+     * An empty field still gets its text box. Without one the caret has
+     * nothing to measure against and no line box to sit in, so the first
+     * character typed would move it -- and an empty field would be the one
+     * place the caret is drawn somewhere else.
+     */
+    {
+        ar_i32 f = ar__first_tag_id("b");
+
+        CHECK(f >= 0 && f + 1 < g_ui->node_count, "field: an empty field has one too");
+        CHECK(g_ui->nodes[f + 1].text != 0 && g_ui->nodes[f + 1].text[0] == 0,
+              "field: holding nothing");
+    }
+
+    /* And what is typed replaces what the markup said, on the screen and not
+       only in the buffer. */
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, "Z", 0);
+    {
+        ar_i32 f = ar__first_tag_id("a");
+
+        CHECK(memcmp(g_ui->nodes[f + 1].text, "abcZ", 4) == 0,
+              "field: typing shows up in the box, not just the buffer");
+    }
+}
+
 static void test_current_color(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
@@ -21971,6 +22024,7 @@ int main(void)
     test_insert_replaces_a_selection();
     test_typing_reaches_the_focused_field();
     test_shift_extends_and_typing_replaces();
+    test_a_field_shows_what_it_holds();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

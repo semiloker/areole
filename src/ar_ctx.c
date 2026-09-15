@@ -63,7 +63,7 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 
 /* Defined with the rest of the field machinery, used by ar_frame_begin and
    ar__push_node, which both come first. */
-static void ar__edit_apply(ar_ctx *c, const ar_input *in);
+static void ar__edit_apply(ar_ctx *c);
 static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n);
 
 #define AR_MAX_RULES 256
@@ -2941,13 +2941,19 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     }
 
     /*
-     * Typing, after Tab and before the tree is built.
+     * Typing is recorded here and applied when the field is reached.
      *
-     * After Tab because a Tab moves the caret to a different field and the
-     * character that arrives with it belongs to the new one. Before the tree,
-     * because the tree is about to be built from the text this changes.
+     * It cannot be applied here. A Tab and a character arrive in the same
+     * frame, the character belongs to the field the Tab moved to, and which
+     * box that is is not known until the tree is built -- so applying it now
+     * means the first character after a Tab goes to the field that just lost
+     * the caret, or to nothing at all. That is exactly the bug a test caught:
+     * focus a field, type immediately, and the character vanishes.
      */
-    ar__edit_apply(c, in);
+    c->pending_text = in ? in->text : 0;
+    c->pending_text_len = in ? in->text_len : 0;
+    c->pending_keys = in ? in->keys_pressed : 0;
+    c->pending_done = 0;
 
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
@@ -3296,6 +3302,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     if (c->next_kind == AR_CTL_TEXT && c->focus_key == key)
     {
         ar__edit_follow_focus(c, key, c->next_value, c->next_value_len);
+        ar__edit_apply(c);
     }
     c->next_value = 0;
     c->next_value_len = 0;
@@ -3756,62 +3763,149 @@ static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar
 }
 
 /*
- * One frame's worth of typing, applied to the focused field.
+ * One frame's worth of typing, applied to the field once it is known.
  *
- * Text and keys are two different inputs and stay that way: the platform turns
- * a key event into a character, because the key that produced `@` is Shift and
- * 2 on one layout and AltGr and Q on another, and no table here could tell.
+ * Applied here rather than in ar_frame_begin because a Tab and a character can
+ * arrive together: the character belongs to the field the Tab moved to, and
+ * which box that is is not settled until the tree is built. Applying it early
+ * sends the first character after a Tab to the field that just lost the caret.
+ *
+ * Text and keys are two different inputs and stay that way -- the platform
+ * turns a key event into a character, because the key that produced `@` is
+ * Shift and 2 on one layout and AltGr and Q on another.
  */
-static void ar__edit_apply(ar_ctx *c, const ar_input *in)
+static void ar__edit_apply(ar_ctx *c)
 {
-    int extend;
+    ar_u32 keys;
+    int    extend;
 
-    if (!in || c->edit_key == 0)
+    if (!c || c->edit_key == 0 || c->pending_done)
     {
         return;
     }
-    extend = (in->keys_pressed & AR_KEY_SHIFT) != 0;
+    c->pending_done = 1;
+    keys = c->pending_keys;
+    extend = (keys & AR_KEY_SHIFT) != 0;
 
-    if (in->text && in->text_len > 0)
+    if (c->pending_text && c->pending_text_len > 0)
     {
-        ar_edit_insert(&c->edit, in->text, in->text_len);
+        ar_edit_insert(&c->edit, c->pending_text, c->pending_text_len);
     }
-    if (in->keys_pressed & AR_KEY_BACKSPACE)
+    if (keys & AR_KEY_BACKSPACE)
     {
         ar_edit_backspace(&c->edit);
     }
-    if (in->keys_pressed & AR_KEY_DELETE)
+    if (keys & AR_KEY_DELETE)
     {
         ar_edit_delete(&c->edit);
     }
-    if (in->keys_pressed & AR_KEY_LEFT)
+    if (keys & AR_KEY_LEFT)
     {
         ar_edit_move(&c->edit, -1, extend);
     }
-    if (in->keys_pressed & AR_KEY_RIGHT)
+    if (keys & AR_KEY_RIGHT)
     {
         ar_edit_move(&c->edit, 1, extend);
     }
-    if (in->keys_pressed & AR_KEY_HOME)
+    if (keys & AR_KEY_HOME)
     {
         ar_edit_home(&c->edit, extend);
     }
-    if (in->keys_pressed & AR_KEY_END)
+    if (keys & AR_KEY_END)
     {
         ar_edit_end(&c->edit, extend);
     }
-    if (in->keys_pressed & AR_KEY_SELECT_ALL)
+    if (keys & AR_KEY_SELECT_ALL)
     {
         ar_edit_select_all(&c->edit);
     }
-    if (in->keys_pressed & AR_KEY_UNDO)
+    if (keys & AR_KEY_UNDO)
     {
         ar_edit_undo(&c->edit);
     }
-    if (in->keys_pressed & AR_KEY_REDO)
+    if (keys & AR_KEY_REDO)
     {
         ar_edit_redo(&c->edit);
     }
+}
+
+/*
+ * A field's text comes from one of three places, in this order.
+ *
+ * The buffer if this field has the caret, the pool if it has been edited and
+ * left, and the markup if neither -- which is the same order the field itself
+ * is loaded in and has to be, or a field would draw one thing and edit
+ * another.
+ */
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n)
+{
+    ar_u32 key;
+    ar_u32 len = 0;
+    ar_i32 at;
+    ar_u32 i;
+    char  *kept;
+
+    if (!c || c->node_count <= 0)
+    {
+        return;
+    }
+    key = c->nodes[c->node_count - 1].key;
+
+    if (key == c->edit_key && c->edit_key != 0)
+    {
+        len = c->edit.len;
+        for (i = 0; i < len; ++i)
+        {
+            c->field_scratch[i] = c->edit.text[i];
+        }
+    }
+    else if ((at = ar__value_find(c, key)) >= 0)
+    {
+        len = c->value_len[at];
+        for (i = 0; i < len; ++i)
+        {
+            c->field_scratch[i] = c->value_text[at][i];
+        }
+    }
+    else if (fallback)
+    {
+        len = n > AR_EDIT_CAP ? AR_EDIT_CAP : n;
+        for (i = 0; i < len; ++i)
+        {
+            c->field_scratch[i] = fallback[i];
+        }
+    }
+    c->field_scratch[len] = 0;
+
+    /*
+     * Copied into the frame arena, because ar_text borrows the pointer.
+     *
+     * One scratch buffer serves the assembly and cannot serve the frame: every
+     * field would point at it and all of them would draw whatever the last one
+     * happened to hold. That is what happened, and it read as "the value
+     * attribute is not arriving" rather than as an aliasing bug -- two fields
+     * showing the same text is only obviously wrong when the two texts differ.
+     */
+    kept = (char *)ar_arena_frame(&c->arena, len + 1u);
+    if (!kept)
+    {
+        c->overflowed = 1;
+        return;
+    }
+    for (i = 0; i < len; ++i)
+    {
+        kept[i] = c->field_scratch[i];
+    }
+    kept[len] = 0;
+
+    /*
+     * An empty field still gets its text box.
+     *
+     * Without one the caret has nothing to measure against and no line box to
+     * sit in, so the first character typed would move it -- and an empty field
+     * would be the one place the caret is drawn somewhere else.
+     */
+    ar_text(c, "ar-value", kept);
 }
 
 const char *ar_field_text(ar_ctx *c, ar_u32 *len)
@@ -4401,6 +4495,64 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                 ar_fill_rect(s, ar_rect_make(r.x - ow, r.y, ow, r.h), clip, oc);
                 ar_fill_rect(s, ar_rect_make(r.x + r.w, r.y, ow, r.h), clip, oc);
             }
+        }
+
+        /*
+         * The caret, and the selection behind it.
+         *
+         * Drawn on the text box of the focused field rather than on the field,
+         * because the text box is where the text actually is: a field with
+         * padding or a border would otherwise put the caret against its own
+         * edge instead of in front of the first character.
+         *
+         * Measured by width of the text before the caret, which is the only
+         * honest way with a proportional face -- counting characters puts the
+         * caret in the middle of a word the moment anything is not monospace.
+         */
+        if (n->text && c->edit_key != 0 && n->parent >= 0 &&
+            c->nodes[n->parent].key == c->edit_key)
+        {
+            ar_i32 pre;
+            char   save;
+            ar_u16 lo, hi;
+
+            save = c->field_scratch[c->edit.caret];
+            c->field_scratch[c->edit.caret] = 0;
+            pre = c->have_face ? ar_text_measure_chain(c->field_scratch, ar_chain_for(c, n),
+                                                       n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+                                                       &c->glyph_scratch)
+                               : ar_text_width(c->field_scratch, n->scale);
+            c->field_scratch[c->edit.caret] = save;
+
+            if (ar_edit_selection(&c->edit, &lo, &hi))
+            {
+                ar_i32 x0, x1;
+                char   s0, s1;
+
+                s0 = c->field_scratch[lo];
+                c->field_scratch[lo] = 0;
+                x0 = c->have_face ? ar_text_measure_chain(c->field_scratch, ar_chain_for(c, n),
+                                                          n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+                                                          &c->glyph_scratch)
+                                  : ar_text_width(c->field_scratch, n->scale);
+                c->field_scratch[lo] = s0;
+                s1 = c->field_scratch[hi];
+                c->field_scratch[hi] = 0;
+                x1 = c->have_face ? ar_text_measure_chain(c->field_scratch, ar_chain_for(c, n),
+                                                          n->style.v[AR_P_FONT_SIZE], &c->glyphs,
+                                                          &c->glyph_scratch)
+                                  : ar_text_width(c->field_scratch, n->scale);
+                c->field_scratch[hi] = s1;
+
+                ar_fill_rect(s, ar_rect_make(n->rect.x + x0, n->rect.y, x1 - x0, n->rect.h), clip,
+                             (ar_color)ar_sys_color_default(AR_SYS_HIGHLIGHT, 0));
+            }
+
+            /* One pixel wide, and always at least one: a caret that scales
+               with the font disappears at small sizes and doubles at large
+               ones, and every toolkit draws it as a hairline for that reason. */
+            ar_fill_rect(s, ar_rect_make(n->rect.x + pre, n->rect.y, 1, n->rect.h), clip,
+                         (ar_color)AR_WIDE(&n->style, AR_P_COLOR));
         }
 
         bw = n->style.v[AR_P_BORDER_WIDTH];

@@ -318,6 +318,23 @@ static const char *const AR__UA[] = {
     "ar-bar { display:block; height:12px; background:AccentColor; }"
     "meter > ar-bar { background:Highlight; }",
 
+    /* A field's text is a box, so it is measured, laid out and painted by the
+       machinery that already does all three. Clipped, because a field does not
+       grow to fit what is typed into it -- which is the one thing everybody
+       knows about text fields and the first thing a naive one gets wrong. */
+    "input { overflow:hidden; }"
+    /*
+     * The field's text has no `white-space` rule, because there is no
+     * `white-space` property in this engine at all -- `nowrap` here is
+     * `flex-wrap`, which is a different question with the same word.
+     *
+     * So a long line in a narrow field wraps, where every real field scrolls.
+     * Stated rather than papered over with a rule that parses and does
+     * nothing: the property belongs with the text work, and the field will
+     * want horizontal scrolling of its own besides.
+     */
+    "ar-value { display:block; }",
+
     "summary { display:block; }"
 
     /*
