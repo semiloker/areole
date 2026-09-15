@@ -26,6 +26,14 @@ struct ar_win
     ar_surface surface;
     ar_input   input;
 
+    /* One frame's typed characters, as UTF-8, and the high half of a surrogate
+       pair waiting for its partner. Windows sends an astral character as two
+       messages and dropping the second is how an emoji becomes a question
+       mark. */
+    char   text_buf[64];
+    ar_u32 text_n;
+    ar_u32 pending_high;
+
     int closed;
     int resized;
     int awake;          /* skip the block in the next pump */
@@ -250,6 +258,70 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
      * the core, so the mapping is done here where GetKeyState exists -- which
      * is the honest split rather than a shortcut.
      */
+    /*
+     * Typed text, which is a different input from the key that produced it.
+     *
+     * WM_CHAR is where Windows has already applied the layout, the dead keys
+     * and the modifiers -- so `@` arrives as `@` whether the keyboard spelled
+     * it Shift+2 or AltGr+Q, and the core never learns what a layout is. A
+     * table of virtual key codes could not have told those apart.
+     *
+     * UTF-16 in, UTF-8 out, and surrogates are joined across two messages
+     * because Windows sends an astral character as two: dropping the second
+     * half is how an emoji becomes a question mark.
+     */
+    case WM_CHAR:
+    {
+        ar_u32 cp = (ar_u32)wp;
+
+        if (cp >= 0xD800u && cp <= 0xDBFFu)
+        {
+            win->pending_high = cp;
+            return 0;
+        }
+        if (cp >= 0xDC00u && cp <= 0xDFFFu && win->pending_high)
+        {
+            cp = 0x10000u + ((win->pending_high - 0xD800u) << 10) + (cp - 0xDC00u);
+            win->pending_high = 0;
+        }
+        /* Control characters arrive here too -- Enter is 13, Tab is 9,
+           Backspace is 8 -- and every one of them is handled as a key above.
+           Letting them through would type a control character into a field. */
+        if (cp >= 0x20u && cp != 0x7Fu)
+        {
+            ar_u32 n = win->text_n;
+
+            if (cp < 0x80u && n + 1 < sizeof win->text_buf)
+            {
+                win->text_buf[n++] = (char)cp;
+            }
+            else if (cp < 0x800u && n + 2 < sizeof win->text_buf)
+            {
+                win->text_buf[n++] = (char)(0xC0u | (cp >> 6));
+                win->text_buf[n++] = (char)(0x80u | (cp & 0x3Fu));
+            }
+            else if (cp < 0x10000u && n + 3 < sizeof win->text_buf)
+            {
+                win->text_buf[n++] = (char)(0xE0u | (cp >> 12));
+                win->text_buf[n++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                win->text_buf[n++] = (char)(0x80u | (cp & 0x3Fu));
+            }
+            else if (n + 4 < sizeof win->text_buf)
+            {
+                win->text_buf[n++] = (char)(0xF0u | (cp >> 18));
+                win->text_buf[n++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+                win->text_buf[n++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                win->text_buf[n++] = (char)(0x80u | (cp & 0x3Fu));
+            }
+            win->text_n = n;
+            win->text_buf[n] = 0;
+            win->input.text = win->text_buf;
+            win->input.text_len = n;
+        }
+        ar_win_wake(win);
+        return 0;
+    }
+
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         switch (wp)
@@ -282,10 +354,61 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             win->input.keys_pressed |=
                 (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_PAGE_UP : AR_KEY_SPACE;
             break;
+        case VK_TAB:
+            /* Shift is resolved here, because the platform knows about
+               modifiers and the core deliberately does not. */
+            win->input.keys_pressed |=
+                (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_TAB_BACK : AR_KEY_TAB;
+            break;
+        case VK_RETURN:
+            win->input.keys_pressed |= AR_KEY_ENTER;
+            break;
+        case VK_BACK:
+            win->input.keys_pressed |= AR_KEY_BACKSPACE;
+            break;
+        case VK_DELETE:
+            win->input.keys_pressed |= AR_KEY_DELETE;
+            break;
+        case 'A':
+        case 'Z':
+        case 'Y':
+            /*
+             * The three editing commands, and the only place a modifier turns
+             * a letter into something else.
+             *
+             * Ctrl+Z is undo and Ctrl+Y is redo on Windows; Ctrl+Shift+Z is
+             * redo everywhere else and is accepted too, because people bring
+             * their fingers with them. Without Ctrl these fall through to
+             * WM_CHAR and arrive as the letters they are.
+             */
+            if (GetKeyState(VK_CONTROL) & 0x8000)
+            {
+                if (wp == 'A')
+                {
+                    win->input.keys_pressed |= AR_KEY_SELECT_ALL;
+                }
+                else if (wp == 'Y')
+                {
+                    win->input.keys_pressed |= AR_KEY_REDO;
+                }
+                else
+                {
+                    win->input.keys_pressed |= (GetKeyState(VK_SHIFT) & 0x8000) ? AR_KEY_REDO
+                                                                                : AR_KEY_UNDO;
+                }
+                break;
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
         default:
             /* Every other key is somebody else's, and swallowing it would stop
                Alt+F4 working. Fall through to DefWindowProc. */
             return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+        if (GetKeyState(VK_SHIFT) & 0x8000)
+        {
+            /* Not a modifier table -- the one modifier that changes what an
+               arrow means, resolved where GetKeyState lives. */
+            win->input.keys_pressed |= AR_KEY_SHIFT;
         }
         ar_win_wake(win);
         return 0;
@@ -508,6 +631,9 @@ int ar_win_pump(ar_win *win)
     win->input.wheel = 0;
     win->input.wheel_px = 0;
     win->input.keys_pressed = 0;
+    win->input.text = 0;
+    win->input.text_len = 0;
+    win->text_n = 0;
     win->resized = 0;
 
     /* With nothing pending and nothing animating, block instead of spinning.

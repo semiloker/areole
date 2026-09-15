@@ -678,6 +678,21 @@ static int ar__focusable_element(const ar_doc *d, ar_i32 node)
     ar_span ti = ar__attr_of(d, node, "tabindex");
     ar_span name = d->nodes[node].name;
 
+    /*
+     * A disabled control is not a tab stop, and that comes before `tabindex`.
+     *
+     * Not an ordering detail: `tabindex="0"` on a disabled field is real
+     * markup -- somebody set the index and disabled it later -- and honouring
+     * the index there puts a control in the tab order that cannot be operated
+     * when it is reached. Every browser drops it, and this example advertised
+     * the rule in its own label before the engine implemented it, which is how
+     * it got noticed.
+     */
+    if (ar__attr_of(d, node, "disabled").p)
+    {
+        return 0;
+    }
+
     if (ti.p && ti.n > 0)
     {
         /* A leading `-` is the only part that matters: -1 and -37 mean the

@@ -1087,6 +1087,10 @@ int ar_focus_is_visible(const ar_ctx *c);
    frame, like everything else this API hands back. */
 const char *ar_field_text(ar_ctx *c, ar_u32 *len);
 
+/* How many tab stops the last frame published. */
+ar_i32 ar_tab_stops(const ar_ctx *c);
+
+
 /*
  * A box with its own declaration list, which is what an HTML `style=""`
  * attribute is: `ar_begin_styled(c, "div.card", "color:red; width:40px")`.
@@ -1610,6 +1614,27 @@ typedef struct ar_doc
  * set.
  */
 ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/* ------------------------------------------------------------------------
+ * Accessibility
+ *
+ * The core computes a tree; a backend adapts it to MSAA, UI Automation,
+ * AT-SPI or NSAccessibility. The split runs one way: the core never learns
+ * what an IAccessible is, and the backend never has to work out what a
+ * `<summary>` announces as.
+ *
+ * Public because an embedder is the one who owns the platform layer, and a
+ * tree nobody outside the library can read is a tree that helps nobody.
+ * ------------------------------------------------------------------------ */
+
+/* The role, as one of the AR_ROLE_* values in ar_a11y.h. */
+ar_u8 ar_a11y_role(const ar_doc *d, ar_i32 node);
+
+/* The accessible name, by the ARIA algorithm. Returns its length. */
+ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap);
+
+/* An attribute by name, or an empty span. */
+ar_span ar_a11y_attr(const ar_doc *d, ar_i32 node, const char *name);
 
 /*
  * Parse into storage the caller points at, with no context involved.
