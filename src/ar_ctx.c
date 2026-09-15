@@ -4045,6 +4045,24 @@ void ar_focus_clear(ar_ctx *c)
     }
 }
 
+/*
+ * The computed `white-space` of the box most recently opened.
+ *
+ * The document walk asks, because collapsing is a property of the element the
+ * text is inside and that element's style is resolved by the time its children
+ * are walked. Before this the walk decided from the tag -- `<pre>` and nothing
+ * else -- so `white-space: pre` on a div did nothing and `white-space: normal`
+ * on a `<pre>` did nothing either.
+ */
+ar_i32 ar_box_white_space(const ar_ctx *c)
+{
+    if (!c || c->node_count <= 0)
+    {
+        return AR_WS_NORMAL;
+    }
+    return c->nodes[c->node_count - 1].style.v[AR_P_WHITE_SPACE];
+}
+
 int ar_box_is_checked(const ar_ctx *c)
 {
     if (!c || c->node_count <= 0)

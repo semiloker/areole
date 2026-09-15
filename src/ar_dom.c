@@ -258,14 +258,6 @@ static void ar__collapse(ar_doc *d, ar_span *text)
     text->n = n;
 }
 
-/* The elements whose contents keep their whitespace. `white-space` is not a
-   property here yet, so the list is by name -- which is what the user-agent
-   stylesheet would say if it could. */
-static int ar__preformatted(ar_span name)
-{
-    return ar_span_is(name, "pre") || ar_span_is(name, "textarea") || ar_span_is(name, "listing") ||
-           ar_span_is(name, "xmp") || ar_span_is(name, "plaintext");
-}
 
 /*
  * An element's `style` attribute, as a NUL-terminated declaration list.
@@ -950,10 +942,6 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         return; /* comments and the doctype generate no box */
     }
 
-    if (ar__preformatted(d->nodes[node].name))
-    {
-        pre = 1;
-    }
 
     ar__selector(d, node, sel);
     {
@@ -1013,6 +1001,19 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         }
         ar_begin_hinted(c, sel, h, ar__inline_style(d, node, style));
     }
+
+    /*
+     * Whether the text inside keeps its spaces, from the computed style and no
+     * longer from the tag.
+     *
+     * The element's style is resolved by the time its children are walked,
+     * which is what makes this possible at all -- and doing it from the tag
+     * was wrong in both directions: `white-space: pre` on a div collapsed
+     * anyway, and `white-space: normal` on a `<pre>` did not. The user-agent
+     * sheet says `pre { white-space: pre }` now, so the tag still decides by
+     * default and an author can say otherwise.
+     */
+    pre = !AR_WS_COLLAPSES(ar_box_white_space(c));
 
     /* After the box exists, because ar_focusable marks the box most recently
        begun -- and before the children, so the tab order is document order. */

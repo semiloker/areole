@@ -335,6 +335,11 @@ static const char *const AR__UA[] = {
      */
     "ar-value { display:block; }",
 
+    /* The tag still decides by default; an author can now say otherwise,
+       which is what moving the decision out of the walk bought. */
+    "pre, textarea { white-space:pre; }"
+    "ar-value { white-space:pre; }",
+
     "summary { display:block; }"
 
     /*

@@ -343,6 +343,15 @@ typedef enum ar_prop
      * drawn outside the border box and contributes nothing to layout, which is
      * the whole of what the property is for.
      */
+    /*
+     * `white-space`, which is two questions in one property and has been since
+     * CSS 2: may the text be wrapped, and may its spaces be collapsed. The
+     * values are the four useful combinations of those two and are named
+     * historically rather than logically, which is why the table below is
+     * written as a pair of flags and not as a scale.
+     */
+    AR_P_WHITE_SPACE,
+
     AR_P_OUTLINE_WIDTH,
 
     AR_P_COLOR_SCHEME,
@@ -412,6 +421,24 @@ enum
     AR_FONT_STYLE_NORMAL = 0,
     AR_FONT_STYLE_ITALIC = 1
 };
+
+/*
+ * `white-space`, as the two flags it actually is.
+ *
+ * `pre-line` collapses spaces but keeps newlines, which is the one combination
+ * whose name says what it does.
+ */
+enum
+{
+    AR_WS_NORMAL = 0,   /* wrap, collapse            */
+    AR_WS_NOWRAP,       /* no wrap, collapse         */
+    AR_WS_PRE,          /* no wrap, keep             */
+    AR_WS_PRE_WRAP,     /* wrap, keep                */
+    AR_WS_PRE_LINE      /* wrap, collapse but for newlines */
+};
+
+#define AR_WS_WRAPS(v)     ((v) != AR_WS_NOWRAP && (v) != AR_WS_PRE)
+#define AR_WS_COLLAPSES(v) ((v) != AR_WS_PRE && (v) != AR_WS_PRE_WRAP)
 
 /* `color-scheme`. Four values and not two, because `normal` and `light` are
    different declarations that happen to render the same: `normal` means the
