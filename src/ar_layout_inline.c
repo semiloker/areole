@@ -60,6 +60,26 @@ ar_i32 ar_inline_baseline(const ar_node *n)
     {
         return n->style.v[AR_P_PAD_TOP] + n->ascent;
     }
+
+    /*
+     * A non-replaced inline box sits on the same baseline as the text inside
+     * it, and `<b>bold</b>` is one: `display:inline` with its text in a child
+     * box, so it reaches here with no text of its own.
+     *
+     * The rule below -- bottom margin edge on the baseline -- is CSS 2.1
+     * §10.8.1 for *atomic* inline-level boxes, which is an inline-block or a
+     * replaced element. Applying it to every textless inline box lifted every
+     * `<b>`, `<i>`, `<code>` and `<a>` off the line its surrounding text sat
+     * on, by about the height of a line. On a page of plain HTML that is the
+     * most visible thing wrong with it and no test saw it, because every
+     * assertion here is about a rectangle and the rectangles were all the
+     * right size in the wrong place.
+     */
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE)
+    {
+        return n->style.v[AR_P_PAD_TOP] + n->ascent;
+    }
+
     return n->rect.h + n->style.v[AR_P_MARGIN_BOTTOM];
 }
 
