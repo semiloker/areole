@@ -101,9 +101,8 @@ int ar_forms_stacking_context(const ar_node *n)
  */
 static int ar__atomic(const ar_node *n)
 {
-    return n->parent >= 0 &&
-           (ar_is_positioned(n) || ar_forms_stacking_context(n) ||
-            n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK);
+    return n->parent >= 0 && (ar_is_positioned(n) || ar_forms_stacking_context(n) ||
+                              n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK);
 }
 
 /* Which of Appendix E's buckets a descendant belongs to. */

@@ -430,11 +430,11 @@ enum
  */
 enum
 {
-    AR_WS_NORMAL = 0,   /* wrap, collapse            */
-    AR_WS_NOWRAP,       /* no wrap, collapse         */
-    AR_WS_PRE,          /* no wrap, keep             */
-    AR_WS_PRE_WRAP,     /* wrap, keep                */
-    AR_WS_PRE_LINE      /* wrap, collapse but for newlines */
+    AR_WS_NORMAL = 0, /* wrap, collapse            */
+    AR_WS_NOWRAP,     /* no wrap, collapse         */
+    AR_WS_PRE,        /* no wrap, keep             */
+    AR_WS_PRE_WRAP,   /* wrap, keep                */
+    AR_WS_PRE_LINE    /* wrap, collapse but for newlines */
 };
 
 #define AR_WS_WRAPS(v)     ((v) != AR_WS_NOWRAP && (v) != AR_WS_PRE)

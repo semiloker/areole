@@ -52,8 +52,8 @@ typedef struct ar_edit
     ar_u16 anchor;
 
     ar_edit_step undo[AR_EDIT_UNDO];
-    ar_u8        undo_n;    /* steps recorded */
-    ar_u8        undo_at;   /* where redo would go */
+    ar_u8        undo_n;     /* steps recorded */
+    ar_u8        undo_at;    /* where redo would go */
     ar_u8        coalescing; /* the last change was a typed character */
 } ar_edit;
 

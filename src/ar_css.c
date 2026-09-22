@@ -441,10 +441,9 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,        AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,  AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS,  AR_P_CAPTION_SIDE,
-                                      AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE};
+static const ar_u8 AR__INHERITED[] = {
+    AR_P_COLOR,      AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,  AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,
+    AR_P_VISIBILITY, AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE, AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -3277,8 +3276,8 @@ static int ar__parse_color_fn(ar__scan *z, const char *name, ar_u32 len, ar_u32 
     else if (ar__same_fold(name, len, "lab") || ar__same_fold(name, len, "lch") ||
              ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch"))
     {
-        int ok = ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch");
-        int polar = ar__same_fold(name, len, "lch") || ar__same_fold(name, len, "oklch");
+        int    ok = ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch");
+        int    polar = ar__same_fold(name, len, "lch") || ar__same_fold(name, len, "oklch");
         ar_i32 lref = ok ? 1 : 100;
         ar_i32 aref = ok ? 1 : 100;
         ar_i32 apct = ok ? (ar_i32)(AR_CFIX * 2 / 5) : (AR_CFIX * 5 / 4);
@@ -3312,8 +3311,8 @@ static int ar__parse_color_fn(ar__scan *z, const char *name, ar_u32 len, ar_u32 
             return 0;
         }
 
-        v.space = (ar_u8)(ok ? (polar ? AR_CS_OKLCH : AR_CS_OKLAB)
-                             : (polar ? AR_CS_LCH : AR_CS_LAB));
+        v.space =
+            (ar_u8)(ok ? (polar ? AR_CS_OKLCH : AR_CS_OKLAB) : (polar ? AR_CS_LCH : AR_CS_LAB));
     }
     else
     {
