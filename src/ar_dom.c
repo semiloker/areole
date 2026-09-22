@@ -1001,6 +1001,25 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
             ar__put_lit(sel, ".ar-radio");
         }
 
+        /*
+         * `:link`, spelled as a class for the same reason.
+         *
+         * An `<a>` is only a link when it has an `href` -- an anchor without
+         * one is a name for somewhere on the page and has never been styled
+         * like a link by anything. That distinction is an attribute selector
+         * in every other engine and there are none here, so it is a synthetic
+         * class like the input types above.
+         *
+         * Without it the choice was to colour every `<a>` or none, and none is
+         * what shipped: links on a plain document were the same black as the
+         * text around them, which is the first thing anyone notices about a
+         * page that does not look like the web.
+         */
+        if (ar_span_is(d->nodes[node].name, "a") && ar__attr_of(d, node, "href").p)
+        {
+            ar__put_lit(sel, ".ar-link");
+        }
+
         if (st)
         {
             ar_state_next(c, st);
