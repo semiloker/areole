@@ -19455,9 +19455,14 @@ static void test_whitespace_between_blocks_is_dropped(void)
         printf("      %ld boxes with whitespace, %ld without\n", (long)with_space, (long)without);
     }
 
-    /* html, head, body, ul, two li and two text spans. Stated so a change in
-       what the walk generates is visible rather than merely consistent. */
-    CHECK(without == 8, "html: and a two-item list is eight boxes");
+    /* html, head, body, ul, two li, two text spans -- and, since list markers
+       exist, an `ar-bullet` for each item. Ten.
+
+       This number is stated rather than derived precisely so that a change in
+       what the walk generates has to be noticed and explained, and it did its
+       job: it went red the moment markers were added, which is the only
+       assertion in the suite that saw them arrive. */
+    CHECK(without == 10, "html: and a two-item list is ten boxes, two of them markers");
 }
 
 static void test_a_table_from_markup_uses_the_table_model(void)

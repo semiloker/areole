@@ -192,6 +192,34 @@ static const char *const AR__UA[] = {
     "ul, ol, menu { display:block; margin:16px 0px; padding-left:40px; }"
     "li { display:list-item; }",
 
+    /*
+     * The markers, placed by a negative margin rather than by a positioning
+     * scheme.
+     *
+     * That is what `list-style-position: outside` is: the marker begins in the
+     * padding the list has already reserved and the content begins at the
+     * content edge, so a line that wraps lines up under the text and not under
+     * the bullet. An inline-block with `margin-left` pulled back by its own
+     * width and its gap says exactly that, and costs no new layout path.
+     *
+     * `ar-marker` is a fixed-width slot so that "9." and "10." end at the same
+     * place -- numbers are right-aligned against the text, which is the whole
+     * reason a list of ten reads as a column instead of a ragged edge.
+     */
+    "ar-marker { display:inline-block; width:1.6em; margin-left:-2em; }"
+    "ar-marker { margin-right:0.4em; text-align:right; }",
+
+    /*
+     * A bullet is a box with a radius, because the built-in face has no U+2022
+     * -- it is ASCII 32 to 126 and everything else comes out as `?`. Drawing
+     * it means it is the same shape whatever face is loaded, and it inherits
+     * its colour from the item like a glyph would.
+     */
+    "ar-bullet { display:inline-block; width:0.4em; height:0.4em; border-radius:0.4em; }"
+    "ar-bullet { margin-left:-1.05em; margin-right:0.65em; background:currentColor; }"
+    "ar-bullet.ar-circle { background:transparent; border:1px solid currentColor; }"
+    "ar-bullet.ar-square { border-radius:0px; }",
+
     /* Inline content, in fours. */
     "span, a, b, i { display:inline; }"
     "em, strong, small, s { display:inline; }",
