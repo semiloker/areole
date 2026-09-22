@@ -601,6 +601,37 @@ typedef ar_i32 ar_scroll_pos;
 #endif
 
 /*
+ * Per-frame strings, per box, and why this is a reservation rather than
+ * whatever happens to be left over.
+ *
+ * Three things are copied into the frame arena *after* the box tree is
+ * reserved: an element's `style=""` declarations, its presentational hints,
+ * and the text a field is showing. All three are allocated out of what the
+ * tree did not take -- and until 0.10.0 the tree took everything. The clamp
+ * that fits the box count to the arena divided by the size of the three
+ * per-box arrays exactly, so what remained was the alignment rounding: 24 to
+ * 40 bytes for a whole document.
+ *
+ * The result was that the first one or two inline styles on a page applied
+ * and every one after them was silently dropped. Not an error -- the box
+ * renders with what its selectors said, which is a reasonable thing to do when
+ * memory runs out and a disastrous one to do always. A `<progress>` showed an
+ * empty track because the width that fills it is written as an inline style.
+ *
+ * Sixteen is measured, not chosen. Across the ten documents in
+ * examples/15_real the worst case is wikipedia-ja-html at 9,161 bytes over
+ * 4,607 boxes -- **2.0 bytes per box** -- and the rest are between 0 and 0.8.
+ * Sixteen is eight times the worst of them, and costs 16/(552+16) = 2.8% of
+ * the box budget on a block that is arena-bound rather than budget-bound.
+ *
+ * A page can still exhaust it: one `style=""` of a hundred characters on every
+ * element is 100 bytes a box and no reservation that keeps the box budget
+ * usable would cover it. That case sets `overflowed` like any other, which is
+ * the difference between a limit and a silent one.
+ */
+#define AR_FRAME_STR_PER_BOX 16u
+
+/*
  * The part of the block that does not scale with the box count: the context
  * itself, the rule table, the resolved-style cache.
  *

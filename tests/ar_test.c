@@ -3141,6 +3141,96 @@ static void test_the_bar_repaints_when_only_its_colour_changed(void)
 }
 
 /*
+ * Every box gets its inline style, not just the first two.
+ *
+ * An inline declaration list is copied into the frame arena, and the frame
+ * arena is what the box tree did not take. The clamp that fits the box count
+ * to the arena divided by the size of the three per-box arrays *exactly*, so
+ * what was left for strings was the alignment rounding -- 24 to 40 bytes for a
+ * whole document, which is one or two declarations. Everything after them was
+ * dropped.
+ *
+ * Silently, and that is the part worth a test rather than a comment: running
+ * out makes a box render with what its selectors said, which is a defensible
+ * thing to do when memory is gone and a disastrous one to do on every page. It
+ * reads as "inline styles do not work sometimes", and on a parsed document it
+ * reads as something much stranger, because `<progress>`'s fill is written as
+ * an inline width -- so a gauge showed an empty track and the bug looked like
+ * it was about gauges.
+ *
+ * Two hundred boxes, because two was enough to pass. The count has to be past
+ * whatever the rounding happens to afford or the test cannot fail.
+ */
+static void test_every_box_gets_its_inline_style(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     i, applied = 0, first_bad = -1;
+
+    ar__ui_reset("#root { display:block; } div { display:block; height:19px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    for (i = 0; i < 200; ++i)
+    {
+        ar_begin_styled(g_ui, "div", "height:10px");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    for (i = 1; i <= 200 && i < g_ui->node_count; ++i)
+    {
+        if (ar__box(i).h == 10)
+        {
+            ++applied;
+        }
+        else if (first_bad < 0)
+        {
+            first_bad = i;
+        }
+    }
+
+    CHECK(g_ui->node_count >= 201, "inline: the tree fits, so the budget is not what is measured");
+    CHECK(applied == 200, "inline: every box's own declaration list reaches it");
+    if (applied != 200)
+    {
+        printf("      %d of 200 applied, first without one is box %d\n", (int)applied,
+               (int)first_bad);
+    }
+}
+
+/*
+ * And the reservation that makes it true, stated as itself.
+ *
+ * The test above is the behaviour; this is the invariant behind it, so that a
+ * change to the frame layout fails with the reason rather than with a box of
+ * the wrong height. Anything the frame copies in after the tree -- inline
+ * styles, presentational hints, a field's text -- comes out of this.
+ */
+static void test_the_frame_keeps_room_for_its_strings(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_u32     want;
+
+    ar__ui_reset("#root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_end(g_ui);
+
+    want = (ar_u32)g_ui->node_cap * AR_FRAME_STR_PER_BOX;
+
+    CHECK(g_ui->node_cap > 0, "inline: the frame reserved a tree");
+    CHECK(ar_arena_available(&g_ui->arena) >= want,
+          "inline: and left its strings room to be copied into");
+    if (ar_arena_available(&g_ui->arena) < want)
+    {
+        printf("      %lu bytes free, %lu wanted for %d boxes\n",
+               (unsigned long)ar_arena_available(&g_ui->arena), (unsigned long)want,
+               (int)g_ui->node_cap);
+    }
+    ar_frame_end(g_ui, &s);
+}
+
+/*
  * The focus ring has to survive damage tracking, and it did not.
  *
  * 0.10.0 shipped a release about interaction whose focus ring never reached
@@ -22241,6 +22331,8 @@ int main(void)
     test_damage_output_is_identical_to_a_full_repaint();
     test_a_region_move_is_identical_to_a_full_repaint();
     test_the_bar_repaints_when_only_its_colour_changed();
+    test_every_box_gets_its_inline_style();
+    test_the_frame_keeps_room_for_its_strings();
     test_a_focus_ring_survives_damage_tracking();
     test_a_system_colour_on_an_outline_resolves();
     test_a_bar_that_appears_because_content_grew();

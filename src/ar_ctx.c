@@ -2876,6 +2876,8 @@ void ar_set_media(ar_ctx *c, const ar_media *media)
 void ar_frame_begin(ar_ctx *c, const ar_input *in)
 {
     ar_u32 room;
+    ar_u32 per_box;
+    ar_u32 str_reserve;
 
     ar_perf_begin(&c->perf, ar__now(c));
 
@@ -3036,15 +3038,28 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        left: reserving every spare byte would make the arena figure in the
        overlay meaningless and would hide a runaway tree instead of reporting
        it. */
+    /*
+     * The per-box cost includes a slice for the strings the frame will copy
+     * in after this -- inline styles, presentational hints, a field's text.
+     *
+     * Dividing by the three arrays alone is what made those strings live on
+     * the arena's rounding error: the clamp fitted the box count to the space
+     * exactly, ar__keep got whatever alignment happened to leave behind, and
+     * the second `style=""` on a page was dropped. See AR_FRAME_STR_PER_BOX.
+     */
+    per_box = (ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) + (ar_u32)sizeof(ar_i32) +
+              AR_FRAME_STR_PER_BOX;
+
     room = ar_arena_available(&c->arena);
     c->node_cap = c->box_budget;
-    if ((ar_u32)c->node_cap *
-            ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) + (ar_u32)sizeof(ar_i32)) >
-        room)
+    if ((ar_u32)c->node_cap * per_box > room)
     {
-        c->node_cap = (ar_i32)(room / ((ar_u32)sizeof(ar_node) + (ar_u32)sizeof(ar_frag) +
-                                       (ar_u32)sizeof(ar_i32)));
+        c->node_cap = (ar_i32)(room / per_box);
     }
+    /* What the strings get, held back from the two reservations below so that
+       neither can spend it -- `frag_cap` in particular falls back to "all the
+       room there is", which is exactly how the reserve would be lost again. */
+    str_reserve = (ar_u32)c->node_cap * AR_FRAME_STR_PER_BOX;
     c->nodes =
         c->node_cap > 0
             ? (ar_node *)ar_arena_frame(&c->arena, (ar_u32)c->node_cap * (ar_u32)sizeof(ar_node))
@@ -3062,6 +3077,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
      */
     c->frag_count = 0;
     room = ar_arena_available(&c->arena);
+    room = room > str_reserve ? room - str_reserve : 0u;
     c->frag_cap = c->node_cap;
     if ((ar_u32)c->frag_cap * (ar_u32)sizeof(ar_frag) > room)
     {
@@ -3081,6 +3097,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        existed, and wrong rather than blank. */
     c->order_count = 0;
     room = ar_arena_available(&c->arena);
+    room = room > str_reserve ? room - str_reserve : 0u;
     c->order =
         (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32) <= room && c->node_cap > 0
             ? (ar_i32 *)ar_arena_frame(&c->arena, (ar_u32)c->node_cap * (ar_u32)sizeof(ar_i32))
