@@ -964,7 +964,15 @@ enum
     AR_VALIGN_BASELINE = 0,
     AR_VALIGN_TOP,
     AR_VALIGN_MIDDLE,
-    AR_VALIGN_BOTTOM
+    AR_VALIGN_BOTTOM,
+
+    /* Both are the baseline case with the baseline moved, not a fourth and
+       fifth way of aligning: everything on the line still shares one baseline
+       and these two shift where this box's own sits against it. Appended
+       rather than inserted, because the four above are stored in `v[]` and a
+       renumbering would change every sheet already parsed. */
+    AR_VALIGN_SUB,
+    AR_VALIGN_SUPER
 };
 
 enum

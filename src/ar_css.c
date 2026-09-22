@@ -944,6 +944,8 @@ static const ar__kw AR_KEYWORDS[] = {
     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
+    {"sub", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUB},
+    {"super", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUPER},
 
     {"row", AR_P_DIRECTION, AR_DIR_ROW},
     {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
