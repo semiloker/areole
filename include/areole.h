@@ -134,6 +134,26 @@ typedef struct ar_surface
 void ar_surface_clear(ar_surface *s, ar_color c);
 void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
 
+/*
+ * The largest corner these will draw, and why there is one at all.
+ *
+ * The span walk keeps one inset per row of a corner, and that array is on the
+ * stack because nothing allocates after ar_init. Sixty-four rows is 256 bytes
+ * of it, covers every control and card anyone has asked for, and a radius past
+ * it is clamped rather than refused -- a button that is slightly less round
+ * than it asked for is a better answer than a square one.
+ */
+#define AR_MAX_RADIUS 64
+
+/* The same rectangle with its corners rounded off, and the ring one leaves
+   when it is drawn inside another. `radius` is clamped to half the shorter
+   side, so a radius past that is a capsule rather than a mistake, and a radius
+   of zero is ar_fill_rect exactly. `width` is the ring's thickness, measured
+   inwards from the edge. */
+void ar_fill_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_rect clip, ar_color c);
+void ar_stroke_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_i32 width, ar_rect clip,
+                          ar_color c);
+
 /* ------------------------------------------------------------------------
  * Instrumentation
  *
