@@ -1820,18 +1820,31 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
          * `color` may itself have been a var() that the loop above only just
          * substituted.
          *
-         * Four properties by name rather than a scan of all hundred-odd. A
+         * The properties by name rather than a scan of all hundred-odd. A
          * second full property walk per box is exactly the shape of the ten
          * per cent 0.9.5 put into malformed parsing without touching the
          * parser, and this one would run on every box of every frame. The
-         * colour properties are a closed set; when a fifth arrives it goes in
-         * this list and nothing will remind anyone, which is why the list sits
-         * beside the comment on AR_WIDE that names the same five.
+         * colour properties are a closed set; when a new one arrives it goes
+         * in this list and nothing will remind anyone, which is why the list
+         * sits beside the comment on AR_WIDE that names the same ones.
+         *
+         * `outline-color` is the one that proved the warning. 0.10.0 added it,
+         * left this list alone, and the user-agent sheet's `outline: 2px solid
+         * AccentColor` reached the paint pass still holding 17 -- the system
+         * colour's *index*. An index has no alpha, the paint pass skips a
+         * transparent outline, and so the focus ring was never drawn. It read
+         * as "the outline property does not work", which it does: an outline
+         * stated in a literal colour drew correctly the whole time.
+         *
+         * AR_P_COLOR stays last, and the counts are derived rather than
+         * typed: currentColor is resolved for every entry *before* it, since
+         * it is what they copy from.
          */
         {
-            static const ar_prop COLOR_PROPS[5] = {AR_P_BACKGROUND, AR_P_BORDER_COLOR,
-                                                   AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
-                                                   AR_P_COLOR};
+            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,      AR_P_BORDER_COLOR,
+                                                  AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
+                                                  AR_P_OUTLINE_COLOR,   AR_P_COLOR};
+            const ar_i32         COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
             ar_i32               k;
             ar_i32               cur;
             int                  dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
@@ -1842,7 +1855,7 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
              * written and currentColor would otherwise copy the index rather
              * than the colour it stands for.
              */
-            for (k = 0; k < 5; ++k)
+            for (k = 0; k < COLOR_N; ++k)
             {
                 ar_prop cp = COLOR_PROPS[k];
 
@@ -1855,7 +1868,7 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
 
             cur = ar_style_get(st, AR_P_COLOR);
 
-            for (k = 0; k < 4; ++k)
+            for (k = 0; k < COLOR_N - 1; ++k)
             {
                 ar_prop cp = COLOR_PROPS[k];
 
@@ -3162,7 +3175,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
      * travel through here. `:focus-visible` and `:focus-within` do, and arrived
      * as zero.
      */
-    ar_u32     state = AR_STATE_NONE;
+    ar_u32 state = AR_STATE_NONE;
 
     if (c->node_count >= c->node_cap)
     {
@@ -4132,6 +4145,26 @@ int ar_focus_is_visible(const ar_ctx *c)
     return c && c->focus_key != 0 && c->focus_visible;
 }
 
+/*
+ * Which box has the focus, by index into this frame's tree.
+ *
+ * -1 when nothing is focused, and also when the focused box is not in *this*
+ * frame's tree -- a focus survives the box going away, because the key outlives
+ * the node, and a caller asking where to draw must be told "nowhere" rather
+ * than given the index the box used to have.
+ *
+ * `focus_index` is written during the build pass, when the key is matched, so
+ * it is settled before layout and correct by the time anyone can ask.
+ */
+ar_i32 ar_focus_node(const ar_ctx *c)
+{
+    if (!c || c->focus_key == 0)
+    {
+        return -1;
+    }
+    return c->focus_index;
+}
+
 void ar_begin(ar_ctx *c, const char *selector)
 {
     ar_begin_styled(c, selector, 0);
@@ -4542,7 +4575,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
          * rectangle behind a transparent background would tint the box itself.
          */
         {
-            ar_i32  ow = n->style.v[AR_P_OUTLINE_WIDTH];
+            ar_i32   ow = n->style.v[AR_P_OUTLINE_WIDTH];
             ar_color oc = (ar_color)AR_WIDE(&n->style, AR_P_OUTLINE_COLOR);
 
             if (ow > 0 && AR_ALPHA_OF(oc) != 0)
@@ -4568,8 +4601,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
          * honest way with a proportional face -- counting characters puts the
          * caret in the middle of a word the moment anything is not monospace.
          */
-        if (n->text && c->edit_key != 0 && n->parent >= 0 &&
-            c->nodes[n->parent].key == c->edit_key)
+        if (n->text && c->edit_key != 0 && n->parent >= 0 && c->nodes[n->parent].key == c->edit_key)
         {
             ar_i32 pre;
             char   save;
@@ -5733,11 +5765,17 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
         ar_slot *slot = ar_ctx_slot(c, n->key);
         ar_u32   digest = ar_paint_digest(n);
 
+        /* Not n->rect: an outline is painted outside the border box, so the
+           box is not the extent of its own pixels. ar_painted_bounds is the
+           one place that knows the difference, and the slot remembers it so
+           the frame that loses a focus ring erases the one it had. */
+        ar_rect bounds = ar_painted_bounds(n);
+
         if (!slot)
         {
             /* No slot means no memory of this box, so no way to know it did
                not change. Repaint it. */
-            ar_damage_add(&c->damage, n->rect);
+            ar_damage_add(&c->damage, bounds);
             other_damage = 1;
             continue;
         }
@@ -5749,11 +5787,18 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
         if (slot->seen != c->frame - 1 || slot->digest != digest)
         {
-            ar_damage_add(&c->damage, n->rect);
+            /* Both, because the change may be the ring going away: the new
+               bounds are then the bare box and say nothing about the pixels
+               the ring left behind. */
+            ar_damage_add(&c->damage, bounds);
+            if (slot->seen == c->frame - 1)
+            {
+                ar_damage_add(&c->damage, slot->rect);
+            }
             other_damage = 1;
         }
-        else if (slot->rect.x != n->rect.x || slot->rect.y != n->rect.y ||
-                 slot->rect.w != n->rect.w || slot->rect.h != n->rect.h)
+        else if (slot->rect.x != bounds.x || slot->rect.y != bounds.y || slot->rect.w != bounds.w ||
+                 slot->rect.h != bounds.h)
         {
             /*
              * A box inside a container whose pixels were just moved is already
@@ -5762,21 +5807,21 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
              * that stayed put, or anything the move did not explain, falls
              * through and is repainted as usual.
              */
-            if (move.container >= 0 && n->rect.x == slot->rect.x &&
-                n->rect.y == slot->rect.y - move.dy && n->rect.w == slot->rect.w &&
-                n->rect.h == slot->rect.h && ar__is_within(c, i, move.container))
+            if (move.container >= 0 && bounds.x == slot->rect.x &&
+                bounds.y == slot->rect.y - move.dy && bounds.w == slot->rect.w &&
+                bounds.h == slot->rect.h && ar__is_within(c, i, move.container))
             {
                 /* Its pixels were moved, not repainted. */
             }
             else
             {
                 ar_damage_add(&c->damage, slot->rect);
-                ar_damage_add(&c->damage, n->rect);
+                ar_damage_add(&c->damage, bounds);
                 other_damage = 1;
             }
         }
 
-        slot->rect = n->rect;
+        slot->rect = bounds;
         slot->digest = digest;
         slot->seen = c->frame;
         slot->last_frame = c->frame;
@@ -5952,8 +5997,8 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
                     {
                         continue;
                     }
-                    other->flags = (ar_u8)((other->flags & ~(ar_u8)AR_SLOT_CHECKED) |
-                                           AR_SLOT_TOUCHED);
+                    other->flags =
+                        (ar_u8)((other->flags & ~(ar_u8)AR_SLOT_CHECKED) | AR_SLOT_TOUCHED);
                 }
                 slot->flags = (ar_u8)(slot->flags | AR_SLOT_CHECKED | AR_SLOT_TOUCHED);
             }

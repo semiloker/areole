@@ -53,7 +53,7 @@ typedef struct ar_node
     ar_i32 next_sibling;
     ar_i32 child_count;
 
-    ar_u32 key;   /* stable across frames, for state and hit testing */
+    ar_u32 key; /* stable across frames, for state and hit testing */
     /* Thirty-two bits as of 0.10.0. It was sixteen and `:checked` was the
        seventeenth state, which is the widening the comment beside
        AR_STATE_FOCUS_WITHIN said the next bit would force. */
@@ -279,8 +279,11 @@ enum
 
 typedef struct ar_slot
 {
-    ar_u32  key;
-    ar_rect rect; /* where this box was last frame */
+    ar_u32 key;
+    /* Where this box's *pixels* were last frame -- ar_painted_bounds, not the
+       border box. An outline is drawn outside the box, so the two differ by
+       the ring's width exactly when a ring is what has to be erased. */
+    ar_rect rect;
 
     /* Where this container is scrolled to, on each axis. Their width is the
        AR_SCROLL_COMPACT switch in areole.h: every box carries a slot, so eight
@@ -363,6 +366,7 @@ void    ar_damage_add(ar_damage *d, ar_rect r);
 void    ar_damage_add_all(ar_damage *d);
 ar_rect ar_damage_bounds(const ar_damage *d, ar_rect viewport);
 ar_u32  ar_paint_digest(const ar_node *n);
+ar_rect ar_painted_bounds(const ar_node *n);
 
 struct ar_ctx
 {
