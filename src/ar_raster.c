@@ -379,6 +379,64 @@ void ar_stroke_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_i32 width,
     }
 }
 
+/*
+ * A filled triangle inscribed in a rectangle, pointing one of four ways.
+ *
+ * Spans again, and for the same reason the rounded rectangle is: clipping and
+ * the opaque fast path are already right in ar_fill_rect. The arithmetic is
+ * the straight-line one -- half-width grows linearly from apex to base -- so
+ * there is no curve to walk and no table.
+ *
+ * It exists for two markers a browser draws and this engine could not: a
+ * `<summary>`'s disclosure triangle and a `<select>`'s arrow. Both are a
+ * glyph elsewhere, and a glyph is not available here -- the built-in face is
+ * ASCII 32 to 126, so U+25B8 would draw as a question mark on any build
+ * without a TrueType face.
+ */
+void ar_fill_tri(ar_surface *s, ar_rect r, ar_i32 dir, ar_rect clip, ar_color c)
+{
+    ar_i32 i;
+
+    if (r.w <= 0 || r.h <= 0)
+    {
+        return;
+    }
+
+    if (dir == AR_TRI_UP || dir == AR_TRI_DOWN)
+    {
+        /* Rows, widening from the apex. `+ (r.h - 1)` rounds the half-width up
+           so the apex is a pixel wide rather than none, which is the
+           difference between a triangle and a triangle with its tip missing. */
+        for (i = 0; i < r.h; ++i)
+        {
+            ar_i32 from_apex = (dir == AR_TRI_DOWN) ? (r.h - 1 - i) : i;
+            ar_i32 w = (r.w * (from_apex + 1) + r.h - 1) / r.h;
+            ar_i32 x = r.x + (r.w - w) / 2;
+
+            ar_fill_rect(s, ar_rect_make(x, r.y + i, w, 1), clip, c);
+        }
+        return;
+    }
+
+    /* Rows again for left and right, because a horizontal span is what the
+       fill is fast at -- so the triangle is built out of rows whose length
+       tapers, not columns. */
+    for (i = 0; i < r.h; ++i)
+    {
+        ar_i32 half = r.h / 2;
+        ar_i32 from_mid = i < half ? half - i : i - half;
+        ar_i32 w = half > 0 ? (r.w * (half - from_mid) + half - 1) / half : r.w;
+        ar_i32 x;
+
+        if (w <= 0)
+        {
+            continue;
+        }
+        x = (dir == AR_TRI_RIGHT) ? r.x : r.x + r.w - w;
+        ar_fill_rect(s, ar_rect_make(x, r.y + i, w, 1), clip, c);
+    }
+}
+
 /* ------------------------------------------------------------------------
  * Moving pixels that are already correct
  * ------------------------------------------------------------------------ */

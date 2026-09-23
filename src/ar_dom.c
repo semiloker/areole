@@ -1329,6 +1329,29 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     ar__list_marker(c, d, node);
 
     /*
+     * A `<summary>`'s disclosure triangle and a `<select>`'s arrow.
+     *
+     * Both are a glyph in a browser and cannot be one here -- the built-in
+     * face is ASCII, so U+25B8 would draw as a question mark. They are boxes
+     * the painter knows by tag; see the note in ar__paint_boxes.
+     *
+     * A summary's points right when its details is shut and down when it is
+     * open, which is the only thing on the page that says which way it will
+     * go. The open state is the parent's, and the walk is inside the details
+     * by the time it reaches the summary, so ar_box_is_open answers for the
+     * box being built rather than for its parent -- which is why the state is
+     * read from the document instead.
+     */
+    if (ar_span_is(d->nodes[node].name, "summary"))
+    {
+        ar_i32 up = d->nodes[node].parent;
+        int    open = up >= 0 && ar__attr_of(d, up, "open").p != 0;
+
+        ar_begin(c, open ? "ar-tri-d" : "ar-tri-r");
+        ar_end(c);
+    }
+
+    /*
      * A `<progress>` or `<meter>` is a track with a bar in it, and the bar is
      * a box whose width is the value.
      *
