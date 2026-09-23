@@ -19340,15 +19340,24 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
 
     CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
     /*
-     * 200 -> 220 at 0.10.0, which spent 203 of it on controls, and 220 -> 232
-     * for the document work that followed: list markers and their three bullet
-     * shapes, a link's colour and underline, `sub` and `sup`. **222 today.**
+     * 200 -> 220 at 0.10.0, which spent 203 of it on controls, then 220 -> 232
+     * for list markers, a link's colour and underline and `sub`/`sup`, and now
+     * 232 -> 244 for the control appearances and the monospace family.
+     * **240 today.**
      *
-     * The wall is AR_MAX_RULES at 256 and this is the warning before it. The
-     * warning has now fired twice and it is worth saying plainly that the
-     * headroom is 34 rules, not a comfortable margin: `<select>` and
-     * `<textarea>` are still owed an appearance, and a monospace family for
-     * `pre` and `code` is a rule each.
+     * The wall is AR_MAX_RULES at 256 and this is the warning before it. It
+     * has fired three times in one sitting and the headroom is now **sixteen
+     * rules**, which is not a margin -- it is one rule with four selectors and
+     * three more like it.
+     *
+     * A rule costs a selector, not a declaration block: `pre, code, kbd, samp
+     * { ... }` is four of them. That is why a sheet grows faster than it
+     * reads, and it is the number to have in mind before adding anything here.
+     *
+     * The next person to add a rule to the user-agent sheet should raise the
+     * cap first rather than discover the wall, because a rule that overflows
+     * is refused *whole and silently* -- the failure ar_ua_css.c's own header
+     * describes, where paragraphs stayed flex items and nothing said so.
      *
      * The move has been priced so nobody has to guess. `ar_rule` is 624 bytes,
      * so the table is 159,744 of AR_MEM_FIXED already -- by a long way the
@@ -19361,7 +19370,7 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
      * property-value pool would cut the 624 by an order of magnitude and make
      * this ceiling stop mattering instead of moving it.
      */
-    CHECK(sheet.count <= 232, "ua: and it fits the 256 every caller gets, with headroom to spare");
+    CHECK(sheet.count <= 244, "ua: and it fits the 256 every caller gets, with headroom to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)

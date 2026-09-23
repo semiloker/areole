@@ -562,6 +562,7 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
         }
     }
     c->style_face[0] = 0; /* the primary face is the regular one */
+    c->mono_face = -1;
     c->face_used = 1;
     ar__rebuild_chains(c);
 
@@ -612,6 +613,23 @@ static void ar__rebuild_chains(ar_ctx *c)
             ch->count++;
         }
     }
+
+    /* And the monospace family, on the same terms: its own face first, then
+       the shared coverage fallbacks, because a monospace face is no more
+       likely to carry CJK than the body one is. */
+    c->mono_chain.count = 0;
+    if (c->mono_face >= 0)
+    {
+        c->mono_chain.face[0] = &c->face[c->mono_face];
+        c->mono_chain.id[0] = (ar_u8)c->mono_face;
+        c->mono_chain.count = 1;
+        for (k = 1; k < c->chain.count && c->mono_chain.count < AR_MAX_FACES; ++k)
+        {
+            c->mono_chain.face[c->mono_chain.count] = c->chain.face[k];
+            c->mono_chain.id[c->mono_chain.count] = c->chain.id[k];
+            c->mono_chain.count++;
+        }
+    }
 }
 
 /* Which of the four a resolved style asks for. 600 is the boundary CSS Fonts 4
@@ -632,6 +650,16 @@ const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
 {
     ar_i32 slot = ar__style_slot(&n->style);
 
+    /* The family first, because it decides which set of style slots to look
+       in -- and there is only one monospace face, so asking for a bold
+       `<code>` gets the monospace regular rather than the body bold. Falling
+       through when no monospace face was loaded is deliberate: a document that
+       says `font-family: monospace` on a build with one face renders in that
+       face, which is what it did before this existed. */
+    if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_MONOSPACE && c->mono_chain.count > 0)
+    {
+        return &c->mono_chain;
+    }
     if (c->style_chain[slot].count > 0)
     {
         return &c->style_chain[slot];
@@ -663,6 +691,45 @@ int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight,
     /* Nothing cached becomes wrong -- the face index is part of every glyph
        key -- but text that was drawn in the regular face because there was no
        bold one is now drawn in the bold one, so the window has to repaint. */
+    ar_invalidate_all(c);
+    return 1;
+}
+
+/*
+ * The face `font-family: monospace` draws with.
+ *
+ * Separate from ar_font_load_styled because it is a different axis: that one
+ * picks a weight within a family, this one picks a family. One face and not
+ * four -- see the comment beside `mono_face` for why a bold `<code>` is not
+ * worth three more.
+ *
+ * An embedder that never calls this loses nothing it had: a document asking
+ * for monospace draws in the body face, exactly as it did before the property
+ * existed. That is the reason ar_chain_for falls through rather than refusing.
+ */
+int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size)
+{
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || n <= 0 || n >= AR_MAX_FACES)
+    {
+        return 0;
+    }
+    if (c->mono_face >= 0)
+    {
+        return 0; /* already loaded; twice is a caller bug, as with a style */
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    c->mono_face = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
+
+    /* Text that drew in the body face because there was no monospace one now
+       draws in the monospace one, so the window repaints -- and the *widths*
+       change with it, so this is a relayout and not only a repaint. */
     ar_invalidate_all(c);
     return 1;
 }

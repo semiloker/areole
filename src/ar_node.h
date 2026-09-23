@@ -484,6 +484,18 @@ struct ar_ctx
     ar_i32        style_face[4];
     ar_font_chain style_chain[4];
 
+    /*
+     * The monospace family, which is one face and not four.
+     *
+     * `<pre>` and `<code>` are the whole reason it exists and neither is
+     * commonly bold or italic, so a second set of four style slots would be
+     * three faces of arena for a case nobody writes. A bold `<code>` draws in
+     * the monospace regular, which is what a family with no bold does
+     * everywhere else in this file.
+     */
+    ar_i32        mono_face;
+    ar_font_chain mono_chain;
+
     ar_font_chain    chain;
     ar_shaper        shaper;
     int              shaping;

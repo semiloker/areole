@@ -441,6 +441,9 @@ int ar_prop_inherits(ar_i32 prop)
      * underline is painted by a box the `a` rule never matched.
      */
     case AR_P_TEXT_DECORATION:
+    /* `font-family` inherits, which is what makes one rule on `body` settle
+       a document -- the same reason `font-size` does. */
+    case AR_P_FONT_FAMILY:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -470,10 +473,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,      AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,     AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE,   AR_P_COLOR_SCHEME,
-                                      AR_P_WHITE_SPACE, AR_P_TEXT_DECORATION};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,       AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,      AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE,    AR_P_COLOR_SCHEME,
+                                      AR_P_WHITE_SPACE, AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -778,6 +781,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"white-space", AR_P_WHITE_SPACE},
                                           {"text-decoration", AR_P_TEXT_DECORATION},
                                           {"text-decoration-line", AR_P_TEXT_DECORATION},
+                                          {"font-family", AR_P_FONT_FAMILY},
                                           {"outline-width", AR_P_OUTLINE_WIDTH},
                                           {"outline-color", AR_P_OUTLINE_COLOR},
                                           {"outline", AR_SH_OUTLINE},
@@ -965,6 +969,10 @@ static const ar__kw AR_KEYWORDS[] = {
     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
     {"underline", AR_P_TEXT_DECORATION, AR_DECOR_UNDERLINE},
     {"line-through", AR_P_TEXT_DECORATION, AR_DECOR_LINE_THROUGH},
+    {"monospace", AR_P_FONT_FAMILY, AR_FAMILY_MONOSPACE},
+    {"serif", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
+    {"sans-serif", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
+    {"cursive", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
     {"sub", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUB},
     {"super", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUPER},
 
