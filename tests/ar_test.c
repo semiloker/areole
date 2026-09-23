@@ -19525,6 +19525,68 @@ static void test_whitespace_between_blocks_is_dropped(void)
  * instead. Comparing halves rather than totals is what makes the check about
  * the direction and not merely about something being drawn.
  */
+/*
+ * An inline element's text joins the line its siblings are on.
+ *
+ * `ar_inline_run` walked one level of siblings, and a document walk puts an
+ * element's text in a child box -- so `<span>` arrived with no text of its
+ * own, failed ar_is_fragmentable and was placed as one unbreakable item. It
+ * took a whole line to itself, gained a space either side that nothing asked
+ * for, and everything past the first line's worth of its text was never drawn.
+ *
+ * Two things are asserted because the bug had two faces. That the three pieces
+ * share one line and touch exactly -- which is what says the element is not an
+ * item on the line -- and that a long one wraps to more than one line rather
+ * than being cut off at the first.
+ */
+static void test_an_inline_elements_text_joins_the_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     a, b, cc;
+
+    ar__render_html(&s, "<p>aaa<span id=\"m\">bbb</span>ccc</p>",
+                    "body { margin:0px; } p { margin:0px; }");
+
+    /* The paragraph's three children in order: text, the span, text. */
+    a = -1;
+    b = ar__first_tag_id("m");
+    CHECK(b > 0, "inline: the span is in the tree");
+    if (b <= 0)
+    {
+        return;
+    }
+    a = b - 1;  /* the text before it */
+    cc = b + 2; /* the span's text child, then the text after */
+
+    CHECK(ar__box(a).y == ar__box(b).y && ar__box(b).y == ar__box(cc).y,
+          "inline: the text, the span and the text after share one line");
+    CHECK(ar__box(a).x + ar__box(a).w == ar__box(b).x,
+          "inline: and the span starts exactly where the text before it ended");
+    CHECK(ar__box(b).x + ar__box(b).w == ar__box(cc).x,
+          "inline: with nothing inserted after it either");
+    if (ar__box(a).y != ar__box(b).y || ar__box(a).x + ar__box(a).w != ar__box(b).x)
+    {
+        printf("      before %ld,%ld %ldx%ld  span %ld,%ld %ldx%ld  after %ld,%ld %ldx%ld\n",
+               (long)ar__box(a).x, (long)ar__box(a).y, (long)ar__box(a).w, (long)ar__box(a).h,
+               (long)ar__box(b).x, (long)ar__box(b).y, (long)ar__box(b).w, (long)ar__box(b).h,
+               (long)ar__box(cc).x, (long)ar__box(cc).y, (long)ar__box(cc).w, (long)ar__box(cc).h);
+    }
+
+    /* And it breaks across lines rather than stopping at the first. */
+    ar__render_html(&s,
+                    "<p>Before <span id=\"w\">a nested inline long enough that it has to wrap"
+                    " across the end of more than one line</span> after.</p>",
+                    "body { margin:0px; } p { margin:0px; width:120px; }");
+    b = ar__first_tag_id("w");
+    CHECK(b > 0 && ar__box(b).h > 30,
+          "inline: a long one wraps instead of being cut off at one line");
+    if (b > 0 && ar__box(b).h <= 30)
+    {
+        printf("      the inline is %ldx%ld, which is one line\n", (long)ar__box(b).w,
+               (long)ar__box(b).h);
+    }
+}
+
 static void test_a_summary_has_a_triangle_that_points(void)
 {
     ar_surface s = ar__ui_surface(200, 60);
@@ -22665,6 +22727,7 @@ int main(void)
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
+    test_an_inline_elements_text_joins_the_line();
     test_a_summary_has_a_triangle_that_points();
     test_an_underline_is_drawn_under_the_text();
     test_sub_and_super_leave_the_baseline();
