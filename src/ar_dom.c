@@ -852,6 +852,46 @@ static ar_i32 ar__attr_num(const ar_doc *d, ar_i32 node, const char *name, ar_i3
  * range and a progress bar counts from nothing.
  */
 /*
+ * Whether this `<option>` is the one its `<select>` is showing.
+ *
+ * `selected` decides when any sibling carries it; otherwise the first option
+ * does, which is what a browser shows and what almost every document is. Both
+ * halves are needed: reading only `selected` leaves a plain `<select>` blank,
+ * and reading only "first" ignores the attribute wherever it appears.
+ */
+static int ar__chosen_option(const ar_doc *d, ar_i32 node)
+{
+    ar_i32 up = d->nodes[node].parent;
+    ar_i32 sib;
+    ar_i32 first = -1;
+
+    if (ar__attr_of(d, node, "selected").p)
+    {
+        return 1;
+    }
+    if (up < 0)
+    {
+        return 0;
+    }
+    for (sib = d->nodes[up].first_child; sib >= 0; sib = d->nodes[sib].next_sibling)
+    {
+        if (d->nodes[sib].kind != AR_DOM_ELEMENT || !ar_span_is(d->nodes[sib].name, "option"))
+        {
+            continue;
+        }
+        if (first < 0)
+        {
+            first = sib;
+        }
+        if (ar__attr_of(d, sib, "selected").p)
+        {
+            return 0; /* somebody else is chosen, and it is not this one */
+        }
+    }
+    return first == node;
+}
+
+/*
  * The marker on a list item, as a box.
  *
  * A marker is a box here rather than something the paint pass draws, for the
@@ -1153,6 +1193,15 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         {
             ar__put_lit(sel, ".ar-radio");
         }
+        else if (kind == AR_CTL_BUTTON && ar_span_is(d->nodes[node].name, "input"))
+        {
+            /* `<input type="submit">` is a button wearing an input's tag, and
+               it has to be told apart from a text field for the same reason a
+               checkbox does: a field has a default width of twenty characters
+               and a button is as wide as its label. Without this, every
+               submit button on every form came out eleven ems wide. */
+            ar__put_lit(sel, ".ar-button");
+        }
 
         /*
          * `:link`, spelled as a class for the same reason.
@@ -1171,6 +1220,19 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         if (ar_span_is(d->nodes[node].name, "a") && ar__attr_of(d, node, "href").p)
         {
             ar__put_lit(sel, ".ar-link");
+        }
+
+        /*
+         * The one option a closed `<select>` shows.
+         *
+         * `selected` when any option carries it, and otherwise the first --
+         * which is what a browser does and the case almost every document
+         * actually is. A class again, because `option[selected]` is an
+         * attribute selector and there are none here.
+         */
+        if (ar_span_is(d->nodes[node].name, "option") && ar__chosen_option(d, node))
+        {
+            ar__put_lit(sel, ".ar-chosen");
         }
 
         if (st)

@@ -313,6 +313,40 @@ static const char *const AR__UA[] = {
     "input { background:Field; color:FieldText; }"
     "button:disabled, input:disabled { color:GrayText; }",
 
+    /*
+     * `select` and `textarea` are controls too, and were boxes with a display
+     * and nothing else -- a dropdown drew as bare text with every option
+     * beside it, and a textarea drew as bare text with no box at all.
+     *
+     * A text field's width is the other half of that. `<input type="text">`
+     * has always had a default size of twenty characters, and with no rule
+     * saying so it shrank to fit its value: an empty field was invisible and
+     * a field with two words in it was two words wide. 11em is that twenty
+     * characters at the 13px these controls use, and it scales with the text
+     * the way a `size` attribute is supposed to.
+     */
+    "select, textarea { background:Field; color:FieldText;"
+    "                   border:1px solid ButtonBorder; }"
+    "select:disabled, textarea:disabled { color:GrayText; }",
+
+    /* A checkbox and a radio are `input` too and must not take this width --
+       but they say so themselves below, and a class beats a type selector, so
+       no rule is needed here to keep them square. */
+    "input, select { width:11em; height:1.6em; }"
+    "textarea { width:11em; height:3.4em; }"
+    ".ar-button { width:auto; padding-left:6px; padding-right:6px; }",
+
+    /*
+     * A dropdown shows the option it is on and not the whole list.
+     *
+     * `option` is `display:block` above, which is right for a list box and
+     * wrong for the closed dropdown every `<select>` starts as. There are no
+     * attribute selectors here, so the document walk marks the one to show
+     * with a synthetic class, exactly as it does for a checkbox.
+     */
+    "select > option { display:none; }"
+    "select > option.ar-chosen { display:block; }",
+
     /* A square that is a square whatever the font is: a control sized in `em`
        grows with the text around it and stops being a checkbox. */
     ".ar-checkbox, .ar-radio { width:13px; height:13px; }"
