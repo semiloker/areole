@@ -785,12 +785,24 @@ typedef ar_i32 ar_scroll_pos;
  * now and the real fix is named in the roadmap: the per-box budget should
  * count the slots the way they are actually allocated.
  */
-#define AR_MEM_FIXED  253952u
+#define AR_MEM_FIXED  294912u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
-/* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
-   slots a rule carries; see ar_init_rules. */
-#define AR_BYTES_PER_RULE 588u
+/*
+ * What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
+ * slots a rule carries; see ar_init_rules.
+ *
+ * 588 -> 636, and it had been wrong since a rule last grew. Only this macro
+ * used it -- ar_init_ex measures with `sizeof(ar_rule)` and so was right -- so
+ * a caller sizing a block with AR_MEM_RULES for more than 256 rules got one
+ * 48 bytes a rule too small and was refused at init. A refusal and not a
+ * corruption, which is why it went unnoticed, and exactly the "a block that is
+ * checked and a block that is used are two different numbers" hazard the
+ * assertion in ar_ctx.c exists for.
+ *
+ * The assertion below now ties the two together, because a comment could not.
+ */
+#define AR_BYTES_PER_RULE 636u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting

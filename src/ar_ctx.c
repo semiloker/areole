@@ -66,7 +66,31 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
 static void ar__edit_apply(ar_ctx *c);
 static void ar__edit_follow_focus(ar_ctx *c, ar_u32 key, const char *initial, ar_u32 n);
 
-#define AR_MAX_RULES 256
+/*
+ * 256 -> 320, and this is the release that had to.
+ *
+ * A rule costs a *selector*, not a declaration block: `pre, code, kbd, samp
+ * { ... }` is four of them. The user-agent sheet reached 240 of 256 adding
+ * list markers, link decoration, `sub`/`sup`, control appearances and a
+ * monospace family -- and a rule that does not fit is refused **whole and
+ * silently**, which is the failure ar_ua_css.c's header describes, where
+ * paragraphs stayed flex items and nothing said so. Sixteen rules of headroom
+ * in front of a silent cliff is not a margin.
+ *
+ * The price, stated because it is every embedder's and not only this sheet's:
+ * an ar_rule is 636 bytes, so sixty-four more is **40,704 bytes** and
+ * AR_MEM_FIXED goes 248 KB -> 288 KB. That is a real cost for a library whose
+ * floor is a machine with 64 MB, and it buys 80 rules of room rather than 16.
+ *
+ * It is the expensive way to buy that room, and the cheap way is named here so
+ * the next person does not have to rediscover it: **a rule carries a whole
+ * ar_style to state the two or three properties it actually sets.** 600 of
+ * those 636 bytes are slots no rule uses. A property-value pool would cut it
+ * by an order of magnitude and make this ceiling stop mattering instead of
+ * moving it, and it would give back most of the 199 KB the table costs today.
+ * Not scheduled, and the number is here so the trade stays visible.
+ */
+#define AR_MAX_RULES 320
 
 /* Distinct selector-and-state tuples in an interface, not boxes: a thousand
    cards sharing one class occupy one entry. The shipped example uses eleven.
@@ -82,6 +106,17 @@ typedef char ar__cache_is_pow2[((AR_STYLE_CACHE & (AR_STYLE_CACHE - 1)) == 0) ? 
    fixed budget stops being fixed -- which is why the track pool moved inside
    this at 0.8.0, and why 0.4.3's five pools are inside it on the commit that
    adds them. */
+/*
+ * The public sizing macro and the private struct, tied together.
+ *
+ * AR_BYTES_PER_RULE is what AR_MEM_RULES charges a caller per rule past the
+ * default; sizeof(ar_rule) is what ar_init_ex then carves out. They were 588
+ * and 636, so a block sized by the macro was 48 bytes a rule short and init
+ * refused it. A comment asking the two to be kept equal had been there and
+ * had not worked, which is the argument for an assertion over a comment.
+ */
+typedef char ar__rule_price_is_honest[(AR_BYTES_PER_RULE == sizeof(ar_rule)) ? 1 : -1];
+
 typedef char ar__mem_fixed_holds
     [(sizeof(ar_ctx) + AR_MAX_RULES * sizeof(ar_rule) + AR_STYLE_CACHE * sizeof(ar_cache_entry) +
           AR_TRACK_POOL * sizeof(ar_track) + AR_CALC_POOL * sizeof(ar_calc_op) +
