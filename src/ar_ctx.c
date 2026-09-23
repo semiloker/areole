@@ -4332,6 +4332,7 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
     char   buf[AR_LINE_BUF];
     ar_i32 len = 0;
     ar_i32 i;
+    ar_i32 adv = 0;
 
     if (!n->text)
     {
@@ -4378,13 +4379,82 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         /* A font puts the baseline below the top of the line box; the bitmap
            face has no baseline and draws from the top, so the two paths take
            different y values for the same text. */
-        ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, ar_chain_for(c, n),
-                            c->shaping ? &c->shaper : 0, n->style.v[AR_P_FONT_SIZE], col,
-                            &c->glyphs, &c->glyph_scratch, 0);
+        adv = ar_text_draw_shaped(s, clip, x, y + n->ascent, buf, ar_chain_for(c, n),
+                                  c->shaping ? &c->shaper : 0, n->style.v[AR_P_FONT_SIZE], col,
+                                  &c->glyphs, &c->glyph_scratch, 0);
     }
     else
     {
         ar_draw_text(s, clip, x, y, buf, n->scale, col);
+        /* Measured below, and only if something is going to be drawn with it:
+           this path reports no advance, and charging every line in every
+           undecorated document for a second pass over its own text to support
+           a property almost nothing sets is the wrong way round. */
+        adv = -1;
+    }
+
+    /*
+     * The line under, over or through it.
+     *
+     * Drawn here rather than in the box pass because a decoration belongs to
+     * the *text* and not to the box: a wrapped link is one box and five
+     * fragments, and a rectangle the width of the box would underline the
+     * white space at the end of every line and the gap before the first word.
+     * The advance the drawing call just returned is exactly what was inked.
+     *
+     * One pixel until the face is large, because a hairline is what a browser
+     * draws at a reading size and anything computed from the font size rounds
+     * to one there anyway. The offset is below the baseline rather than on it,
+     * so a descender crosses the line instead of sitting on it.
+     */
+    {
+        ar_i32 decor = n->style.v[AR_P_TEXT_DECORATION];
+
+        if (decor != AR_DECOR_NONE && adv < 0)
+        {
+            adv = ar_text_width(buf, n->scale);
+        }
+        if (decor != AR_DECOR_NONE && adv > 0)
+        {
+            ar_i32 thick = n->style.v[AR_P_FONT_SIZE] / 14;
+            ar_i32 base, ly;
+
+            if (thick < 1)
+            {
+                thick = 1;
+            }
+
+            /*
+             * Where the baseline is, and the two faces disagree about it for
+             * the same reason the drawing calls do: an outline face puts the
+             * baseline under its ascent, and the built-in bitmap face has no
+             * baseline at all and fills its whole line box with glyph.
+             *
+             * For the bitmap face the underline therefore goes *inside* the
+             * bottom of the text rather than below it. Putting it below is
+             * what the first version did, and the line fell outside the text
+             * box -- so it was clipped away and the decoration drew nothing at
+             * all on every build without a TrueType face, which is every test
+             * in this suite.
+             */
+            if (c->have_face)
+            {
+                base = y + n->ascent;
+                ly = base + thick;
+            }
+            else
+            {
+                base = y + n->text_h;
+                ly = base - thick;
+            }
+            if (decor == AR_DECOR_LINE_THROUGH)
+            {
+                /* Through the middle of the lower case, which is about a third
+                   of the way up from the baseline for every Latin face. */
+                ly = base - n->style.v[AR_P_FONT_SIZE] / 3;
+            }
+            ar_fill_rect(s, ar_rect_make(x, ly, adv, thick), clip, col);
+        }
     }
 }
 

@@ -425,6 +425,22 @@ int ar_prop_inherits(ar_i32 prop)
     /* Text properties inherit, and this is one: a `<pre>` whose children
        did not keep their spaces would be a `<pre>` in name only. */
     case AR_P_WHITE_SPACE:
+    /*
+     * `text-decoration` inherits here, and CSS says it does not.
+     *
+     * The specification has an ancestor's decoration *propagate* to its
+     * descendants without being inherited, so a child cannot turn it off --
+     * `text-decoration: none` inside an underlined link does nothing in a
+     * browser. Drawing it that way needs the painter to walk up the ancestor
+     * chain per fragment, which is the one thing the flat-style design is
+     * for not doing.
+     *
+     * Inheritance gets the same picture for every document anyone writes and
+     * differs only for that one declaration. It also has to reach the child:
+     * a document walk puts an element's text in a child box, so a link's
+     * underline is painted by a box the `a` rule never matched.
+     */
+    case AR_P_TEXT_DECORATION:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -454,9 +470,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {
-    AR_P_COLOR,      AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,  AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,
-    AR_P_VISIBILITY, AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE, AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,      AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,     AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE,   AR_P_COLOR_SCHEME,
+                                      AR_P_WHITE_SPACE, AR_P_TEXT_DECORATION};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -759,6 +776,8 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"color-scheme", AR_P_COLOR_SCHEME},
                                           {"white-space", AR_P_WHITE_SPACE},
+                                          {"text-decoration", AR_P_TEXT_DECORATION},
+                                          {"text-decoration-line", AR_P_TEXT_DECORATION},
                                           {"outline-width", AR_P_OUTLINE_WIDTH},
                                           {"outline-color", AR_P_OUTLINE_COLOR},
                                           {"outline", AR_SH_OUTLINE},
@@ -944,6 +963,8 @@ static const ar__kw AR_KEYWORDS[] = {
     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
+    {"underline", AR_P_TEXT_DECORATION, AR_DECOR_UNDERLINE},
+    {"line-through", AR_P_TEXT_DECORATION, AR_DECOR_LINE_THROUGH},
     {"sub", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUB},
     {"super", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUPER},
 
