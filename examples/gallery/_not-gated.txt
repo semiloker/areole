@@ -164,14 +164,22 @@ css/color/system-colors  browser: the system colours come from the OS theme ther
 #
 # What is left is a width, and it is not about vertical-align at all. Setting
 # the demo to `vertical-align: baseline` leaves the same two boxes 7 px wide
-# against Chrome's 11, and the line box 19 against 16 -- so it is there
-# whatever the alignment says. It is the inline-at-another-font-size fault the
-# real-document corpus found and named, and it is the reason this demo cannot
-# be gated yet rather than a reason to leave the alignment alone: with the two
-# offsets in, the demo went from four disagreeing boxes to two.
+# against Chrome's 11 -- so it is there whatever the alignment says.
+#
+# The cause is the built-in face and not layout. `n->scale` is `font-size / 8`
+# in integers, so the 13 px these subscripts compute to draws and measures in
+# an 8 px cell, while the browser sets the same text at 13 with the outline
+# face the gallery ships. Every demo at a multiple of eight agrees; this one
+# asks for 0.8125em of 16 and does not.
+#
+# So it is 0.2.1's fractional bitmap scaling, or an areole that loads the
+# gallery's own TrueType the way the browser does -- the same choice
+# `css/units/cap` and `css/units/ch` are waiting on. Not a layout fault, and
+# the alignment either side of it is exact: with the two offsets in, the demo
+# went from four disagreeing boxes to two.
 #
 # The demo stays, amber, because the two that remain are the thing that will
 # go green.
 
-css/text/sub-super  engine: an inline at a smaller font-size measures narrow -- the offsets are right, the advance is not
+css/text/sub-super  engine: the built-in face scales in whole 8 px cells, so 13 px text measures as 8 -- the offsets are exact
 
