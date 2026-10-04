@@ -63,6 +63,31 @@ int ar_is_block(const ar_node *n)
 }
 
 /*
+ * Does this box lay its *children* out as block flow?
+ *
+ * A different question from ar_is_block, and conflating the two is what left
+ * an inline-block's insides to the flex algorithm. CSS 2.1 9.2.4: an
+ * inline-block is inline on the outside and a block container on the inside.
+ * ar_is_block answers for the outside -- does this box stack among its
+ * siblings, does it take its parent's width -- and an inline-block must say no
+ * to both. Asked about the inside it also said no, and a box that is not a
+ * block, a grid or a table falls through to flex in this engine.
+ *
+ * So for eight releases an inline-block laid its children out in a row and
+ * sized each to its contents: invisible while every inline-block held one
+ * thing -- a button's label, a checkbox's mark -- and wrong the moment one
+ * held two. A slider's track and its thumb sat side by side at zero width,
+ * a colour field's swatch was zero wide and drew nothing, and a select's
+ * options lined up beside each other. A button's label was placed by the flex
+ * row rather than by its `text-align: center`, which is why it sat at the
+ * left of every button.
+ */
+int ar_is_block_container(const ar_node *n)
+{
+    return ar_is_block(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK;
+}
+
+/*
  * Does this box establish a new block formatting context?
  *
  * Margins do not collapse across the boundary of one, and a float does not
@@ -117,7 +142,10 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
 {
     ar_i32 c;
 
-    if (n->text && n->text[0])
+    /* Any text box, empty or not. The only empty ones are fields, and an empty
+       field still has a line for its caret to stand in: collapsing it took the
+       field's height down to its padding, a six-pixel sliver. */
+    if (n->text)
     {
         return 0;
     }

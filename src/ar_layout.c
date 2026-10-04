@@ -118,7 +118,18 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
     ar_node *n = &nodes[i];
     ar_i32   widest = 0;
     ar_i32   c;
+    ar_i32   run = 0;
 
+    /*
+     * The widest line, and a line is a run of inline-level children, not one.
+     *
+     * Block children stack, so each is a line of its own and the container
+     * needs the widest. Inline children sit side by side until something
+     * block-level interrupts them, so a run of them needs its *sum* -- a file
+     * field's button and the name beside it, a checkbox and its label. Taking
+     * the widest of those made every shrink-to-fit box exactly too narrow for
+     * its own contents, and the last item wrapped onto a line by itself.
+     */
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
         ar_node *ch = &nodes[c];
@@ -129,6 +140,16 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
             continue;
         }
         w = ar__intrinsic(ch, 0) + ch->style.v[AR_P_MARGIN_LEFT] + ch->style.v[AR_P_MARGIN_RIGHT];
+        if (ar_is_inline_level(ch) && !ar_is_floated(ch))
+        {
+            run += w;
+            if (run > widest)
+            {
+                widest = run;
+            }
+            continue;
+        }
+        run = 0;
         if (w > widest)
         {
             widest = w;
@@ -186,7 +207,7 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
 
     /* A grid is not a flex row: its children do not sit side by side along one
        axis, so summing them is the wrong intrinsic width. */
-    side_by_side = !ar_is_block(n) && !ar_is_grid(n) && ar_axis_main(n) == 0;
+    side_by_side = !ar_is_block_container(n) && !ar_is_grid(n) && ar_axis_main(n) == 0;
 
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
@@ -394,7 +415,7 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
             ar__measure_block(nodes, i);
             continue;
         }
-        if (ar_is_block(n))
+        if (ar_is_block_container(n))
         {
             ar__measure_block(nodes, i);
             continue;
@@ -528,7 +549,7 @@ static int ar__stretched_by_parent(const ar_node *nodes, const ar_node *n)
     {
         /* No writing modes, so a grid's cross axis is always the block one. */
     }
-    else if (!ar_is_block(p) && !ar_is_table(p) && !ar_is_table_internal(p) &&
+    else if (!ar_is_block_container(p) && !ar_is_table(p) && !ar_is_table_internal(p) &&
              !ar_is_table_block(p) && ar_axis_main(p) == 0)
     {
         /* A flex row: the cross axis is the block axis here too. A column's
@@ -787,7 +808,7 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
      * cell takes its height from its row and a stretched item from its
      * parent, and neither may be answered from here.
      */
-    if (nodes && n->first_child >= 0 && ar_is_block(n) && !ar_is_table_block(n) &&
+    if (nodes && n->first_child >= 0 && ar_is_block_container(n) && !ar_is_table_block(n) &&
         n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && env->wrap &&
         !ar__stretched_by_parent(nodes, n))
     {
@@ -916,11 +937,17 @@ static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
  * is the other half of what makes it inline-level -- a block child of the same
  * markup would take the whole width and force the next item onto a new line.
  */
-static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
+/*
+ * Every item a line will hold, sized -- including the ones inside an inline
+ * box, which join the line as much as its siblings do. A checkbox inside a
+ * `<label>` is on the line beside the label's words, and nothing sized it:
+ * it went on the line zero pixels wide until something else placed the label
+ * a second time, which was itself the bug that moved the label's text.
+ */
+static void ar__size_run(ar__stack_ud *su, ar_i32 first, ar_i32 stop)
 {
-    ar__stack_ud *su = (ar__stack_ud *)ud;
-    ar_node      *nodes = su->nodes;
-    ar_i32        c;
+    ar_node *nodes = su->nodes;
+    ar_i32   c;
 
     for (c = first; c >= 0 && c != stop; c = nodes[c].next_sibling)
     {
@@ -931,7 +958,35 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
             continue;
         }
         ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
+        if (ar_flows_children(ch))
+        {
+            ar__size_run(su, ch->first_child, -1);
+        }
+        else if (ch->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK && ch->first_child >= 0 &&
+                 ch->measured_w != ch->rect.w && su->env->node_count > 0)
+        {
+            /* Its insides laid out now, at its size, so the line can ask where
+               its last line of text is -- which is where it sits on the line.
+               A box with a stated height was otherwise left unplaced until the
+               forward sweep, after the line had been closed without it. The
+               line carries them along when it moves the box (ar__carry). */
+            ar_relayout_subtree(nodes, su->env->node_count, c, su->env);
+
+            /* A measurement, not the placement: the line has not decided
+               where this box goes yet, so the forward sweep must place its
+               insides again once it has -- which the memo would tell it not
+               to. Every field's text was left where this pass put it. */
+            ch->measured_w = -1;
+        }
     }
+}
+
+static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
+{
+    ar__stack_ud *su = (ar__stack_ud *)ud;
+    ar_node      *nodes = su->nodes;
+
+    ar__size_run(su, first, stop);
 
     return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align,
                          &su->floats, su->top + y, su->env);
@@ -1064,6 +1119,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     ar_i32   left, top;
     ar_i32   cursor;
     ar_i32   c;
+    ar_i32   legend = -1, legend_shift = 0;
 
     /* scrollbar-gutter takes its width off the inline end before the children
        see it. areole's bar is an overlay so nothing reflows when one appears;
@@ -1234,20 +1290,67 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         }
     }
 
+    /*
+     * A fieldset's rendered legend, which sits on the fieldset's top border
+     * rather than inside its padding.
+     *
+     * It is as wide as its contents, at the content edge, with its top at the
+     * fieldset's own top -- and the border is drawn through its middle and
+     * broken behind it, by the painter. Everything else in the fieldset starts
+     * under the legend, by the padding less the border the legend now covers:
+     * which is how a browser arrives at 437 for the legend, 455 for its
+     * bottom and 476 for the first line of the group beneath it.
+     */
+    {
+        ar_i32 lg = n->first_child;
+
+        while (lg >= 0 && ar__hidden(&nodes[lg]))
+        {
+            lg = nodes[lg].next_sibling;
+        }
+        if (lg >= 0 && (nodes[lg].state & AR_STATE_LEGEND) && env->node_count > 0)
+        {
+            ar_node *ch = &nodes[lg];
+            ar_i32   below;
+
+            ch->rect.x = left + ch->style.v[AR_P_MARGIN_LEFT];
+            ch->rect.y = n->rect.y;
+            ar__size_shrink_to_fit(nodes, ch, inner_w, env);
+            ch->rect.x = left + ch->style.v[AR_P_MARGIN_LEFT];
+            ch->rect.y = n->rect.y;
+            ar_relayout_subtree(nodes, env->node_count, lg, env);
+            legend = lg;
+            below =
+                ch->rect.y + ch->rect.h + n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_BORDER_WIDTH];
+            legend_shift = below > top ? below - top : 0;
+        }
+    }
+
     /* The stack, by the same walk the measure pass used. */
     {
         ar__stack_ud su;
 
         su.nodes = nodes;
-        su.top = top;
+        su.top = top + legend_shift;
         su.left = left;
         su.inner_w = inner_w;
         su.align = n->style.v[AR_P_TEXT_ALIGN];
         su.env = env;
         ar_float_reset(&su.floats, left, left + inner_w);
 
+        /* The legend is not in the stack: it has been placed. Its siblings
+           are, from under it. */
+        if (legend >= 0)
+        {
+            n->first_child = nodes[legend].next_sibling;
+        }
         cursor = ar_block_stack(n, nodes, ar__rect_height_of, ar__place_child_at, ar__place_run,
                                 ar__clear_to, &su);
+        if (legend >= 0)
+        {
+            n->first_child = legend;
+            cursor += legend_shift;
+        }
 
         /*
          * A formatting context grows to hold its own floats; a plain block box
@@ -1261,6 +1364,34 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
             if (fb > cursor)
             {
                 cursor = fb;
+            }
+        }
+
+        /*
+         * `align-content` on a block container, which CSS Box Alignment 3 gives
+         * it and browsers now honour: the contents as a whole pushed to the
+         * middle or the end of a box taller than they are.
+         *
+         * It is how a control's label sits in the middle of the control. A
+         * button thirty-two pixels tall with one line of text in it has its
+         * text at the top, unless something says otherwise -- and nothing
+         * could, because this was a property only flex and grid read. Only for
+         * a stated height: an automatic one is exactly as tall as its contents
+         * and there is no room to distribute.
+         */
+        if (n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO)
+        {
+            ar_i32 ac = n->style.v[AR_P_ALIGN_CONTENT] & AR_ALIGN_MODE_MASK;
+            ar_i32 room = inner_h - cursor - (n->text ? ar__text_block_height(n) : 0);
+
+            if ((ac == AR_ALIGN_CENTER || ac == AR_ALIGN_END) && room > 0)
+            {
+                ar_i32 dy = ac == AR_ALIGN_CENTER ? room / 2 : room;
+
+                for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+                {
+                    ar_shift_subtree(nodes, env->frags, env->frag_used, c, 0, dy);
+                }
             }
         }
     }
@@ -1396,7 +1527,7 @@ ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env
     {
         return n->fit[1];
     }
-    if (!ar_is_block(n) && !ar_is_table_block(n))
+    if (!ar_is_block_container(n) && !ar_is_table_block(n))
     {
         return n->fit[1];
     }
@@ -1416,15 +1547,29 @@ ar_i32 ar_content_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env
     return h;
 }
 
-static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
+static void ar__place_range(ar_node *nodes, ar_i32 from, ar_i32 to, ar_layout_env *env)
 {
     ar_i32 i;
 
-    for (i = 0; i < count; ++i)
+    for (i = from; i < to; ++i)
     {
         ar_node *n = &nodes[i];
 
         if (ar__hidden(n) || n->first_child < 0)
+        {
+            continue;
+        }
+
+        /*
+         * An inline box whose children join the line has already been placed
+         * -- by the line filler of the block it is in, which put its contents
+         * on the line beside everything else. Placing it again here handed it
+         * to the flex algorithm, which laid its text out a second time inside
+         * the box and moved the rectangle away from the fragment the painter
+         * draws: a label's text drew over the checkbox it was beside, and its
+         * padding moved the box and not the words.
+         */
+        if (ar_flows_children(n))
         {
             continue;
         }
@@ -1461,7 +1606,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             ar_grid_place(nodes, i, env->sheet, env);
             continue;
         }
-        if (ar_is_block(n))
+        if (ar_is_block_container(n))
         {
             /*
              * Placed once, not twice.
@@ -1510,6 +1655,52 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
     }
 }
 
+static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
+{
+    ar__place_range(nodes, 0, count, env);
+}
+
+static int ar__inside(const ar_node *nodes, ar_i32 i, ar_i32 root)
+{
+    for (; i >= 0; i = nodes[i].parent)
+    {
+        if (i == root)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Lay a subtree out again where its root now stands.
+ *
+ * For a box the flow placed at one width and positioning then gave another --
+ * an absolutely positioned panel with `left` and `right`, a dropdown hung
+ * under its control. The flow laid its contents out at its shrink-to-fit
+ * width; the box then grew to its real one and its contents stayed where they
+ * were, so every row of a dropdown was as wide as its own text and the list
+ * behind them was full width. Moving the children was never enough: they had
+ * to be laid out at the new width, which is what the forward sweep does when
+ * it is pointed at the subtree again.
+ *
+ * Boxes are stored in pre-order, so a subtree is a run of indices starting at
+ * its root, and the sweep can be handed exactly that run. The memo is cleared
+ * through the whole run first, or the sweep would skip every box whose
+ * recorded width still matched -- which is all of them below the root.
+ */
+void ar_relayout_subtree(ar_node *nodes, ar_i32 count, ar_i32 root, ar_layout_env *env)
+{
+    ar_i32 end = root + 1;
+
+    while (end < count && ar__inside(nodes, end, root))
+    {
+        ++end;
+    }
+    ar__forget_measurement(nodes, root);
+    ar__place_range(nodes, root, end, env);
+}
+
 void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env)
 {
     ar_i32 i;
@@ -1518,6 +1709,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     {
         return;
     }
+    env->node_count = count;
 
     ar__measure(nodes, count);
 
@@ -1539,7 +1731,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
     {
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
         {
-            ar_position_out_of_flow(nodes, i, viewport, env);
+            ar_position_out_of_flow(nodes, count, i, viewport, env);
         }
     }
 
@@ -1565,7 +1757,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
         if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
             AR_WIDE(&nodes[i].style, AR_P_POSITION_ANCHOR))
         {
-            ar_position_out_of_flow(nodes, i, viewport, env);
+            ar_position_out_of_flow(nodes, count, i, viewport, env);
         }
     }
     ar_position_try(nodes, count, viewport, env);

@@ -983,7 +983,12 @@ enum
 enum
 {
     AR_FAMILY_DEFAULT = 0,
-    AR_FAMILY_MONOSPACE
+    AR_FAMILY_MONOSPACE,
+    /* The face a browser draws controls in -- Arial, on Windows -- while the
+       body text is in the serif default. Two proportional families, because a
+       page of Times with Times in its fields is not what anybody's browser
+       shows. */
+    AR_FAMILY_SANS
 };
 
 enum
@@ -1383,6 +1388,12 @@ enum
      * markup and stops agreeing with the screen the first time anyone clicks.
      */
     AR_STATE_OPEN = 1 << 19,
+
+    /* The first `<legend>` of a `<fieldset>`: the one a browser draws on the
+       fieldset's top border rather than inside it. Not a pseudo-class -- no
+       selector names it -- but a fact the layout and the painter both need,
+       and the document walk is the one place that knows it. */
+    AR_STATE_LEGEND = 1 << 20,
 
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };

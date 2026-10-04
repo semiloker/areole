@@ -788,6 +788,14 @@ typedef struct ar_layout_env
     ar_text_range_fn measure;
     void            *ud;
 
+    /* The same width in 1/AR_ONE_PIXEL, unrounded, so the line filler can sum
+       a run's pieces and round once. Measuring the run from its start for
+       every word did the same with whole pixels and made a line quadratic in
+       its words -- 15% of layout on a page of wrapped paragraphs. Null when
+       `measure` is exact already, as the bitmap face's whole pixels are: then
+       a run's pieces sum to the run with nothing to correct. */
+    ar_text_range_fn measure_fx;
+
     /* The stylesheet, because a grid template is a list and a style slot is
        sixteen bits -- the slot holds an index into a pool that lives here.
        May be null, in which case a grid has no templates and every track is
@@ -804,6 +812,10 @@ typedef struct ar_layout_env
     ar_frag *frags;
     ar_i32   frag_cap;
     ar_i32   frag_used;
+
+    /* How many boxes the tree has, so a pass that lays out a subtree again
+       knows where the array ends. Set by ar_layout_solve. */
+    ar_i32 node_count;
 } ar_layout_env;
 
 void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
@@ -816,6 +828,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
 ar_i32 ar_margin_collapse(ar_i32 a, ar_i32 b);
 
 int ar_is_block(const ar_node *n);
+int ar_is_block_container(const ar_node *n);
 int ar_establishes_bfc(const ar_node *n);
 
 /* Whether a child's bottom margin reaches through this box's bottom edge. */
@@ -1160,7 +1173,12 @@ void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was);
 
 void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 count, ar_i32 i, ar_rect viewport,
+                             ar_layout_env *env);
+
+/* Lay a subtree out again at its root's current rectangle -- for a box that
+   positioning gave a width the flow did not. See ar_layout.c. */
+void ar_relayout_subtree(ar_node *nodes, ar_i32 count, ar_i32 root, ar_layout_env *env);
 void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 int  ar_is_sticky(const ar_node *n);
@@ -1206,6 +1224,10 @@ void ar_float_place(ar_float_ctx *fc, ar_node *n, ar_i32 y, ar_i32 side);
  * ------------------------------------------------------------------------ */
 int    ar_is_inline_level(const ar_node *n);
 ar_i32 ar_inline_baseline(const ar_node *n);
+
+/* The same, for a box in its tree: an inline-block's baseline is the last line
+   inside it, which needs the tree to find. */
+ar_i32 ar_inline_baseline_of(const ar_node *nodes, ar_i32 i);
 
 /* Lays a run of inline-level siblings into line boxes and returns how tall
    they came to. Sizes must already be resolved. */
