@@ -403,6 +403,7 @@ toolkit breaks that circle.
 - **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant ✅
 - **0.9.5** *It does arithmetic* — `calc()` and the maths functions, custom properties and `var()` ✅
 - **0.9.6** *It knows what colour means* — every notation CSS Color 4 defines, `color-mix()`, `currentColor`, the system colours and `color-scheme` ✅
+- **0.10.0** *It can be used* — focus and tab order, text editing, every form control, forms that submit, and an accessibility tree a screen reader can walk ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -964,7 +965,7 @@ with the layout explanation and none with an algorithmic one. The first half was
 the second was false: 0.9.6 removed the cost because it happened to fix the bug, not because it
 moved memory again.
 
-**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
+**This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
 ships under 0.9.5's: a version may not move backwards.
 
 | | |
@@ -1066,6 +1067,117 @@ parser end to end against Edge, thirteen of them exactly. The gap is real and st
 whole and the wire to the window manager is what is missing, which is the same shape 0.4.1 shipped
 `dvh`, `lvh` and `svh` in. `color-scheme: dark` is what selects the dark set today.
 
+### 0.10.0, complete
+
+**This is the release where areole stops being a viewer.** Everything before it renders; this is
+the first version a person can *use* -- Tab through, type into, tick, choose from, submit -- and
+the first one a screen reader can read. [Example 16](examples/16_forms/README.md) is the guide: a
+delivery form of twenty controls in plain markup, with no stylesheet at all.
+
+| | |
+| --- | --- |
+| Controls | text, password, number, textarea, select with groups, range, colour, file, checkbox, radio, button, submit, reset, progress, meter, label, fieldset and legend, details, hidden |
+| Editing | grapheme clusters, words, selection, the clipboard, IME composition; 512 undo steps in 24 KB |
+| Forms | implicit submission, `ar_form_submitted`, `ar_form_encode` |
+| Accessibility | a public tree; MSAA on Windows, read back from another process: 20 of 20 controls named |
+| Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.18% of pixels differ |
+| Checks | **1,964** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
+| Memory | `AR_MEM_FIXED` 288 KB -> 320 KB; no allocation after init, the undo log included |
+| Binary | the core +125,760 bytes since 0.9.6, against a budget of 60 KB -- see below |
+
+**Six of the eight acceptance criteria are met by a program. Two need a person.**
+
+| criterion | |
+| --- | --- |
+| 1. every control renders, responds and reports its value | met: example 16's selftest per control, `tools/versus.py` against Edge |
+| 2. the caret never lands mid-cluster, 200 strings | met, 100% |
+| 3. 500 steps of undo and redo restore every byte | met |
+| 4. IME composition with a Japanese input method | **owed by hand.** Drawn inline and never stored, in `ar_test`; the Win32 side is written and has not met a real IME |
+| 5. tab order is document order, whatever `order` says | met |
+| 6. twenty controls, each with a role and a name, in Narrator and NVDA | **half.** `ar_a11y_probe` reads all twenty, named, through MSAA and UI Automation; nobody has listened yet |
+| 7. a blink invalidates fewer than 2,000 pixels | met: 15 in example 16 |
+| 8. no allocation after init | met: `ar_bench` checks it on every scene, and on the three written for this release |
+
+**And one of the Pentium II budgets is missed**, projected by `ar_require` from this machine to
+the Pentium II 400 profile:
+
+| | budget | projected |
+| --- | --- | --- |
+| keystroke into a 2,000-character textarea | < 12 ms | 7.0 to 8.8 ms |
+| a caret blink's frame | < 0.5 ms | **0.97 to 1.41 ms** |
+| the accessibility tree, 500 nodes | < 8 ms | about 1.2 to 1.7 ms (0.27 to 0.39 for 114) |
+| the undo log | <= 128 KB | 24 KB |
+
+The blink repaints 15 pixels and still costs a frame: an immediate-mode engine builds and lays out
+the whole tree to learn that only the caret changed. A blink that skipped the build -- paint the
+caret's column straight from the last frame -- is the fix, and it is not in this release.
+
+**The binary budget is missed by twice.** 0.10.0's document allows 60 KB with accessibility
+separable; the core is 125,760 bytes larger than at 0.9.6, of which `ar_a11y.c` is 13,848.
+`ar_ctx.c` grew 27,600 in the last stretch alone and `ar_dom.c` 22,468 -- the control walk and form
+submission, which tools/check_size.py itemises where it raises the HTML budget to 188 KB. That
+raise is recorded as what it is: set after the work, because the document named no size.
+
+### Four bugs found by checking, not by reading
+
+**No screen reader had ever seen anything in the window.** MinGW's liboleacc.a resolves
+`IID_IAccessible` to the address of an import thunk, so the provider marshalled an interface
+nobody had registered and every reader got `REGDB_E_IIDNOTREG`. The example's README said MSAA had
+been read back by a script; the script did not exist. It does now, as `ar_a11y_probe`, and its
+first run found this.
+
+**Its second run found the containers named with every word inside them.** The form, the fieldset
+with all three radios' labels, and the closed `<details>` with the sentence it hides -- read out by
+whatever contained it. A group, a form and a landmark are now named by markup or not at all, a
+fieldset by its legend, and what is not rendered is not read.
+
+**A run of words was measured quadratically.** Rounding a line's pieces once rather than one by
+one -- a button's two-word label had wrapped inside itself -- was done by measuring from the run's
+start at every word, and the alternating benchmark caught it at 15% of layout on a page of wrapped
+paragraphs before it shipped. The run now keeps its width in fixed point; with the bitmap face,
+whose widths are whole pixels already, it does not round at all.
+
+**An inline-block sat a line low on a padded body**, because the line moved the box and left its
+insides behind to be read for a baseline -- and an `<svg>` sat on the text a CDATA section left
+inside it. Two gallery demos regressed and are back on Chrome's geometry, and `ar_test` holds both.
+
+### What it cost
+
+Measured by alternating runs against the commit before it on the same machine, because the machine
+would not hold still for a baseline. Two full passes over the 52 shared scenes put the median at
+0.986 and 1.025 of the old time, and no scene was slower in every pair by more than 5%. Eight
+rounds each on the suspects:
+
+| scene | p50 | layout phase |
+| --- | --- | --- |
+| `inline_wrap` | +2.2% | +4.6% |
+| `scroll_container` | +2.2% | +1.2% |
+| `html_render` | +2 to 6% | +5 to 7% |
+| `grid_20x20` | code placement | +1% with both builds aligned to 64 bytes |
+
+`html_render`'s cost is spread across the inline-box and inline-block work: nine builds with one
+change each stubbed out left it where it was. It is recorded rather than chased further.
+
+Three scenes were written for what this release added -- `field_keystroke` 0.37 ms, `caret_blink`
+0.08 ms and `a11y_tree` 0.018 ms here -- and they land with the stamp, not before it:
+`gen_perf_doc.py --check` fails on a registered scene the baseline does not hold, which is that gate
+doing exactly its job.
+
+**`AR_VERSION_STRING` still says 0.9.6.** The stamp and `bench/baseline.json` move together, and
+the machine read 30 to 55% spread between epochs on the layout group at 10% load -- the numbers
+0.9.2 discarded rather than published. The baseline, with the three new scenes in it, waits for a
+quiet machine, as 0.9.4's and 0.9.6's did.
+
+### What this release does not do
+
+- **No network.** A form is submitted to the program; there is no POST.
+- **No date, time or datetime-local pickers** -- they need a calendar and a locale database.
+- **No `<select multiple>` and no `size` list box.** A select is a dropdown.
+- **No colour dialog**, only a palette of sixteen; no `contenteditable`, rich text or spellcheck.
+- **Undo does not survive leaving a field.** The text does; the history is one buffer's.
+- **The caret moves logically through bidirectional text**, not visually.
+- **`accent-color` and `color-scheme` on controls are 0.10.1's.**
+
 ## Building
 
 ```sh
@@ -1133,12 +1245,12 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `15_real` | ten documents saved from the web | by eye, 9 / 10 |
 | `ar_hints` | what HTML's legacy attributes compute to | 42 / 43 |
-| `ar_elements` | what every element's defaults compute to | 1066 / 1071 |
+| `ar_elements` | what every element's defaults compute to | 1061 / 1071 |
 | `ar_quirks` | what a document with no doctype does differently | 39 / 39 |
 | `ar_units` | what every CSS length unit computes to | **35 / 35** |
 | `ar_calc` | what calc() and var() compute to | **109 / 109** |
 | `media` | 300 media queries, both engines, four viewports | **1200 / 1200** |
-| `gallery` | one standalone page per feature, both engines | 163 / 163 gated, 13 reported |
+| `gallery` | one standalone page per feature, both engines | 180 / 180 gated, 14 reported |
 | `09_table` | tables: anonymous boxes, collapse, spans | 616 / 624 |
 
 The table corpus is the honest exception and is not gated: **8 of its 624 boxes still land
