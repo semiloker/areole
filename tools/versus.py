@@ -45,6 +45,7 @@ from gallery import read_png  # noqa: E402
 ENGINE = os.path.join(ROOT, 'build', 'ar_gallery.exe')
 FONTS = 'C:/Windows/Fonts/'
 DEFAULT_FONTS = {'body': FONTS + 'times.ttf', 'bold': FONTS + 'timesbd.ttf',
+                 'italic': FONTS + 'timesi.ttf',
                  'sans': FONTS + 'arial.ttf', 'mono': FONTS + 'consola.ttf'}
 
 # The page goes in an iframe and is measured from outside, so the page itself
@@ -59,6 +60,12 @@ function dump(){
   const out = [];
   try {
     const d = document.getElementById('f').contentDocument;
+    /* The screenshot is taken with --hide-scrollbars, and areole's bar is an
+       overlay that takes no room; a page taller than the window measured
+       here with a 15 px scrollbar disagreed with its own picture. */
+    const s = d.createElement('style');
+    s.textContent = 'html{scrollbar-width:none}';
+    (d.head || d.documentElement).appendChild(s);
     for (const e of d.querySelectorAll('[id]')) {
       const r = e.getBoundingClientRect();
       out.push('#' + e.id + ' ' + Math.round(r.left) + ' ' + Math.round(r.top) + ' ' +
@@ -94,6 +101,8 @@ def areole(page, w, h, fonts, out_ppm):
         args += ['--mono', fonts['mono']]
     if fonts.get('bold'):
         args += ['--bold', fonts['bold']]
+    if fonts.get('italic'):
+        args += ['--italic', fonts['italic']]
     r = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace')
     return parse_boxes(r.stdout)
 
@@ -101,8 +110,13 @@ def areole(page, w, h, fonts, out_ppm):
 def browser_run(browser, args):
     """Run the browser with a timeout, so a hung headless instance cannot hang
     the tool -- which is the failure tools/gallery.py documents."""
+    # Light, always. A page that offers `color-scheme: light dark` follows the
+    # system theme in a browser, and on a machine in dark mode the WHATWG
+    # standard came out white on black -- 97% of its pixels "different" --
+    # while areole's prefers-color-scheme is pinned to light until 0.16.1.
     try:
-        return subprocess.run([browser, '--headless', '--disable-gpu', '--no-sandbox'] + args,
+        return subprocess.run([browser, '--headless', '--disable-gpu', '--no-sandbox',
+                               '--blink-settings=preferredColorScheme=1'] + args,
                               capture_output=True, text=True, encoding='utf-8', errors='replace',
                               timeout=60).stdout
     except subprocess.TimeoutExpired:
@@ -206,8 +220,12 @@ def main():
         m = mine.get(key)
         t = theirs.get(key)
         fmt = lambda r: '%d,%d %dx%d' % r if r else '-'  # noqa: E731
+        # Two empty boxes agree wherever they are: a browser reports an element
+        # it does not render at 0,0 and areole at its place in the flow, and
+        # neither is anything a reader can see.
+        empty = m is not None and t is not None and m[2] == m[3] == 0 and t[2] == t[3] == 0
         off = (m is None or t is None or
-               max(abs(m[i] - t[i]) for i in range(4)) > args.tolerance)
+               (not empty and max(abs(m[i] - t[i]) for i in range(4)) > args.tolerance))
         bad += off
         lines.append('%-14s %-22s %-22s %s' % (key, fmt(m), fmt(t), 'DIFFERS' if off else 'ok'))
     lines.append('%d of %d elements differ by more than %dpx' % (bad, len(set(mine) | set(theirs)),
