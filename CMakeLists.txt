@@ -153,6 +153,14 @@ if(WIN32)
     target_link_libraries(example_forms PRIVATE areole_win32)
     areole_set_warnings(example_forms)
 
+    # Reads example 16 back through MSAA and UI Automation from another
+    # process, which is what a screen reader sees. Run by hand and not by
+    # ctest: it opens a window.
+    add_executable(ar_a11y_probe tools/a11y_probe.c)
+    target_link_libraries(ar_a11y_probe PRIVATE oleacc ole32 oleaut32 uuid)
+    set_target_properties(ar_a11y_probe PROPERTIES C_EXTENSIONS ON)
+    areole_set_warnings(ar_a11y_probe)
+
     add_executable(example_hello examples/01_hello/main.c)
     target_link_libraries(example_hello PRIVATE areole_win32)
     areole_set_warnings(example_hello)
