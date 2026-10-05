@@ -194,36 +194,36 @@ static int ar__gb_break(ar_u8 a, ar_u8 b, ar_i32 ri_run)
 }
 
 /* Decode the codepoint starting at `at`, and where it ends. */
-static ar_u32 ar__cp_at(const ar_edit *e, ar_u16 at, ar_u16 *end)
+static ar_u32 ar__cp_at(const char *t, ar_u16 len, ar_u16 at, ar_u16 *end)
 {
-    const char *p = e->text + at;
+    const char *p = t + at;
     const char *q = p;
     ar_u32      c;
 
-    if (at >= e->len)
+    if (at >= len)
     {
         *end = at;
         return 0;
     }
     c = ar_utf8_next(&q);
     *end = (ar_u16)(at + (q - p));
-    if (*end > e->len)
+    if (*end > len)
     {
-        *end = e->len;
+        *end = len;
     }
     return c;
 }
 
 /* The offset of the codepoint before `at`, found by walking back over
    continuation bytes -- which is what makes UTF-8 worth using. */
-static ar_u16 ar__cp_before(const ar_edit *e, ar_u16 at)
+static ar_u16 ar__cp_before(const char *t, ar_u16 at)
 {
     ar_u16 i = at;
 
     while (i > 0)
     {
         --i;
-        if (((unsigned char)e->text[i] & 0xC0) != 0x80)
+        if (((unsigned char)t[i] & 0xC0) != 0x80)
         {
             break;
         }
@@ -233,17 +233,17 @@ static ar_u16 ar__cp_before(const ar_edit *e, ar_u16 at)
 
 /* How many regional indicators run backwards from `at`. Flags pair up, so the
    parity of this decides whether the next one joins or starts afresh. */
-static ar_i32 ar__ri_run(const ar_edit *e, ar_u16 at)
+static ar_i32 ar__ri_run(const char *t, ar_u16 len, ar_u16 at)
 {
     ar_i32 n = 0;
     ar_u16 i = at;
 
     while (i > 0)
     {
-        ar_u16 prev = ar__cp_before(e, i);
+        ar_u16 prev = ar__cp_before(t, i);
         ar_u16 end;
 
-        if (ar__gb_class(ar__cp_at(e, prev, &end)) != AR__GB_RI)
+        if (ar__gb_class(ar__cp_at(t, len, prev, &end)) != AR__GB_RI)
         {
             break;
         }
@@ -253,27 +253,27 @@ static ar_i32 ar__ri_run(const ar_edit *e, ar_u16 at)
     return n;
 }
 
-ar_u16 ar_edit_next(const ar_edit *e, ar_u16 at)
+ar_u16 ar_cluster_next(const char *t, ar_u16 len, ar_u16 at)
 {
     ar_u16 i;
 
-    if (at >= e->len)
+    if (at >= len)
     {
-        return e->len;
+        return len;
     }
     i = at;
     for (;;)
     {
         ar_u16 end, next_end;
-        ar_u8  a = ar__gb_class(ar__cp_at(e, i, &end));
+        ar_u8  a = ar__gb_class(ar__cp_at(t, len, i, &end));
         ar_u8  b;
 
-        if (end >= e->len)
+        if (end >= len)
         {
-            return e->len;
+            return len;
         }
-        b = ar__gb_class(ar__cp_at(e, end, &next_end));
-        if (ar__gb_break(a, b, ar__ri_run(e, end)))
+        b = ar__gb_class(ar__cp_at(t, len, end, &next_end));
+        if (ar__gb_break(a, b, ar__ri_run(t, len, end)))
         {
             return end;
         }
@@ -281,7 +281,7 @@ ar_u16 ar_edit_next(const ar_edit *e, ar_u16 at)
     }
 }
 
-ar_u16 ar_edit_prev(const ar_edit *e, ar_u16 at)
+ar_u16 ar_cluster_prev(const char *t, ar_u16 len, ar_u16 at)
 {
     ar_u16 i;
 
@@ -297,17 +297,17 @@ ar_u16 ar_edit_prev(const ar_edit *e, ar_u16 at)
      * comes before: the only honest way to find the previous boundary is to
      * find the codepoint start and then ask whether it is one.
      */
-    i = ar__cp_before(e, at);
+    i = ar__cp_before(t, at);
     while (i > 0)
     {
-        ar_u16 prev = ar__cp_before(e, i);
+        ar_u16 prev = ar__cp_before(t, i);
         ar_u16 end;
-        ar_u8  a = ar__gb_class(ar__cp_at(e, prev, &end));
+        ar_u8  a = ar__gb_class(ar__cp_at(t, len, prev, &end));
         ar_u8  b;
         ar_u16 unused;
 
-        b = ar__gb_class(ar__cp_at(e, i, &unused));
-        if (ar__gb_break(a, b, ar__ri_run(e, i)))
+        b = ar__gb_class(ar__cp_at(t, len, i, &unused));
+        if (ar__gb_break(a, b, ar__ri_run(t, len, i)))
         {
             return i;
         }
@@ -316,50 +316,112 @@ ar_u16 ar_edit_prev(const ar_edit *e, ar_u16 at)
     return 0;
 }
 
-int ar_edit_is_boundary(const ar_edit *e, ar_u16 at)
+int ar_cluster_is_boundary(const char *t, ar_u16 len, ar_u16 at)
 {
     ar_u16 end;
     ar_u8  a, b;
     ar_u16 prev;
 
-    if (at == 0 || at >= e->len)
+    if (at == 0 || at >= len)
     {
         return 1;
     }
-    if (((unsigned char)e->text[at] & 0xC0) == 0x80)
+    if (((unsigned char)t[at] & 0xC0) == 0x80)
     {
         return 0; /* inside a codepoint, never a boundary */
     }
-    prev = ar__cp_before(e, at);
-    a = ar__gb_class(ar__cp_at(e, prev, &end));
-    b = ar__gb_class(ar__cp_at(e, at, &end));
-    return ar__gb_break(a, b, ar__ri_run(e, at));
+    prev = ar__cp_before(t, at);
+    a = ar__gb_class(ar__cp_at(t, len, prev, &end));
+    b = ar__gb_class(ar__cp_at(t, len, at, &end));
+    return ar__gb_break(a, b, ar__ri_run(t, len, at));
+}
+
+ar_u16 ar_edit_next(const ar_edit *e, ar_u16 at)
+{
+    return ar_cluster_next(e->text, e->len, at);
+}
+
+ar_u16 ar_edit_prev(const ar_edit *e, ar_u16 at)
+{
+    return ar_cluster_prev(e->text, e->len, at);
+}
+
+int ar_edit_is_boundary(const ar_edit *e, ar_u16 at)
+{
+    return ar_cluster_is_boundary(e->text, e->len, at);
+}
+
+ar_u32 ar_cluster_count(const char *t, ar_u32 n)
+{
+    ar_u32 k = 0;
+    ar_u16 at = 0;
+    ar_u16 len = (ar_u16)(n > AR_EDIT_CAP ? AR_EDIT_CAP : n);
+
+    while (at < len)
+    {
+        at = ar_cluster_next(t, len, at);
+        ++k;
+    }
+    return k;
 }
 
 /* ------------------------------------------------------------------------
  * The buffer
  * ------------------------------------------------------------------------ */
 
-void ar_edit_init(ar_edit *e, const char *text)
+void ar_edit_init_n(ar_edit *e, const char *text, ar_u32 n)
 {
-    ar_u32 n = 0;
+    ar_u32 i;
 
     if (!e)
     {
         return;
     }
-    memset(e, 0, sizeof *e);
-    if (text)
+    /*
+     * Not memset over the whole structure. It is 29 KB, most of it the undo
+     * log, and every byte of the log is unreachable until a step writes it --
+     * the counts below are what make it empty. Clearing it anyway would be
+     * paid on every focus change for the sake of bytes nobody can read.
+     */
+    if (!text)
     {
-        while (text[n] && n < AR_EDIT_CAP)
+        n = 0;
+    }
+    if (n > AR_EDIT_CAP)
+    {
+        n = AR_EDIT_CAP;
+        /* Never keep half a codepoint at the cut. */
+        while (n > 0 && ((unsigned char)text[n] & 0xC0) == 0x80)
         {
-            e->text[n] = text[n];
-            ++n;
+            --n;
         }
+    }
+    for (i = 0; i < n; ++i)
+    {
+        e->text[i] = text[i];
     }
     e->len = (ar_u16)n;
     e->caret = e->len;
     e->anchor = e->len;
+    e->max_cp = 0;
+    e->steps_n = 0;
+    e->steps_at = 0;
+    e->log_used = 0;
+    e->coalescing = 0;
+}
+
+void ar_edit_init(ar_edit *e, const char *text)
+{
+    ar_u32 n = 0;
+
+    if (text)
+    {
+        while (text[n] && n < AR_EDIT_CAP)
+        {
+            ++n;
+        }
+    }
+    ar_edit_init_n(e, text, n);
 }
 
 int ar_edit_selection(const ar_edit *e, ar_u16 *lo, ar_u16 *hi)
@@ -373,80 +435,278 @@ int ar_edit_selection(const ar_edit *e, ar_u16 *lo, ar_u16 *hi)
     return 1;
 }
 
-/* Take a copy before changing anything, unless this is more of the same typing
-   run -- so a word typed is one undo step and not eleven. */
-static void ar__record(ar_edit *e, int coalesce)
+ar_u16 ar_edit_snap(const ar_edit *e, ar_u16 at)
 {
-    ar_edit_step *st;
+    if (at >= e->len)
+    {
+        return e->len;
+    }
+    while (at > 0 && !ar_edit_is_boundary(e, at))
+    {
+        --at;
+    }
+    return at;
+}
 
-    if (coalesce && e->coalescing && e->undo_n > 0)
+/* ------------------------------------------------------------------------
+ * The undo log
+ *
+ * Steps [0, steps_at) can be undone; [steps_at, steps_n) are what redo would
+ * bring back. Their bytes sit end to end in `log` in step order, so the bytes
+ * of step k start where step k-1's end -- `off` is stored anyway, because
+ * dropping the oldest step moves everything and recomputing every offset from
+ * the start on each undo would make the log quadratic in its own length.
+ * ------------------------------------------------------------------------ */
+
+static ar_u16 ar__step_bytes(const ar_edit_step *s)
+{
+    return (ar_u16)(s->del_n + s->ins_n);
+}
+
+/* Throw the oldest step away, which is what happens when either the steps or
+   the bytes run out. A moving window, as in every editor at its own limit. */
+static void ar__drop_oldest(ar_edit *e)
+{
+    ar_u16 gone, i;
+
+    if (e->steps_n == 0)
     {
         return;
     }
-    if (e->undo_at >= AR_EDIT_UNDO)
+    gone = ar__step_bytes(&e->steps[0]);
+    memmove(e->log, e->log + gone, (size_t)(e->log_used - gone));
+    e->log_used = (ar_u16)(e->log_used - gone);
+    for (i = 1; i < e->steps_n; ++i)
     {
-        ar_u8 i;
-
-        /* The ring is full: drop the oldest. A field's history is not worth
-           more than sixteen steps and a moving window is what every editor
-           does once its own limit is reached. */
-        for (i = 1; i < AR_EDIT_UNDO; ++i)
-        {
-            e->undo[i - 1] = e->undo[i];
-        }
-        e->undo_at = AR_EDIT_UNDO - 1;
+        e->steps[i - 1] = e->steps[i];
+        e->steps[i - 1].off = (ar_u16)(e->steps[i - 1].off - gone);
     }
-    st = &e->undo[e->undo_at];
-    memcpy(st->text, e->text, e->len);
-    st->len = e->len;
-    st->caret = e->caret;
-    e->undo_at++;
-    e->undo_n = e->undo_at;
-    e->coalescing = (ar_u8)(coalesce ? 1 : 0);
+    e->steps_n--;
+    if (e->steps_at > 0)
+    {
+        e->steps_at--;
+    }
 }
 
-static void ar__erase(ar_edit *e, ar_u16 lo, ar_u16 hi)
+/*
+ * Make the change at [lo, hi) to `ins` and remember how to take it back.
+ *
+ * `typing` is the coalescing request: a typed character that lands exactly
+ * where the last typed character ended extends that step rather than starting
+ * one, so a word typed is one undo and not eleven. Anything else -- a paste, a
+ * deletion, a caret that moved in between -- starts a fresh step.
+ */
+static void ar__replace(ar_edit *e, ar_u16 lo, ar_u16 hi, const char *ins, ar_u16 n, int typing)
 {
-    ar_u16 i;
+    ar_u16        del_n = (ar_u16)(hi - lo);
+    ar_edit_step *last;
+    ar_u16        i;
 
-    for (i = hi; i < e->len; ++i)
+    if (del_n == 0 && n == 0)
     {
-        e->text[lo + (i - hi)] = e->text[i];
+        return;
     }
-    e->len = (ar_u16)(e->len - (hi - lo));
-    e->caret = lo;
-    e->anchor = lo;
+
+    /* A new edit forgets what redo could have brought back, as everywhere. */
+    if (e->steps_at < e->steps_n)
+    {
+        e->steps_n = e->steps_at;
+        e->log_used =
+            e->steps_n
+                ? (ar_u16)(e->steps[e->steps_n - 1].off + ar__step_bytes(&e->steps[e->steps_n - 1]))
+                : 0;
+        e->coalescing = 0;
+    }
+
+    last = e->steps_n ? &e->steps[e->steps_n - 1] : 0;
+    if (typing && e->coalescing && last && last->typing && del_n == 0 &&
+        last->at + last->ins_n == lo && (ar_u32)e->log_used + n <= AR_EDIT_UNDO_BYTES)
+    {
+        /* The run's bytes are the last thing in the log, so the new ones go
+           straight on the end of them. */
+        for (i = 0; i < n; ++i)
+        {
+            e->log[e->log_used + i] = ins[i];
+        }
+        e->log_used = (ar_u16)(e->log_used + n);
+        last->ins_n = (ar_u16)(last->ins_n + n);
+    }
+    else
+    {
+        ar_edit_step *st;
+
+        while (e->steps_n > 0 && (e->steps_n >= AR_EDIT_UNDO_STEPS ||
+                                  (ar_u32)e->log_used + del_n + n > AR_EDIT_UNDO_BYTES))
+        {
+            ar__drop_oldest(e);
+        }
+        st = &e->steps[e->steps_n];
+        st->at = lo;
+        st->del_n = del_n;
+        st->ins_n = n;
+        st->off = e->log_used;
+        st->caret0 = e->caret;
+        st->anchor0 = e->anchor;
+        st->typing = (ar_u8)(typing ? 1 : 0);
+        st->pad_ = 0;
+        for (i = 0; i < del_n; ++i)
+        {
+            e->log[e->log_used + i] = e->text[lo + i];
+        }
+        for (i = 0; i < n; ++i)
+        {
+            e->log[e->log_used + del_n + i] = ins[i];
+        }
+        e->log_used = (ar_u16)(e->log_used + del_n + n);
+        e->steps_n++;
+    }
+    e->steps_at = e->steps_n;
+    e->coalescing = (ar_u8)(typing ? 1 : 0);
+
+    /* And the text itself: close the gap or open one, then fill it. */
+    if (n != del_n)
+    {
+        memmove(e->text + lo + n, e->text + hi, (size_t)(e->len - hi));
+    }
+    for (i = 0; i < n; ++i)
+    {
+        e->text[lo + i] = ins[i];
+    }
+    e->len = (ar_u16)(e->len - del_n + n);
+    e->caret = (ar_u16)(lo + n);
+    e->anchor = e->caret;
 }
 
-void ar_edit_insert(ar_edit *e, const char *utf8, ar_u32 n)
+/* How many codepoints a run of UTF-8 holds: everything but continuation
+   bytes. What `maxlength` counts, approximately -- HTML counts UTF-16 code
+   units, and the two differ only for characters outside the BMP. */
+static ar_u32 ar__cp_count(const char *p, ar_u32 n)
+{
+    ar_u32 i, k = 0;
+
+    for (i = 0; i < n; ++i)
+    {
+        if (((unsigned char)p[i] & 0xC0) != 0x80)
+        {
+            ++k;
+        }
+    }
+    return k;
+}
+
+/*
+ * How much of `n` bytes of insertion fits, cut back to a codepoint boundary.
+ *
+ * Two limits: the buffer, and `max_cp` if somebody set one. Text over the
+ * limit is dropped from the end of what was typed, never from what was already
+ * there -- a field does not eat its own contents because a paste was long.
+ */
+static ar_u32 ar__fits(const ar_edit *e, const char *utf8, ar_u32 n, ar_u16 lo, ar_u16 hi)
+{
+    ar_u32 room = AR_EDIT_CAP - (ar_u32)(e->len - (hi - lo));
+    ar_u32 asked = n;
+
+    if (n > room)
+    {
+        n = room;
+    }
+    if (e->max_cp)
+    {
+        ar_u32 have = ar__cp_count(e->text, lo) + ar__cp_count(e->text + hi, (ar_u32)(e->len - hi));
+        ar_u32 i, k = 0;
+
+        if (have >= e->max_cp)
+        {
+            return 0;
+        }
+        for (i = 0; i < n; ++i)
+        {
+            if (((unsigned char)utf8[i] & 0xC0) != 0x80)
+            {
+                if (have + k >= e->max_cp)
+                {
+                    n = i;
+                    break;
+                }
+                ++k;
+            }
+        }
+    }
+    /* Only a cut can land inside a codepoint, and only then is utf8[n] a byte
+       of the caller's string rather than one past its end. */
+    while (n > 0 && n < asked && ((unsigned char)utf8[n] & 0xC0) == 0x80)
+    {
+        --n;
+    }
+    return n;
+}
+
+static void ar__insert(ar_edit *e, const char *utf8, ar_u32 n, int typing)
 {
     ar_u16 lo, hi;
-    ar_u32 i;
 
     if (!e || !utf8 || n == 0)
     {
         return;
     }
-    ar__record(e, 1);
-    if (ar_edit_selection(e, &lo, &hi))
+    lo = e->caret;
+    hi = e->caret;
+    ar_edit_selection(e, &lo, &hi);
+    n = ar__fits(e, utf8, n, lo, hi);
+    if (n == 0 && lo == hi)
     {
-        ar__erase(e, lo, hi);
+        return;
     }
-    if ((ar_u32)e->len + n > AR_EDIT_CAP)
+    /* Typing over a selection starts a typing step: the replacement is its
+       first character and the rest of the word joins it, so select-all and
+       retype is one undo -- which is what it was before the log existed. */
+    ar__replace(e, lo, hi, utf8, (ar_u16)n, typing);
+}
+
+void ar_edit_insert(ar_edit *e, const char *utf8, ar_u32 n)
+{
+    if (e)
     {
-        n = AR_EDIT_CAP - e->len;
+        ar__insert(e, utf8, n, 1);
     }
-    for (i = e->len; i > e->caret; --i)
+}
+
+void ar_edit_paste(ar_edit *e, const char *utf8, ar_u32 n)
+{
+    if (e)
     {
-        e->text[i + n - 1] = e->text[i - 1];
+        e->coalescing = 0;
+        ar__insert(e, utf8, n, 0);
     }
-    for (i = 0; i < n; ++i)
+}
+
+void ar_edit_replace_all(ar_edit *e, const char *utf8, ar_u32 n)
+{
+    if (!e)
     {
-        e->text[e->caret + i] = utf8[i];
+        return;
     }
-    e->len = (ar_u16)(e->len + n);
-    e->caret = (ar_u16)(e->caret + n);
-    e->anchor = e->caret;
+    if (n > AR_EDIT_CAP)
+    {
+        n = AR_EDIT_CAP;
+    }
+    if (n == e->len && (n == 0 || memcmp(e->text, utf8, n) == 0))
+    {
+        return; /* no step for a change that changes nothing */
+    }
+    e->coalescing = 0;
+    ar__replace(e, 0, e->len, utf8, (ar_u16)n, 0);
+}
+
+/* Remove [lo, hi) as one step, which is every deletion this file makes. */
+static void ar__remove(ar_edit *e, ar_u16 lo, ar_u16 hi)
+{
+    if (hi <= lo)
+    {
+        return;
+    }
+    e->coalescing = 0;
+    ar__replace(e, lo, hi, "", 0, 0);
 }
 
 void ar_edit_backspace(ar_edit *e)
@@ -457,17 +717,16 @@ void ar_edit_backspace(ar_edit *e)
     {
         return;
     }
-    ar__record(e, 0);
     if (ar_edit_selection(e, &lo, &hi))
     {
-        ar__erase(e, lo, hi);
+        ar__remove(e, lo, hi);
         return;
     }
     if (e->caret == 0)
     {
-        return;
+        return; /* and records nothing: an undo that undoes nothing is a bug */
     }
-    ar__erase(e, ar_edit_prev(e, e->caret), e->caret);
+    ar__remove(e, ar_edit_prev(e, e->caret), e->caret);
 }
 
 void ar_edit_delete(ar_edit *e)
@@ -478,17 +737,16 @@ void ar_edit_delete(ar_edit *e)
     {
         return;
     }
-    ar__record(e, 0);
     if (ar_edit_selection(e, &lo, &hi))
     {
-        ar__erase(e, lo, hi);
+        ar__remove(e, lo, hi);
         return;
     }
     if (e->caret >= e->len)
     {
         return;
     }
-    ar__erase(e, e->caret, ar_edit_next(e, e->caret));
+    ar__remove(e, e->caret, ar_edit_next(e, e->caret));
 }
 
 void ar_edit_move(ar_edit *e, ar_i32 delta, int extend)
@@ -551,6 +809,20 @@ void ar_edit_end(ar_edit *e, int extend)
     e->coalescing = 0;
 }
 
+void ar_edit_set_caret(ar_edit *e, ar_u16 at, int extend)
+{
+    if (!e)
+    {
+        return;
+    }
+    e->caret = ar_edit_snap(e, at);
+    if (!extend)
+    {
+        e->anchor = e->caret;
+    }
+    e->coalescing = 0;
+}
+
 /* ------------------------------------------------------------------------
  * Words
  * ------------------------------------------------------------------------ */
@@ -604,10 +876,10 @@ void ar_edit_word_at(const ar_edit *e, ar_u16 at, ar_u16 *lo, ar_u16 *hi)
     }
     if (at >= e->len)
     {
-        at = ar__cp_before(e, e->len);
+        at = ar__cp_before(e->text, e->len);
     }
 
-    if (!ar__word_char(ar__cp_at(e, at, &end)))
+    if (!ar__word_char(ar__cp_at(e->text, e->len, at, &end)))
     {
         /* Not in a word: select the run of whatever this is, which is what a
            double click on a space does. */
@@ -619,8 +891,8 @@ void ar_edit_word_at(const ar_edit *e, ar_u16 at, ar_u16 *lo, ar_u16 *hi)
     i = at;
     while (i > 0)
     {
-        ar_u16 prev = ar__cp_before(e, i);
-        ar_u32 c = ar__cp_at(e, prev, &end);
+        ar_u16 prev = ar__cp_before(e->text, i);
+        ar_u32 c = ar__cp_at(e->text, e->len, prev, &end);
 
         if (ar__word_char(c))
         {
@@ -629,10 +901,10 @@ void ar_edit_word_at(const ar_edit *e, ar_u16 at, ar_u16 *lo, ar_u16 *hi)
         }
         if (ar__word_join(c) && prev > 0)
         {
-            ar_u16 before = ar__cp_before(e, prev);
+            ar_u16 before = ar__cp_before(e->text, prev);
             ar_u16 unused;
 
-            if (ar__word_char(ar__cp_at(e, before, &unused)))
+            if (ar__word_char(ar__cp_at(e->text, e->len, before, &unused)))
             {
                 i = before;
                 continue;
@@ -645,7 +917,7 @@ void ar_edit_word_at(const ar_edit *e, ar_u16 at, ar_u16 *lo, ar_u16 *hi)
     i = at;
     while (i < e->len)
     {
-        ar_u32 c = ar__cp_at(e, i, &end);
+        ar_u32 c = ar__cp_at(e->text, e->len, i, &end);
 
         if (ar__word_char(c))
         {
@@ -656,7 +928,7 @@ void ar_edit_word_at(const ar_edit *e, ar_u16 at, ar_u16 *lo, ar_u16 *hi)
         {
             ar_u16 unused;
 
-            if (ar__word_char(ar__cp_at(e, end, &unused)))
+            if (ar__word_char(ar__cp_at(e->text, e->len, end, &unused)))
             {
                 i = end;
                 continue;
@@ -684,57 +956,171 @@ void ar_edit_select_all(ar_edit *e)
     e->coalescing = 0;
 }
 
+/*
+ * Where Ctrl and an arrow land: the start of the next word going right, the
+ * start of this or the previous word going left.
+ *
+ * Windows' rule rather than the Mac's -- the Mac stops at the *end* of the
+ * next word going right -- because the platform this ships on first is
+ * Windows, and a caret that lands one place in every other text box on the
+ * machine and another here is a bug report however defensible either is.
+ */
+static ar_u16 ar__word_stop(const ar_edit *e, ar_u16 at, ar_i32 dir)
+{
+    ar_u16 end;
+
+    if (dir > 0)
+    {
+        /* Through the rest of this word, then through what follows it. */
+        while (at < e->len && ar__word_char(ar__cp_at(e->text, e->len, at, &end)))
+        {
+            at = end;
+        }
+        while (at < e->len && !ar__word_char(ar__cp_at(e->text, e->len, at, &end)))
+        {
+            at = end;
+        }
+        return at;
+    }
+    while (at > 0)
+    {
+        ar_u16 prev = ar__cp_before(e->text, at);
+
+        if (ar__word_char(ar__cp_at(e->text, e->len, prev, &end)))
+        {
+            break;
+        }
+        at = prev;
+    }
+    while (at > 0)
+    {
+        ar_u16 prev = ar__cp_before(e->text, at);
+
+        if (!ar__word_char(ar__cp_at(e->text, e->len, prev, &end)))
+        {
+            break;
+        }
+        at = prev;
+    }
+    return at;
+}
+
+void ar_edit_move_word(ar_edit *e, ar_i32 dir, int extend)
+{
+    if (!e)
+    {
+        return;
+    }
+    e->coalescing = 0;
+    if (!extend && e->caret != e->anchor)
+    {
+        ar_u16 lo, hi;
+
+        ar_edit_selection(e, &lo, &hi);
+        e->caret = dir < 0 ? lo : hi;
+        e->anchor = e->caret;
+    }
+    e->caret = ar_edit_snap(e, ar__word_stop(e, e->caret, dir));
+    if (!extend)
+    {
+        e->anchor = e->caret;
+    }
+}
+
+void ar_edit_backspace_word(ar_edit *e)
+{
+    ar_u16 lo, hi;
+
+    if (!e)
+    {
+        return;
+    }
+    if (ar_edit_selection(e, &lo, &hi))
+    {
+        ar__remove(e, lo, hi);
+        return;
+    }
+    ar__remove(e, ar_edit_snap(e, ar__word_stop(e, e->caret, -1)), e->caret);
+}
+
+void ar_edit_delete_word(ar_edit *e)
+{
+    ar_u16 lo, hi;
+
+    if (!e)
+    {
+        return;
+    }
+    if (ar_edit_selection(e, &lo, &hi))
+    {
+        ar__remove(e, lo, hi);
+        return;
+    }
+    ar__remove(e, e->caret, ar_edit_snap(e, ar__word_stop(e, e->caret, 1)));
+}
+
 /* ------------------------------------------------------------------------
  * Undo
  * ------------------------------------------------------------------------ */
 
+/* Swap `cut_n` bytes at `at` for `put_n` bytes of the log at `from`. The one
+   apply both directions use, because undo and redo are the same replacement
+   with its two halves exchanged. */
+static void ar__apply(ar_edit *e, ar_u16 at, ar_u16 cut_n, ar_u16 from, ar_u16 put_n)
+{
+    ar_u16 i;
+
+    if (put_n != cut_n)
+    {
+        memmove(e->text + at + put_n, e->text + at + cut_n, (size_t)(e->len - at - cut_n));
+    }
+    for (i = 0; i < put_n; ++i)
+    {
+        e->text[at + i] = e->log[from + i];
+    }
+    e->len = (ar_u16)(e->len - cut_n + put_n);
+}
+
 int ar_edit_undo(ar_edit *e)
 {
-    ar_edit_step  now;
-    ar_edit_step *st;
+    const ar_edit_step *st;
 
-    if (!e || e->undo_at == 0)
+    if (!e || e->steps_at == 0)
     {
         return 0;
     }
-
-    /* The current state goes back where the step came from, so redo has
-       somewhere to return to -- the ring holds a position and not a stack. */
-    memcpy(now.text, e->text, e->len);
-    now.len = e->len;
-    now.caret = e->caret;
-
-    e->undo_at--;
-    st = &e->undo[e->undo_at];
-    memcpy(e->text, st->text, st->len);
-    e->len = st->len;
-    e->caret = st->caret;
-    e->anchor = e->caret;
-    *st = now;
+    st = &e->steps[e->steps_at - 1];
+    ar__apply(e, st->at, st->ins_n, st->off, st->del_n);
+    e->caret = st->caret0;
+    e->anchor = st->anchor0;
+    e->steps_at--;
     e->coalescing = 0;
     return 1;
 }
 
 int ar_edit_redo(ar_edit *e)
 {
-    ar_edit_step  now;
-    ar_edit_step *st;
+    const ar_edit_step *st;
 
-    if (!e || e->undo_at >= e->undo_n)
+    if (!e || e->steps_at >= e->steps_n)
     {
         return 0;
     }
-    memcpy(now.text, e->text, e->len);
-    now.len = e->len;
-    now.caret = e->caret;
-
-    st = &e->undo[e->undo_at];
-    memcpy(e->text, st->text, st->len);
-    e->len = st->len;
-    e->caret = st->caret;
+    st = &e->steps[e->steps_at];
+    ar__apply(e, st->at, st->del_n, (ar_u16)(st->off + st->del_n), st->ins_n);
+    e->caret = (ar_u16)(st->at + st->ins_n);
     e->anchor = e->caret;
-    *st = now;
-    e->undo_at++;
+    e->steps_at++;
     e->coalescing = 0;
     return 1;
+}
+
+ar_u16 ar_edit_undo_depth(const ar_edit *e)
+{
+    return e ? e->steps_at : 0;
+}
+
+ar_u16 ar_edit_redo_depth(const ar_edit *e)
+{
+    return e ? (ar_u16)(e->steps_n - e->steps_at) : 0;
 }

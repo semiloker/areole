@@ -18004,10 +18004,12 @@ static void test_controls_are_boxes(void)
     CHECK(ar__box_style(ar__first_tag_id("t"))->v[AR_P_WIDTH] != 13,
           "ua: a text field is not sized like either");
 
-    /* The radio is round and the checkbox is not. */
-    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] > 0, "ua: a radio is round");
-    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_BORDER_RADIUS] == 0,
-          "ua: and a checkbox is square");
+    /* The radio is round and the checkbox is a square with the two-pixel
+       corners Edge draws on it -- it was flat-cornered until the controls were
+       measured against a browser rather than drawn from memory. */
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] >= 6, "ua: a radio is round");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_BORDER_RADIUS] == 2,
+          "ua: and a checkbox is square, with a browser's small corners");
 
     /* The system colours reach a control, which is what those names are for. */
     CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("t")), AR_P_BACKGROUND) == 0xFFFFFFFFu,
@@ -18032,12 +18034,17 @@ static void test_the_mark_is_a_box_that_appears(void)
         ar_i32 mark = box + 1; /* its only child */
 
         CHECK(mark < g_ui->node_count, "ua: a checkbox has a mark child");
-        CHECK((ar_u32)AR_WIDE(ar__box_style(mark), AR_P_BACKGROUND) == 0u,
-              "ua: and the mark is transparent while unchecked");
+        CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(mark), AR_P_COLOR)) == 0u,
+              "ua: and the tick is transparent while unchecked");
 
+        /* Checked, the box itself turns the browser's blue and the tick inside
+           it white -- what Edge draws, sampled from its pixels. */
         ar__press_at(&s, 5, 5);
-        CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_BACKGROUND) != 0u,
-              "ua: and takes a colour once checked");
+        CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c")), AR_P_BACKGROUND) == 0xFF0075FFu,
+              "ua: and the box turns blue once checked");
+        CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_COLOR)) !=
+                  0u,
+              "ua: with its tick showing");
     }
 }
 
@@ -18119,15 +18126,17 @@ static void test_a_gauge_is_a_track_with_a_bar(void)
     /* A quarter of 200 is 50, and `value="0.25"` is the common way to write
        it -- an integer parse would make it zero, which is a full bar reading
        empty rather than an error anybody notices. */
-    CHECK(ar__box(ar__first_tag_id("p") + 1).w == 50, "gauge: a progress bar is its value");
+    /* The fill is inside a track now -- a gauge is the same pill a slider is
+       drawn as -- so it is the second box under the gauge, not the first. */
+    CHECK(ar__box(ar__first_tag_id("p") + 2).w == 50, "gauge: a progress bar is its value");
 
     /* A meter has a `min` and a progress bar does not: a meter measures a
        range, a progress bar counts up from nothing. Half of 10..20 is 100px. */
-    CHECK(ar__box(ar__first_tag_id("m") + 1).w == 100, "gauge: a meter measures from its min");
+    CHECK(ar__box(ar__first_tag_id("m") + 2).w == 100, "gauge: a meter measures from its min");
 
     /* Indeterminate reads as empty, which is written down rather than
        pretended about: there is no animation here to say "waiting". */
-    CHECK(ar__box(ar__first_tag_id("e") + 1).w == 0, "gauge: one with no value reads empty");
+    CHECK(ar__box(ar__first_tag_id("e") + 2).w == 0, "gauge: one with no value reads empty");
 }
 
 static void test_a_positive_tabindex_sorts_first(void)
@@ -18791,18 +18800,13 @@ static void test_nowrap_does_not_wrap(void)
 }
 
 /*
- * A field still wraps, and the property is not the reason.
+ * A field does not wrap, and the property is the reason.
  *
- * `white-space: pre` reaches the field's text box -- the computed value is
- * AR_WS_PRE, checked below -- and the text is three lines tall anyway. So the
- * cascade is right and the layout is not: a block box carrying its own text
- * does not take its line breaks from the loop in ar_layout_inline.c that this
- * property was wired into, and finding which loop it does take them from is
- * the next commit rather than a guess in this one.
- *
- * Left as a failing expectation would be worse than useless -- a red test
- * nobody can act on becomes a red test everybody ignores -- so what is true is
- * asserted and what is not is written down here and in the roadmap.
+ * This test spent most of 0.10.0 asserting the opposite as a known fault: the
+ * computed value reached the field's text box as `pre` and the text folded
+ * onto three lines anyway, because a block carrying its own text was wrapped
+ * by a path that never asked `white-space`. It asks now (ar__wrap_lines), and
+ * the long value is one line that the field scrolls.
  */
 static void test_white_space_reaches_a_field_but_does_not_hold_it(void)
 {
@@ -18817,10 +18821,8 @@ static void test_white_space_reaches_a_field_but_does_not_hold_it(void)
     CHECK(ar__box_style(ar__first_tag_id("a") + 1)->v[AR_P_WHITE_SPACE] == AR_WS_PRE,
           "white-space: the user-agent sheet reaches a field's text");
 
-    /* And the part that does not work yet, stated as the measurement it is
-       rather than as a passing test of something weaker. */
-    CHECK(ar__box(ar__first_tag_id("a") + 1).h > 20,
-          "white-space: a block with its own text still wraps -- known, unfixed");
+    CHECK(ar__box(ar__first_tag_id("a") + 1).h == g_ui->nodes[ar__first_tag_id("a") + 1].text_h,
+          "white-space: and a block with its own text keeps it to one line");
 }
 
 /*
@@ -22173,6 +22175,658 @@ static void test_the_adoption_agency_terminates_on_anything(void)
     CHECK(bad == 0, "html: and terminates on every chain of misnested formatting");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.10.0, the rest of interaction
+ *
+ * The controls a browser has that a viewer does not, the editing a textarea
+ * needs, and the layout faults the comparison against Edge turned up -- each
+ * with a check that fails when the thing it pins is taken out.
+ * ------------------------------------------------------------------------ */
+
+/* The DOM node carrying `id`, in the document the last render parsed. */
+static ar_i32 ar__dom_id(const char *id)
+{
+    ar_i32 i;
+    size_t n = strlen(id);
+
+    for (i = 0; i < g_doc.node_count; ++i)
+    {
+        ar_span v = ar_a11y_attr(&g_doc, i, "id");
+
+        if (v.p && v.n == n && memcmp(v.p, id, n) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* What a reader would be told an element holds. */
+static int ar__value_is(const char *id, const char *want)
+{
+    char   buf[256];
+    ar_u32 n = ar_a11y_value(g_ui, &g_doc, ar__dom_id(id), buf, sizeof buf);
+
+    return n == (ar_u32)strlen(want) && memcmp(buf, want, n) == 0;
+}
+
+/* Tab until the element is focused, the way a keyboard gets anywhere. */
+static int ar__tab_to(ar_surface *s, const char *id)
+{
+    ar_i32 guard;
+
+    for (guard = 0; guard < 40; ++guard)
+    {
+        ar_i32 dom = ar__dom_id(id);
+
+        if (dom >= 0 && g_doc.nodes[dom].box >= 0 && ar_focus_node(g_ui) == g_doc.nodes[dom].box)
+        {
+            return 1;
+        }
+        ar__type(s, 0, AR_KEY_TAB);
+    }
+    return 0;
+}
+
+/* --- the caret corpus ---------------------------------------------------- */
+
+static ar_u32 ar__cp_of(const char *s, ar_u32 at, ar_u32 *len)
+{
+    const unsigned char *p = (const unsigned char *)s + at;
+
+    if (p[0] < 0x80)
+    {
+        *len = 1;
+        return p[0];
+    }
+    if ((p[0] & 0xE0) == 0xC0)
+    {
+        *len = 2;
+        return ((ar_u32)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    }
+    if ((p[0] & 0xF0) == 0xE0)
+    {
+        *len = 3;
+        return ((ar_u32)(p[0] & 0x0F) << 12) | ((ar_u32)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    }
+    *len = 4;
+    return ((ar_u32)(p[0] & 0x07) << 18) | ((ar_u32)(p[1] & 0x3F) << 12) |
+           ((ar_u32)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+
+/*
+ * May a caret stand at `at`? Answered without the engine's own rules, from the
+ * handful of facts no reading of UAX #29 disputes: never inside a UTF-8
+ * sequence, never in front of a combining mark, a skin tone or a joiner,
+ * never just after a joiner, never between the jamo of one syllable.
+ */
+static int ar__caret_may_stand(const char *s, ar_u32 len, ar_u32 at)
+{
+    ar_u32 n, prev_at, cp, prev = 0;
+
+    if (at == 0 || at >= len)
+    {
+        return 1;
+    }
+    if (((unsigned char)s[at] & 0xC0) == 0x80)
+    {
+        return 0;
+    }
+    cp = ar__cp_of(s, at, &n);
+    prev_at = at - 1;
+    while (prev_at > 0 && ((unsigned char)s[prev_at] & 0xC0) == 0x80)
+    {
+        --prev_at;
+    }
+    prev = ar__cp_of(s, prev_at, &n);
+    if ((cp >= 0x300 && cp <= 0x36F) || (cp >= 0x1F3FB && cp <= 0x1F3FF) || cp == 0x200D)
+    {
+        return 0;
+    }
+    if (prev == 0x200D)
+    {
+        return 0;
+    }
+    if (prev >= 0x1100 && prev <= 0x115F && cp >= 0x1160 && cp <= 0x11A7)
+    {
+        return 0;
+    }
+    if (prev >= 0x1160 && prev <= 0x11A7 && cp >= 0x11A8 && cp <= 0x11FF)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * 0.10.0's second criterion as it is written: two hundred strings, every stop
+ * the caret makes checked against a rule that is not the engine's own. The
+ * strings are the sixteen of the corpus above, two at a time, so a mark or a
+ * joiner meets everything else on both sides of it.
+ */
+static void test_the_caret_corpus_of_two_hundred(void)
+{
+    static ar_edit e;
+    char           buf[160];
+    ar_i32         a, b, count = 0, stops = 0;
+    int            bad = 0;
+
+    for (a = 0; a < AR__CLUSTER_N && count < 200; ++a)
+    {
+        for (b = 0; b < AR__CLUSTER_N && count < 200; ++b)
+        {
+            ar_u16 at;
+            ar_i32 guard;
+
+            strcpy(buf, AR__CLUSTERS[a]);
+            strcat(buf, AR__CLUSTERS[b]);
+            ar_edit_init(&e, buf);
+            for (at = 0, guard = 0; at < e.len && guard < 80; ++guard)
+            {
+                at = ar_edit_next(&e, at);
+                ++stops;
+                bad |= !ar__caret_may_stand(buf, e.len, at);
+            }
+            for (at = e.len, guard = 0; at > 0 && guard < 80; ++guard)
+            {
+                at = ar_edit_prev(&e, at);
+                ++stops;
+                bad |= !ar__caret_may_stand(buf, e.len, at);
+            }
+            ++count;
+        }
+    }
+    CHECK(count == 200, "edit: the corpus is two hundred strings");
+    CHECK(stops > 1000, "edit: and the caret walked all of them, both ways");
+    CHECK(!bad, "edit: and never stood inside a cluster, by a rule that is not its own");
+}
+
+/*
+ * 0.10.0's third criterion: a five-hundred-operation session, and undo and redo
+ * restore the text byte for byte at every step.
+ *
+ * The text before each step is kept as the session runs; a typing run that
+ * coalesces into the step before it adds no step and so no snapshot, which is
+ * the coalescing the log is meant to do.
+ */
+static void test_undo_and_redo_over_five_hundred_steps(void)
+{
+    static ar_edit e;
+    static char    snap[520][96];
+    static ar_u16  snap_n[520];
+    char           before[96];
+    ar_u16         before_n;
+    ar_u32         seed = 2463534242u;
+    ar_i32         op, k;
+    ar_u16         depth;
+    int            bad = 0;
+
+    ar_edit_init(&e, "start");
+    for (op = 0; op < 500; ++op)
+    {
+        ar_u16 d = ar_edit_undo_depth(&e);
+        ar_u32 r;
+
+        memcpy(before, e.text, e.len);
+        before_n = e.len;
+
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        r = seed;
+
+        if (e.len > 60)
+        {
+            ar_edit_select_all(&e);
+            ar_edit_paste(&e, "reset", 5);
+        }
+        else
+        {
+            switch (r % 6)
+            {
+            case 0:
+                ar_edit_paste(&e, AR__CLUSTERS[(r >> 8) % 4],
+                              (ar_u32)strlen(AR__CLUSTERS[(r >> 8) % 4]));
+                break;
+            case 1:
+                ar_edit_insert(&e, "ty", 2);
+                break;
+            case 2:
+                ar_edit_backspace(&e);
+                break;
+            case 3:
+                ar_edit_move(&e, (r >> 8) % 2 ? 1 : -2, 0);
+                ar_edit_delete(&e);
+                break;
+            case 4:
+                ar_edit_move(&e, -1, 1);
+                ar_edit_paste(&e, "Q", 1);
+                break;
+            default:
+                ar_edit_move_word(&e, (r >> 8) % 2 ? 1 : -1, 0);
+                ar_edit_paste(&e, " w", 2);
+                break;
+            }
+        }
+        if (ar_edit_undo_depth(&e) == d + 1 && d < 520)
+        {
+            memcpy(snap[d], before, before_n);
+            snap_n[d] = before_n;
+        }
+    }
+    depth = ar_edit_undo_depth(&e);
+    memcpy(snap[depth], e.text, e.len);
+    snap_n[depth] = e.len;
+
+    for (k = depth; k > 0; --k)
+    {
+        if (!ar_edit_undo(&e) || e.len != snap_n[k - 1] || memcmp(e.text, snap[k - 1], e.len) != 0)
+        {
+            bad = 1;
+        }
+    }
+    CHECK(!ar_edit_undo(&e), "undo: and stops at the start of the history");
+    for (k = 1; k <= depth; ++k)
+    {
+        if (!ar_edit_redo(&e) || e.len != snap_n[k] || memcmp(e.text, snap[k], e.len) != 0)
+        {
+            bad = 1;
+        }
+    }
+    CHECK(depth >= 300, "undo: the session left hundreds of steps to undo");
+    CHECK(!bad, "undo: every step back and every step forward is byte for byte");
+}
+
+/* --- focus ---------------------------------------------------------------- */
+
+/*
+ * 0.10.0's fifth criterion: `order` moves boxes and must not move the focus.
+ * The specification is explicit, and a tab order taken from the boxes rather
+ * than the document is exactly how it gets broken by accident.
+ */
+static void test_tab_order_ignores_flex_order(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"row\">"
+                    "<input id=\"a\"><input id=\"b\"><input id=\"c\">"
+                    "</div></body></html>",
+                    "body { margin:0 } #row { display:flex } #a { order:3 } #c { order:1 }");
+
+    CHECK(ar__box(ar__first_tag_id("c")).x < ar__box(ar__first_tag_id("a")).x,
+          "focus: order puts the third field first on the screen");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("a"), "focus: and Tab still starts at the first");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("b"), "focus: then the second");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("c"), "focus: then the third, in document order");
+}
+
+/* --- the new controls ----------------------------------------------------- */
+
+static void test_a_textarea_holds_its_content_and_takes_newlines(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     ta, kid;
+
+    ar__render_html(&s, "<html><body><textarea id=\"t\">one</textarea></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar__field_is("one"), "textarea: starts from its content, not a value attribute");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    ar__type(&s, "two", 0);
+    CHECK(ar__field_is("one\ntwo"), "textarea: Enter is a newline in it");
+
+    ta = ar__first_tag_id("t");
+    kid = ta >= 0 ? g_ui->nodes[ta].first_child : -1;
+    while (kid >= 0 && !g_ui->nodes[kid].text)
+    {
+        kid = g_ui->nodes[kid].next_sibling;
+    }
+    CHECK(kid >= 0 && ar__box(kid).h >= 2 * g_ui->nodes[kid].text_h,
+          "textarea: and the newline is a second line on the screen");
+    CHECK(ar__tags("span", &kid, 1) == 0, "textarea: its content is drawn once, by the field");
+}
+
+static void test_a_password_draws_masks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     p;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"p\" type=\"password\" value=\"abc\"></body></html>",
+                    "body { margin:0 }");
+    p = ar__first_tag_id("p");
+    CHECK(p >= 0 && p + 1 < g_ui->node_count && strcmp(g_ui->nodes[p + 1].text, "***") == 0,
+          "password: one mask a character, and never the characters");
+    CHECK(ar__value_is("p", "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2"),
+          "password: a reader is told its length and not its text");
+}
+
+static void test_a_number_steps_within_its_limits(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"n\" type=\"number\" value=\"5\" min=\"1\" "
+                    "max=\"6\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_UP);
+    CHECK(ar__field_is("6"), "number: up steps it");
+    ar__type(&s, 0, AR_KEY_UP);
+    CHECK(ar__field_is("6"), "number: and stops at max");
+    ar__type(&s, "x9", 0);
+    CHECK(ar__field_is("69"), "number: typing takes digits and drops the rest");
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is("6"), "number: and a step is one undo");
+}
+
+static void test_a_select_opens_and_chooses(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     one;
+
+    ar__render_html(&s,
+                    "<html><body><select id=\"s\"><option>a</option><option selected>b</option>"
+                    "<option>c</option></select></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__value_is("s", "b"), "select: shows its selected option");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_DOWN);
+    CHECK(ar__value_is("s", "c"), "select: down chooses the next");
+    ar__type(&s, 0, AR_KEY_SPACE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__tags("ar-listbox", &one, 1) == 1, "select: space opens its list");
+    ar__type(&s, 0, AR_KEY_ESCAPE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__tags("ar-listbox", &one, 1) == 0, "select: and Escape closes it");
+    CHECK(ar__value_is("s", "c"), "select: on the choice it had");
+}
+
+static void test_a_select_is_as_wide_as_its_widest_option(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><select id=\"s\"><option>a</option>"
+                    "<option>a much longer option</option></select></body></html>",
+                    "body { margin:0 }");
+    {
+        ar_i32 i, longest = -1;
+
+        /* Against the option's own text, measured: the built-in face is
+           proportional, so a character count says nothing about a width. */
+        for (i = 0; i < g_ui->node_count; ++i)
+        {
+            if (g_ui->nodes[i].text && strcmp(g_ui->nodes[i].text, "a much longer option") == 0)
+            {
+                longest = i;
+            }
+        }
+        CHECK(longest >= 0 && ar__box(ar__first_tag_id("s")).w >= ar__box(longest).w + 22,
+              "select: sized by the widest option, which it is not showing");
+    }
+}
+
+static void test_a_slider_steps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"r\" type=\"range\" min=\"0\" max=\"10\" "
+                    "value=\"5\"></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__value_is("r", "5"), "range: starts at its value");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_RIGHT);
+    CHECK(ar__value_is("r", "6"), "range: right steps it up");
+    ar__type(&s, 0, AR_KEY_END);
+    CHECK(ar__value_is("r", "10"), "range: End is its max");
+    ar__type(&s, 0, AR_KEY_HOME);
+    CHECK(ar__value_is("r", "0"), "range: Home its min");
+}
+
+static void test_a_label_passes_its_click(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"c\" type=\"checkbox\">"
+                    "<label id=\"l\" for=\"c\">tick me</label></body></html>",
+                    "body { margin:0 }");
+    r = ar__box(ar__first_tag_id("l"));
+    ar__press_at(&s, r.x + r.w / 2, r.y + r.h / 2);
+    ar__reframe(&s);
+    CHECK((g_ui->nodes[ar__first_tag_id("c")].state & AR_STATE_CHECKED) != 0,
+          "label: a click on the words ticks the box");
+}
+
+static void test_a_form_submits_what_was_done(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     form, by = -9;
+    char       data[256];
+    ar_u32     n;
+
+    ar__render_html(&s,
+                    "<html><body><form id=\"f\">"
+                    "<input id=\"a\" name=\"a\" value=\"x\">"
+                    "<input type=\"checkbox\" name=\"b\" checked>"
+                    "<input type=\"checkbox\" name=\"c\">"
+                    "<select name=\"d\"><option value=\"1\">1</option>"
+                    "<option value=\"2\" selected>2</option></select>"
+                    "<textarea name=\"e\">l1\nl2</textarea>"
+                    "<input type=\"hidden\" name=\"h\" value=\"z z\">"
+                    "<input id=\"go\" type=\"submit\" name=\"go\" value=\"Go\">"
+                    "<input id=\"rs\" type=\"reset\">"
+                    "</form></body></html>",
+                    "body { margin:0 }");
+    ar__tab_to(&s, "a");
+    ar__type(&s, "y", 0);
+    ar__tab_to(&s, "go");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    form = ar_form_submitted(g_ui, &by);
+    CHECK(form == ar__dom_id("f"), "form: a submit button submits its form");
+    CHECK(by == ar__dom_id("go"), "form: and says which button did it");
+    n = ar_form_encode(g_ui, form, by, data, sizeof data);
+    CHECK(n == (ar_u32)strlen(data) && strcmp(data, "a=xy&b=on&d=2&e=l1%0D%0Al2&h=z+z&go=Go") == 0,
+          "form: encoded with what was typed and ticked, urlencoded");
+
+    ar__tab_to(&s, "rs");
+    ar__type(&s, 0, AR_KEY_SPACE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__value_is("a", "x"), "form: reset puts a field back to its markup");
+
+    ar__tab_to(&s, "a");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    CHECK(ar_form_submitted(g_ui, &by) == ar__dom_id("f") && by == ar__dom_id("go"),
+          "form: Enter in a field submits it through its first submit button");
+}
+
+/*
+ * What the tree said when it was finally read back through MSAA, by a client in
+ * another process: every control right, and the containers around them wrong.
+ * The form was named with every word in it, the fieldset with its legend and
+ * all three radios' labels, the closed `<details>` with the sentence it was
+ * hiding, and the paragraph around a textarea with what had been typed into
+ * it. Each is a rule of accname or HTML-AAM that the name walk did not have.
+ */
+static void test_containers_are_named_by_markup_not_content(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    ar__render_html(
+        &s,
+        "<html><body><form id=\"f\">"
+        "<fieldset id=\"fs\"><legend>When</legend>"
+        "<label><input type=\"radio\" name=\"w\"> Soon</label></fieldset>"
+        "<p id=\"p\"><label for=\"t\">Address</label>"
+        "<textarea id=\"t\">12 Mill Lane</textarea></p>"
+        "<p id=\"q\">Size <select><option>Small<option>Large</select></p>"
+        "<details id=\"d\"><summary id=\"s\">More</summary>"
+        "<p>The gate code is 4417.</p></details>"
+        "<ul><li id=\"li\">Item<details><summary>Sum</summary>Secret</details></li></ul>"
+        "</form></body></html>",
+        "body { margin:0 }");
+    /* A list item is named by its content, so what a closed details inside
+       it hides must be skipped by the walk and not by the role. */
+    CHECK(ar__name_is("li", "Item"), "accname: content nobody can see is not read out");
+    CHECK(ar__name_is("f", ""), "accname: a form is not named by its content");
+    CHECK(ar__name_is("fs", "When"), "accname: a fieldset is named by its legend, and only that");
+    CHECK(ar__name_is("p", "Address"), "accname: a textarea's text is not its paragraph's name");
+    CHECK(ar__name_is("q", "Size"), "accname: and a select's options are not either");
+    CHECK(ar__name_is("d", ""), "accname: a details group is not named by its content");
+    CHECK(ar__name_is("s", "More"), "accname: its summary is, as a button is");
+    CHECK(ar__name_is("t", "Address"), "accname: and the textarea is named by its label");
+}
+
+static void test_the_a11y_tree(void)
+{
+    ar_surface   s = ar__ui_surface(400, 300);
+    ar_a11y_item items[32];
+    ar_i32       n, k, form = -1, box = -1, head = -1;
+
+    ar__render_html(&s,
+                    "<html><body><h2>Title</h2><form>"
+                    "<input id=\"c\" type=\"checkbox\" checked>"
+                    "<div><button>Go</button></div>"
+                    "</form></body></html>",
+                    "body { margin:0 }");
+    n = ar_a11y_tree(g_ui, &g_doc, items, 32);
+    for (k = 0; k < n && k < 32; ++k)
+    {
+        if (items[k].role == AR_ROLE_FORM)
+        {
+            form = k;
+        }
+        if (items[k].role == AR_ROLE_CHECKBOX)
+        {
+            box = k;
+        }
+        if (items[k].role == AR_ROLE_HEADING)
+        {
+            head = k;
+        }
+    }
+    CHECK(n == 4, "a11y: four things a reader needs, and no div among them");
+    CHECK(head >= 0 && items[head].level == 2, "a11y: a heading carries its level");
+    CHECK(box >= 0 && (items[box].state & AR_A11Y_CHECKED) &&
+              (items[box].state & AR_A11Y_FOCUSABLE),
+          "a11y: a checkbox says it is checked and focusable");
+    CHECK(box >= 0 && items[box].parent == form, "a11y: and is a child of its form");
+    CHECK(items[n - 1].parent == form && items[n - 1].role == AR_ROLE_BUTTON,
+          "a11y: the div around the button is walked through, not listed");
+}
+
+/* --- the caret on the screen ---------------------------------------------- */
+
+static ar_u32 g_test_clock_us = 1000000u;
+
+static ar_u32 ar__test_clock(void)
+{
+    return g_test_clock_us;
+}
+
+/*
+ * 0.10.0's seventh criterion: a blink invalidates fewer than 2,000 pixels. It
+ * repaints one column -- the caret's -- because nothing else changed.
+ */
+static void test_a_blink_is_one_column(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     k, px = 0;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar_set_clock(g_ui, ar__test_clock);
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    ar__type(&s, 0, 0);
+    g_test_clock_us += 530000u;
+    ar__type(&s, 0, 0);
+    for (k = 0; k < ar_damage_count(g_ui); ++k)
+    {
+        ar_rect r = ar_damage_rect(g_ui, k);
+
+        px += r.w * r.h;
+    }
+    CHECK(px > 0 && px < 2000, "caret: a blink repaints the caret's column and nothing else");
+    CHECK(ar_caret_wait_us(g_ui) > 0 && ar_caret_wait_us(g_ui) <= 530000u,
+          "caret: and says how long until the next");
+    ar_set_clock(g_ui, 0);
+}
+
+static void test_a_field_scrolls_rather_than_wraps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\" value=\"a much longer value than fits\">"
+                    "</body></html>",
+                    "body { margin:0 } input { width:40px }");
+    f = ar__first_tag_id("f");
+    CHECK(ar__box(f + 1).h == g_ui->nodes[f + 1].text_h,
+          "field: a long value is one line, not three");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_END);
+    CHECK(g_ui->edit_scroll_x > 0, "field: and scrolls to keep the caret in view");
+    ar__type(&s, 0, AR_KEY_HOME);
+    CHECK(g_ui->edit_scroll_x == 0, "field: and back");
+}
+
+static void test_a_composition_is_drawn_and_not_stored(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+    ar_i32     f;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.compose = "XY";
+    in.compose_len = 2;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    f = ar__first_tag_id("f");
+    CHECK(strcmp(g_ui->nodes[f + 1].text, "abXY") == 0,
+          "ime: the composition is drawn at the caret");
+    CHECK(ar__field_is("ab"), "ime: and is not in the buffer");
+    ar__type(&s, "XY", 0);
+    CHECK(ar__field_is("abXY"), "ime: until it is committed, as typing");
+}
+
+static void test_the_clipboard(void)
+{
+    ar_surface  s = ar__ui_surface(400, 300);
+    ar_u32      n = 0;
+    const char *t;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"hello\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_SELECT_ALL);
+    ar__type(&s, 0, AR_KEY_COPY);
+    t = ar_clipboard_text(g_ui, &n);
+    CHECK(t && n == 5 && memcmp(t, "hello", 5) == 0, "clipboard: copy offers the selection");
+    ar__type(&s, 0, AR_KEY_CUT);
+    t = ar_clipboard_text(g_ui, &n);
+    CHECK(t && n == 5 && memcmp(t, "hello", 5) == 0 && ar__field_is(""),
+          "clipboard: cut offers it and removes it");
+    ar__type(&s, "two\nlines", AR_KEY_PASTE);
+    CHECK(ar__field_is("twolines"), "clipboard: a paste into one line loses its newlines");
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is(""), "clipboard: and is one undo step");
+}
+
 /* --- the layout faults the comparison with Edge found --------------------- */
 
 static void test_an_inline_block_sits_on_its_text(void)
@@ -22285,6 +22939,48 @@ static void test_a_replaced_element_sits_on_its_bottom_edge(void)
     CHECK(ar__box(v).y == 20, "replaced: the tallest thing on its line, so at the line's top");
     CHECK(ar__box(b).y - (ar__box(v).y + ar__box(v).h) < 8,
           "replaced: on its bottom edge, so its line ends just under it");
+}
+
+static void test_an_inline_boxs_padding_moves_its_words(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     r, l;
+
+    ar__render_html(&s,
+                    "<html><body><p><input id=\"r\" type=\"radio\">"
+                    "<label id=\"l\" style=\"padding-left:8px\">x</label></p></body></html>",
+                    "body { margin:0 } input { margin:0 }");
+    r = ar__first_tag_id("r");
+    l = ar__first_tag_id("l");
+    CHECK(ar__box(l + 1).x >= ar__box(r).x + ar__box(r).w + 8,
+          "inline: a label's padding is between the radio and its words");
+}
+
+static void test_a_hidden_input_has_no_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"h\" type=\"hidden\" value=\"x\"></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("h"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: an input of type hidden draws nothing");
+}
+
+static void test_a_legend_sits_on_the_border(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f, l, p;
+
+    ar__render_html(&s,
+                    "<html><body><fieldset id=\"f\"><legend id=\"l\">L</legend>"
+                    "<p id=\"p\">x</p></fieldset></body></html>",
+                    "body { margin:0 }");
+    f = ar__first_tag_id("f");
+    l = ar__first_tag_id("l");
+    p = ar__first_tag_id("p");
+    CHECK(ar__box(l).y == ar__box(f).y, "fieldset: the legend stands on the top border");
+    CHECK(ar__box(l).w < ar__box(f).w / 2, "fieldset: as wide as its words");
+    CHECK(ar__box(p).y > ar__box(l).y + ar__box(l).h, "fieldset: and the content starts under it");
 }
 
 int main(void)
@@ -22822,12 +23518,32 @@ int main(void)
     test_white_space_collapsing();
     test_nowrap_does_not_wrap();
     test_white_space_reaches_a_field_but_does_not_hold_it();
+    test_the_caret_corpus_of_two_hundred();
+    test_undo_and_redo_over_five_hundred_steps();
+    test_tab_order_ignores_flex_order();
+    test_a_textarea_holds_its_content_and_takes_newlines();
+    test_a_password_draws_masks();
+    test_a_number_steps_within_its_limits();
+    test_a_select_opens_and_chooses();
+    test_a_select_is_as_wide_as_its_widest_option();
+    test_a_slider_steps();
+    test_a_label_passes_its_click();
+    test_a_form_submits_what_was_done();
+    test_the_a11y_tree();
+    test_containers_are_named_by_markup_not_content();
+    test_a_blink_is_one_column();
+    test_a_field_scrolls_rather_than_wraps();
+    test_a_composition_is_drawn_and_not_stored();
+    test_the_clipboard();
     test_an_inline_block_sits_on_its_text();
     test_an_inline_block_lays_out_its_children_as_blocks();
     test_an_absolute_box_lays_its_contents_out_at_its_width();
     test_a_relative_percentage_is_of_the_parent();
     test_an_inline_block_carries_its_contents();
     test_a_replaced_element_sits_on_its_bottom_edge();
+    test_an_inline_boxs_padding_moves_its_words();
+    test_a_hidden_input_has_no_box();
+    test_a_legend_sits_on_the_border();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
