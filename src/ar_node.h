@@ -873,8 +873,13 @@ struct ar_ctx
     ar_rect caret_painted;
     int     caret_on;
     int     caret_painted_on;
-    ar_u32  caret_epoch;
-    ar_u32  edit_hash; /* caret, selection and composition, for the digest */
+
+    /* A finished frame is standing: ar_frame_end has run and ar_frame_begin
+       has not, so the tree and the pixels it painted still agree, and
+       ar_frame_blink may repaint from the one into the other. */
+    int    frame_standing;
+    ar_u32 caret_epoch;
+    ar_u32 edit_hash; /* caret, selection and composition, for the digest */
 
     /* Keys that need lines to mean anything -- Up and Down in a textarea, Home
        and End there -- held until layout has made the lines. */

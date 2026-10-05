@@ -80,7 +80,7 @@ one font shipped beside it.
 | *Delivery instructions* | opens and closes; the triangle turns | `details` / `summary` |
 | **Enter** in any text field, or *Place order* | the form is submitted to the program, which prints it | `ar_form_submitted`, `ar_form_encode` |
 | *Start again* | every control goes back to its markup | `reset` |
-| leave the caret in a field | it blinks, and each blink repaints **15 pixels** | caret-only damage, `ar_caret_wait_us` |
+| leave the caret in a field | it blinks, and each blink repaints **15 pixels** without building a frame | `ar_caret_wait_us`, `ar_win_idle`, `ar_frame_blink` |
 | Ctrl+Win+Enter (Narrator), then Tab | every control should announce role, name and value -- not yet heard by ear | the accessibility tree, MSAA |
 
 ## The API an embedder uses
@@ -106,6 +106,19 @@ while (ar_win_pump(win)) {
     ar_win_after_frame(win, ctx);  /* clipboard, IME position, caret blink,
                                       file dialog, accessibility events */
 }
+```
+
+And one shortcut, which is what makes a blinking caret cost nothing: when
+the caret's timer is the only thing that woke the window, there is no input
+for a frame to learn from, and the blink is one column of the frame already
+on screen.
+
+```c
+    if (ar_win_idle(win)) {                     /* the timer, and nothing else */
+        ar_win_present(win, ar_frame_blink(ctx, ar_win_surface(win)));
+        ar_win_wake_after(win, ar_caret_wait_us(ctx));
+        continue;                               /* 3.7 us here, not a frame */
+    }
 ```
 
 `ar_win_after_frame` is five public calls bundled; a program that wants any of

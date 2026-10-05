@@ -58,6 +58,12 @@ struct ar_win
     /* A timer is armed for the caret's next blink. */
     int timer_armed;
 
+    /* What woke the last pump: the blink timer fired, and whether anything
+       else did -- a message for the window that was not the timer or a
+       repaint, a wake asked for, a resize. ar_win_idle is the pair. */
+    int timer_fired;
+    int only_time;
+
     int closed;
     int resized;
     int awake;          /* skip the block in the next pump */
@@ -456,10 +462,12 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_TIMER:
         /* The caret's blink, and nothing else: one timer, re-armed each frame
-           for exactly as long as the core says the caret will hold still. */
+           for exactly as long as the core says the caret will hold still.
+           No ar_win_wake: the message arriving is what ended the wait, and a
+           wake on top of it bought a second, empty frame after every blink. */
         KillTimer(hwnd, 1);
         win->timer_armed = 0;
-        ar_win_wake(win);
+        win->timer_fired = 1;
         return 0;
 
     case WM_GETOBJECT:
@@ -841,6 +849,8 @@ int ar_win_pump(ar_win *win)
     win->input.clicks = 0;
     win->text_n = 0;
     win->resized = 0;
+    win->timer_fired = 0;
+    win->only_time = !win->awake;
 
     /* With nothing pending and nothing animating, block instead of spinning.
        This is the whole of the idle CPU story: a window nobody is touching
@@ -858,11 +868,22 @@ int ar_win_pump(ar_win *win)
             win->closed = 1;
             return 0;
         }
+        /* Messages for other windows on this thread -- COM's, marshalling a
+           screen reader's calls -- change nothing a frame would see. */
+        if (msg.hwnd == win->hwnd && msg.message != WM_TIMER && msg.message != WM_PAINT)
+        {
+            win->only_time = 0;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     return win->closed ? 0 : 1;
+}
+
+int ar_win_idle(const ar_win *win)
+{
+    return win && win->timer_fired && win->only_time && !win->resized;
 }
 
 ar_surface *ar_win_surface(ar_win *win)

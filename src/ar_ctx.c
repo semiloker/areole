@@ -3138,6 +3138,9 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
 
     ar_perf_begin(&c->perf, ar__now(c));
 
+    /* The tree ar_frame_blink would repaint from is about to go. */
+    c->frame_standing = 0;
+
     /* Releasing the whole previous tree. One integer store. */
     ar_arena_frame_reset(&c->arena);
 
@@ -8582,7 +8585,43 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
 
     /* The frame is left open on purpose: ar_frame_presented closes it, once
        the caller has actually put the pixels on screen. */
+    c->frame_standing = s != 0;
     return damage;
+}
+
+/*
+ * The blink, from the frame that is standing.
+ *
+ * Everything the caret's column shows is still here: the tree ar_frame_end
+ * laid out, its paint order, its clips, the caret's rectangle. A full frame
+ * at this point would rebuild all of that, find every digest unchanged and
+ * repaint exactly this column -- the blink-as-damage block above -- so this
+ * does the last step alone, through the same ar__paint, and leaves
+ * caret_painted saying what is on screen so the next real frame agrees.
+ */
+ar_rect ar_frame_blink(ar_ctx *c, ar_surface *s)
+{
+    ar_rect r = ar_rect_make(0, 0, 0, 0);
+    int     on;
+
+    if (!c || !s || !c->frame_standing || !c->clock || ar_rect_is_empty(c->caret_rect))
+    {
+        return r;
+    }
+    on = ar__caret_showing(c);
+    if (on == c->caret_painted_on)
+    {
+        return r;
+    }
+    c->caret_on = on;
+    r = ar_rect_intersect(c->caret_rect, c->last_viewport);
+    if (!ar_rect_is_empty(r))
+    {
+        ar__paint(c, s, r);
+    }
+    c->caret_painted = c->caret_rect;
+    c->caret_painted_on = on;
+    return r;
 }
 
 void ar_invalidate(ar_ctx *c, ar_rect r)

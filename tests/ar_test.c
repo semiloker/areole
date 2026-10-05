@@ -22735,6 +22735,92 @@ static ar_u32 ar__test_clock(void)
  * 0.10.0's seventh criterion: a blink invalidates fewer than 2,000 pixels. It
  * repaints one column -- the caret's -- because nothing else changed.
  */
+/*
+ * A blink without a frame paints what the frame would have, and only that.
+ *
+ * ar_frame_blink repaints the caret's column from the frame that is standing.
+ * The proof that it is the same blink is the frame that follows: built at the
+ * same moment, it must find nothing left to paint -- every pixel already what
+ * it would have made -- or the two disagree about what the screen shows.
+ */
+static ar_u32 g_blink_copy[400 * 300];
+
+static int ar__surface_matches_copy(const ar_surface *s)
+{
+    ar_i32 x, y;
+
+    for (y = 0; y < s->h; ++y)
+    {
+        for (x = 0; x < s->w; ++x)
+        {
+            if (s->pixels[y * s->stride + x] != g_blink_copy[y * 400 + x])
+            {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void test_a_blink_needs_no_frame(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+    ar_i32     x, y;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar_set_clock(g_ui, ar__test_clock);
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    ar__type(&s, 0, 0);
+
+    r = ar_frame_blink(g_ui, &s);
+    CHECK(ar_rect_is_empty(r), "blink: nothing to paint while the caret's phase holds");
+
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            g_blink_copy[y * 400 + x] = s.pixels[y * s.stride + x];
+        }
+    }
+    g_test_clock_us += 530000u;
+    r = ar_frame_blink(g_ui, &s);
+    CHECK(!ar_rect_is_empty(r) && r.w * r.h < 2000,
+          "blink: a phase change paints the caret's column and nothing more");
+    CHECK(!ar__surface_matches_copy(&s), "blink: and the column did change");
+    CHECK(ar_rect_is_empty(ar_frame_blink(g_ui, &s)), "blink: once, not again");
+
+    /* The frame at the same moment: nothing for it to do. */
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            g_blink_copy[y * 400 + x] = s.pixels[y * s.stride + x];
+        }
+    }
+    ar__type(&s, 0, 0);
+    CHECK(ar_damage_count(g_ui) == 0, "blink: the next frame agrees, and finds nothing to paint");
+    CHECK(ar__surface_matches_copy(&s), "blink: every pixel what that frame would have drawn");
+
+    /* With a frame begun and not ended there is no tree to paint from. */
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        g_test_clock_us += 530000u;
+        ar_frame_begin(g_ui, &in);
+        CHECK(ar_rect_is_empty(ar_frame_blink(g_ui, &s)),
+              "blink: refuses while a frame is being built");
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, &s);
+    }
+    ar_set_clock(g_ui, 0);
+}
+
 static void test_a_blink_is_one_column(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -23532,6 +23618,7 @@ int main(void)
     test_the_a11y_tree();
     test_containers_are_named_by_markup_not_content();
     test_a_blink_is_one_column();
+    test_a_blink_needs_no_frame();
     test_a_field_scrolls_rather_than_wraps();
     test_a_composition_is_drawn_and_not_stored();
     test_the_clipboard();

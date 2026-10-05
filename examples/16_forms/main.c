@@ -1151,6 +1151,16 @@ int main(int argc, char **argv)
             const ar_input *in = ar_win_input(win);
             ar_i32          region, form, by;
 
+            /* Woken by the caret's timer and nothing else: the blink is one
+               column, painted from the frame already standing, and building
+               a whole frame to find that out is what ar_frame_blink saves. */
+            if (ar_win_idle(win))
+            {
+                ar_win_present(win, ar_frame_blink(c, ar_win_surface(win)));
+                ar_win_wake_after(win, ar_caret_wait_us(c));
+                continue;
+            }
+
             frame(c, in, ar_win_surface(win));
             for (region = 0; region < ar_damage_count(c); ++region)
             {

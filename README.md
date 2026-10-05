@@ -1083,7 +1083,7 @@ delivery form of twenty controls in plain markup, with no stylesheet at all.
 | Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.18% of pixels differ |
 | Checks | **1,964** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
 | Memory | `AR_MEM_FIXED` 288 KB -> 320 KB; no allocation after init, the undo log included |
-| Binary | the core +125,760 bytes since 0.9.6, against a budget of 60 KB -- see below |
+| Binary | the core +125,984 bytes since 0.9.6, against a budget of 60 KB -- see below |
 
 **Six of the eight acceptance criteria are met by a program. Two need a person.**
 
@@ -1098,23 +1098,28 @@ delivery form of twenty controls in plain markup, with no stylesheet at all.
 | 7. a blink invalidates fewer than 2,000 pixels | met: 15 in example 16 |
 | 8. no allocation after init | met: `ar_bench` checks it on every scene, and on the three written for this release |
 
-**And one of the Pentium II budgets is missed**, projected by `ar_require` from this machine to
-the Pentium II 400 profile:
+**The Pentium II budgets are met**, projected by `ar_require` from this machine to the Pentium II
+400 profile -- the blink's only after it stopped being a frame:
 
 | | budget | projected |
 | --- | --- | --- |
 | keystroke into a 2,000-character textarea | < 12 ms | 7.0 to 8.8 ms |
-| a caret blink's frame | < 0.5 ms | **0.97 to 1.41 ms** |
+| a caret blink, by `ar_frame_blink` | < 0.5 ms | **0.045 to 0.065 ms** |
+| the same blink by a whole frame | | 0.96 to 1.40 ms |
 | the accessibility tree, 500 nodes | < 8 ms | about 1.2 to 1.7 ms (0.27 to 0.39 for 114) |
 | the undo log | <= 128 KB | 24 KB |
 
-The blink repaints 15 pixels and still costs a frame: an immediate-mode engine builds and lays out
-the whole tree to learn that only the caret changed. A blink that skipped the build -- paint the
-caret's column straight from the last frame -- is the fix, and it is not in this release.
+The blink repainted 15 pixels and cost a frame: an immediate-mode engine built and laid out the
+whole tree to learn that only the caret had changed. `ar_frame_blink` paints the caret's column from
+the frame that is standing -- the tree, the clips and the paint order are all still there between
+one frame's end and the next one's begin -- and a backend calls it when the caret's timer is all that
+woke it, which `ar_win_idle` reports. 3.7 microseconds here against 81 for the frame. `ar_test`
+holds it to the frame's own answer: the frame that follows a blink finds nothing left to paint, and
+every pixel is what it would have drawn.
 
 **The binary budget is missed by twice.** 0.10.0's document allows 60 KB with accessibility
-separable; the core is 125,760 bytes larger than at 0.9.6, of which `ar_a11y.c` is 13,848.
-`ar_ctx.c` grew 27,600 in the last stretch alone and `ar_dom.c` 22,468 -- the control walk and form
+separable; the core is 125,984 bytes larger than at 0.9.6, of which `ar_a11y.c` is 13,848.
+`ar_ctx.c` grew 27,824 in the last stretch alone and `ar_dom.c` 22,468 -- the control walk and form
 submission, which tools/check_size.py itemises where it raises the HTML budget to 188 KB. That
 raise is recorded as what it is: set after the work, because the document named no size.
 
@@ -1158,15 +1163,16 @@ rounds each on the suspects:
 `html_render`'s cost is spread across the inline-box and inline-block work: nine builds with one
 change each stubbed out left it where it was. It is recorded rather than chased further.
 
-Three scenes were written for what this release added -- `field_keystroke` 0.37 ms, `caret_blink`
-0.08 ms and `a11y_tree` 0.018 ms here -- and they land with the stamp, not before it:
+Four scenes were written for what this release added -- `field_keystroke` 0.37 ms, `caret_blink`
+0.004 ms, `caret_blink_frame` 0.08 ms and `a11y_tree` 0.018 ms here -- and they land with the
+stamp, not before it:
 `gen_perf_doc.py --check` fails on a registered scene the baseline does not hold, which is that gate
 doing exactly its job.
 
 **`AR_VERSION_STRING` still says 0.9.6.** The stamp and `bench/baseline.json` move together, and
 the machine read 30 to 55% spread between epochs on the layout group at 10% load -- the numbers
 0.9.2 discarded rather than published. The baseline, with the three new scenes in it, waits for a
-quiet machine, as 0.9.4's and 0.9.6's did.
+quiet machine, as 0.9.4's and 0.9.6's did, and with the four new scenes in it.
 
 ### What this release does not do
 
