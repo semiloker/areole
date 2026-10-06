@@ -23076,6 +23076,29 @@ static void test_many_classes_are_all_kept(void)
           "classes: and a hidden element with five of its own is still hidden");
 }
 
+/*
+ * A line with nothing on it is not there: no height, and the margins either
+ * side of it still meet (CSS 2.1 9.4.2). The HTML standard's page opens
+ * `<header><a class=logo></a><hgroup><h1>`, and the empty link made a line
+ * that stood between the header's edge and the heading's margin: everything
+ * on the page sat 25 px below Edge's.
+ */
+static void test_a_line_with_nothing_on_it_is_not_there(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"d\"><a></a> <h1 id=\"h\">T</h1></div>"
+                    "<div id=\"e\"><a>x</a> <h1 id=\"g\">T</h1></div></body></html>",
+                    "body { margin:0 } h1 { margin:20px 0 } div { background:#eee }");
+    CHECK(ar__box(ar__first_tag_id("d")).y == 20,
+          "phantom: the heading's margin collapses through a parent whose line is empty");
+    CHECK(ar__box(ar__first_tag_id("h")).y == ar__box(ar__first_tag_id("d")).y,
+          "phantom: and the empty line takes no height above the heading");
+    CHECK(ar__box(ar__first_tag_id("g")).y > ar__box(ar__first_tag_id("e")).y + 20,
+          "phantom: a line with a word on it is still a line");
+}
+
 static void test_the_hidden_attribute_hides(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -23672,6 +23695,7 @@ int main(void)
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
     test_the_hidden_attribute_hides();
+    test_a_line_with_nothing_on_it_is_not_there();
     test_many_classes_are_all_kept();
     test_a_legend_sits_on_the_border();
     test_current_color();
