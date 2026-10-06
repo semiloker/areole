@@ -6832,10 +6832,54 @@ static void ar__paint_fieldset(ar_ctx *c, ar_surface *s, const ar_node *n, ar_re
     ar_fill_rect(s, ar_rect_make(r.x, bottom - 1, r.w, 1), clip, light);
 }
 
+/*
+ * Whose background the canvas takes, CSS 2.1 14.2, or -1 for nobody's.
+ *
+ * The root's, when it has one; and in an HTML document whose root has none,
+ * the body's -- the rule that makes `body { background: ... }` colour the whole
+ * window rather than a box that stops where the text does. Beside a browser,
+ * the document example drew its page colour in a rectangle with white down
+ * both sides and under the last paragraph, which is the body's box and not
+ * the canvas.
+ */
+static ar_i32 ar__canvas_box(const ar_ctx *c)
+{
+    ar_i32 k;
+
+    if (c->node_count <= 0 || c->nodes[0].parent >= 0)
+    {
+        return -1;
+    }
+    if (AR_ALPHA_OF((ar_color)AR_WIDE(&c->nodes[0].style, AR_P_BACKGROUND)) != 0)
+    {
+        return 0;
+    }
+    if (c->nodes[0].sel_tag != ar_hash("html", 4u))
+    {
+        return -1;
+    }
+    for (k = c->nodes[0].first_child; k >= 0; k = c->nodes[k].next_sibling)
+    {
+        if (c->nodes[k].sel_tag == ar_hash("body", 4u) &&
+            c->nodes[k].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            return AR_ALPHA_OF((ar_color)AR_WIDE(&c->nodes[k].style, AR_P_BACKGROUND)) != 0 ? k
+                                                                                            : -1;
+        }
+    }
+    return -1;
+}
+
 static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
     ar_i32 painted = c->order ? c->order_count : c->node_count;
+
+    /* The canvas first, under everything, and the box it came from does not
+       paint the same colour again -- which matters for a translucent one. */
+    ar_i32 canvas = ar__canvas_box(c);
+    int    document =
+        c->node_count > 0 && c->nodes[0].parent < 0 && c->nodes[0].sel_tag == ar_hash("html", 4u);
 
     /*
      * ponytail: two markers the painter knows by tag name.
@@ -6868,6 +6912,23 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
     ar_u32 tag_chev = ar_hash("ar-chev", 7u);
     ar_u32 tag_grip = ar_hash("ar-grip", 7u);
     ar_u32 tag_fieldset = ar_hash("fieldset", 8u);
+    ar_u32 tag_value = ar_hash("ar-value", 8u);
+
+    if (canvas >= 0)
+    {
+        ar_fill_rect(s, region, region,
+                     (ar_color)AR_WIDE(&c->nodes[canvas].style, AR_P_BACKGROUND));
+    }
+    else if (document)
+    {
+        /* Nobody named a colour, so it is the canvas's own: `Canvas`, in the
+           root's colour scheme -- white, or near-black for a dark page. An
+           interface built with ar_begin has no root `html` and keeps
+           whatever the surface held, as it always has. */
+        ar_fill_rect(s, region, region,
+                     (ar_color)ar_sys_color_default(
+                         AR_SYS_CANVAS, c->nodes[0].style.v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK));
+    }
 
     for (ord = 0; ord < painted; ++ord)
     {
@@ -6952,7 +7013,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         }
 
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
-        if (AR_ALPHA_OF(bg) != 0)
+        if (AR_ALPHA_OF(bg) != 0 && i != canvas)
         {
             if (radius > 0)
             {
@@ -7105,6 +7166,23 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_i32 advance = n->line_h;
             ar_i32 li;
 
+            /*
+             * `text-align` for a box's own text. A line of children is aligned
+             * where the line is filled; text a box carries itself was always
+             * drawn from the left, so a list's numbers -- a fixed slot with its
+             * text right-aligned against the item -- sat at the left of their
+             * slot, a word's width from where a browser puts them. A field's
+             * text stays left: its caret is measured from there.
+             */
+            ar_i32 align = n->style.v[AR_P_TEXT_ALIGN];
+            int    aligned = (align == AR_TEXT_ALIGN_RIGHT || align == AR_TEXT_ALIGN_CENTER) &&
+                             n->sel_tag != tag_value;
+            ar_i32 len = 0;
+
+            while (aligned && n->text[len])
+            {
+                ++len;
+            }
             if (lines < 1)
             {
                 lines = 1;
@@ -7119,8 +7197,22 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
                 ar_i32 from = starts[li];
                 ar_i32 to = (li + 1 < lines) ? starts[li + 1] : -1;
                 ar_i32 ly = ty + li * advance;
+                ar_i32 lx = tx;
 
-                ar__draw_line(c, s, tclip, tx, ly, n, from, to, tc);
+                if (aligned)
+                {
+                    /* Trailing spaces hang, as they do at a wrap anywhere. */
+                    ar_i32 end = to < 0 ? len : to;
+                    ar_i32 w;
+
+                    while (end > from && (n->text[end - 1] == ' ' || n->text[end - 1] == '\n'))
+                    {
+                        --end;
+                    }
+                    w = (ar__range_fx(c, n, from, end) + AR_ONE_PIXEL - 1) / AR_ONE_PIXEL;
+                    lx += align == AR_TEXT_ALIGN_RIGHT ? inner_w - w : (inner_w - w) / 2;
+                }
+                ar__draw_line(c, s, tclip, lx, ly, n, from, to, tc);
             }
         }
     }

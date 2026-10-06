@@ -23053,6 +23053,38 @@ static void test_a_hidden_input_has_no_box(void)
 }
 
 /*
+ * The body's background is the canvas's, everywhere the body is not.
+ *
+ * CSS 2.1 14.2. The surface starts green so that a pixel the canvas did not
+ * reach shows up as green rather than passing for white.
+ */
+static void test_the_body_background_fills_the_canvas(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     x, y;
+
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            s.pixels[y * s.stride + x] = 0xFF00FF00u;
+        }
+    }
+    ar__render_html(&s, "<html><body><p>x</p></body></html>",
+                    "body { margin:20px; background:#ff0000 } p { margin:0 }");
+    CHECK(ar__pixel_at(5, 5) == 0xFF0000u,
+          "canvas: the body's colour outside its box, in its margin");
+    CHECK(ar__pixel_at(390, 290) == 0xFF0000u,
+          "canvas: and below the content, to the window's edge");
+
+    ar__render_html(&s, "<html><body><p>x</p></body></html>",
+                    "html { background:#0000ff } body { margin:20px; background:#ff0000 }"
+                    " p { margin:0 }");
+    CHECK(ar__pixel_at(5, 5) == 0x0000FFu, "canvas: the root's own colour wins when it has one");
+    CHECK(ar__pixel_at(25, 25) == 0xFF0000u, "canvas: and the body keeps its box then");
+}
+
+/*
  * An element with many classes keeps them -- and keeps the walk's own.
  *
  * A box held four classes and dropped the rest without a word, and the walk
@@ -23697,6 +23729,7 @@ int main(void)
     test_the_hidden_attribute_hides();
     test_a_line_with_nothing_on_it_is_not_there();
     test_many_classes_are_all_kept();
+    test_the_body_background_fills_the_canvas();
     test_a_legend_sits_on_the_border();
     test_current_color();
     test_custom_properties();

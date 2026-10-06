@@ -99,8 +99,15 @@ static const char *const AR__UA[] = {
      * In the user-agent sheet rather than in ar_style_defaults, so it reaches
      * documents and leaves interfaces alone: an ar_begin tree that never asks
      * for this sheet still gets eight.
+     *
+     * No background on `html`. A browser's sheet has none either: the white
+     * behind a page is the canvas's own colour, `Canvas`, and the painter
+     * gives it to a document whose root and body name nothing. A white root
+     * here meant the root always had a background, so a body's never
+     * reached the canvas, and `color-scheme: dark` put a dark page on a
+     * white sheet.
      */
-    "html { display:block; background:#ffffff; font-size:16px; }"
+    "html { display:block; font-size:16px; }"
     "body { display:block; margin:8px; }",
 
     "head, style, script, title { display:none; }"
@@ -210,10 +217,12 @@ static const char *const AR__UA[] = {
      *
      * `ar-marker` is a fixed-width slot so that "9." and "10." end at the same
      * place -- numbers are right-aligned against the text, which is the whole
-     * reason a list of ten reads as a column instead of a ragged edge.
+     * reason a list of ten reads as a column instead of a ragged edge. The gap
+     * is a space's width, a quarter of an em in Times: a browser's marker is
+     * "1. " ending at the content edge, so its period stops one space short.
      */
-    "ar-marker { display:inline-block; width:1.6em; margin-left:-2em; }"
-    "ar-marker { margin-right:0.4em; text-align:right; }",
+    "ar-marker { display:inline-block; width:1.75em; margin-left:-2em; }"
+    "ar-marker { margin-right:0.25em; text-align:right; }",
 
     /*
      * A bullet is a box with a radius, because the built-in face has no U+2022
