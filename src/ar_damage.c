@@ -262,21 +262,26 @@ ar_u32 ar_paint_digest(const ar_node *n)
        it to. An unconditional outline in the same document drew perfectly,
        because the first frame damages everything, which is exactly why the
        property looked implemented and the ring looked broken. */
-    static const int PAINTED[] = {
-        AR_P_DISPLAY,         AR_P_OVERFLOW,        AR_P_OVERFLOW_X,       AR_P_BACKGROUND,
-        AR_P_BORDER_WIDTH,    AR_P_BORDER_COLOR,    AR_P_PAD_LEFT,         AR_P_PAD_TOP,
-        AR_P_COLOR,           AR_P_SCROLLBAR_WIDTH, AR_P_SCROLLBAR_GUTTER, AR_P_SCROLLBAR_THUMB,
-        AR_P_SCROLLBAR_TRACK, AR_P_VISIBILITY,      AR_P_EMPTY_CELLS,      AR_P_OUTLINE_WIDTH,
-        AR_P_OUTLINE_COLOR,   AR_P_BORDER_RADIUS,   AR_P_TEXT_DECORATION,  AR_P_FONT_FAMILY};
-    ar_u32 h = 2166136261u;
-    ar_u32 i;
-    ar_u32 count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
+    static const int PAINTED[] = {AR_P_DISPLAY,         AR_P_OVERFLOW,         AR_P_OVERFLOW_X,
+                                  AR_P_BACKGROUND,      AR_P_BORDER_WIDTH,     AR_P_BORDER_COLOR,
+                                  AR_P_PAD_LEFT,        AR_P_PAD_TOP,          AR_P_COLOR,
+                                  AR_P_SCROLLBAR_WIDTH, AR_P_SCROLLBAR_GUTTER, AR_P_SCROLLBAR_THUMB,
+                                  AR_P_SCROLLBAR_TRACK, AR_P_VISIBILITY,       AR_P_EMPTY_CELLS,
+                                  AR_P_OUTLINE_WIDTH,   AR_P_OUTLINE_COLOR,    AR_P_BORDER_RADIUS,
+                                  AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY,      AR_P_OPACITY};
+    ar_u32           h = 2166136261u;
+    ar_u32           i;
+    ar_u32           count = (ar_u32)(sizeof PAINTED / sizeof PAINTED[0]);
 
     for (i = 0; i < count; ++i)
     {
         h = ar__mix(h, (ar_u32)ar_style_get(&n->style, PAINTED[i]));
     }
     h = ar__mix(h, (ar_u32)n->scale);
+
+    /* A box inside one that went transparent did not change, and must still
+       be painted over: its own opacity is still one. */
+    h = ar__mix(h, (n->state & AR_STATE_TRANSPARENT) ? 1u : 0u);
 
     /*
      * Not style, but the paint pass reads it all the same.

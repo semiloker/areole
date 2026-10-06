@@ -23085,6 +23085,40 @@ static void test_the_body_background_fills_the_canvas(void)
 }
 
 /*
+ * `opacity: 0` draws nothing for a box or anything inside it, and the box
+ * keeps its space. weather.gov hides its open menus with an inline
+ * `opacity: 0`, and every one of them drew.
+ */
+static void test_opacity_zero_draws_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     x, y, red = 0;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"a\" style=\"opacity:0\">"
+                    "<div id=\"b\" style=\"opacity:1\">menu</div></div>"
+                    "<p id=\"p\" style=\"opacity:50%\">after</p>"
+                    "<p id=\"q\" style=\"opacity:0.25\">q</p></body></html>",
+                    "body { margin:0 } #a { height:40px; background:#ff0000 }"
+                    " #b { background:#ff0000; color:#ff0000 } p { margin:0 }");
+    for (y = 0; y < 40; ++y)
+    {
+        for (x = 0; x < 200; ++x)
+        {
+            red += ar__pixel_at(x, y) == 0xFF0000u;
+        }
+    }
+    CHECK(red == 0, "opacity: zero draws nothing, and nothing inside it either");
+    CHECK(ar__box(ar__first_tag_id("p")).y == 40, "opacity: and the box keeps its space");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OPACITY] == 1000,
+          "opacity: a child's own opacity is still one; it is the parent's that hides it");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_OPACITY] == 500,
+          "opacity: a percentage is read as a fraction");
+    CHECK(ar__box_style(ar__first_tag_id("q"))->v[AR_P_OPACITY] == 250,
+          "opacity: and so is a number");
+}
+
+/*
  * An element with many classes keeps them -- and keeps the walk's own.
  *
  * A box held four classes and dropped the rest without a word, and the walk
@@ -23729,6 +23763,7 @@ int main(void)
     test_the_hidden_attribute_hides();
     test_a_line_with_nothing_on_it_is_not_there();
     test_many_classes_are_all_kept();
+    test_opacity_zero_draws_nothing();
     test_the_body_background_fills_the_canvas();
     test_a_legend_sits_on_the_border();
     test_current_color();

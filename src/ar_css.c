@@ -121,6 +121,8 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_BORDER_COLLAPSE] = AR_BORDER_SEPARATE;
     s->unit[AR_P_BORDER_COLLAPSE] = AR_UNIT_KEYWORD;
     s->v[AR_P_VISIBILITY] = AR_VIS_VISIBLE;
+    s->v[AR_P_OPACITY] = 1000;
+    s->unit[AR_P_OPACITY] = AR_UNIT_NUMBER;
     s->unit[AR_P_VISIBILITY] = AR_UNIT_KEYWORD;
     s->v[AR_P_CAPTION_SIDE] = AR_CAPTION_TOP;
     s->unit[AR_P_CAPTION_SIDE] = AR_UNIT_KEYWORD;
@@ -840,6 +842,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"table-layout", AR_P_TABLE_LAYOUT},
                                           {"border-collapse", AR_P_BORDER_COLLAPSE},
                                           {"visibility", AR_P_VISIBILITY},
+                                          {"opacity", AR_P_OPACITY},
                                           {"caption-side", AR_P_CAPTION_SIDE},
                                           {"empty-cells", AR_P_EMPTY_CELLS},
                                           {"border-spacing", AR_P_BORDER_SPACING},
@@ -3636,6 +3639,30 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
         {
             out.v = sign * (n * 1000 + milli);
+            out.ok = 1;
+            out.unit = AR_UNIT_NUMBER;
+            return out;
+        }
+
+        /* `opacity`: a number or a percentage, either way per mille here, and
+           clamped to [0, 1] at parse time as CSS clamps it at computed time --
+           nothing between the two can tell. */
+        if (prop == AR_P_OPACITY)
+        {
+            ar_i32 pm = n * 1000 + milli;
+
+            if (z->p < z->end && *z->p == '%')
+            {
+                z->p++;
+                pm = n * 10 + milli / 100;
+            }
+            else if (ar__number_has_unit(z))
+            {
+                out.ok = 0;
+                return out;
+            }
+            pm *= sign;
+            out.v = pm < 0 ? 0 : (pm > 1000 ? 1000 : pm);
             out.ok = 1;
             out.unit = AR_UNIT_NUMBER;
             return out;
