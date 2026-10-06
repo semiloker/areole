@@ -1400,12 +1400,20 @@ enum
 
 /*
  * A selector can name several classes and an element can carry several, and
- * `.card.selected` has to match a box that is both. Four is the ceiling on
- * each: a rule naming five classes and a box carrying five are both things
- * nobody writes, and the alternative is a variable-length list inside a struct
- * that must stay copyable.
+ * `.card.selected` has to match a box that is both. Eight is the ceiling on
+ * each, and the alternative is a variable-length list inside a struct that
+ * must stay copyable.
+ *
+ * It was four, on the grounds that "a box carrying five is something nobody
+ * writes". Every utility-class site writes it on most elements: nasa.gov's
+ * links carry five, its buttons seven. A fifth class was dropped without a
+ * word, and the classes the walk adds itself -- `.ar-link`, `.ar-hidden` --
+ * come after the author's and were the first to go: links drew as plain
+ * text, and a megamenu marked `hidden` drew open, because its own five
+ * classes had filled the set. The walk's classes are now taken first (see
+ * ar_selector_split) and the set is eight.
  */
-#define AR_MAX_CLASSES 4
+#define AR_MAX_CLASSES 8
 
 typedef struct ar_classes
 {

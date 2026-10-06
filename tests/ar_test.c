@@ -23052,6 +23052,47 @@ static void test_a_hidden_input_has_no_box(void)
           "hidden: an input of type hidden draws nothing");
 }
 
+/*
+ * An element with many classes keeps them -- and keeps the walk's own.
+ *
+ * A box held four classes and dropped the rest without a word, and the walk
+ * appends `.ar-link` and `.ar-hidden` after the author's: nasa.gov's links,
+ * five classes each, drew as plain text, and a `hidden` megamenu with five
+ * classes drew open.
+ */
+static void test_many_classes_are_all_kept(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><a id=\"a\" class=\"c1 c2 c3 c4 c5 c6 c7\" href=\"x\">link</a>"
+                    "<div id=\"d\" class=\"c1 c2 c3 c4 c5\" hidden>menu</div></body></html>",
+                    "body { margin:0 } .c7 { padding-left:7px }");
+    CHECK(ar__box_style(ar__first_tag_id("a") + 1)->v[AR_P_TEXT_DECORATION] != 0,
+          "classes: a link with seven classes is still a link");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_PAD_LEFT] == 7,
+          "classes: and a rule naming its seventh class still matches");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "classes: and a hidden element with five of its own is still hidden");
+}
+
+static void test_the_hidden_attribute_hides(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><ul id=\"u\" hidden><li>x</li></ul>"
+                    "<p id=\"p\" hidden=\"until-found\">y</p>"
+                    "<div id=\"d\" class=\"shown\" hidden>z</div></body></html>",
+                    "body { margin:0 } .shown { display:block }");
+    CHECK(ar__box_style(ar__first_tag_id("u"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: the attribute hides a list");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: until-found hides too, with no find-in-page to reveal it");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK,
+          "hidden: and the page's own display still wins, as in a browser");
+}
+
 static void test_a_legend_sits_on_the_border(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -23630,6 +23671,8 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
+    test_the_hidden_attribute_hides();
+    test_many_classes_are_all_kept();
     test_a_legend_sits_on_the_border();
     test_current_color();
     test_custom_properties();

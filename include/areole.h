@@ -685,11 +685,16 @@ typedef ar_i32 ar_scroll_pos;
  * these bytes on every box whether or not any box sets it, which is the trade
  * the flat-style design makes and the reason `text-decoration` is one
  * property here rather than the four CSS 3 splits it into.
+ *
+ * 584 -> 600 at 0.10.0, for classes: a box keeps eight now and kept four
+ * (AR_MAX_CLASSES, in ar_css.h, says why four was wrong). Sixteen bytes of
+ * hashes, measured, and `opacity` beside them cost nothing -- three bytes the
+ * style's alignment had already rounded away.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 584u
+#define AR_BYTES_PER_BOX 600u
 #else
-#define AR_BYTES_PER_BOX 584u
+#define AR_BYTES_PER_BOX 600u
 #endif
 
 /*
@@ -871,8 +876,15 @@ typedef ar_i32 ar_scroll_pos;
  * 500-step undo session: 256 bytes and sixteen snapshots could meet neither.
  * The pool was 16 KB in the first draft of this and was halved, because two
  * full textareas is a form nobody fills in, and every embedder pays for it.
+ *
+ * 320 KB -> 340 KB, for eight classes rather than four. A rule carries four
+ * class sets -- its subject's and three for the boxes above it -- so each set
+ * growing by sixteen bytes is sixty-four a rule, and the default table of 320
+ * rules is the 20,480 bytes this moves by: 342,712 measured of 348,160, the
+ * same five kilobytes of headroom as before. The rule table is the whole of
+ * it; nothing else in the fixed block holds a class.
  */
-#define AR_MEM_FIXED  327680u
+#define AR_MEM_FIXED  348160u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /*
@@ -888,8 +900,11 @@ typedef ar_i32 ar_scroll_pos;
  * assertion in ar_ctx.c exists for.
  *
  * The assertion below now ties the two together, because a comment could not.
+ *
+ * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
+ * it was four.
  */
-#define AR_BYTES_PER_RULE 636u
+#define AR_BYTES_PER_RULE 700u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting
