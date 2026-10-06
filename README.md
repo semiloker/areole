@@ -1279,6 +1279,17 @@ means working through CSS 17.6.2's conflict resolution rather than fitting the r
 Listed rather than compensated for.
 The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
 
+**And whole pages, beside Edge.** `python tools/comparison.py` puts thirteen
+of them in `docs/comparison/` -- the plain form, the document examples, and the
+ten pages saved from the web in `examples/15_real` -- each as areole, Edge, and
+the pixels that differ. It is a folder to look through rather than a gate, and
+the first look found what the corpora had not: an element keeps eight classes
+now and kept four, so a link on a utility-class site drew as text and a menu
+marked `hidden` drew open (nasa.gov: 51.5% of pixels different, then 4.6%); the
+`hidden` attribute itself was never read; an empty line before a heading pushed
+the HTML standard's whole page down 25 px; a body's background stopped at the
+body's box; and no field showed its `placeholder`.
+
 **Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped
 without, and grid's arrived late; flex's has not arrived at all. It is the next one to build, and
 0.9.1's gallery is where it belongs.
