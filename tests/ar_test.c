@@ -23053,6 +23053,13 @@ static void test_a_hidden_input_has_no_box(void)
 }
 
 /*
+ * The `hidden` attribute hides anything, and an author can still show it.
+ *
+ * nasa.gov beside Edge: its `<ul hidden>` submenus drawn open. The
+ * user-agent rule is `[hidden] { display: none }`, and like every user-agent
+ * rule it loses to the page's own `display`.
+ */
+/*
  * The body's background is the canvas's, everywhere the body is not.
  *
  * CSS 2.1 14.2. The surface starts green so that a pixel the canvas did not
@@ -23200,6 +23207,42 @@ static void test_a_line_with_nothing_on_it_is_not_there(void)
           "phantom: and the empty line takes no height above the heading");
     CHECK(ar__box(ar__first_tag_id("g")).y > ar__box(ar__first_tag_id("e")).y + 20,
           "phantom: a line with a word on it is still a line");
+}
+
+/*
+ * A font collection's first face loads. Every CJK face Windows ships is a
+ * .ttc, and refusing them made Japanese text a page of notdef boxes.
+ */
+static ar_u8 g_ttc[16 + sizeof AR_TEST_FONT];
+
+static void test_a_font_collection_loads_its_first_face(void)
+{
+    ar_face f;
+    ar_u32  i, tables;
+    ar_u8  *t = g_ttc + 16;
+
+    memcpy(g_ttc, "ttcf\0\1\0\0\0\0\0\1\0\0\0\x10", 16);
+    memcpy(t, AR_TEST_FONT, sizeof AR_TEST_FONT);
+    tables = ((ar_u32)t[4] << 8) | t[5];
+    for (i = 0; i < tables; ++i)
+    {
+        ar_u8 *rec = t + 12 + i * 16 + 8;
+        ar_u32 off =
+            ((ar_u32)rec[0] << 24) | ((ar_u32)rec[1] << 16) | ((ar_u32)rec[2] << 8) | rec[3];
+
+        off += 16; /* a collection's table offsets count from the file's start */
+        rec[0] = (ar_u8)(off >> 24);
+        rec[1] = (ar_u8)(off >> 16);
+        rec[2] = (ar_u8)(off >> 8);
+        rec[3] = (ar_u8)off;
+    }
+    CHECK(ar_face_init(&f, g_ttc, (ar_u32)sizeof g_ttc) && f.ok,
+          "ttc: a collection's first face initialises");
+    CHECK(ar_face_glyph(&f, 'A') == 1 && ar_face_advance(&f, 1) == 1000,
+          "ttc: and maps and measures like the font it holds");
+
+    g_ttc[15] = 0xF0; /* the first face's offset, now past the end */
+    CHECK(!ar_face_init(&f, g_ttc, (ar_u32)sizeof g_ttc), "ttc: an offset past the end is refused");
 }
 
 static void test_the_hidden_attribute_hides(void)
@@ -23799,6 +23842,7 @@ int main(void)
     test_a_hidden_input_has_no_box();
     test_the_hidden_attribute_hides();
     test_a_line_with_nothing_on_it_is_not_there();
+    test_a_font_collection_loads_its_first_face();
     test_many_classes_are_all_kept();
     test_opacity_zero_draws_nothing();
     test_a_placeholder_shows_until_typed();

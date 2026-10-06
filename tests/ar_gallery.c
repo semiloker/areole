@@ -58,6 +58,10 @@ static unsigned char g_face_sans[8u * 1024u * 1024u];
 static unsigned char g_face_mono[8u * 1024u * 1024u];
 static unsigned char g_face_bold[8u * 1024u * 1024u];
 static unsigned char g_face_italic[8u * 1024u * 1024u];
+static unsigned char g_face_bold_italic[8u * 1024u * 1024u];
+/* A fallback for what the primary face does not cover -- CJK, mostly -- and
+   CJK collections are large: Yu Gothic is fourteen megabytes. */
+static unsigned char g_face_fallback[24u * 1024u * 1024u];
 
 static ar_u32 read_face(const char *path, unsigned char *buf, ar_u32 cap)
 {
@@ -217,7 +221,7 @@ int main(int argc, char **argv)
     const char *path = 0;
     const char *ppm_path = 0;
     const char *font_body = 0, *font_sans = 0, *font_mono = 0, *font_bold = 0;
-    const char *font_italic = 0;
+    const char *font_italic = 0, *font_bold_italic = 0, *font_fallback = 0;
     int         want_geometry = 0;
     int         want_ids = 0;
     int         k;
@@ -261,6 +265,14 @@ int main(int argc, char **argv)
         {
             font_italic = argv[++k];
         }
+        else if (strcmp(argv[k], "--bold-italic") == 0 && k + 1 < argc)
+        {
+            font_bold_italic = argv[++k];
+        }
+        else if (strcmp(argv[k], "--fallback") == 0 && k + 1 < argc)
+        {
+            font_fallback = argv[++k];
+        }
         else if (strcmp(argv[k], "--size") == 0 && k + 1 < argc)
         {
             long w = 0, h = 0;
@@ -281,7 +293,8 @@ int main(int argc, char **argv)
     {
         printf("# usage: ar_gallery demo.html [--geometry] [--ids] [--ppm out.ppm]\n"
                "#        [--size WxH] [--font body.ttf] [--sans sans.ttf] [--mono mono.ttf]\n"
-               "#        [--bold bold.ttf] [--italic italic.ttf]\n");
+               "#        [--bold bold.ttf] [--italic italic.ttf] [--bold-italic bi.ttf]\n"
+               "#        [--fallback cjk.ttc]\n");
         return 2;
     }
     if (!read_file(path))
@@ -306,6 +319,12 @@ int main(int argc, char **argv)
         {
             printf("# %s did not load\n", font_body);
         }
+        if (font_fallback &&
+            (n = read_face(font_fallback, g_face_fallback, sizeof g_face_fallback)) > 0 &&
+            !ar_font_add(c, g_face_fallback, n))
+        {
+            printf("# %s did not load as a fallback\n", font_fallback);
+        }
         if (font_sans && (n = read_face(font_sans, g_face_sans, sizeof g_face_sans)) > 0)
         {
             ar_font_load_sans(c, g_face_sans, n);
@@ -321,6 +340,11 @@ int main(int argc, char **argv)
         if (font_italic && (n = read_face(font_italic, g_face_italic, sizeof g_face_italic)) > 0)
         {
             ar_font_load_styled(c, g_face_italic, n, 400, 1);
+        }
+        if (font_bold_italic &&
+            (n = read_face(font_bold_italic, g_face_bold_italic, sizeof g_face_bold_italic)) > 0)
+        {
+            ar_font_load_styled(c, g_face_bold_italic, n, 700, 1);
         }
     }
     ar_ua_stylesheet(c);

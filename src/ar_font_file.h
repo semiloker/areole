@@ -33,6 +33,12 @@ typedef struct ar_face
     const ar_u8 *data;
     ar_u32       size;
 
+    /* Where this face's table directory starts: zero for a font file, and the
+       first face's offset inside a collection (.ttc), whose tables are found
+       through a directory of their own but at offsets counted from the start
+       of the whole file. */
+    ar_u32 dir;
+
     /* Offsets into data. Zero means the table is absent. */
     ar_u32 head, hhea, maxp, cmap, loca, glyf, hmtx, os2, name;
 
