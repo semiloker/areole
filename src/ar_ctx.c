@@ -4717,8 +4717,15 @@ static ar_u16 ar__buf_off(const ar_ctx *c, ar_i32 d)
  * left, and the markup if neither -- which is the same order the field itself
  * is loaded in and has to be, or a field would draw one thing and edit
  * another.
+ *
+ * And when all three are empty, the `placeholder`, in the same box with a
+ * class that greys it: shown with the caret in the field too, until the first
+ * character, as every browser does. The same box rather than a second one,
+ * because the caret is measured against this box's text from offset zero --
+ * which is where an empty field's caret is whatever the box holds -- and a
+ * click into the hint lands at the end of an empty buffer, which is zero.
  */
-void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n)
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n, const char *placeholder, ar_u32 pn)
 {
     ar_u32      key;
     const char *src = 0;
@@ -4813,6 +4820,23 @@ void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n)
     if (edited)
     {
         c->edit_box = c->node_count;
+    }
+    if (out_len == 0 && placeholder && pn > 0)
+    {
+        char *hint;
+
+        pn = pn > AR_EDIT_CAP ? AR_EDIT_CAP : pn;
+        hint = (char *)ar_arena_frame(&c->arena, pn + 1u);
+        if (hint)
+        {
+            for (i = 0; i < pn; ++i)
+            {
+                hint[i] = placeholder[i];
+            }
+            hint[pn] = 0;
+            ar_text(c, "ar-value.ar-placeholder", hint);
+            return;
+        }
     }
     ar_text(c, "ar-value", kept);
 }

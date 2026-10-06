@@ -315,7 +315,7 @@ int    ar_field_value_of(const ar_ctx *c, ar_u32 key, const char **text, ar_u32 
 
 /* Emit the text child of the field just opened, from whichever of the three
    places currently holds its text. */
-void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n);
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n, const char *placeholder, ar_u32 pn);
 void ar_text_kept(ar_ctx *c, const char *selector, const char *text, ar_u32 n);
 
 /* Whether the box most recently opened is a `<details>` that is showing its

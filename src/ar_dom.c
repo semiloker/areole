@@ -1983,8 +1983,9 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
     {
         ar_span v = ar_span_is(d->nodes[node].name, "textarea") ? ar__first_text(d, node)
                                                                 : ar__attr_of(d, node, "value");
+        ar_span ph = ar__attr_of(d, node, "placeholder");
 
-        ar_field_child(c, v.p, v.n);
+        ar_field_child(c, v.p, v.n, ph.p, ph.n);
     }
 
     /*
