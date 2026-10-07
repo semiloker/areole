@@ -5953,6 +5953,22 @@ static ar_i32 ar__field_lines(ar_ctx *c, const ar_node *n, ar_i32 *starts)
         starts[0] = 0;
         lines = 1;
     }
+
+    /*
+     * A newline at the very end opens a line with nothing on it yet, which
+     * the wrap does not report: it draws text, and there is none to draw.
+     * The caret is what stands on that line -- without it, Enter at the end
+     * of a textarea left the caret beside the last word, and only the next
+     * character typed went down a line.
+     */
+    {
+        ar_i32 len = ar__text_len(n->text);
+
+        if (len > 0 && n->text[len - 1] == '\n' && lines < AR_MAX_LINES && starts[lines - 1] < len)
+        {
+            starts[lines++] = len;
+        }
+    }
     return lines;
 }
 
@@ -6387,8 +6403,13 @@ static ar_i32 ar__range_at(const ar_ctx *c, ar_i32 r, ar_i32 x)
     ar_i32 thumb_w = 0, left, span;
     ar_i32 v, k;
 
-    /* The rail is the child that holds the thumb: the track comes first. */
-    while (rail >= 0 && c->nodes[rail].first_child < 0)
+    /*
+     * The rail, by its name. "The first child with a child of its own" found
+     * the track once the track held a fill, and took the fill for the thumb --
+     * and the fill's width *is* the value, so a press on the thumb moved it
+     * left and a held one wandered while the value fed back into itself.
+     */
+    while (rail >= 0 && c->nodes[rail].sel_tag != ar_hash("ar-rail", 7u))
     {
         rail = c->nodes[rail].next_sibling;
     }
@@ -6411,8 +6432,11 @@ static ar_i32 ar__range_at(const ar_ctx *c, ar_i32 r, ar_i32 x)
     {
         x = span;
     }
-    /* In two halves so (hi - lo) * x cannot overflow for a range of millions. */
-    v = lo + (ar_i32)(((hi - lo) / 1000) * x / span * 1000 + ((hi - lo) % 1000) * x / span);
+    /* In two halves so (hi - lo) * x cannot overflow for a range of millions,
+       and the first in thousandths of the span, so the step's rounding below
+       sees the fraction: truncated to whole units first, a press exactly on
+       the thumb came out one step to its left. */
+    v = lo + (ar_i32)(((hi - lo) / 1000) * (x * 1000 / span) + ((hi - lo) % 1000) * x / span);
     k = (v - lo + step / 2) / step;
     v = lo + k * step;
     return v > hi ? hi : v;
