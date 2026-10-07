@@ -440,6 +440,105 @@ void ar_fill_tri(ar_surface *s, ar_rect r, ar_i32 dir, ar_rect clip, ar_color c)
 /* ------------------------------------------------------------------------
  * Moving pixels that are already correct
  * ------------------------------------------------------------------------ */
+/*
+ * `d` of `dst`, taken from `src`, which is `scale` thousandths of dst's size.
+ *
+ * Shrinking
+ * averages the block of render pixels behind each window pixel,
+ * which is what makes 2000
+ * smoother than 1000: an edge half across a pixel
+ * comes out half its colour. Growing reads the
+ * four render pixels around the
+ * window pixel's centre and mixes them, so 500 is soft rather than
+ * blocky.
+ * Integers throughout, 8 bits of fraction for the mix.
+ */
+void ar_surface_resample(const ar_surface *src, ar_surface *dst, ar_rect d, ar_i32 scale)
+{
+    ar_i32 k = scale;
+    ar_i32 x, y;
+
+    if (!src || !dst || !src->pixels || !dst->pixels || src->w < 1 || src->h < 1 || k < 1)
+    {
+        return;
+    }
+    d = ar_rect_intersect(d, ar_rect_make(0, 0, dst->w, dst->h));
+
+    for (y = d.y; y < d.y + d.h; ++y)
+    {
+        ar_u32 *out = dst->pixels + y * dst->stride;
+
+        if (k > 1000)
+        {
+            ar_i32 sy0 = y * k / 1000, sy1 = (y + 1) * k / 1000;
+
+            sy1 = sy1 > src->h ? src->h : sy1;
+            sy0 = sy0 >= sy1 ? sy1 - 1 : sy0;
+            for (x = d.x; x < d.x + d.w; ++x)
+            {
+                ar_i32 sx0 = x * k / 1000, sx1 = (x + 1) * k / 1000;
+                ar_u32 r = 0, g = 0, b = 0, n = 0;
+                ar_i32 sx, sy;
+
+                sx1 = sx1 > src->w ? src->w : sx1;
+                sx0 = sx0 >= sx1 ? sx1 - 1 : sx0;
+                for (sy = sy0; sy < sy1; ++sy)
+                {
+                    const ar_u32 *row = src->pixels + sy * src->stride;
+
+                    for (sx = sx0; sx < sx1; ++sx)
+                    {
+                        r += (row[sx] >> 16) & 0xFFu;
+                        g += (row[sx] >> 8) & 0xFFu;
+                        b += row[sx] & 0xFFu;
+                        ++n;
+                    }
+                }
+                n = n ? n : 1;
+                out[x] = 0xFF000000u | ((r / n) << 16) | ((g / n) << 8) | (b / n);
+            }
+        }
+        else
+        {
+            ar_i32        sy = ((2 * y + 1) * k * 128) / 1000 - 128;
+            ar_i32        fy, sy2;
+            const ar_u32 *r0, *r1;
+
+            sy = sy < 0 ? 0 : sy;
+            fy = sy & 0xFF;
+            sy >>= 8;
+            sy = sy >= src->h ? src->h - 1 : sy;
+            sy2 = sy + 1 < src->h ? sy + 1 : sy;
+            r0 = src->pixels + sy * src->stride;
+            r1 = src->pixels + sy2 * src->stride;
+            for (x = d.x; x < d.x + d.w; ++x)
+            {
+                ar_i32 sx = ((2 * x + 1) * k * 128) / 1000 - 128;
+                ar_i32 fx, sx2, ch;
+                ar_u32 px = 0xFF000000u;
+
+                sx = sx < 0 ? 0 : sx;
+                fx = sx & 0xFF;
+                sx >>= 8;
+                sx = sx >= src->w ? src->w - 1 : sx;
+                sx2 = sx + 1 < src->w ? sx + 1 : sx;
+                for (ch = 0; ch < 24; ch += 8)
+                {
+                    ar_i32 a = (ar_i32)((r0[sx] >> ch) & 0xFFu),
+                           b = (ar_i32)((r0[sx2] >> ch) & 0xFFu);
+                    ar_i32 c0 = (ar_i32)((r1[sx] >> ch) & 0xFFu),
+                           e = (ar_i32)((r1[sx2] >> ch) & 0xFFu);
+                    ar_i32 top = a * 256 + (b - a) * fx, bottom = c0 * 256 + (e - c0) * fx;
+                    ar_i32 v = (top * 256 + (bottom - top) * fy) >> 16;
+
+                    px |= (ar_u32)(v < 0 ? 0 : v > 255 ? 255 : v) << ch;
+                }
+                out[x] = px;
+            }
+        }
+    }
+}
+
 int ar_surface_move_rows(ar_surface *s, ar_i32 x, ar_i32 w, ar_i32 src_y, ar_i32 dst_y, ar_i32 h)
 {
     ar_i32 row;

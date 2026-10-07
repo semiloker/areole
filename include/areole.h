@@ -166,6 +166,15 @@ void ar_fill_tri(ar_surface *s, ar_rect r, ar_i32 dir, ar_rect clip, ar_color c)
 void ar_stroke_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_i32 width, ar_rect clip,
                           ar_color c);
 
+/*
+ * Fills the rectangle `d` of `dst` from `src`, a picture `scale` thousandths
+ * of dst's size -- what a backend does with a frame drawn at a render scale
+ * (ar_set_render_scale). Larger than dst, each dst pixel is the average of
+ * the block behind it; smaller, a bilinear mix of the four around its centre.
+ * Integers only, and nothing allocated.
+ */
+void ar_surface_resample(const ar_surface *src, ar_surface *dst, ar_rect d, ar_i32 scale);
+
 /* ------------------------------------------------------------------------
  * Instrumentation
  *
@@ -1209,6 +1218,26 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
  * width and height come from the surface areole is drawn into.
  */
 void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths);
+
+/*
+ * Draws at a scale of the layout, in thousandths: 2000 paints every box,
+ * border, corner and glyph twice as large in each direction, 500 at half.
+ *
+ * Layout does not change. ar_frame_end lays the page out in the surface's
+ * size divided by the scale -- hand it a surface 2000x1280 at 2000 and the
+ * page is laid out at 1000x640 -- and every rectangle the API reports, from
+ * ar_node_rect to the damage, is in those layout pixels, so the pointer and
+ * hit testing need nothing new. What a backend does with the bigger or
+ * smaller picture is its own business: ar_win_set_render_scale shrinks it into
+ * the window for smoother edges and text, or stretches it for speed.
+ *
+ * Glyphs are rasterized at the scaled size, so a face has to be loaded with a
+ * `max_px` that covers the largest text times the scale: text larger than that
+ * is not drawn, here as at 1000. Clamped to 250..8000; 1000 is the default,
+ * and costs one comparison per drawing call.
+ */
+void   ar_set_render_scale(ar_ctx *c, ar_i32 thousandths);
+ar_i32 ar_render_scale(const ar_ctx *c);
 
 /*
  * What media queries are answered against, stated rather than inferred.

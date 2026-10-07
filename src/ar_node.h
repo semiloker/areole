@@ -607,6 +607,11 @@ struct ar_ctx
        piece of the media state a caller has to supply. */
     ar_i32 media_resolution;
 
+    /* Surface pixels per layout pixel, in thousandths: ar_set_render_scale,
+       and the scale the pixels standing were painted at. */
+    ar_i32 render_scale;
+    ar_i32 painted_scale;
+
     /* Set by ar_set_media, and it stops ar_frame_begin deriving the size from
        the last frame's viewport. A caller who has said what the window is
        must not be second-guessed by a stale one. */

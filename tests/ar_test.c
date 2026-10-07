@@ -22869,6 +22869,123 @@ static void test_a_blink_is_one_column(void)
     ar_set_clock(g_ui, 0);
 }
 
+/* One frame of the parsed document into `s`, at whatever scale is set. */
+static void ar__frame_into(ar_surface *s)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+/* How many pixels of a surface-space rectangle are dark: ink, not paper. */
+static ar_i32 ar__ink_in(ar_rect r)
+{
+    ar_i32 x, y, n = 0;
+
+    for (y = r.y; y < r.y + r.h; ++y)
+    {
+        for (x = r.x; x < r.x + r.w; ++x)
+        {
+            n += (ar__pixel_at(x, y) & 0xFFu) < 0x80u;
+        }
+    }
+    return n;
+}
+
+/*
+ * A render scale paints the same layout into a surface that many times the
+ * size, and lays out in the surface's size divided by it -- so every box keeps
+ * its layout rectangle, and its pixels land where the scale puts them.
+ */
+static void test_a_render_scale_paints_the_same_layout(void)
+{
+    ar_surface s = ar__ui_surface(300, 150);
+    ar_rect    one, two, half, t;
+    ar_i32     ink_one;
+    ar_u32     red = 0xFF0000u;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"b\" style=\"position:absolute; left:20px; top:10px; "
+                    "width:40px; height:30px; background:#ff0000\"></div><p id=\"t\" "
+                    "style=\"position:absolute; left:20px; top:60px; margin:0\">Hello</p>"
+                    "</body></html>",
+                    "body { margin:0; background:#ffffff }");
+    one = ar__box(ar__first_tag_id("b"));
+    t = ar__box(ar__first_tag_id("t"));
+    ink_one = ar__ink_in(t);
+    CHECK(ar_render_scale(g_ui) == 1000 && ar__pixel_at(20, 10) == red && ink_one > 0,
+          "scale: 1000 draws as it always did");
+
+    ar_set_render_scale(g_ui, 2000);
+    s = ar__ui_surface(600, 300);
+    ar__frame_into(&s);
+    two = ar__box(ar__first_tag_id("b"));
+    CHECK(two.x == one.x && two.y == one.y && two.w == one.w && two.h == one.h,
+          "scale: 2000 lays out the same page in a surface twice the size");
+    CHECK(ar__pixel_at(40, 20) == red && ar__pixel_at(119, 79) == red &&
+              ar__pixel_at(120, 20) != red && ar__pixel_at(40, 80) != red,
+          "scale: and the box fills exactly twice its pixels each way");
+    CHECK(ar__ink_in(ar_rect_make(t.x * 2, t.y * 2, t.w * 2, t.h * 2)) > ink_one * 2,
+          "scale: and its text is drawn larger, not left out");
+
+    ar_set_render_scale(g_ui, 500);
+    s = ar__ui_surface(150, 75);
+    ar__frame_into(&s);
+    half = ar__box(ar__first_tag_id("b"));
+    CHECK(half.x == one.x && half.w == one.w, "scale: 500 lays out the same page too");
+    CHECK(ar__pixel_at(10, 5) == red && ar__pixel_at(29, 19) == red && ar__pixel_at(30, 5) != red,
+          "scale: in half the pixels");
+    ar_set_render_scale(g_ui, 1000);
+}
+
+/*
+ * Resampling a render-scale picture into a window: a larger picture averages
+ * the block behind each pixel, a smaller one mixes the four around its centre.
+ */
+static ar_u32 g_rs_src[8], g_rs_dst[8];
+
+static void test_resampling_a_scaled_picture(void)
+{
+    ar_surface src, dst;
+
+    /* 4x2 at 2000 into 2x1: a black-and-white block averages to grey, and a
+       red block stays red. */
+    g_rs_src[0] = 0x000000u;
+    g_rs_src[1] = 0xFFFFFFu;
+    g_rs_src[4] = 0xFFFFFFu;
+    g_rs_src[5] = 0x000000u;
+    g_rs_src[2] = g_rs_src[3] = g_rs_src[6] = g_rs_src[7] = 0xFF0000u;
+    src.pixels = g_rs_src;
+    src.w = 4;
+    src.h = 2;
+    src.stride = 4;
+    dst.pixels = g_rs_dst;
+    dst.w = 2;
+    dst.h = 1;
+    dst.stride = 2;
+    ar_surface_resample(&src, &dst, ar_rect_make(0, 0, 2, 1), 2000);
+    CHECK((g_rs_dst[0] & 0xFFFFFFu) == 0x7F7F7Fu, "resample: a block shrinks to its average");
+    CHECK((g_rs_dst[1] & 0xFFFFFFu) == 0xFF0000u, "resample: and a flat one keeps its colour");
+
+    /* 2x1 at 500 into 4x1: black to white, in order, ends exact. */
+    g_rs_src[0] = 0x000000u;
+    g_rs_src[1] = 0xFFFFFFu;
+    src.w = 2;
+    src.h = 1;
+    src.stride = 2;
+    dst.w = 4;
+    dst.stride = 4;
+    ar_surface_resample(&src, &dst, ar_rect_make(0, 0, 4, 1), 500);
+    CHECK((g_rs_dst[0] & 0xFFu) == 0x00u && (g_rs_dst[3] & 0xFFu) == 0xFFu &&
+              (g_rs_dst[1] & 0xFFu) < (g_rs_dst[2] & 0xFFu) && (g_rs_dst[1] & 0xFFu) > 0u,
+          "resample: a smaller picture is mixed between its pixels, not blocked");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24180,6 +24297,8 @@ int main(void)
     test_max_width_is_the_contents();
     test_a_slider_follows_the_pointer();
     test_enter_moves_the_caret_down();
+    test_a_render_scale_paints_the_same_layout();
+    test_resampling_a_scaled_picture();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
