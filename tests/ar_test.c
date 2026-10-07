@@ -23444,6 +23444,43 @@ static void test_a_flex_auto_margin_takes_the_free_space(void)
           "auto margin: and in a column, margin-top pushes it to the bottom");
 }
 
+/*
+ * White space that would begin a line, or does not fit at the end of one,
+ * is no line's content (CSS Text 4.1.3). The newline after a field as wide as
+ * its line made a line of its own, and every form field sat one line lower.
+ */
+static void test_a_space_does_not_open_a_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"width:300px\">"
+                    "<span style=\"display:inline-block; width:100%; height:20px\"></span>\n"
+                    "<p id=\"p\">x</p></div>"
+                    "<div id=\"d\" style=\"width:300px\">"
+                    "<span style=\"display:inline-block; width:100%; height:20px\"></span> "
+                    "<span id=\"w\">word</span></div></body></html>",
+                    "body { margin:0 } p { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("p")).y == 20,
+          "space: the newline after a full-width box makes no line");
+    CHECK(ar__box(ar__first_tag_id("w")).x == 0 &&
+              ar__box(ar__first_tag_id("w")).y == ar__box(ar__first_tag_id("d")).y + 20,
+          "space: and the next word starts its line at the left edge");
+
+    ar__render_html(
+        &s,
+        "<html><body><div style=\"width:20px; white-space:nowrap\">"
+        "<span id=\"a\">aaaaaaaa</span> <span id=\"b\">b</span></div>"
+        "<div><span style=\"display:inline-block\"></span> <span id=\"e\">x</span></div>"
+        "</body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("b")).x >
+              ar__box(ar__first_tag_id("a")).x + ar__box(ar__first_tag_id("a")).w,
+          "space: a line that may not wrap keeps its spaces past the edge");
+    CHECK(ar__box(ar__first_tag_id("e")).x > 0,
+          "space: and the space after an empty inline-block is content");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -24005,9 +24042,6 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
-    test_a_flex_item_is_a_block();
-    test_text_decoration_none();
-    test_a_flex_auto_margin_takes_the_free_space();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
@@ -24020,6 +24054,10 @@ int main(void)
     test_a_placeholder_shows_until_typed();
     test_the_body_background_fills_the_canvas();
     test_a_legend_sits_on_the_border();
+    test_a_flex_item_is_a_block();
+    test_text_decoration_none();
+    test_a_flex_auto_margin_takes_the_free_space();
+    test_a_space_does_not_open_a_line();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();

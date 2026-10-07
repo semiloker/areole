@@ -427,6 +427,7 @@ typedef struct ar__liner
     ar_i32 line_off;   /* what a float pushed this line's start to  */
     ar_i32 line_w;     /* and how much of it is left                */
     ar_i32 line_frag0; /* the first fragment on this line           */
+    ar_i32 line_has;   /* whether anything has been put on it yet   */
 
     /* The fragment being accumulated: a run of one node's pieces that have all
        landed on the current line. */
@@ -699,8 +700,23 @@ static void ar__break_line(ar__liner *L, const ar_float_ctx *fc, ar_i32 abs_top)
 {
     L->y += ar__close_line(L);
     L->x = 0;
+    L->line_has = 0;
     L->line_frag0 = L->env->frags ? L->env->frag_used : 0;
     ar__line_band(fc, abs_top + L->y, L->left, L->inner_w, &L->line_off, &L->line_w);
+}
+
+/* Whether text[from, to) is nothing but white space a line may collapse. */
+static int ar__only_spaces(const char *t, ar_i32 from, ar_i32 to)
+{
+    for (; from < to; ++from)
+    {
+        if (t[from] != ' ' && t[from] != '\t' && t[from] != '\n' && t[from] != '\r' &&
+            t[from] != '\f')
+        {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 /* Adds one piece of one node to the current line. `fx` is its unrounded
@@ -721,6 +737,7 @@ static void ar__add_piece(ar__liner *L, ar_i32 c, ar_i32 from, ar_i32 to, ar_i32
     L->open_w += w;
     L->open_fx += fx;
     L->x += w;
+    L->line_has = 1;
 }
 
 /*
@@ -848,6 +865,29 @@ static int ar__flow(ar__liner *L, ar_i32 first, ar_i32 stop, const ar_float_ctx 
 
                 /* Rounded as part of its run, not on its own: ar__piece_w. */
                 w = ar__piece_w(L, ch, at, next, L->open_node == c, &fx);
+
+                /*
+                 * White space that would start a line, or that does not fit at
+                 * the end of one where the line may wrap, is not a line's
+                 * content (CSS Text 4.1.3): at the end it hangs, at the start
+                 * it is removed. The space after a field as wide as its line --
+                 * `<input style="width:100%">` and the newline before the next
+                 * `<label>` -- wrapped onto a line of its own and pushed every
+                 * field after it down by one.
+                 *
+                 * "Start" is nothing on the line yet, not x == 0: the space
+                 * after an empty inline-block is content, and the space just
+                 * inside a padded `<a>` at a line's start is not. A newline
+                 * `pre-line` kept is a break and still has to happen.
+                 */
+                if (AR_WS_COLLAPSES(ch->style.v[AR_P_WHITE_SPACE]) && kind != AR_BREAK_MANDATORY &&
+                    ar__only_spaces(ch->text, at, next) &&
+                    (!L->line_has ||
+                     (AR_WS_WRAPS(ch->style.v[AR_P_WHITE_SPACE]) && L->x + w > L->line_w)))
+                {
+                    at = next;
+                    continue;
+                }
 
                 /*
                  * `white-space` decides whether this line may end here at all.
@@ -1016,6 +1056,7 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
     L.align = align;
     L.y = 0;
     L.x = 0;
+    L.line_has = 0;
     L.line_frag0 = env->frags ? env->frag_used : 0;
 
     /*
