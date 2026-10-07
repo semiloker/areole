@@ -1129,7 +1129,7 @@ delivery form of twenty controls in plain markup, with no stylesheet at all.
 | Forms | implicit submission, `ar_form_submitted`, `ar_form_encode` |
 | Accessibility | a public tree; MSAA on Windows, read back from another process: 20 of 20 controls named |
 | Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.45% of pixels differ |
-| Checks | **2,029** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
+| Checks | **2,044** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
 | Memory | `AR_MEM_FIXED` 288 KB -> 320 KB; no allocation after init, the undo log included |
 | Binary | the core +125,984 bytes since 0.9.6, against a budget of 60 KB -- see below |
 
