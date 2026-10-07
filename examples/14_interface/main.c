@@ -902,6 +902,12 @@ static int selftest(ar_ctx *c, ar_doc *d)
             {
                 ar_rect f = nf > 0 ? ar_node_frag(c, i, k, 0, 0) : ar_node_rect(c, i);
 
+                /* Text drawn nowhere -- the newline between two flex items,
+                   which is not rendered -- cannot be drawn outside its box. */
+                if (f.w <= 0 || f.h <= 0)
+                {
+                    continue;
+                }
                 ++checked;
                 if (f.y + f.h <= box.y || f.y >= box.y + box.h || f.x + f.w <= box.x ||
                     f.x >= box.x + box.w)
