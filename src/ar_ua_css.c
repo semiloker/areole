@@ -308,11 +308,10 @@ static const char *const AR__UA[] = {
        because it shared a rule with two elements that are. */
     "output { display:inline; }",
 
-    /* Two rules, because AR_MAX_SEL_LIST is four and a list of six is
-       refused whole rather than truncated -- which is the trap this file's
-       own header warns about. */
+    /* An option has no size of its own and takes its select's, as in a
+       browser: a rule of its own here kept a select's text at 13 pixels
+       inside a select the page had made 14. */
     "input, button, select, textarea { font-size:13px; }"
-    "optgroup, option { font-size:13px; }"
     "input, button, select { font-family:sans-serif; }",
 
     /*
