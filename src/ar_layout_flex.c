@@ -822,9 +822,35 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             if (pass == 1)
             {
                 ar_i32 index = 0;
+                ar_i32 lead_prop = axis ? AR_P_MARGIN_TOP : AR_P_MARGIN_LEFT;
+                ar_i32 trail_prop = axis ? AR_P_MARGIN_BOTTOM : AR_P_MARGIN_RIGHT;
+                ar_i32 autos = 0, share = 0, extra = 0;
 
-                ar_align_distribute(ar_align_from_justify(n->style.v[AR_P_JUSTIFY]),
-                                    inner_main - main_used, count, &lead, &between);
+                /*
+                 * `margin: auto` on the main axis takes the free space first,
+                 * shared equally, and `justify-content` then has none to place
+                 * (Flexbox 9.5) -- which is how a toolbar puts its last item at
+                 * the far end: `margin-left: auto`. An auto margin was zero
+                 * here, and the avatar in a top bar sat beside the tabs.
+                 */
+                for (c = first; c >= 0 && c != stop; c = ar__flex_next(nodes, i, c, ordered))
+                {
+                    autos += nodes[c].style.unit[lead_prop] == AR_UNIT_AUTO;
+                    autos += nodes[c].style.unit[trail_prop] == AR_UNIT_AUTO;
+                }
+                if (autos > 0 && inner_main - main_used > 0)
+                {
+                    share = (inner_main - main_used) / autos;
+                    extra = (inner_main - main_used) - share * autos;
+                    lead = 0;
+                    between = 0;
+                }
+                else
+                {
+                    autos = 0;
+                    ar_align_distribute(ar_align_from_justify(n->style.v[AR_P_JUSTIFY]),
+                                        inner_main - main_used, count, &lead, &between);
+                }
                 cursor = *ar_axis_pos(&n->rect, axis) + ar_axis_pad_lead(&n->style, axis) + lead;
 
                 for (c = first; c >= 0 && c != stop; c = ar__flex_next(nodes, i, c, ordered))
@@ -840,9 +866,19 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                     }
 
                     cursor += ar_axis_margin_lead(&it->style, axis);
+                    if (autos > 0 && it->style.unit[lead_prop] == AR_UNIT_AUTO)
+                    {
+                        cursor += share + (extra > 0 ? 1 : 0);
+                        extra -= extra > 0 ? 1 : 0;
+                    }
                     *ar_axis_pos(&it->rect, axis) = cursor;
                     cursor += *ar_axis_size(&it->rect, axis) +
                               ar_axis_margin_trail(&it->style, axis) + gap + between;
+                    if (autos > 0 && it->style.unit[trail_prop] == AR_UNIT_AUTO)
+                    {
+                        cursor += share + (extra > 0 ? 1 : 0);
+                        extra -= extra > 0 ? 1 : 0;
+                    }
 
                     /* Stretch is a size, so it happens before the offset is
                        asked for, and only for an item that stated no cross
