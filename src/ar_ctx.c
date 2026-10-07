@@ -2399,6 +2399,55 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
  * flows the right way on the second pass. A sheet that uses none of these
  * three never gets here.
  */
+/*
+ * A block inside an inline, CSS 2.1 9.2.1.1.
+ *
+ * The inline box is broken around the block: its inline content before and
+ * after goes into anonymous blocks, and the block sits between them, stacked.
+ * Here it fell to the line filler instead, which put the block on the line as
+ * one item beside whatever preceded it -- MDN's navigation, an unknown element
+ * (so inline) holding a `<button>` and a `<div>` of links, drew as a button
+ * stretched down the whole height of its menu with the menu beside it. And it
+ * is the shape of every card that is a link: `<a><div>...</div></a>`.
+ *
+ * So an inline box with an in-flow block-level child is laid out as a block,
+ * which gives the same stacking: its inline children make anonymous lines and
+ * its blocks stack between them. Children first -- a box is decided after the
+ * boxes inside it, so an inline holding an inline holding a block becomes a
+ * block too.
+ *
+ * ponytail: the inline is not split, it is promoted. The difference shows only
+ * where the inline sat inside a line with text before it: that text ends its
+ * line here, where the specification would continue it beside the inline's
+ * own first words. The split proper is anonymous-box work in the line filler.
+ */
+static void ar__blockify_inlines(ar_ctx *c)
+{
+    ar_i32 i;
+
+    for (i = c->node_count - 1; i >= 0; --i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   k;
+
+        if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || n->first_child < 0)
+        {
+            continue;
+        }
+        for (k = n->first_child; k >= 0; k = c->nodes[k].next_sibling)
+        {
+            const ar_node *ch = &c->nodes[k];
+
+            if (ch->style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE && !ar_is_inline_level(ch) &&
+                !ar_is_floated(ch) && !ar_is_out_of_flow(ch))
+            {
+                n->style.v[AR_P_DISPLAY] = AR_DISPLAY_BLOCK;
+                break;
+            }
+        }
+    }
+}
+
 static void ar__resolve_late(ar_ctx *c)
 {
     ar_i32 i;
@@ -8186,6 +8235,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Before the collapse marking and before layout: everything after this
        point walks the tree, and this is the last moment the tree changes. */
     ar__splice_contents(c);
+    ar__blockify_inlines(c);
     ar__mark_collapsed(c);
 
     /* The viewport lengths, which needed this frame's surface and so could not
