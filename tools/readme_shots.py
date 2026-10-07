@@ -117,6 +117,25 @@ def engine_args(folder, faces, page, size):
     return args
 
 
+LABEL_H = 34
+LABEL = """<!doctype html><html><body style="margin:0; background:%s">
+<div style="padding:6px 14px; font-family:'Segoe UI'; font-size:15px; color:#ffffff">
+<b>%s</b> %s</div></body></html>"""
+
+
+def label(folder, w, name, note, bg):
+    """A strip naming one half of a picture, drawn by areole like everything
+    else here."""
+    with tempfile.TemporaryDirectory(prefix='areole-label-') as tmp:
+        page = os.path.join(tmp, 'label.html')
+        ppm = os.path.join(tmp, 'label.ppm')
+        with io.open(page, 'w', encoding='utf-8') as f:
+            f.write(LABEL % (bg, name, note))
+        args = engine_args(folder, SEGOE, page, (w, LABEL_H))
+        subprocess.run(args + ['--ppm', ppm], capture_output=True)
+        return read_ppm(ppm)[2]
+
+
 def blend(px, i, rgb, alpha):
     for k in range(3):
         px[i + k] = (px[i + k] * (256 - alpha) + rgb[k] * alpha) >> 8
@@ -247,9 +266,13 @@ def main():
                 print('no browser screenshot of %s: docs/vs/%s.png left as it was' % (page, name))
                 continue
             gap = 12
-            rows = [mine[y * w * 3:(y + 1) * w * 3] + b'\xc8\xcc\xd4' * gap +
-                    bytes(got[2][y * w * 3:(y + 1) * w * 3]) for y in range(h)]
-            write_png(os.path.join(docs, 'vs', name + '.png'), w * 2 + gap, h, b''.join(rows))
+            left = label(opts.fonts, w, 'areole', '&mdash; this library', '#2f6fed') + mine
+            right = label(opts.fonts, w, 'Edge', '&mdash; the browser, same file', '#5b6270')
+            right += bytes(got[2])
+            rows = [left[y * w * 3:(y + 1) * w * 3] + b'\xc8\xcc\xd4' * gap +
+                    right[y * w * 3:(y + 1) * w * 3] for y in range(h + LABEL_H)]
+            write_png(os.path.join(docs, 'vs', name + '.png'), w * 2 + gap, h + LABEL_H,
+                      b''.join(rows))
             print('docs/vs/%s.png' % name)
 
     live(engine_args(opts.fonts, SEGOE, 'docs/showcase.html', (W, H)),
