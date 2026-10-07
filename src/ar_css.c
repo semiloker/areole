@@ -975,6 +975,10 @@ static const ar__kw AR_KEYWORDS[] = {
     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
     {"underline", AR_P_TEXT_DECORATION, AR_DECOR_UNDERLINE},
     {"line-through", AR_P_TEXT_DECORATION, AR_DECOR_LINE_THROUGH},
+    /* The commonest thing anyone writes about a link, and it was not a value:
+       `a { text-decoration: none }` was dropped as an unknown keyword and
+       every link kept the user-agent sheet's underline. */
+    {"none", AR_P_TEXT_DECORATION, AR_DECOR_NONE},
     {"monospace", AR_P_FONT_FAMILY, AR_FAMILY_MONOSPACE},
     {"serif", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
     {"sans-serif", AR_P_FONT_FAMILY, AR_FAMILY_SANS},
