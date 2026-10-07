@@ -23379,6 +23379,29 @@ static void test_a_legend_sits_on_the_border(void)
     CHECK(ar__box(p).y > ar__box(l).y + ar__box(l).h, "fieldset: and the content starts under it");
 }
 
+/*
+ * A flex item is a block whatever its display said (Flexbox 4): a navigation
+ * bar's `<a>` links laid out as blocks, with their words in them. They were
+ * left inline, and an inline flex item drew no text.
+ */
+static void test_a_flex_item_is_a_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a;
+
+    ar__render_html(&s,
+                    "<html><body><nav style=\"display:flex\"><a id=\"a\" href=\"#\">Home</a>"
+                    "<span id=\"b\">About</span></nav></body></html>",
+                    "body { margin:0 }");
+    a = ar__first_tag_id("a");
+    CHECK(ar__box_style(a)->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK &&
+              ar__box_style(ar__first_tag_id("b"))->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK,
+          "flex item: an inline child of a flex container is a block");
+    CHECK(ar__box(a).w > 0 && ar__box(a).h > 0, "flex item: with its words in it");
+    CHECK(ar__box(ar__first_tag_id("b")).x >= ar__box(a).x + ar__box(a).w,
+          "flex item: and the next one beside it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -23940,6 +23963,7 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
+    test_a_flex_item_is_a_block();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
