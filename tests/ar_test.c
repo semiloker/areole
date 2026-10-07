@@ -23379,6 +23379,32 @@ static void test_a_legend_sits_on_the_border(void)
     CHECK(ar__box(p).y > ar__box(l).y + ar__box(l).h, "fieldset: and the content starts under it");
 }
 
+/* A `<br>` ends its line: in text, between fields, twice, and at the end. */
+static void test_a_br_breaks_the_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     line;
+    ar_rect    i1, i2;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"r\">one</div><div id=\"a\">one<br>two</div>"
+                    "<div id=\"b\">one<br><br>three</div><div id=\"c\">one<br></div>"
+                    "<div><input id=\"i1\"><br><input id=\"i2\"></div>"
+                    "<div id=\"f\" style=\"float:left\">one<br>three</div>"
+                    "<div id=\"g\" style=\"float:left; clear:left\">three</div></body></html>",
+                    "body { margin:0 }");
+    line = ar__box(ar__first_tag_id("r")).h;
+    CHECK(line > 0 && ar__box(ar__first_tag_id("a")).h == 2 * line, "br: one<br>two is two lines");
+    CHECK(ar__box(ar__first_tag_id("b")).h == 3 * line,
+          "br: two of them leave an empty line between, a line tall");
+    CHECK(ar__box(ar__first_tag_id("c")).h == line, "br: and one at the end adds nothing");
+    i1 = ar__box(ar__first_tag_id("i1"));
+    i2 = ar__box(ar__first_tag_id("i2"));
+    CHECK(i2.y >= i1.y + i1.h && i2.x == i1.x, "br: a field after one goes under the field before");
+    CHECK(ar__box(ar__first_tag_id("f")).w == ar__box(ar__first_tag_id("g")).w,
+          "br: and a shrink-to-fit box is as wide as its widest line, not both");
+}
+
 /*
  * A flex item is a block whatever its display said (Flexbox 4): a navigation
  * bar's `<a>` links laid out as blocks, with their words in them. They were
@@ -24042,6 +24068,7 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
+    test_a_br_breaks_the_line();
     test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();

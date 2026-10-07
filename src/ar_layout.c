@@ -139,6 +139,11 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
         {
             continue;
         }
+        if (ar_is_line_break(ch))
+        {
+            run = 0; /* a `<br>`: what follows is the next line's sum */
+            continue;
+        }
         w = ar__intrinsic(ch, 0) + ch->style.v[AR_P_MARGIN_LEFT] + ch->style.v[AR_P_MARGIN_RIGHT];
         if (ar_is_inline_level(ch) && !ar_is_floated(ch))
         {
