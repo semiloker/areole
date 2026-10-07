@@ -7,6 +7,8 @@
  *
  *     ar_gallery demo.html --geometry          one line per element
  *     ar_gallery demo.html --ppm out.ppm       the render
+ *     ar_gallery page.html --ppm out.ppm --scale 2
+ *                                              drawn at twice the pixels, then shrunk
  *     ar_gallery page.html --script s.txt --frames dir
  *                                              the page used, a frame at a time
  *
@@ -53,6 +55,39 @@ static ar_i32 VIEW_H = 600;
    atlases, for the faces --font, --sans and --mono load. */
 static unsigned char g_memory[AR_MEM_DOC(8192, 2u * 1024u * 1024u) + 8u * 1024u * 1024u];
 static ar_u32        g_pixels[MAX_W * MAX_H];
+
+/* The picture at a render scale, before it is resampled to the view: four
+   times the largest view's pixels, which is 2x of it or 4x of a quarter. */
+static ar_u32 g_scaled[MAX_W * MAX_H * 4];
+
+/* "2", "1.5", "0.5x" or "1500" as thousandths: a scale as a person types it. */
+static ar_i32 parse_scale(const char *t)
+{
+    ar_i32 whole = 0, frac = 0, digits = 0;
+
+    while (*t >= '0' && *t <= '9')
+    {
+        whole = whole * 10 + (*t++ - '0');
+    }
+    if (*t == '.')
+    {
+        ++t;
+        while (*t >= '0' && *t <= '9' && digits < 3)
+        {
+            frac = frac * 10 + (*t++ - '0');
+            ++digits;
+        }
+    }
+    while (digits++ < 3)
+    {
+        frac *= 10;
+    }
+    if (whole >= 100) /* already thousandths */
+    {
+        return whole;
+    }
+    return whole * 1000 + frac;
+}
 
 /* Font files, one buffer each: a face keeps a pointer into its bytes. */
 static unsigned char g_face_body[8u * 1024u * 1024u];
@@ -603,6 +638,7 @@ int main(int argc, char **argv)
     const char *path = 0;
     const char *ppm_path = 0;
     const char *script_path = 0, *frames_dir = 0;
+    ar_i32      scale = 1000;
     const char *font_body = 0, *font_sans = 0, *font_mono = 0, *font_bold = 0;
     const char *font_italic = 0, *font_bold_italic = 0, *font_fallback = 0;
     int         want_geometry = 0;
@@ -635,6 +671,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[k], "--frames") == 0 && k + 1 < argc)
         {
             frames_dir = argv[++k];
+        }
+        else if (strcmp(argv[k], "--scale") == 0 && k + 1 < argc)
+        {
+            scale = parse_scale(argv[++k]);
         }
         else if (strcmp(argv[k], "--font") == 0 && k + 1 < argc)
         {
@@ -752,6 +792,20 @@ int main(int argc, char **argv)
     s.w = VIEW_W;
     s.h = VIEW_H;
     s.stride = VIEW_W;
+    if (scale != 1000)
+    {
+        ar_set_render_scale(c, scale);
+        scale = ar_render_scale(c);
+        s.pixels = g_scaled;
+        s.w = (VIEW_W * scale + 999) / 1000;
+        s.h = (VIEW_H * scale + 999) / 1000;
+        s.stride = s.w;
+        if ((long)s.w * (long)s.h > (long)(sizeof g_scaled / sizeof g_scaled[0]))
+        {
+            printf("# %ldx%ld at that scale does not fit\n", (long)s.w, (long)s.h);
+            return 2;
+        }
+    }
     memset(&in, 0, sizeof in);
     in.mouse_x = -1;
     in.mouse_y = -1;
@@ -827,6 +881,19 @@ int main(int argc, char **argv)
 
     if (ppm_path)
     {
+        /* At a render scale the picture is resampled to the view first, the
+           way a window shows it: ar_surface_resample is what ar_win_present
+           calls. */
+        if (scale != 1000)
+        {
+            ar_surface view;
+
+            view.pixels = g_pixels;
+            view.w = VIEW_W;
+            view.h = VIEW_H;
+            view.stride = VIEW_W;
+            ar_surface_resample(&s, &view, ar_rect_make(0, 0, VIEW_W, VIEW_H), scale);
+        }
         return write_ppm(ppm_path);
     }
     return 0;
