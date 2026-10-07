@@ -169,7 +169,7 @@ static ar_i32 ar__auto_min(const ar_node *n, ar_i32 axis)
      */
     if (ar_pset_has(n->style.set, prop))
     {
-        return n->style.v[prop];
+        return ar_used_min(n, axis);
     }
     if (n->style.unit[ar_axis_size_prop(axis)] == AR_UNIT_PX)
     {
@@ -336,8 +336,7 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
     {
         ar_node *it = &nodes[c];
         ar_i32   base = ar__flex_base(it, axis, inner_main);
-        ar_i32   hypo =
-            ar_clamp(base, ar__auto_min(it, axis), AR_WIDE(&it->style, ar_axis_max_prop(axis)));
+        ar_i32   hypo = ar_clamp(base, ar__auto_min(it, axis), ar_used_max(it, axis));
 
         *ar_axis_size(&it->rect, axis) = hypo;
         it->state = (ar_u16)(it->state & ~AR_STATE_FLEX_FROZEN);
@@ -437,8 +436,7 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
             factor = growing ? ar__grow_of(it, axis)
                              : ar__share(base, it->style.v[AR_P_FLEX_SHRINK], 1000);
             want = base + ar__share(free_space, factor, factor_sum);
-            got =
-                ar_clamp(want, ar__auto_min(it, axis), AR_WIDE(&it->style, ar_axis_max_prop(axis)));
+            got = ar_clamp(want, ar__auto_min(it, axis), ar_used_max(it, axis));
 
             *ar_axis_size(&it->rect, axis) = got;
             /* What this pass actually handed out, which is what the leftover
@@ -484,7 +482,7 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
                     {
                         continue;
                     }
-                    cap = AR_WIDE(&it->style, ar_axis_max_prop(axis));
+                    cap = ar_used_max(it, axis);
                     if (*ar_axis_size(&it->rect, axis) < cap)
                     {
                         *ar_axis_size(&it->rect, axis) += 1;
@@ -707,8 +705,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             {
                 ar_node *it = &nodes[stop];
                 ar_i32   base = ar__flex_base(it, axis, inner_main);
-                ar_i32   hypo = ar_clamp(base, ar__auto_min(it, axis),
-                                         AR_WIDE(&it->style, ar_axis_max_prop(axis)));
+                ar_i32   hypo = ar_clamp(base, ar__auto_min(it, axis), ar_used_max(it, axis));
                 ar_i32   outer = hypo + ar_axis_margin_lead(&it->style, axis) +
                                  ar_axis_margin_trail(&it->style, axis);
 
@@ -890,8 +887,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                                       ar_axis_margin_trail(&it->style, cross);
 
                         *ar_axis_size(&it->rect, cross) =
-                            ar_clamp(room, it->style.v[ar_axis_min_prop(cross)],
-                                     AR_WIDE(&it->style, ar_axis_max_prop(cross)));
+                            ar_clamp(room, ar_used_min(it, cross), ar_used_max(it, cross));
                         ar_wrap_height(nodes, it, axis, 1, env);
                     }
 

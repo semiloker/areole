@@ -354,6 +354,26 @@ ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated)
     return stated + pad;
 }
 
+/*
+ * The limits were compared with the occupied size as they stood, so
+ * `max-width: 640px` with twenty pixels of padding a side gave 600 of content
+ * where a browser gives 640: every centred article column on the web was
+ * forty pixels narrower than it should be, and wrapped its lines elsewhere.
+ */
+ar_i32 ar_used_min(const ar_node *n, ar_i32 axis)
+{
+    ar_i32 v = n->style.v[ar_axis_min_prop(axis)];
+
+    return v > 0 ? ar_used_size(n, axis, v) : v;
+}
+
+ar_i32 ar_used_max(const ar_node *n, ar_i32 axis)
+{
+    ar_i32 v = AR_WIDE(&n->style, ar_axis_max_prop(axis));
+
+    return v == 0x7FFFFFFF ? v : ar_used_size(n, axis, v);
+}
+
 int ar_is_floated(const ar_node *n)
 {
     /* An out-of-flow box is not a float even if it says `float`, because

@@ -1094,6 +1094,12 @@ int ar_is_floated(const ar_node *n);
 /* A stated size, turned into the size the box occupies. See box-sizing. */
 ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
 
+/* `min-width` / `min-height` and the two `max-*`, turned into the size the box
+   occupies the same way: under `content-box` the limit is the content's, and
+   the padding goes around it. "No maximum" stays no maximum. */
+ar_i32 ar_used_min(const ar_node *n, ar_i32 axis);
+ar_i32 ar_used_max(const ar_node *n, ar_i32 axis);
+
 /* ------------------------------------------------------------------------
  * Scroll containers -- ar_scroll.c
  * ------------------------------------------------------------------------ */
