@@ -266,9 +266,17 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
         }
     }
 
+    /*
+     * A child that collapses through itself is no content either: an empty
+     * block inside an empty block lets the margins through both, as CSS 2.1
+     * 8.3.1 has it. Wikipedia's empty menus are a `<div>` around a `<div>`
+     * around an empty `<ul>`, and each one stopped the `<ul>`'s margins at
+     * the first `<div>`: sixteen pixels a menu that Edge does not have.
+     */
     for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        if (ar__counts(nodes, c))
+        if (ar__counts(nodes, c) &&
+            !(ar_is_block(&nodes[c]) && ar__self_collapsing(&nodes[c], nodes)))
         {
             return 0;
         }
@@ -276,35 +284,38 @@ static int ar__self_collapsing(const ar_node *n, const ar_node *nodes)
     return 1;
 }
 
-/* The first and last children that are in flow at all -- past any inline
-   content that makes no line, which is not there for a margin to meet. */
-static ar_i32 ar__first_in_flow(const ar_node *n, const ar_node *nodes)
+/*
+ * The margins that meet a parent's top (or bottom) edge from inside: its first
+ * in-flow child's, and past it, while that child collapses through itself, the
+ * next one's too -- an empty block is no content, so the margin after it is
+ * as adjoining as the margin on it (CSS 2.1 8.3.1). Wikipedia opens its page
+ * body with an empty `#siteNotice` and puts its first heading under it, and
+ * that heading's twenty pixels stopped at the empty block: everything below
+ * sat four pixels above Edge's.
+ */
+static ar_i32 ar__adjoining(const ar_node *n, const ar_node *nodes, int top)
 {
+    ar_i32 m = 0;
     ar_i32 c;
 
-    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
+    for (c = top ? n->first_child : n->last_child; c >= 0;
+         c = top ? nodes[c].next_sibling : nodes[c].prev_sibling)
     {
-        if (ar__counts(nodes, c))
+        if (!ar__counts(nodes, c))
         {
-            return c;
+            continue;
+        }
+        if (!ar_is_block(&nodes[c]))
+        {
+            break;
+        }
+        m = ar_margin_collapse(m, top ? nodes[c].mt : nodes[c].mb);
+        if (!ar__self_collapsing(&nodes[c], nodes))
+        {
+            break;
         }
     }
-    return -1;
-}
-
-static ar_i32 ar__last_in_flow(const ar_node *n, const ar_node *nodes)
-{
-    ar_i32 c;
-    ar_i32 last = -1;
-
-    for (c = n->first_child; c >= 0; c = nodes[c].next_sibling)
-    {
-        if (ar__counts(nodes, c))
-        {
-            last = c;
-        }
-    }
-    return last;
+    return m;
 }
 
 /*
@@ -377,21 +388,11 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
 
     if (ar__open_at_top(n))
     {
-        ar_i32 first = ar__first_in_flow(n, nodes);
-
-        if (first >= 0 && ar_is_block(&nodes[first]))
-        {
-            mt = ar_margin_collapse(mt, nodes[first].mt);
-        }
+        mt = ar_margin_collapse(mt, ar__adjoining(n, nodes, 1));
     }
     if (ar_block_open_at_bottom(n))
     {
-        ar_i32 last = ar__last_in_flow(n, nodes);
-
-        if (last >= 0 && ar_is_block(&nodes[last]))
-        {
-            mb = ar_margin_collapse(mb, nodes[last].mb);
-        }
+        mb = ar_margin_collapse(mb, ar__adjoining(n, nodes, 0));
     }
 
     /* Through itself, last, so that a box which is empty *and* open at both
@@ -406,6 +407,23 @@ void ar_block_margins(ar_node *n, const ar_node *nodes)
 
     n->mt = mt;
     n->mb = mb;
+}
+
+/*
+ * The top margin a self-collapsing box would have if it had a bottom border,
+ * which is where CSS 2.1 8.3.1 puts its top edge: its own margin collapsed
+ * with whatever escaped from its first child, and not the bottom margins it
+ * would otherwise fold in.
+ */
+static ar_i32 ar__top_through(const ar_node *n, const ar_node *nodes)
+{
+    ar_i32 mt = n->style.v[AR_P_MARGIN_TOP];
+
+    if (ar__open_at_top(n))
+    {
+        mt = ar_margin_collapse(mt, ar__adjoining(n, nodes, 1));
+    }
+    return mt;
 }
 
 /* The gap above the first child: nothing, if its margin escaped through the
@@ -589,13 +607,16 @@ ar_i32 ar_block_stack(const ar_node *n, ar_node *nodes, ar_block_height_fn heigh
              * Its own top edge sits below the margin immediately before it,
              * not below the whole collapsed run -- the run carries on past
              * this box and positions whatever comes next. And "the margin
-             * immediately before it" means the one the author wrote, not the
-             * collapsed pair already stored on the node, which is why the
-             * style is read directly here.
+             * immediately before it" is its top margin as though it had a
+             * bottom border (ar__top_through), not the collapsed pair stored
+             * on the node -- and nothing at all for a first child whose
+             * margin already escaped through the parent, or it is applied
+             * twice, once outside and once in.
              */
             if (place)
             {
-                ar_i32 own = ar_margin_collapse(pending, ch->style.v[AR_P_MARGIN_TOP]);
+                ar_i32 own =
+                    ar_margin_collapse(pending, at_start ? mt : ar__top_through(ch, nodes));
 
                 place(ud, c, cursor + own, 0);
             }

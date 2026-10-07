@@ -23053,76 +23053,6 @@ static void test_a_hidden_input_has_no_box(void)
 }
 
 /*
- * A `<style>` inside a `<template>` does not style the document. MDN keeps all
- * of its styles in declarative shadow roots, and read as the page's they made
- * every link transparent.
- */
-static void test_template_styles_stay_in_the_template(void)
-{
-    ar_surface s = ar__ui_surface(400, 300);
-    ar_input   in;
-
-    ar__ui_reset("");
-    ar_ua_stylesheet(g_ui);
-    ar__parse("<html><body><template shadowrootmode=\"open\"><style>p { color:#ff0000 }</style>"
-              "</template><p id=\"p\">x</p><style>#p { padding-left:3px }</style></body></html>");
-    ar_doc_stylesheets(g_ui, &g_doc);
-    memset(&in, 0, sizeof in);
-    in.mouse_x = -1;
-    in.mouse_y = -1;
-    ar_frame_begin(g_ui, &in);
-    ar_dom_build(g_ui, &g_doc);
-    ar_frame_end(g_ui, &s);
-    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("p")), AR_P_COLOR) != 0xFFFF0000u,
-          "template: a style inside it does not reach the document");
-    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_PAD_LEFT] == 3,
-          "template: while the document's own style still does");
-}
-
-/*
- * An element nothing names is inline, as CSS's initial value says -- and an
- * inline holding a block stacks around it rather than putting it on a line.
- * MDN's `<mdn-dropdown>` drew its button stretched down beside its menu.
- */
-static void test_an_unknown_element_is_inline(void)
-{
-    ar_surface s = ar__ui_surface(400, 300);
-    ar_rect    b, d;
-
-    ar__render_html(
-        &s,
-        "<html><body><p><my-word id=\"w\">word</my-word></p>"
-        "<my-menu id=\"m\"><button id=\"b\">b</button><div id=\"d\">panel</div></my-menu>"
-        "</body></html>",
-        "body { margin:0 } p { margin:0 }");
-    CHECK(ar__box_style(ar__first_tag_id("w"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
-          "unknown: an element nothing names is inline");
-    b = ar__box(ar__first_tag_id("b"));
-    d = ar__box(ar__first_tag_id("d"));
-    CHECK(d.y >= b.y + b.h, "unknown: a block inside an inline goes below what came before it");
-    CHECK(b.h < 40, "unknown: and nothing is stretched to the block's height");
-}
-
-/*
- * A list item's marker sits beside its first block, not on a line above it:
- * `<li><p>`, and Wikipedia's contents, `<li><a><div>`.
- */
-static void test_a_marker_sits_beside_the_first_block(void)
-{
-    ar_surface s = ar__ui_surface(400, 300);
-    ar_i32     li;
-
-    ar__render_html(&s,
-                    "<html><body><ul><li id=\"l\"><div id=\"t\">text</div></li></ul></body></html>",
-                    "body { margin:0 } ul { margin:0 }");
-    li = ar__first_tag_id("l");
-    CHECK(ar__box(li + 1).y < ar__box(ar__first_tag_id("t")).y + ar__box(ar__first_tag_id("t")).h,
-          "marker: on the block's first line");
-    CHECK(ar__box(ar__first_tag_id("t")).y == ar__box(li).y,
-          "marker: and the block does not move down a line for it");
-}
-
-/*
  * The `hidden` attribute hides anything, and an author can still show it.
  *
  * nasa.gov beside Edge: its `<ul hidden>` submenus drawn open. The
@@ -23313,6 +23243,106 @@ static void test_a_font_collection_loads_its_first_face(void)
 
     g_ttc[15] = 0xF0; /* the first face's offset, now past the end */
     CHECK(!ar_face_init(&f, g_ttc, (ar_u32)sizeof g_ttc), "ttc: an offset past the end is refused");
+}
+
+/*
+ * A `<style>` inside a `<template>` does not style the document. MDN keeps all
+ * of its styles in declarative shadow roots, and read as the page's they made
+ * every link transparent.
+ */
+static void test_template_styles_stay_in_the_template(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<html><body><template shadowrootmode=\"open\"><style>p { color:#ff0000 }</style>"
+              "</template><p id=\"p\">x</p><style>#p { padding-left:3px }</style></body></html>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("p")), AR_P_COLOR) != 0xFFFF0000u,
+          "template: a style inside it does not reach the document");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_PAD_LEFT] == 3,
+          "template: while the document's own style still does");
+}
+
+/*
+ * An element nothing names is inline, as CSS's initial value says -- and an
+ * inline holding a block stacks around it rather than putting it on a line.
+ * MDN's `<mdn-dropdown>` drew its button stretched down beside its menu.
+ */
+static void test_an_unknown_element_is_inline(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    b, d;
+
+    ar__render_html(
+        &s,
+        "<html><body><p><my-word id=\"w\">word</my-word></p>"
+        "<my-menu id=\"m\"><button id=\"b\">b</button><div id=\"d\">panel</div></my-menu>"
+        "</body></html>",
+        "body { margin:0 } p { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("w"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+          "unknown: an element nothing names is inline");
+    b = ar__box(ar__first_tag_id("b"));
+    d = ar__box(ar__first_tag_id("d"));
+    CHECK(d.y >= b.y + b.h, "unknown: a block inside an inline goes below what came before it");
+    CHECK(b.h < 40, "unknown: and nothing is stretched to the block's height");
+}
+
+/*
+ * A list item's marker sits beside its first block, not on a line above it:
+ * `<li><p>`, and Wikipedia's contents, `<li><a><div>`.
+ */
+static void test_a_marker_sits_beside_the_first_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     li;
+
+    ar__render_html(&s,
+                    "<html><body><ul><li id=\"l\"><div id=\"t\">text</div></li></ul></body></html>",
+                    "body { margin:0 } ul { margin:0 }");
+    li = ar__first_tag_id("l");
+    CHECK(ar__box(li + 1).y < ar__box(ar__first_tag_id("t")).y + ar__box(ar__first_tag_id("t")).h,
+          "marker: on the block's first line");
+    CHECK(ar__box(ar__first_tag_id("t")).y == ar__box(li).y,
+          "marker: and the block does not move down a line for it");
+}
+
+/*
+ * Margins pass through empty blocks, however deep, and past an empty first
+ * child to the one after it (CSS 2.1 8.3.1). Wikipedia's empty menus added
+ * sixteen pixels each, and its first heading's margin stopped at an empty
+ * `#siteNotice`.
+ */
+static void test_margins_pass_through_empty_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:10px\"></div>"
+                    "<div id=\"a\"><div><ul> </ul></div></div>"
+                    "<div id=\"b\"><div><ul> </ul></div></div>"
+                    "<div id=\"c\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("a")).y == 26 && ar__box(ar__first_tag_id("b")).y == 26 &&
+              ar__box(ar__first_tag_id("c")).y == 26,
+          "collapse: two empty lists' margins are one margin, as Edge has it");
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:10px\"></div>"
+                    "<div id=\"o\"><div></div><div id=\"i\" style=\"margin-top:20px; height:5px\">"
+                    "</div></div></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("o")).y == 30,
+          "collapse: a margin after an empty first child still meets the parent's edge");
+    CHECK(ar__box(ar__first_tag_id("i")).y == 30, "collapse: and is not applied again inside");
 }
 
 static void test_the_hidden_attribute_hides(void)
@@ -23910,10 +23940,11 @@ int main(void)
     test_a_replaced_element_sits_on_its_bottom_edge();
     test_an_inline_boxs_padding_moves_its_words();
     test_a_hidden_input_has_no_box();
+    test_the_hidden_attribute_hides();
     test_template_styles_stay_in_the_template();
     test_an_unknown_element_is_inline();
     test_a_marker_sits_beside_the_first_block();
-    test_the_hidden_attribute_hides();
+    test_margins_pass_through_empty_blocks();
     test_a_line_with_nothing_on_it_is_not_there();
     test_a_font_collection_loads_its_first_face();
     test_many_classes_are_all_kept();
