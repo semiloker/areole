@@ -174,6 +174,53 @@ Four limits worth knowing, rather than discovering:
   their logical forms. There are no logical properties anywhere yet.
 - `overflow-anchor` holds one container at a time.
 
+### The top layer and anchoring
+
+| Property | Values |
+| --- | --- |
+| `overlay` | `none`, `auto`, `modal` |
+| `inert` | `none`, `auto` |
+| `anchor-name` | a custom ident, e.g. `--tip` |
+| `position-anchor` | the ident of an `anchor-name` |
+| `position-try` | `none`, `flip-block`, `flip-inline`, `flip-both` |
+
+Inside `top`, `right`, `bottom` and `left`: **`anchor(top | right | bottom |
+left | center)`**, which resolves to that edge of the anchored box's anchor.
+Inside `width` and `height`: **`anchor-size(width | height)`**.
+
+And one pseudo-element, the only one areole has: **`::backdrop`**, the sheet
+painted under a modal and over everything else. It matches no box, so it is
+written against the element it belongs to — `.dialog::backdrop { background:
+#0008; }` — and says nothing about that element.
+
+**A box with `overlay: auto` or `modal` is in the top layer**, which paints
+above every stacking context and clips to the viewport rather than to its
+ancestors. That is not the same as a large `z-index` and cannot be reproduced
+by one: a z-index orders a box among its siblings inside one stacking context
+and cannot lift it out of that context, so a dialog declared inside anything
+positioned can always be covered by that thing's siblings, whatever number it
+asks for.
+
+`modal` additionally makes everything outside it `inert`. `auto` does not —
+that is the whole difference between a dialog and a popover.
+
+Three deviations, named rather than discovered:
+
+- **CSS makes `overlay` UA-controlled**: only `<dialog>` and `popover` may
+  enter the top layer, and a stylesheet cannot put a box there. areole has no
+  UA stylesheet and no elements, so a stylesheet sets it. When the parser lands
+  it will set this on `dialog[open]` and nothing else changes.
+- **`inert` is an HTML attribute**, and there are no attributes here. Same
+  arrangement, same migration.
+- **`modal` is not a CSS value at all.** It is what `showModal()` does, and
+  there is no method to call.
+
+`position-try` ships as the flip only. The full property takes a list of
+fallback position sets and that grammar is still moving; the flip is the part
+that has settled and is what a popover near an edge needs. A flipped box is
+mirrored about its anchor rather than pushed inside the viewport, because a
+tooltip shoved sideways to fit stops pointing at anything.
+
 ### Paint
 
 | Property | Values |
@@ -258,6 +305,11 @@ Named so that their absence is a decision rather than an oversight:
 - `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
 - grid, tables
 - `env()` names beyond safe-area and titlebar — nothing can supply them
+- `<dialog>`, `popover`, `popovertarget` — HTML, and there is no parser yet
+- focus of any kind, so no focus trap, no `autofocus`, no Escape to dismiss
+- `position-try-fallbacks` as a list — the grammar is still moving
+- `position-area` — tracked, no version
+- every pseudo-element except `::backdrop`
 - shorthand `font`, `background` with anything but a colour
 - `font-family` is parsed and ignored: one face at a time, chosen by
   `ar_font_load`

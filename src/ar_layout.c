@@ -1077,6 +1077,33 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
             ar_position_out_of_flow(nodes, i, viewport);
         }
     }
+
+    /*
+     * Anchors, and then the boxes hung off them, placed a second time.
+     *
+     * An anchor is usually positioned itself, so until the pass above has run
+     * its rectangle is still the static position and measuring anything
+     * against it gives the wrong answer -- which is exactly what the first
+     * attempt at this did. So: place everything, resolve every anchor() now
+     * that the anchors are where they will be, then place the anchored boxes
+     * again against real numbers.
+     *
+     * Twice rather than sorted into dependency order, because the second pass
+     * touches only boxes that named an anchor and there are never many. One
+     * level deep: an anchor that is itself anchored to a third box would need
+     * a third pass, and CSS forbids the cycle but not the chain. Named here
+     * rather than discovered.
+     */
+    ar_resolve_anchors(nodes, count, viewport);
+    for (i = 0; i < count; ++i)
+    {
+        if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
+            AR_WIDE(&nodes[i].style, AR_P_POSITION_ANCHOR))
+        {
+            ar_position_out_of_flow(nodes, i, viewport);
+        }
+    }
+    ar_position_try(nodes, count, viewport);
     ar_position_relative(nodes, count, viewport);
     ar_scroll_apply(nodes, count, env);
 

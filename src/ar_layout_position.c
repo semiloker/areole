@@ -182,6 +182,207 @@ static void ar__resolve_axis(const ar_node *n, ar_i32 cb_pos, ar_i32 cb_size, ar
     *out_pos = *out_pos + m_lead;
 }
 
+/* ------------------------------------------------------------------------
+ * Anchor positioning
+ *
+ * A positioned box names an anchor and measures its own edges against that
+ * box's rectangle instead of guessing at coordinates. It is what makes a
+ * tooltip stay attached to the thing it describes when that thing moves.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The box this one is anchored to, or -1.
+ *
+ * A linear scan, matching a hash to a hash. There is no index because there is
+ * no need for one: an interface has a handful of anchors, the scan runs once
+ * per anchored box per frame, and an index would cost every box a slot to save
+ * a walk nobody can measure. If that stops being true it is a hash table over
+ * the names, not a field on the node.
+ */
+static ar_i32 ar__anchor_of(const ar_node *nodes, ar_i32 count, ar_i32 i)
+{
+    ar_i32 want = AR_WIDE(&nodes[i].style, AR_P_POSITION_ANCHOR);
+    ar_i32 j;
+
+    if (!want)
+    {
+        return -1;
+    }
+    for (j = 0; j < count; ++j)
+    {
+        if (j != i && AR_WIDE(&nodes[j].style, AR_P_ANCHOR_NAME) == want &&
+            nodes[j].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            return j;
+        }
+    }
+    return -1;
+}
+
+/* Where one edge of the anchor sits, in absolute coordinates. */
+static ar_i32 ar__anchor_edge(ar_rect a, ar_i32 side, int vertical)
+{
+    switch (side)
+    {
+    case AR_ANCHOR_SIDE_TOP:
+        return a.y;
+    case AR_ANCHOR_SIDE_BOTTOM:
+        return a.y + a.h;
+    case AR_ANCHOR_SIDE_LEFT:
+        return a.x;
+    case AR_ANCHOR_SIDE_RIGHT:
+        return a.x + a.w;
+    default:
+        break;
+    }
+    return vertical ? a.y + a.h / 2 : a.x + a.w / 2;
+}
+
+/*
+ * Rewrites every anchor() on this box into a plain length.
+ *
+ * Done before placement rather than inside it, so ar__resolve_axis keeps
+ * seeing lengths and knows nothing about anchors. An inset is measured from
+ * its own edge of the containing block, which is why the two trailing sides
+ * subtract rather than add.
+ */
+static void ar__resolve_anchor_box(ar_node *nodes, ar_i32 count, ar_i32 i, ar_rect viewport)
+{
+    ar_node *n = &nodes[i];
+    ar_i32   a = ar__anchor_of(nodes, count, i);
+    ar_rect  cb, ar;
+    ar_i32   p;
+
+    if (a < 0)
+    {
+        return;
+    }
+    cb = ar_containing_block(nodes, i, viewport);
+    ar = nodes[a].rect;
+
+    for (p = 0; p < 4; ++p)
+    {
+        static const ar_i32 SIDE[4] = {AR_P_TOP, AR_P_RIGHT, AR_P_BOTTOM, AR_P_LEFT};
+        ar_i32              prop = SIDE[p];
+        ar_i32              side, edge, at;
+        int                 vertical = (prop == AR_P_TOP || prop == AR_P_BOTTOM);
+
+        if (n->style.unit[prop] != AR_UNIT_ANCHOR)
+        {
+            continue;
+        }
+        side = n->style.v[prop];
+        edge = ar__anchor_edge(ar, side, vertical);
+
+        if (prop == AR_P_TOP)
+        {
+            at = edge - cb.y;
+        }
+        else if (prop == AR_P_LEFT)
+        {
+            at = edge - cb.x;
+        }
+        else if (prop == AR_P_BOTTOM)
+        {
+            at = (cb.y + cb.h) - edge;
+        }
+        else
+        {
+            at = (cb.x + cb.w) - edge;
+        }
+        ar_style_put(&n->style, prop, at);
+        n->style.unit[prop] = AR_UNIT_PX;
+    }
+
+    if (n->style.unit[AR_P_WIDTH] == AR_UNIT_ANCHOR)
+    {
+        ar_style_put(&n->style, AR_P_WIDTH,
+                     n->style.v[AR_P_WIDTH] == AR_ANCHOR_SIZE_HEIGHT ? ar.h : ar.w);
+        n->style.unit[AR_P_WIDTH] = AR_UNIT_PX;
+    }
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_ANCHOR)
+    {
+        ar_style_put(&n->style, AR_P_HEIGHT,
+                     n->style.v[AR_P_HEIGHT] == AR_ANCHOR_SIZE_WIDTH ? ar.w : ar.h);
+        n->style.unit[AR_P_HEIGHT] = AR_UNIT_PX;
+    }
+}
+
+void ar_resolve_anchors(ar_node *nodes, ar_i32 count, ar_rect viewport)
+{
+    ar_i32 i;
+
+    for (i = 0; i < count; ++i)
+    {
+        if (ar_is_out_of_flow(&nodes[i]) && nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            ar__resolve_anchor_box(nodes, count, i, viewport);
+        }
+    }
+}
+
+/*
+ * `position-try`: if the box left the viewport, put it on the anchor's other
+ * side instead.
+ *
+ * Only the flip, which is the part of the property whose grammar has stopped
+ * moving -- `position-try-fallbacks` takes a list of position sets and is
+ * named in tracked-unstable.md as still changing. A popover near the bottom of
+ * the screen opening upwards is what people actually need from it.
+ *
+ * Mirrored about the anchor rather than merely pushed inside the viewport,
+ * because a tooltip shoved sideways to fit stops pointing at anything.
+ */
+void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport)
+{
+    ar_i32 i;
+
+    for (i = 0; i < count; ++i)
+    {
+        ar_node *n = &nodes[i];
+        ar_i32   try_mode = n->style.v[AR_P_POSITION_TRY];
+        ar_i32   a;
+
+        if (try_mode == AR_TRY_NONE || !ar_is_out_of_flow(n) ||
+            n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        a = ar__anchor_of(nodes, count, i);
+        if (a < 0)
+        {
+            continue;
+        }
+
+        if (try_mode == AR_TRY_FLIP_BLOCK || try_mode == AR_TRY_FLIP_BOTH)
+        {
+            ar_rect anc = nodes[a].rect;
+
+            if (n->rect.y + n->rect.h > viewport.y + viewport.h)
+            {
+                n->rect.y = anc.y - n->rect.h;
+            }
+            else if (n->rect.y < viewport.y)
+            {
+                n->rect.y = anc.y + anc.h;
+            }
+        }
+        if (try_mode == AR_TRY_FLIP_INLINE || try_mode == AR_TRY_FLIP_BOTH)
+        {
+            ar_rect anc = nodes[a].rect;
+
+            if (n->rect.x + n->rect.w > viewport.x + viewport.w)
+            {
+                n->rect.x = anc.x - n->rect.w;
+            }
+            else if (n->rect.x < viewport.x)
+            {
+                n->rect.x = anc.x + anc.w;
+            }
+        }
+    }
+}
+
 /*
  * Places one out-of-flow box against its containing block.
  *

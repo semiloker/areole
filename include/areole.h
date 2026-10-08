@@ -386,11 +386,22 @@ typedef ar_i32 ar_scroll_pos;
    width a box's contents came to fitted in padding the node already had, so
    the whole cost is the horizontal scroll position in the slot -- which
    AR_SCROLL_COMPACT removes by halving both positions. Compact builds still
-   fit 408, so on that setting horizontal scrolling costs nothing per box. */
+   fit 408, so on that setting horizontal scrolling costs nothing per box.
+
+   416 -> 440 for the top layer and anchor positioning: `overlay`, `inert` and
+   `position-try` are a keyword each, and `anchor-name` and `position-anchor`
+   are thirty-two bits each because they hold a hash. Narrowing those two to
+   sixteen was the alternative and was refused: two anchor names colliding
+   would silently attach a popover to the wrong box, which is a worse failure
+   than a larger struct and an invisible one. Measured at 428 of 440 rather
+   than guessed, so there are twelve bytes left before this has to move again.
+
+   The assertions in ar_ctx.c are what noticed every one of these; they are
+   there so this number cannot quietly stop being true. */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 408u
+#define AR_BYTES_PER_BOX 432u
 #else
-#define AR_BYTES_PER_BOX 416u
+#define AR_BYTES_PER_BOX 440u
 #endif
 
 /*

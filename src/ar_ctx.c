@@ -566,6 +566,68 @@ void ar_set_viewport_fit_cover(ar_ctx *c, int cover)
  * a scrolling ancestor further out is not this box's scrollport and cannot
  * rescue it.
  */
+/*
+ * Which boxes the pointer is not allowed to reach.
+ *
+ * Two sources, and the second is the interesting one. A box can say `inert`
+ * about itself and its subtree; and a modal in the top layer makes everything
+ * *outside* it inert, which is what stops a click landing on the page behind a
+ * dialog. That second rule depends on a box that may be declared after the one
+ * being asked about, so it cannot be answered while the tree is being built --
+ * the same shape as :last-child, and settled the same way, in a pass once the
+ * tree is closed.
+ *
+ * The topmost modal wins when there are several, because a stack of dialogs is
+ * a stack: the one opened last is the one you are talking to. Tree order is
+ * open order, so that is the last one found.
+ *
+ * Written into `state` after the styles are resolved, so nothing can select on
+ * it and the style cache never sees it. That is deliberate: `:inert` is not a
+ * selector areole parses, and putting a post-resolution value into the cache
+ * key's word is only safe because nothing reads it back.
+ */
+/* Defined further down, beside the other tree walks. Declared here because
+   inertness is settled long before that point in the file. */
+static int ar__is_within(const ar_ctx *c, ar_i32 i, ar_i32 root);
+
+static void ar__mark_inert(ar_ctx *c)
+{
+    ar_i32 modal = -1;
+    ar_i32 i;
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        if (c->nodes[i].style.v[AR_P_OVERLAY] == AR_OVERLAY_MODAL &&
+            c->nodes[i].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE)
+        {
+            modal = i;
+        }
+    }
+
+    for (i = 0; i < c->node_count; ++i)
+    {
+        ar_node *n = &c->nodes[i];
+        ar_i32   at;
+        int      inert = 0;
+
+        if (modal >= 0 && !ar__is_within(c, i, modal))
+        {
+            inert = 1;
+        }
+        for (at = i; at >= 0 && !inert; at = c->nodes[at].parent)
+        {
+            if (c->nodes[at].style.v[AR_P_INERT] == AR_INERT_AUTO)
+            {
+                inert = 1;
+            }
+        }
+        if (inert)
+        {
+            n->state = (ar_u16)(n->state | AR_STATE_INERT);
+        }
+    }
+}
+
 static void ar__diagnose(ar_ctx *c)
 {
     ar_i32 i;
@@ -1843,8 +1905,18 @@ static void ar__clip_tree(ar_ctx *c, ar_rect viewport)
     {
         ar_node *n = &c->nodes[i];
 
-        if (n->parent < 0)
+        if (n->parent < 0 || ar_in_top_layer(n))
         {
+            /*
+             * The top layer starts a fresh clip at the viewport.
+             *
+             * Without this the concept does not work at all: `clip` is a strict
+             * intersection down the parent chain with no escape, so a modal
+             * declared inside anything with `overflow: hidden` would paint
+             * above everything and be clipped to a box it has no relationship
+             * with. Painting order and clipping have to agree that it left its
+             * ancestors behind.
+             */
             n->clip = viewport;
         }
         else
@@ -1940,6 +2012,33 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
         {
             continue;
+        }
+
+        /*
+         * A modal's ::backdrop, painted the moment the walk reaches the modal.
+         *
+         * Here rather than in a pass of its own because that is exactly where
+         * it belongs: under the modal, over everything else. The top layer is
+         * emitted last, so by the time this runs the whole interface beneath is
+         * already on the surface and the modal itself is one line away.
+         *
+         * The cost is stated rather than discovered: this is a full-viewport
+         * fill, 4.9 ms on the tier at 640x480. A modal's first frame is
+         * expensive and every frame after it is free, because nothing changes
+         * and damage tracking has nothing to present.
+         */
+        if (n->style.v[AR_P_OVERLAY] == AR_OVERLAY_MODAL)
+        {
+            ar_style bd;
+            ar_color fill;
+
+            ar_sheet_resolve_backdrop(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id, n->state,
+                                      &bd);
+            fill = (ar_color)AR_WIDE(&bd, AR_P_BACKGROUND);
+            if (AR_ALPHA_OF(fill) != 0)
+            {
+                ar_fill_rect(s, c->last_viewport, region, fill);
+            }
         }
 
         clip = ar_rect_intersect(n->clip, region);
@@ -2075,6 +2174,38 @@ static void ar__paint(ar_ctx *c, ar_surface *s, ar_rect region)
  * The thumb's top is (rect.h - thumb.h) * scroll / range, so a drag is that
  * read backwards. The grab offset keeps the thumb where it was picked up.
  */
+/*
+ * Can the pointer reach this box at all?
+ *
+ * Four separate walks ask a version of this -- hover, the scrollbar drag, the
+ * wheel and the keys -- and they used to ask it three different ways. One
+ * predicate so a rule added here cannot be honoured in three places out of
+ * four, which is what would have happened to inertness.
+ *
+ * The clip test is the part that was missing. The hit test asked only whether
+ * the point was inside the box's rectangle, and a box scrolled up out of its
+ * scrollport still has a rectangle -- one that overlaps whatever is above the
+ * port. Being later in paint order, it won. So a row scrolled out of a list
+ * took the cursor from the thing actually drawn there. A box painted nowhere
+ * can be reached nowhere, and `clip` is where that is already recorded.
+ */
+static int ar__reachable(const ar_node *n, ar_i32 x, ar_i32 y)
+{
+    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+    {
+        return 0;
+    }
+    if (n->state & AR_STATE_INERT)
+    {
+        return 0;
+    }
+    if (!ar_rect_contains(n->rect, x, y))
+    {
+        return 0;
+    }
+    return ar_rect_contains(n->clip, x, y);
+}
+
 static void ar__apply_drag(ar_ctx *c)
 {
     ar_i32 i;
@@ -2141,7 +2272,7 @@ static void ar__apply_drag(ar_ctx *c)
         {
             continue;
         }
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE || ar_scroll_range(n) <= 0)
+        if (!ar__reachable(n, c->mouse_x, c->mouse_y) || ar_scroll_range(n) <= 0)
         {
             continue;
         }
@@ -2184,11 +2315,7 @@ static void ar__apply_wheel(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want;
 
-        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -2302,11 +2429,7 @@ static void ar__apply_keys(ar_ctx *c)
         ar_slot *slot;
         ar_i32   want, travel;
 
-        if (!ar_is_scroll_container(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (!ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (!ar_is_scroll_container(n) || !ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             continue;
         }
@@ -2366,6 +2489,7 @@ static void ar__update_hot(ar_ctx *c)
     ar_i32 i;
 
     c->hot = 0;
+    c->hot_index = -1;
     if (!c->mouse_inside)
     {
         return;
@@ -2384,13 +2508,10 @@ static void ar__update_hot(ar_ctx *c)
         ar_i32   at = c->order ? c->order[i] : i;
         ar_node *n = &c->nodes[at];
 
-        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
-        {
-            continue;
-        }
-        if (ar_rect_contains(n->rect, c->mouse_x, c->mouse_y))
+        if (ar__reachable(n, c->mouse_x, c->mouse_y))
         {
             c->hot = n->key;
+            c->hot_index = at;
             break;
         }
     }
@@ -2872,6 +2993,7 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* Content widths, then clips: both once the rectangles are final and
        before anything asks for either. */
     ar__content_widths(c);
+    ar__mark_inert(c);
     ar__diagnose(c);
     ar__clip_tree(c, viewport);
     ar_perf_mark(&c->perf, AR_PHASE_LAYOUT, ar__now(c));

@@ -5470,6 +5470,758 @@ static void test_a_sticky_box_that_can_never_stick_is_reported(void)
           "diag: a code has a sentence, and an unknown code has an empty one");
 }
 
+/*
+ * A box clipped away by its container must not take the hover.
+ *
+ * The hit test walks paint order and asks `ar_rect_contains(n->rect, ...)`. It
+ * never consults `n->clip`, so a row scrolled up out of its scrollport still
+ * answers for a point that is inside its rectangle and outside the box that
+ * clips it -- and the row is later in paint order than whatever is really
+ * showing there, so it wins.
+ *
+ * The scene puts a spacer above a scrollport and scrolls the port by 20, which
+ * lifts its first row twenty pixels above the port's top edge. The cursor goes
+ * into that overlap: inside the row's rectangle, outside the port. What is
+ * actually painted there is the spacer.
+ */
+/* ------------------------------------------------------------------------
+ * The top layer
+ *
+ * Not a large z-index, and the difference is the whole point: a z-index orders
+ * a box among its siblings inside one stacking context and cannot lift it out
+ * of that context. A modal declared inside anything positioned could therefore
+ * always be covered by that thing's siblings, whatever number it asked for.
+ * ------------------------------------------------------------------------ */
+static ar_i32 ar__paint_index(ar_i32 node)
+{
+    ar_i32 i;
+
+    for (i = 0; i < g_ui->order_count; ++i)
+    {
+        if (g_ui->order[i] == node)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void ar__top_scene(ar_surface *s, const char *css)
+{
+    ar_input in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 50;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.ctx"); /* 1: its own stacking context */
+    ar_begin(g_ui, "div.pop"); /* 2: the candidate for the top layer */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.over"); /* 3: a later sibling that covers it */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* `.ctx` forms a context, so `.pop` cannot escape it with any z-index at all;
+   `.over` is a later positioned sibling laid over the same corner, in a
+   context of its own with a higher z, so it covers `.pop` in every reading
+   of the rules except the top layer. */
+static const char *AR_TOP_CSS = "#root { display:block; }"
+                                ".ctx  { display:block; position:relative; z-index:1;"
+                                "        width:100px; height:100px; }"
+                                ".pop  { display:block; position:absolute; z-index:9999;"
+                                "        width:80px; height:80px; }"
+                                ".over { display:block; position:absolute; z-index:2;"
+                                "        top:0px; left:0px; width:100px; height:100px; }";
+
+static const char *AR_TOP_CSS_ON = "#root { display:block; }"
+                                   ".ctx  { display:block; position:relative; z-index:1;"
+                                   "        width:100px; height:100px; }"
+                                   ".pop  { display:block; position:absolute; overlay:auto;"
+                                   "        width:80px; height:80px; }"
+                                   ".over { display:block; position:absolute; z-index:2;"
+                                   "        top:0px; left:0px; width:100px; height:100px; }";
+
+static void test_the_top_layer_beats_a_z_index_it_cannot_reach(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_i32     pop_off, over_off, pop_on, over_on;
+
+    /* The control, and the reason the top layer exists: `.pop` asks for 9999
+       and still loses, because it is trapped in `.ctx`'s context. */
+    ar__top_scene(&s, AR_TOP_CSS);
+    pop_off = ar__paint_index(2);
+    over_off = ar__paint_index(3);
+    CHECK(pop_off >= 0 && over_off > pop_off,
+          "top layer: z-index 9999 still loses to a sibling of its own context");
+
+    ar__top_scene(&s, AR_TOP_CSS_ON);
+    pop_on = ar__paint_index(2);
+    over_on = ar__paint_index(3);
+    CHECK(pop_on > over_on, "top layer: overlay:auto paints above it with no z-index at all");
+
+    /* Once each, never twice: the array holds one slot per box. */
+    CHECK(g_ui->order_count == g_ui->node_count,
+          "top layer: a box in it is emitted once, not in both passes");
+}
+
+static void test_the_top_layer_escapes_a_clipping_ancestor(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".clip { display:block; width:60px; height:60px; overflow:hidden; }"
+                 ".pop  { display:block; width:150px; height:150px; overlay:auto; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.clip");
+    ar_begin(g_ui, "div.pop");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    /* Painting above everything while clipped to a box it has left behind is
+       the failure this pairing exists to prevent. */
+    CHECK(g_ui->nodes[2].clip.w == 200 && g_ui->nodes[2].clip.h == 300,
+          "top layer: a box in it clips to the viewport, not to its ancestors");
+    CHECK(g_ui->nodes[1].clip.w == 200, "top layer: and the clipping ancestor is unaffected");
+}
+
+static void test_the_top_layer_takes_the_pointer_first(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+
+    /* Paint and hit testing read the same order, one forwards and one back, so
+       a box lifted above everything is also hit before everything. */
+    ar__top_scene(&s, AR_TOP_CSS);
+    CHECK(g_ui->hot == g_ui->nodes[3].key, "top layer: without it the later sibling takes the hit");
+
+    ar__top_scene(&s, AR_TOP_CSS_ON);
+    CHECK(g_ui->hot == g_ui->nodes[2].key, "top layer: with it the lifted box takes the hit");
+}
+
+/* ------------------------------------------------------------------------
+ * inert
+ *
+ * A modal makes everything outside it unreachable. The half that matters is
+ * the other one: the modal itself, its own subtree, and an ordinary page with
+ * no modal on it must all stay reachable, or "inert" just means "nothing
+ * works".
+ * ------------------------------------------------------------------------ */
+static void ar__inert_scene(ar_surface *s, const char *css, ar_i32 mx, ar_i32 my)
+{
+    ar_input in;
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = mx;
+    in.mouse_y = my;
+    in.mouse_inside = 1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page"); /* 1 */
+    ar_begin(g_ui, "div.btn");  /* 2, under the dialog */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dlg"); /* 3 */
+    ar_begin(g_ui, "div.ok");  /* 4, inside the dialog */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+/* The dialog covers the right half, the page's button the left, so the two can
+   be pointed at separately. */
+static const char *AR_INERT_CSS = "#root { display:block; }"
+                                  ".page { display:block; position:absolute; top:0px; left:0px;"
+                                  "        width:200px; height:200px; }"
+                                  ".btn  { display:block; position:absolute; top:20px; left:10px;"
+                                  "        width:60px; height:40px; }"
+                                  ".dlg  { display:block; position:absolute; top:0px; left:100px;"
+                                  "        width:100px; height:200px; }"
+                                  /* Inside .dlg, which is positioned, so these insets are
+                                     measured from the dialog rather than the viewport: the
+                                     dialog starts at 100, so this lands at 110. */
+                                  ".ok   { display:block; position:absolute; top:20px;"
+                                  "        left:10px; width:60px; height:40px; }";
+
+static void test_a_modal_makes_everything_outside_it_unreachable(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       modal[900];
+    char       plain[900];
+
+    strcpy(plain, AR_INERT_CSS);
+    strcpy(modal, AR_INERT_CSS);
+    strcat(modal, ".dlg { overlay: modal; }");
+
+    /* The control first. With no modal the page's button takes the cursor,
+       which is what makes the next assertion mean something. */
+    ar__inert_scene(&s, plain, 40, 40);
+    CHECK(g_ui->hot == g_ui->nodes[2].key, "inert: with no modal the button under it is reachable");
+
+    ar__inert_scene(&s, modal, 40, 40);
+    CHECK(g_ui->hot != g_ui->nodes[2].key,
+          "inert: a modal puts the button outside it out of reach");
+
+    /* And the modal's own subtree is not inert, which is the half that turns
+       this from a feature into a bug if it is got wrong. */
+    ar__inert_scene(&s, modal, 140, 40);
+    CHECK(g_ui->hot == g_ui->nodes[4].key, "inert: the modal's own contents stay reachable");
+}
+
+static void test_inert_marks_a_subtree_without_any_modal(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       css[900];
+
+    strcpy(css, AR_INERT_CSS);
+    strcat(css, ".page { inert: auto; }");
+
+    /* No modal anywhere: a box can simply say it is inert, and it carries its
+       subtree with it. */
+    ar__inert_scene(&s, css, 40, 40);
+    CHECK(g_ui->hot != g_ui->nodes[2].key && g_ui->hot != g_ui->nodes[1].key,
+          "inert: a subtree marked inert takes no pointer, nor does its child");
+
+    ar__inert_scene(&s, css, 140, 40);
+    CHECK(g_ui->hot == g_ui->nodes[4].key, "inert: and a sibling outside it is untouched");
+}
+
+static void test_a_non_modal_top_layer_box_makes_nothing_inert(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    char       css[900];
+
+    strcpy(css, AR_INERT_CSS);
+    strcat(css, ".dlg { overlay: auto; }");
+
+    /* A popover is in the top layer and is not a modal. The page behind it
+       keeps working, which is the entire difference between the two. */
+    ar__inert_scene(&s, css, 40, 40);
+    CHECK(g_ui->hot == g_ui->nodes[2].key,
+          "inert: a non-modal box in the top layer leaves the page reachable");
+}
+
+/* ------------------------------------------------------------------------
+ * ::backdrop
+ *
+ * The one pseudo-element areole has, and it matches no box: it is the sheet
+ * painted under a modal and over everything else. So it has to be checked on
+ * the pixels -- there is no rectangle to compare.
+ * ------------------------------------------------------------------------ */
+static ar_u32 ar__backdrop_px(const char *css, ar_i32 x, ar_i32 y)
+{
+    ar_surface s = ar__dmg_surface(g_dmg_a);
+    ar_input   in;
+    ar_i32     i;
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+    }
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.page");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.dlg");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    ar_frame_presented(g_ui);
+
+    return g_dmg_a[y * AR_DMG_W + x];
+}
+
+/* The page fills the surface in one colour; the dialog is a small box in the
+   corner. Everything interesting happens at a point the page covers and the
+   dialog does not. */
+static const char *AR_BD_CSS = "#root { display:block; }"
+                               ".page { display:block; position:absolute; top:0px; left:0px;"
+                               "        width:256px; height:128px; background:#3050a0; }"
+                               ".dlg  { display:block; position:absolute; top:0px; left:0px;"
+                               "        width:20px; height:20px; background:#ffffff; }";
+
+static void test_a_backdrop_paints_under_the_modal_and_over_the_page(void)
+{
+    ar_u32 plain, opaque, nonmodal;
+    char   css[900];
+
+    /* No modal, no backdrop: the page's own colour. */
+    plain = ar__backdrop_px(AR_BD_CSS, 128, 64);
+    CHECK((plain & 0xFFFFFFu) == 0x3050A0u, "backdrop: without one the page is what shows");
+
+    /* A modal with an opaque backdrop covers the page entirely. */
+    strcpy(css, AR_BD_CSS);
+    strcat(css, ".dlg { overlay: modal; } .dlg::backdrop { background:#101010; }");
+    opaque = ar__backdrop_px(css, 128, 64);
+    CHECK((opaque & 0xFFFFFFu) == 0x101010u, "backdrop: a modal's backdrop covers the page");
+
+    /* The same declaration on a box that is in the top layer but not modal
+       paints nothing: a popover has no backdrop, and that is the difference. */
+    strcpy(css, AR_BD_CSS);
+    strcat(css, ".dlg { overlay: auto; } .dlg::backdrop { background:#101010; }");
+    nonmodal = ar__backdrop_px(css, 128, 64);
+    CHECK((nonmodal & 0xFFFFFFu) == 0x3050A0u,
+          "backdrop: a non-modal box in the top layer has none");
+}
+
+static void test_a_backdrop_rule_styles_nothing_else(void)
+{
+    /* `.dlg::backdrop` must say nothing about `.dlg`, or every dialog would
+       take its backdrop's colour. The two passes are separate for this. */
+    ar__sheet(".dlg { display:block; background:#ffffff; }"
+              ".dlg::backdrop { background:#101010; }");
+    CHECK((ar__css_value(".dlg", 0, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFFFFFF,
+          "backdrop: a ::backdrop rule does not style the element it hangs off");
+
+    /* And an unknown pseudo-element is refused rather than silently matching
+       the element, which is how `::before` would otherwise start working. */
+    ar__sheet(".x { display:block; background:#ffffff; }"
+              ".x::before { background:#101010; }");
+    CHECK((ar__css_value(".x", 0, AR_P_BACKGROUND) & 0xFFFFFF) == 0xFFFFFF,
+          "backdrop: a pseudo-element areole cannot paint is refused, not applied");
+}
+
+/* ------------------------------------------------------------------------
+ * Anchor positioning
+ *
+ * A positioned box measures its edges against a box it names, rather than
+ * against coordinates somebody worked out by hand. The anchor is 60 wide and
+ * 20 tall at (40, 50) in every case below, so the expected numbers are
+ * arithmetic on those four values and can be read without running anything.
+ * ------------------------------------------------------------------------ */
+static void ar__posanchor_scene(ar_surface *s, const char *extra)
+{
+    char     css[1000];
+    ar_input in;
+
+    strcpy(css, "#root { display:block; }"
+                ".anc { display:block; position:absolute; top:50px; left:40px;"
+                "       width:60px; height:20px; anchor-name: --a; }"
+                ".pop { display:block; position:absolute; position-anchor: --a; }");
+    strcat(css, extra);
+
+    ar__ui_reset(css);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.anc");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.pop");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_anchor_places_a_box_against_the_box_it_names(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* Directly below: my top edge at the anchor's bottom, my left at its left.
+       The anchor is at y 50 and 20 tall, so 70; and at x 40. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).y == 70 && ar__box(2).x == 40,
+          "anchor: anchor(bottom) and anchor(left) attach the box to the anchor");
+
+    /* The trailing edges, which are measured from the other side of the
+       containing block and are where an off-by-one would show. Right edge at
+       the anchor's left edge, 40, so with a width of 30 the box starts at 10. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(top); right: anchor(left);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).x == 10 && ar__box(2).y == 50,
+          "anchor: a trailing inset measures from the far edge and still lands");
+
+    /* The centre of a 60 wide anchor starting at 40 is 70. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(center);"
+                            "       width:30px; height:10px; }");
+    CHECK(ar__box(2).x == 70, "anchor: anchor(center) is the middle of the anchor");
+}
+
+static void test_anchor_size_takes_the_anchors_measurements(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width: anchor-size(width); height: anchor-size(height); }");
+    CHECK(ar__box(2).w == 60 && ar__box(2).h == 20,
+          "anchor: anchor-size() gives the box the anchor's measurements");
+
+    /* Crossed on purpose: a width taking the anchor's height proves the two
+       are read separately rather than both falling back to one of them. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width: anchor-size(height); height:10px; }");
+    CHECK(ar__box(2).w == 20, "anchor: anchor-size(height) on a width is the anchor's height");
+}
+
+static void test_position_try_flips_a_box_that_left_the_viewport(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* A box 400 tall hung below an anchor at y 70 runs off a 300 tall
+       viewport. Flipped, its bottom sits on the anchor's top edge at 50, so it
+       starts at 50 - 400. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:400px; position-try: flip-block; }");
+    CHECK(ar__box(2).y == 50 - 400, "anchor: position-try flips a box that ran off the bottom");
+
+    /* The control, and the reason it is here: without the property the box
+       stays where it was put and runs off the edge. A flip that happens
+       anyway would pass the check above for the wrong reason. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:400px; }");
+    CHECK(ar__box(2).y == 70, "anchor: without position-try it stays put and overflows");
+
+    /* And a box that fits is not flipped, which is the other way to get this
+       wrong. */
+    ar__posanchor_scene(&s, ".pop { top: anchor(bottom); left: anchor(left);"
+                            "       width:30px; height:10px; position-try: flip-block; }");
+    CHECK(ar__box(2).y == 70, "anchor: a box that fits is left alone");
+}
+
+static void test_an_anchor_nobody_declared_changes_nothing(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+
+    /* Naming an anchor that does not exist must leave the box where the
+       ordinary rules put it rather than at some resolved-against-nothing
+       coordinate. */
+    ar__ui_reset("#root { display:block; }"
+                 ".pop { display:block; position:absolute; position-anchor: --missing;"
+                 "       top: anchor(bottom); left:15px; width:30px; height:10px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.pop");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+    CHECK(ar__box(1).x == 15, "anchor: an unresolved anchor leaves the other insets working");
+}
+
+/* ------------------------------------------------------------------------
+ * Criterion 2: the top layer against twenty-five adversarial arrangements
+ *
+ * Paint order is not geometry, so the browser comparison cannot see it: two
+ * boxes that overlap have the same rectangles whichever is on top. This corpus
+ * therefore states the expected order itself, and every case is built so that
+ * the ordinary rules would give the opposite answer -- a z-index the top layer
+ * has to beat, a stacking context it has to escape, a clip it has to leave.
+ *
+ * `hi` is the box that must end up in front. `lo` is the one that would win
+ * without the top layer. Each case declares the same three-box shape so the
+ * indices are fixed: 0 root, 1 the wrapper, 2 lo, 3 hi.
+ * ------------------------------------------------------------------------ */
+typedef struct
+{
+    const char *name;
+    const char *css;
+} ar__layer_case;
+
+/*
+ * Twenty-five. The first block varies what `hi` has to climb out of, the
+ * second varies what `lo` is doing to stay in front, and the last few are the
+ * cases where the answer is *not* the top layer -- because a corpus that only
+ * ever expects one answer cannot tell a correct engine from one that always
+ * says yes.
+ */
+static const ar__layer_case AR_LAYER_CASES[] = {
+    /* 1-8: hi is in the top layer and lo is trying everything. */
+    {"plain", ".lo { z-index:5; } .hi { overlay:auto; }"},
+    {"lo-huge-z", ".lo { z-index:30000; } .hi { overlay:auto; }"},
+    {"lo-context", ".lo { position:relative; z-index:9; } .hi { overlay:auto; }"},
+    {"hi-negative-z", ".lo { z-index:1; } .hi { overlay:auto; z-index:-5; }"},
+    {"hi-in-wrapper", ".wrap { position:relative; z-index:2; } .lo { z-index:99; }"
+                      ".hi { overlay:auto; }"},
+    {"hi-in-clipper", ".wrap { overflow:hidden; } .lo { z-index:99; } .hi { overlay:auto; }"},
+    {"hi-static", ".lo { position:relative; z-index:4; } .hi { position:static; overlay:auto; }"},
+    {"hi-modal", ".lo { z-index:1000; } .hi { overlay:modal; }"},
+
+    /* 9-16: both in the top layer, so tree order decides -- a stack of
+       dialogs, where the one opened last is the one in front. */
+    {"both-tree-order", ".lo { overlay:auto; } .hi { overlay:auto; }"},
+    {"both-lo-has-z", ".lo { overlay:auto; z-index:500; } .hi { overlay:auto; }"},
+    {"both-hi-negative", ".lo { overlay:auto; } .hi { overlay:auto; z-index:-9; }"},
+    {"both-modal-over-auto", ".lo { overlay:auto; } .hi { overlay:modal; }"},
+    {"both-auto-over-modal", ".lo { overlay:modal; } .hi { overlay:auto; }"},
+    {"both-in-wrapper", ".wrap { position:relative; z-index:3; }"
+                        ".lo { overlay:auto; } .hi { overlay:auto; }"},
+    {"both-clipped-wrapper", ".wrap { overflow:hidden; } .lo { overlay:auto; }"
+                             ".hi { overlay:auto; }"},
+    {"both-lo-relative", ".lo { overlay:auto; position:relative; z-index:7; }"
+                         ".hi { overlay:auto; }"},
+
+    /* 17-21: no top layer at all, so the ordinary rules decide and the corpus
+       has to agree with them. `hi` is declared last, so it wins on tree order
+       unless lo outranks it. */
+    {"none-tree-order", ".lo { display:block; } .hi { display:block; }"},
+    {"none-lo-positioned", ".lo { position:relative; } .hi { display:block; }"},
+    {"none-hi-positioned", ".lo { display:block; } .hi { position:relative; }"},
+    {"none-hi-higher-z", ".lo { position:relative; z-index:1; }"
+                         ".hi { position:relative; z-index:2; }"},
+    {"none-hi-equal-z", ".lo { position:relative; z-index:2; }"
+                        ".hi { position:relative; z-index:2; }"},
+
+    /* 22-25: the top layer is on `lo`, so the expected answer inverts. Without
+       these the corpus would pass against an engine that painted the
+       last-declared box in front and called it a top layer. */
+    {"inverted-plain", ".lo { overlay:auto; } .hi { z-index:5; }"},
+    {"inverted-huge-z", ".lo { overlay:auto; } .hi { z-index:30000; }"},
+    {"inverted-context", ".lo { overlay:auto; } .hi { position:relative; z-index:8; }"},
+    {"inverted-modal", ".lo { overlay:modal; } .hi { position:relative; z-index:8; }"}};
+
+#define AR_LAYER_CASE_COUNT ((ar_i32)(sizeof AR_LAYER_CASES / sizeof AR_LAYER_CASES[0]))
+
+/* Which of the last four cases expect `lo` in front instead. */
+static int ar__layer_inverted(ar_i32 k)
+{
+    return k >= AR_LAYER_CASE_COUNT - 4;
+}
+
+static void test_the_top_layer_over_an_adversarial_corpus(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_i32     k;
+    ar_i32     wrong = -1;
+
+    for (k = 0; k < AR_LAYER_CASE_COUNT && wrong < 0; ++k)
+    {
+        char     css[1000];
+        ar_input in;
+        ar_i32   lo_at, hi_at;
+
+        strcpy(css, "#root { display:block; }"
+                    ".wrap { display:block; }"
+                    ".lo { display:block; position:absolute; top:0px; left:0px;"
+                    "      width:80px; height:80px; }"
+                    ".hi { display:block; position:absolute; top:0px; left:0px;"
+                    "      width:80px; height:80px; }");
+        strcat(css, AR_LAYER_CASES[k].css);
+
+        ar__ui_reset(css);
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.wrap");
+        ar_begin(g_ui, "div.lo");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.hi");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+
+        lo_at = ar__paint_index(2);
+        hi_at = ar__paint_index(3);
+
+        if (lo_at < 0 || hi_at < 0)
+        {
+            wrong = k;
+        }
+        else if (ar__layer_inverted(k) ? !(lo_at > hi_at) : !(hi_at > lo_at))
+        {
+            wrong = k;
+        }
+    }
+
+    CHECK(wrong < 0, "top layer: twenty-five adversarial arrangements paint in the right order");
+    if (wrong >= 0)
+    {
+        printf("      case %ld (%s): lo at %ld, hi at %ld\n", (long)wrong,
+               AR_LAYER_CASES[wrong].name, (long)ar__paint_index(2), (long)ar__paint_index(3));
+    }
+    CHECK(AR_LAYER_CASE_COUNT == 25,
+          "top layer: the corpus is the twenty-five the criterion asks for");
+}
+
+/* ------------------------------------------------------------------------
+ * Criterion 4: position-try, against arithmetic rather than against a browser
+ *
+ * The flip fires when the box would leave the viewport, and areole's viewport
+ * is the surface while a browser's is the window its page sits in -- so the
+ * same case overflows on one side and not the other. Comparing them would
+ * report a difference of framing as a difference of flipping, which is the
+ * judgement the snap corpus already made about `proximity`.
+ *
+ * The anchor is 60 wide and 20 tall at (40, 50) throughout, so every expected
+ * number below is arithmetic on those four values.
+ * ------------------------------------------------------------------------ */
+static void test_position_try_over_a_corpus_of_flips(void)
+{
+    ar_surface s = ar__ui_surface(300, 300);
+    ar_i32     k;
+    ar_i32     wrong = -1;
+
+    /* name, extra css, expected x, expected y. */
+    static const struct
+    {
+        const char *css;
+        ar_i32      x, y;
+    } CASES[20] = {
+        /* Vertical: hung below, too tall, flips to sit above the anchor. */
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:400px;"
+         " position-try:flip-block; }",
+         40, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:260px;"
+         " position-try:flip-block; }",
+         40, 50 - 260},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:231px;"
+         " position-try:flip-block; }",
+         40, 50 - 231},
+        /* Fits exactly, so it must not flip: 70 + 230 == 300. */
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:230px;"
+         " position-try:flip-block; }",
+         40, 70},
+        {".pop { top:anchor(bottom); left:anchor(left); width:20px; height:10px;"
+         " position-try:flip-block; }",
+         40, 70},
+        /* Hung above and off the top, flips to sit below. */
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:80px;"
+         " position-try:flip-block; }",
+         40, 70},
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:51px;"
+         " position-try:flip-block; }",
+         40, 70},
+        /* Fits above exactly: 50 - 50 == 0. */
+        {".pop { bottom:anchor(top); left:anchor(left); width:20px; height:50px;"
+         " position-try:flip-block; }",
+         40, 0},
+        /* Horizontal. */
+        {".pop { left:anchor(right); top:anchor(top); width:400px; height:10px;"
+         " position-try:flip-inline; }",
+         40 - 400, 50},
+        {".pop { left:anchor(right); top:anchor(top); width:201px; height:10px;"
+         " position-try:flip-inline; }",
+         40 - 201, 50},
+        {".pop { left:anchor(right); top:anchor(top); width:200px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:60px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:41px; height:10px;"
+         " position-try:flip-inline; }",
+         100, 50},
+        {".pop { right:anchor(left); top:anchor(top); width:40px; height:10px;"
+         " position-try:flip-inline; }",
+         0, 50},
+        /* Both axes at once. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-both; }",
+         40 - 400, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:20px; height:400px;"
+         " position-try:flip-both; }",
+         100, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:10px;"
+         " position-try:flip-both; }",
+         40 - 400, 70},
+        /* flip-block must not touch the inline axis, and the reverse. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-block; }",
+         100, 50 - 400},
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px;"
+         " position-try:flip-inline; }",
+         40 - 400, 70},
+        /* And with no property at all nothing moves, however far it overflows. */
+        {".pop { top:anchor(bottom); left:anchor(right); width:400px; height:400px; }", 100, 70}};
+
+    for (k = 0; k < 20 && wrong < 0; ++k)
+    {
+        ar__posanchor_scene(&s, CASES[k].css);
+        if (ar__box(2).x != CASES[k].x || ar__box(2).y != CASES[k].y)
+        {
+            wrong = k;
+        }
+    }
+
+    CHECK(wrong < 0, "anchor: position-try lands where the arithmetic says on twenty cases");
+    if (wrong >= 0)
+    {
+        ar__posanchor_scene(&s, CASES[wrong].css);
+        printf("      case %ld: want %ld,%ld got %ld,%ld\n", (long)wrong, (long)CASES[wrong].x,
+               (long)CASES[wrong].y, (long)ar__box(2).x, (long)ar__box(2).y);
+    }
+}
+
+static void test_a_clipped_box_does_not_take_the_hover(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_input   in;
+    int        i;
+
+    ar__ui_reset("#root   { display:block; }"
+                 ".spacer { display:block; height:100px; }"
+                 ".port   { display:block; height:100px; overflow:scroll; }"
+                 ".prow   { display:block; height:40px; }");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 50;
+    in.mouse_y = 90; /* inside row 0 once scrolled, outside the port */
+    in.mouse_inside = 1;
+
+    for (i = 0; i < 3; ++i)
+    {
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.spacer");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.port");
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.prow");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+        ar_node_scroll_to(g_ui, 2, 20);
+        ar_frame_presented(g_ui);
+    }
+
+    /* The premise: the port sits at 100 and its first row has been lifted to
+       80, so the cursor at 90 really is in the overlap. */
+    CHECK(ar__box(2).y == 100 && ar__box(3).y == 80,
+          "hover: the probe really does put the cursor in the clipped overlap");
+
+    CHECK(!(g_ui->nodes[3].state & AR_STATE_HOVER),
+          "hover: a row scrolled out of its scrollport does not take the cursor");
+    CHECK((g_ui->nodes[1].state & AR_STATE_HOVER) != 0,
+          "hover: the box actually painted there takes it instead");
+}
+
 static void test_a_sticky_box_too_big_to_move_does_not(void)
 {
     ar_surface s = ar__ui_surface(300, 300);
@@ -9225,6 +9977,21 @@ int main(void)
     test_sticky_against_the_viewport();
     test_sticky_with_no_offsets_never_moves();
     test_a_sticky_box_too_big_to_move_does_not();
+    test_a_clipped_box_does_not_take_the_hover();
+    test_the_top_layer_beats_a_z_index_it_cannot_reach();
+    test_the_top_layer_escapes_a_clipping_ancestor();
+    test_the_top_layer_takes_the_pointer_first();
+    test_a_modal_makes_everything_outside_it_unreachable();
+    test_inert_marks_a_subtree_without_any_modal();
+    test_a_non_modal_top_layer_box_makes_nothing_inert();
+    test_a_backdrop_paints_under_the_modal_and_over_the_page();
+    test_a_backdrop_rule_styles_nothing_else();
+    test_anchor_places_a_box_against_the_box_it_names();
+    test_anchor_size_takes_the_anchors_measurements();
+    test_position_try_flips_a_box_that_left_the_viewport();
+    test_an_anchor_nobody_declared_changes_nothing();
+    test_the_top_layer_over_an_adversarial_corpus();
+    test_position_try_over_a_corpus_of_flips();
     test_a_sticky_box_that_can_never_stick_is_reported();
     test_env_falls_back_only_when_nothing_reported_it();
     test_viewport_fit_moves_the_insets_and_the_viewport_together();

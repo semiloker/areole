@@ -458,6 +458,145 @@ static const bench_scene SC_STICKY_20_OFF = {
     init_sticky_off,
     frame_sticky};
 
+/* ------------------------------------------------------------------------
+ * 0.6.3's two budgets: a modal over a deep tree, and twenty anchored boxes.
+ *
+ * The coverage document puts the top layer under 0.1 ms on the tier and anchor
+ * resolution under 0.2 ms, and both were assertions until there was a scene to
+ * take them from. Each has an *_off twin with the property removed, because a
+ * whole-frame figure says nothing about what a feature costs.
+ *
+ * The modal scene is the one to read carefully. Its backdrop is a full-viewport
+ * fill, which is the dominant cost and is *supposed* to be: the coverage
+ * document says so up front -- 4.9 ms on the tier at 640x480, paid on the
+ * frame the modal opens and never again, because nothing changes afterwards
+ * and damage tracking has nothing to present. The scene declares it every
+ * frame, so what it measures is that worst frame repeatedly.
+ * ------------------------------------------------------------------------ */
+static const char *const SHEET_LAYER_BENCH =
+    "#root { display:block; background:#ffffff; }"
+    ".sect { display:block; height:60px; background:#f7f7f7; }"
+    ".cell { display:block; height:14px; margin:1px 0px; background:#fafafa; }"
+    ".dlg  { display:block; position:absolute; top:120px; left:160px; width:320px;"
+    "        height:200px; background:#ffffff; overlay:modal; }"
+    ".dlg::backdrop { background:#00000060; }";
+
+static const char *const SHEET_LAYER_BENCH_OFF =
+    "#root { display:block; background:#ffffff; }"
+    ".sect { display:block; height:60px; background:#f7f7f7; }"
+    ".cell { display:block; height:14px; margin:1px 0px; background:#fafafa; }"
+    ".dlg  { display:block; position:absolute; top:120px; left:160px; width:320px;"
+    "        height:200px; background:#ffffff; }";
+
+static const char *const SHEET_ANCHOR_BENCH =
+    "#root { display:block; background:#ffffff; }"
+    ".row  { display:block; height:26px; position:relative; background:#f7f7f7; }"
+    ".t    { display:block; position:absolute; top:3px; left:40px; width:80px;"
+    "        height:18px; background:#e8eef4; anchor-name: --t; }"
+    ".tip  { display:block; position:absolute; position-anchor: --t;"
+    "        top: anchor(bottom); left: anchor(center); width:90px; height:14px;"
+    "        background:#eef2f4; }";
+
+static const char *const SHEET_ANCHOR_BENCH_OFF =
+    "#root { display:block; background:#ffffff; }"
+    ".row  { display:block; height:26px; position:relative; background:#f7f7f7; }"
+    ".t    { display:block; position:absolute; top:3px; left:40px; width:80px;"
+    "        height:18px; background:#e8eef4; }"
+    ".tip  { display:block; position:absolute; top:21px; left:80px;"
+    "        width:90px; height:14px; background:#eef2f4; }";
+
+static void init_layer(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_LAYER_BENCH);
+}
+
+static void init_layer_off(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_LAYER_BENCH_OFF);
+}
+
+static void frame_layer(bench_env *e)
+{
+    int i, j;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 12; ++i)
+    {
+        ar_begin(e->ui, "div.sect");
+        for (j = 0; j < 3; ++j)
+        {
+            ar_begin(e->ui, "div.cell");
+            ar_end(e->ui);
+        }
+        ar_end(e->ui);
+    }
+    ar_begin(e->ui, "div.dlg");
+    ar_end(e->ui);
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static void init_anchored(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_ANCHOR_BENCH);
+}
+
+static void init_anchored_off(bench_env *e)
+{
+    ar_stylesheet(e->ui, SHEET_ANCHOR_BENCH_OFF);
+}
+
+static void frame_anchored(bench_env *e)
+{
+    int i;
+
+    begin_frame(e);
+    ar_begin(e->ui, "div#root");
+    for (i = 0; i < 20; ++i)
+    {
+        ar_begin(e->ui, "div.row");
+        ar_begin(e->ui, "div.t");
+        ar_end(e->ui);
+        ar_begin(e->ui, "div.tip");
+        ar_end(e->ui);
+        ar_end(e->ui);
+    }
+    ar_end(e->ui);
+    ar_frame_end(e->ui, &e->surface);
+    ar_frame_presented(e->ui);
+}
+
+static const bench_scene SC_TOP_LAYER = {
+    "top_layer", "layout",   "a modal with a full-viewport backdrop over a 48 box tree",
+    800,         600,        1,
+    init_layer,  frame_layer};
+
+static const bench_scene SC_TOP_LAYER_OFF = {
+    "top_layer_off",
+    "layout",
+    "the same tree and dialog with no top layer, to subtract",
+    800,
+    600,
+    1,
+    init_layer_off,
+    frame_layer};
+
+static const bench_scene SC_ANCHORED_20 = {
+    "anchored_20", "layout",      "20 tooltips placed by anchor() against 20 anchors", 800, 600, 1,
+    init_anchored, frame_anchored};
+
+static const bench_scene SC_ANCHORED_20_OFF = {
+    "anchored_20_off",
+    "layout",
+    "the same twenty pairs at literal offsets, to subtract",
+    800,
+    600,
+    1,
+    init_anchored_off,
+    frame_anchored};
+
 void bench_register_layout(void)
 {
     bench_register(&SC_FLAT_100);
@@ -471,4 +610,8 @@ void bench_register_layout(void)
     bench_register(&SC_SCROLL_CONTAINER);
     bench_register(&SC_STICKY_20);
     bench_register(&SC_STICKY_20_OFF);
+    bench_register(&SC_TOP_LAYER);
+    bench_register(&SC_TOP_LAYER_OFF);
+    bench_register(&SC_ANCHORED_20);
+    bench_register(&SC_ANCHORED_20_OFF);
 }
