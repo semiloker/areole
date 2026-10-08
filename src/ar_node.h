@@ -576,21 +576,22 @@ struct ar_ctx
     ar_font_chain style_chain[4];
 
     /*
-     * The monospace family, which is one face and not four.
-     *
-     * `<pre>` and `<code>` are the whole reason it exists and neither is
-     * commonly bold or italic, so a second set of four style slots would be
-     * three faces of arena for a case nobody writes. A bold `<code>` draws in
-     * the monospace regular, which is what a family with no bold does
-     * everywhere else in this file.
+     * The monospace and sans-serif families: a regular face each, and the
+     * same three styled slots the default family has, indexed the same way
+     * (1 bold, 2 italic, 3 both; 0 unused). A style nobody loaded a face for
+     * draws in the family's regular face, as a family with no bold does
+     * everywhere else in this file. They were one face each, and a bold
+     * sans-serif heading -- or a bold button -- drew regular (#21).
      */
     ar_i32        mono_face;
     ar_font_chain mono_chain;
+    ar_i32        mono_styled[4];
+    ar_font_chain mono_styled_chain[4];
 
-    /* And the sans-serif family, on the same terms: one face, for controls
-       and for anything that asks for sans-serif. */
     ar_i32        sans_face;
     ar_font_chain sans_chain;
+    ar_i32        sans_styled[4];
+    ar_font_chain sans_styled_chain[4];
 
     ar_font_chain    chain;
     ar_shaper        shaper;

@@ -23105,6 +23105,45 @@ static void test_an_inline_background_is_its_fonts_height(void)
     }
 }
 
+/*
+ * Bold sans-serif draws in the sans family's bold face when there is one, and
+ * in its regular face when there is not (#21).
+ */
+static void test_sans_serif_has_a_bold(void)
+{
+    ar_surface           s = ar__ui_surface(400, 300);
+    ar_input             in;
+    const ar_font_chain *b, *r, *m;
+
+    ar__ui_reset("");
+    CHECK(ar_font_load(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 64) &&
+              ar_font_load_sans(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT) &&
+              ar_font_load_mono(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT),
+          "sans bold: the families load");
+    CHECK(!ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 400, 0),
+          "sans bold: the regular style is not a styled face");
+    CHECK(ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 700, 0) &&
+              !ar_font_load_sans_styled(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 700, 0),
+          "sans bold: a bold face loads, once");
+    ar_ua_stylesheet(g_ui);
+    ar_stylesheet(g_ui, ".s { font-family:sans-serif } .b { font-weight:bold } "
+                        ".m { font-family:monospace }");
+    ar__parse("<html><body><p id=\"b\" class=\"s b\">A</p><p id=\"r\" class=\"s\">A</p>"
+              "<p id=\"m\" class=\"m b\">A</p></body></html>");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    b = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("b")]);
+    r = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("r")]);
+    m = ar_chain_for(g_ui, &g_ui->nodes[ar__first_tag_id("m")]);
+    CHECK(b == &g_ui->sans_styled_chain[1] && r == &g_ui->sans_chain,
+          "sans bold: bold sans-serif takes the sans bold face, regular the regular");
+    CHECK(m == &g_ui->mono_chain, "sans bold: and bold monospace with no bold face its regular");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24419,6 +24458,7 @@ int main(void)
     test_a_field_clicked_into_is_ringed();
     test_a_trailing_space_hangs();
     test_an_inline_background_is_its_fonts_height();
+    test_sans_serif_has_a_bold();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();

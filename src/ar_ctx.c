@@ -649,6 +649,15 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     c->style_face[0] = 0; /* the primary face is the regular one */
     c->mono_face = -1;
     c->sans_face = -1;
+    {
+        ar_i32 st;
+
+        for (st = 0; st < 4; ++st)
+        {
+            c->mono_styled[st] = -1;
+            c->sans_styled[st] = -1;
+        }
+    }
     c->face_used = 1;
     ar__rebuild_chains(c);
 
@@ -730,6 +739,41 @@ static void ar__rebuild_chains(ar_ctx *c)
             c->sans_chain.count++;
         }
     }
+
+    /* The two families' styled faces, each led by its own face -- or, for
+       bold italic with none, by the bold, then the italic -- and the shared
+       fallbacks after. A style with no face at all has an empty chain, and
+       ar_chain_for draws it in the family's regular face. */
+    for (st = 1; st < 4; ++st)
+    {
+        ar_i32 fam;
+
+        for (fam = 0; fam < 2; ++fam)
+        {
+            const ar_i32  *slots = fam ? c->sans_styled : c->mono_styled;
+            ar_font_chain *ch = fam ? &c->sans_styled_chain[st] : &c->mono_styled_chain[st];
+            ar_i32         lead = slots[st];
+
+            if (lead < 0 && st == 3)
+            {
+                lead = slots[1] >= 0 ? slots[1] : slots[2];
+            }
+            ch->count = 0;
+            if (lead < 0)
+            {
+                continue;
+            }
+            ch->face[0] = &c->face[lead];
+            ch->id[0] = (ar_u8)lead;
+            ch->count = 1;
+            for (k = 1; k < c->chain.count && ch->count < AR_MAX_FACES; ++k)
+            {
+                ch->face[ch->count] = c->chain.face[k];
+                ch->id[ch->count] = c->chain.id[k];
+                ch->count++;
+            }
+        }
+    }
 }
 
 /* Which of the four a resolved style asks for. 600 is the boundary CSS Fonts 4
@@ -758,11 +802,13 @@ const ar_font_chain *ar_chain_for(const ar_ctx *c, const ar_node *n)
        face, which is what it did before this existed. */
     if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_MONOSPACE && c->mono_chain.count > 0)
     {
-        return &c->mono_chain;
+        return slot && c->mono_styled_chain[slot].count > 0 ? &c->mono_styled_chain[slot]
+                                                            : &c->mono_chain;
     }
     if (n->style.v[AR_P_FONT_FAMILY] == AR_FAMILY_SANS && c->sans_chain.count > 0)
     {
-        return &c->sans_chain;
+        return slot && c->sans_styled_chain[slot].count > 0 ? &c->sans_styled_chain[slot]
+                                                            : &c->sans_chain;
     }
     if (c->style_chain[slot].count > 0)
     {
@@ -870,6 +916,42 @@ int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size)
     ar__rebuild_chains(c);
     ar_invalidate_all(c);
     return 1;
+}
+
+/* A styled face for one of the two families: `slots` is that family's, and
+   `regular` its regular face, which has to be loaded first. */
+static int ar__load_family_styled(ar_ctx *c, ar_i32 *slots, ar_i32 regular, const void *data,
+                                  ar_u32 size, ar_i32 weight, int italic)
+{
+    ar_i32 slot = (weight >= 600 ? 1 : 0) | (italic ? 2 : 0);
+    ar_i32 n = c->face_used;
+
+    if (!c->have_face || regular < 0 || slot == 0 || n <= 0 || n >= AR_MAX_FACES ||
+        slots[slot] >= 0)
+    {
+        return 0; /* no family yet, the regular style, no room, or loaded twice */
+    }
+    if (!ar_face_init(&c->face[n], data, size))
+    {
+        return 0;
+    }
+    slots[slot] = n;
+    c->face_used = n + 1;
+    ar__rebuild_chains(c);
+    ar_invalidate_all(c);
+    return 1;
+}
+
+int ar_font_load_sans_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic)
+{
+    return c ? ar__load_family_styled(c, c->sans_styled, c->sans_face, data, size, weight, italic)
+             : 0;
+}
+
+int ar_font_load_mono_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic)
+{
+    return c ? ar__load_family_styled(c, c->mono_styled, c->mono_face, data, size, weight, italic)
+             : 0;
 }
 
 int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
