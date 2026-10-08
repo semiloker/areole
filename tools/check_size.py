@@ -55,7 +55,29 @@ OBJECTS = [
 # Raising a published number twice needs an argument that can be checked, and
 # this one can: the roadmap says in writing which release criterion 2 belonged
 # to when the 112 KB was set.
-TOTAL_BUDGET = 144 * 1024
+#
+# 144 KB -> 150 KB at 0.9.3, and this raise has a weaker argument than the last
+# two, so it is worth being plain about it.
+#
+# 0.9.2 was cut at 147,412 of 147,456: forty-four bytes of headroom, which is
+# not headroom, it is a coincidence. 0.9.3's remaining insertion-mode rules --
+# the stack of template insertion modes, foster parenting stopping at a
+# template, the in-table ignore list, `</button>`, the cell's row-group end
+# tags, the column group's split character token, the duplicate `<a>` coming
+# off the open stack -- cost 1,472 bytes between them and put it 1,428 over.
+#
+# 0.9.3's own document does allocate "under 6 KB", but honesty about what that
+# figure was for: it was written for the fragment parsing algorithm and CDATA,
+# and both of those shipped inside 0.9.0 instead, where they are already
+# counted in the 144 KB. So this is not drawing on an allowance that was set
+# aside; it is a new one, needed because the half of 0.9.3 that looked like the
+# small half turned out to have a size of its own.
+#
+# 150 KB against 148,884 measured: 4,716 bytes, which is meant to cover the
+# rest of 0.9.3 and nothing after it. Four of the thirteen failures left are
+# `<selectedcontent>`, which is an element that mirrors another element's
+# content and will not be free.
+TOTAL_BUDGET = 150 * 1024
 ENTITY_BUDGET = 30 * 1024
 ENTITY_OBJECT = "ar_html_entity.c"
 

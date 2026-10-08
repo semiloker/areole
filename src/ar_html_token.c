@@ -1795,8 +1795,12 @@ int ar_html_next(ar_html_tok *t, ar_token *out)
              * swallowing an HTML document that contains the characters by
              * accident. `in_foreign` is set by the tree builder; see ar_html.h.
              */
-            if (t->in_foreign && next + 8 < t->end && next[1] == '[' &&
-                ar_span_is(ar__span(next + 2, 6), "CDATA") == 0 &&
+            /* `next + 7 < t->end`, because the bytes read are next[1] through
+               next[7] and next[7] has to be one of them. `next + 8` demanded a
+               byte after the marker that a document is not obliged to have, so
+               `<svg><![CDATA[` at the very end of a file missed this and became
+               a bogus comment -- a node no browser has. */
+            if (t->in_foreign && next + 7 < t->end && next[1] == '[' &&
                 memcmp(next + 2, "CDATA[", 6) == 0)
             {
                 t->p = next + 8;
