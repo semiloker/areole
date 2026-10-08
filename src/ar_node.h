@@ -10,8 +10,14 @@
 #include "ar_internal.h"
 #include "ar_css.h"
 #include "ar_text.h"
+#include "ar_edit.h"
 
 #define AR_MAX_DEPTH 64
+
+/* How many focusable boxes one frame may hold. A form with more than this
+   many fields is a form nobody fills in; Tab stops at the ceiling rather
+   than wrapping into the wrong place, and ar_test says so. */
+#define AR_MAX_FOCUSABLES 256
 
 /* ------------------------------------------------------------------------
  * Box
@@ -47,8 +53,11 @@ typedef struct ar_node
     ar_i32 next_sibling;
     ar_i32 child_count;
 
-    ar_u32 key;   /* stable across frames, for state and hit testing */
-    ar_u16 state; /* hover, active, focus, and the structural pseudo-classes */
+    ar_u32 key; /* stable across frames, for state and hit testing */
+    /* Thirty-two bits as of 0.10.0. It was sixteen and `:checked` was the
+       seventeenth state, which is the widening the comment beside
+       AR_STATE_FOCUS_WITHIN said the next bit would force. */
+    ar_u32 state; /* hover, active, focus, checked, and the structural ones */
 
     /*
      * Where the inline declarations start inside `hints`, or 0 for none.
@@ -226,10 +235,147 @@ typedef struct ar_node
  * That is what this table is for: one slot per box, keyed by a hash that is
  * stable as long as the tree shape is.
  * ------------------------------------------------------------------------ */
+/* Set state bits on the next box to be opened. Internal: the public API has
+   no notion of a state bit, and the states this carries are the ones the
+   markup decides rather than the ones input does. */
+void ar_state_next(ar_ctx *c, ar_u32 bits);
+
+/*
+ * What kind of control the next box is.
+ *
+ * `group` is what the control acts on: a radio's `name` hash, a summary's
+ * details, an option's select, a swatch's colour field. `dom` is the element
+ * it came from, or -1 for a control declared by hand -- a label's click and a
+ * form's submission both start from the element and need to find the box.
+ * `val` is a payload the kind gives meaning to: an option's index, a swatch's
+ * colour, the element a label is for.
+ */
+void ar_control_next(ar_ctx *c, ar_u8 kind, ar_u32 group, ar_i32 dom, ar_i32 val);
+
+/* A text field's value as the markup states it. */
+void ar_value_next(ar_ctx *c, const char *value, ar_u32 len);
+
+/*
+ * What sort of field the next box is, and its limits.
+ *
+ * `flags` is AR_FIELD_*. `lo`, `hi` and `step` are thousandths, read only by a
+ * number field and a range; `maxlen` is `maxlength` in characters, 0 for none.
+ */
+void ar_field_next(ar_ctx *c, ar_u32 flags, ar_i32 lo, ar_i32 hi, ar_i32 step, ar_i32 maxlen);
+
+enum
+{
+    AR_FIELD_MULTI = 1u << 0,    /* a textarea: Enter is a newline, arrows move by line */
+    AR_FIELD_PASSWORD = 1u << 1, /* drawn as bullets, never copied            */
+    AR_FIELD_NUMBER = 1u << 2,   /* digits and a sign; Up and Down step it    */
+    AR_FIELD_READONLY = 1u << 3, /* a caret and a selection, and no edits     */
+    AR_FIELD_DISABLED = 1u << 4
+};
+
+/*
+ * A control's value as the user left it, or `dflt` if nobody has touched it.
+ *
+ * For the controls whose state is a number rather than a bit: the option a
+ * select shows, where a slider sits, the colour a colour field holds. Asked
+ * of the box most recently opened, which is the control itself while the walk
+ * is deciding what to build inside it.
+ */
+ar_i32 ar_box_value(const ar_ctx *c, ar_i32 dflt);
+
+/* The key of the box most recently opened, so the walk can hand it to the
+   controls built inside it as the thing they act on. */
+ar_u32 ar_box_key(const ar_ctx *c);
+
+/* Whether a box already built this frame carries any of `bits` in its state:
+   a summary asks it of its details, which is open by the slot and not by the
+   markup once anybody has clicked. */
+int ar_box_state(const ar_ctx *c, ar_i32 box, ar_u32 bits);
+
+/* The `<option>` a select is showing now, or -1 -- for the accessibility
+   tree's value and for a form's submission. */
+ar_i32 ar_dom_select_option(const ar_ctx *c, const ar_doc *d, ar_i32 node);
+
+/* The document the frame is being built from, recorded by ar_dom_build so the
+   end of the frame -- a submission, a label's click -- can read attributes. */
+void ar_frame_doc(ar_ctx *c, ar_doc *d);
+
+/* DOM helpers the end of the frame calls, implemented beside the walk in
+   ar_dom.c because that is where attributes are read. */
+ar_i32 ar_dom_form_of(const ar_doc *d, ar_i32 node);
+ar_i32 ar_dom_first_submit(const ar_doc *d, ar_i32 form);
+void   ar_dom_form_reset(ar_ctx *c, const ar_doc *d, ar_i32 form);
+ar_i32 ar_dom_attr_num(const ar_doc *d, ar_i32 node, const char *name, ar_i32 dflt);
+
+/* The control state the walk and the form code share, keyed by box. */
+ar_i32 ar_ctl_value(const ar_ctx *c, ar_u32 key, ar_i32 dflt);
+void   ar_ctl_set_value(ar_ctx *c, ar_u32 key, ar_i32 v);
+void   ar_ctl_forget(ar_ctx *c, ar_u32 key);
+ar_u32 ar_ctl_key_of(const ar_ctx *c, ar_i32 dom);
+int    ar_field_value_of(const ar_ctx *c, ar_u32 key, const char **text, ar_u32 *len);
+
+/* Emit the text child of the field just opened, from whichever of the three
+   places currently holds its text. */
+void ar_field_child(ar_ctx *c, const char *fallback, ar_u32 n, const char *placeholder, ar_u32 pn);
+void ar_text_kept(ar_ctx *c, const char *selector, const char *text, ar_u32 n);
+
+/* Whether the box most recently opened is a `<details>` that is showing its
+   contents. The walk asks so it can skip the children of a closed one. */
+int ar_box_is_open(const ar_ctx *c);
+
+/* The same question about a control's checkedness, for the mark. */
+int ar_box_is_checked(const ar_ctx *c);
+
+/* The computed `white-space` of the box just opened, for the walk that has to
+   decide whether to collapse the text inside it. */
+ar_i32 ar_box_white_space(const ar_ctx *c);
+
+/* Whether the last box opened inside the current one is inline-level, which is
+   what decides whether a whitespace-only text node is content. */
+int ar_last_child_is_inline(const ar_ctx *c);
+
+enum
+{
+    AR_CTL_NONE = 0,
+    AR_CTL_CHECKBOX,
+    AR_CTL_RADIO,
+    AR_CTL_BUTTON, /* type=button: activates, and does nothing on its own   */
+    AR_CTL_SUMMARY,
+    AR_CTL_DETAILS,
+    AR_CTL_TEXT,
+    AR_CTL_SUBMIT, /* submits its form                                       */
+    AR_CTL_RESET,  /* puts its form back the way the markup had it           */
+    AR_CTL_SELECT, /* opens and closes; arrows choose                         */
+    AR_CTL_OPTION, /* one row of an open select: group is the select's key   */
+    AR_CTL_RANGE,  /* a slider: arrows step it, a press puts it under the pointer */
+    AR_CTL_COLOR,  /* a swatch that opens a palette                           */
+    AR_CTL_SWATCH, /* one colour of that palette: val is 0xRRGGBB             */
+    AR_CTL_FILE,   /* asks the embedder for a file name                       */
+    AR_CTL_LABEL   /* passes its click to the control it labels: val is that element */
+};
+
+/* Whether a kind is a push button of any sort, which is what a click on a
+   label passes straight through to. */
+#define AR_CTL_IS_BUTTON(k) ((k) == AR_CTL_BUTTON || (k) == AR_CTL_SUBMIT || (k) == AR_CTL_RESET)
+
+/*
+ * The capacities of the interaction tables, all on the context and none on
+ * the boxes, for the reason the control list gives: a field on every box is a
+ * cost on every box in every interface for the handful that are controls.
+ */
+#define AR_VALUES      32   /* fields whose text survives losing the caret   */
+#define AR_VALUE_BYTES 8192 /* and the bytes they share: two full textareas  */
+#define AR_CVALS       64   /* selects, sliders and colours that were touched */
+#define AR_RANGES      32   /* sliders in one frame                          */
+#define AR_CTL_MEMO    128  /* which box each control element last became    */
+#define AR_COMPOSE_CAP 256  /* an input method's composition string          */
+
 typedef struct ar_slot
 {
-    ar_u32  key;
-    ar_rect rect; /* where this box was last frame */
+    ar_u32 key;
+    /* Where this box's *pixels* were last frame -- ar_painted_bounds, not the
+       border box. An outline is drawn outside the box, so the two differ by
+       the ring's width exactly when a ring is what has to be erased. */
+    ar_rect rect;
 
     /* Where this container is scrolled to, on each axis. Their width is the
        AR_SCROLL_COMPACT switch in areole.h: every box carries a slot, so eight
@@ -253,7 +399,33 @@ typedef struct ar_slot
        caught it being paid every frame. */
     ar_i32 text_min_px;
     ar_u32 seen; /* frame this box last appeared in the tree */
+
+    /*
+     * What the user has done to this control, as opposed to what the markup
+     * said.
+     *
+     * `checked` in the markup is the default checkedness; a click changes the
+     * state and not the attribute. So the state has to outlive the frame and
+     * cannot come from the document, and the slot is where per-box memory
+     * already lives.
+     *
+     * TOUCHED is the half that is easy to forget: without it there is no way
+     * to tell "unchecked because the user unchecked it" from "unchecked
+     * because nobody has been here yet", and a box with `checked` in the
+     * markup would spring back on every frame.
+     */
+    ar_u8 flags;
 } ar_slot;
+
+enum
+{
+    AR_SLOT_CHECKED = 1 << 0,
+    AR_SLOT_TOUCHED = 1 << 1,
+    /* A `<details>` showing its contents. Separate from CHECKED because a
+       box is never both, and sharing the bit would work until the day
+       something is. */
+    AR_SLOT_OPEN = 1 << 2
+};
 
 /* ------------------------------------------------------------------------
  * Damage
@@ -286,6 +458,7 @@ void    ar_damage_add(ar_damage *d, ar_rect r);
 void    ar_damage_add_all(ar_damage *d);
 ar_rect ar_damage_bounds(const ar_damage *d, ar_rect viewport);
 ar_u32  ar_paint_digest(const ar_node *n);
+ar_rect ar_painted_bounds(const ar_node *n);
 
 struct ar_ctx
 {
@@ -402,6 +575,23 @@ struct ar_ctx
     ar_i32        style_face[4];
     ar_font_chain style_chain[4];
 
+    /*
+     * The monospace family, which is one face and not four.
+     *
+     * `<pre>` and `<code>` are the whole reason it exists and neither is
+     * commonly bold or italic, so a second set of four style slots would be
+     * three faces of arena for a case nobody writes. A bold `<code>` draws in
+     * the monospace regular, which is what a family with no bold does
+     * everywhere else in this file.
+     */
+    ar_i32        mono_face;
+    ar_font_chain mono_chain;
+
+    /* And the sans-serif family, on the same terms: one face, for controls
+       and for anything that asks for sans-serif. */
+    ar_i32        sans_face;
+    ar_font_chain sans_chain;
+
     ar_font_chain    chain;
     ar_shaper        shaper;
     int              shaping;
@@ -416,6 +606,11 @@ struct ar_ctx
        The window reports its size but never its scale, so this is the one
        piece of the media state a caller has to supply. */
     ar_i32 media_resolution;
+
+    /* Surface pixels per layout pixel, in thousandths: ar_set_render_scale,
+       and the scale the pixels standing were painted at. */
+    ar_i32 render_scale;
+    ar_i32 painted_scale;
 
     /* Set by ar_set_media, and it stops ar_frame_begin deriving the size from
        the last frame's viewport. A caller who has said what the window is
@@ -459,6 +654,260 @@ struct ar_ctx
     ar_i32 hot_chain_n;
     ar_u32 active_chain[AR_MAX_DEPTH];
     ar_i32 active_chain_n;
+
+    /*
+     * Focus, as a key and the path from it to the root.
+     *
+     * The same shape as the hover chain above and for the same two reasons:
+     * keys rather than indices because the state is wanted in `ar_begin` while
+     * this frame's tree is still being built, and a chain because
+     * `:focus-within` matches every ancestor the way `:hover` does.
+     *
+     * Zero means nothing is focused, which is a real state and not a missing
+     * one -- a document with nothing focused is where every document starts,
+     * and Tab is what leaves it.
+     */
+    /*
+     * State bits the next box opened will carry, set and then cleared.
+     *
+     * It has to arrive *before* the box, not after: `ar__push_node` resolves
+     * the style against the state, so a bit added afterwards would match no
+     * rule and the box would be styled as though it were not checked. That is
+     * why this is a pending value rather than a setter on the box.
+     */
+    /*
+     * The field being edited, and which box it belongs to.
+     *
+     * One buffer and not one per field. An ar_edit is four and a half
+     * kilobytes, almost all of it the undo ring, and twenty of them is a form's
+     * worth of memory spent on nineteen fields nobody is typing in. Only one
+     * field has the caret at a time, which is the whole of the argument.
+     *
+     * What that costs is named rather than hidden: **undo does not survive
+     * leaving a field.** Tab away and back, and the ring is empty. A browser
+     * keeps it, and keeping it here means a ring per field or a shared ring
+     * that knows which field each step belongs to -- neither of which is worth
+     * doing before the text is on the screen at all.
+     *
+     * The text itself does survive, in the pool below, because losing what
+     * somebody typed is not a trade-off, it is a bug.
+     */
+    ar_edit edit;
+    ar_u32  edit_key;
+
+    /* This frame's typing, held until the buffer has a field to belong to.
+       Tab and a character can arrive in the same frame, and the character
+       belongs to the field the Tab moved to -- which is not known until the
+       tree is built. */
+    const char *pending_text;
+    ar_u32      pending_text_len;
+    ar_u32      pending_keys;
+    int         pending_done;
+
+    ar_u32 next_state;
+
+    /* And what kind of control it is, for the same reason and taken the same
+       way. A radio also carries the hash of its `name`, which is the whole of
+       what makes a group a group. */
+    ar_u8  next_kind;
+    ar_u32 next_group;
+
+    /* A text field's markup value, borrowed for the length of ar_begin --
+       only read when the field is newly focused and has no stored text. */
+    const char *next_value;
+    ar_u32      next_value_len;
+
+    ar_u32 focus_key;
+    /* Where it landed in this frame's tree, or -1. Recorded in ar_begin so
+       the ancestor chain costs a walk up rather than a search over every
+       box, which on a ten-thousand-box document is the difference between
+       eight compares and ten thousand. */
+    ar_i32 focus_index;
+    ar_u32 focus_chain[AR_MAX_DEPTH];
+    ar_i32 focus_chain_n;
+
+    /*
+     * Whether the focus arrived from the keyboard.
+     *
+     * `:focus-visible` is this bit, and it is the whole reason the pseudo-class
+     * exists: a click must focus without drawing a ring and a Tab must draw
+     * one. It cannot be worked out from the box, only from the event that
+     * moved the focus, so it is remembered here at the moment of the move.
+     */
+    int focus_visible;
+
+    /* The focusable boxes of the frame just built, in document order, so Tab
+       has something to walk. Rebuilt every frame because the tree is. */
+    ar_u32 focusables[AR_MAX_FOCUSABLES];
+    ar_i32 focusable_n;
+
+    /* And the list as it stood when the frame closed, which is what Tab and a
+       click actually walk. Two lists because the live one is half-built while
+       the tree is being declared, and a Tab arriving mid-frame would see a
+       document that stops at whatever box is open. */
+    ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
+    ar_i32 focusable_prev_n;
+
+    /* The `tabindex` of each stop, in the same order. A positive one sorts
+       ahead of every zero, which is the rule nobody should rely on and every
+       engine has to honour. */
+    ar_i16 focus_order[AR_MAX_FOCUSABLES];
+    ar_i16 focus_order_prev[AR_MAX_FOCUSABLES];
+
+    /*
+     * The controls of the frame just built.
+     *
+     * Activation is settled at frame end, when the tree is complete and the
+     * click is known, and takes effect on the next frame -- the same one-frame
+     * model hover and focus already use, and for the same reason: the state a
+     * box is styled with has to be settled before the box is styled.
+     */
+    /*
+     * What every other edited field holds, without its history.
+     *
+     * One shared run of bytes rather than a fixed slot per field. It was
+     * sixteen slots of 256 bytes, which fitted a one-line field exactly and a
+     * textarea not at all: a field that can hold four kilobytes would have
+     * lost everything past the 256th byte the moment the caret left it. So the
+     * entries are spans of `value_bytes`, packed, and a field takes what it
+     * holds rather than what the largest field might.
+     *
+     * Thirty-two entries and sixteen kilobytes. The field after either runs
+     * out evicts the least recently seen, which loses text, and that is the
+     * reason both numbers are written down rather than guessed at.
+     */
+    ar_u32 value_key[AR_VALUES];
+    ar_i32 value_dom[AR_VALUES]; /* for a form submitting a field it did not build */
+    ar_u16 value_off[AR_VALUES];
+    ar_u16 value_len[AR_VALUES];
+    ar_u32 value_seen[AR_VALUES];
+    char   value_bytes[AR_VALUE_BYTES];
+    ar_u16 value_used;
+
+    ar_u32 control_key[AR_MAX_FOCUSABLES];
+    ar_u32 control_group[AR_MAX_FOCUSABLES];
+    ar_u8  control_kind[AR_MAX_FOCUSABLES];
+    ar_i32 control_n;
+
+    /* The element each control came from, and the payload its kind gives a
+       meaning to -- see ar_control_next. */
+    ar_i32 control_dom[AR_MAX_FOCUSABLES];
+    ar_i32 control_val[AR_MAX_FOCUSABLES];
+    ar_i32 control_box[AR_MAX_FOCUSABLES]; /* this frame's index, for its state */
+    ar_i32 next_dom;
+    ar_i32 next_val;
+
+    /* The flags of the field most recently opened, for the text child the walk
+       builds inside it -- a password draws bullets whether or not it has the
+       caret, and the child is built after the field's flags were taken. */
+    ar_u32 field_flags_cur;
+
+    /* The focus moved by keyboard this frame, so its box is brought into view
+       once layout has said where it is. */
+    int focus_moved;
+
+    /* Enter in a single-line field, waiting for the end of the frame to find
+       the form it submits -- which needs the document, and the document is
+       only certain to be complete there. */
+    ar_i32 implicit_from;
+
+    /* What the next field is and its limits, taken by ar__push_node. */
+    ar_u32 next_field;
+    ar_i32 next_lo, next_hi, next_step, next_maxlen;
+
+    /*
+     * This frame's sliders and their limits, by key.
+     *
+     * A press on a slider is resolved at the end of the frame against where it
+     * was drawn, and turning an x into a value needs the range -- which is in
+     * the markup, and the markup is not something the end of the frame should
+     * have to parse again.
+     */
+    ar_u32 range_key[AR_RANGES];
+    ar_i32 range_lo[AR_RANGES], range_hi[AR_RANGES], range_step[AR_RANGES];
+    ar_i32 range_box[AR_RANGES];
+    ar_i32 range_n;
+
+    /*
+     * The controls whose state is a number, as the user left them.
+     *
+     * The same relationship the text pool has with `value` and a slot's
+     * CHECKED bit has with `checked`: the markup is where a control starts,
+     * and this is where it went. Absent means untouched.
+     */
+    ar_u32 cval_key[AR_CVALS];
+    ar_i32 cval[AR_CVALS];
+    ar_u32 cval_seen[AR_CVALS];
+
+    /*
+     * Which box each control element became when it was last built.
+     *
+     * A control inside a closed `<details>` makes no box this frame, and a
+     * form still submits it -- with whatever the user left in it. That state
+     * is keyed by box, so the key has to outlive the frame that made it.
+     */
+    ar_i32        ctl_memo_dom[AR_CTL_MEMO];
+    ar_u32        ctl_memo_key[AR_CTL_MEMO];
+    ar_i32        ctl_memo_next;
+    const ar_doc *memo_doc;
+
+    /* The edited field, beyond its buffer: what sort it is, its limits, and
+       where this frame put it. */
+    ar_u32 edit_flags;
+    ar_i32 edit_lo, edit_hi, edit_step;
+    ar_i32 edit_dom;
+    ar_i32 edit_box;       /* its text box this frame, or -1 */
+    ar_i32 edit_field_box; /* the field itself, or -1        */
+
+    /*
+     * How far a single-line field's text is shifted left so the caret stays
+     * in view. A field does not wrap; it scrolls, and this is the scroll.
+     * Only the field with the caret has one, which is what every browser
+     * does with a field the caret has left.
+     */
+    ar_i32 edit_scroll_x;
+
+    /*
+     * The caret as painted, and whether the blink has it showing.
+     *
+     * `caret_epoch` is when it was last made to show: any keystroke or move
+     * restarts the blink with the caret visible, because a caret that vanishes
+     * the instant you press an arrow is a caret you cannot follow.
+     */
+    ar_rect caret_rect;
+    ar_rect caret_painted;
+    int     caret_on;
+    int     caret_painted_on;
+
+    /* A finished frame is standing: ar_frame_end has run and ar_frame_begin
+       has not, so the tree and the pixels it painted still agree, and
+       ar_frame_blink may repaint from the one into the other. */
+    int    frame_standing;
+    ar_u32 caret_epoch;
+    ar_u32 edit_hash; /* caret, selection and composition, for the digest */
+
+    /* Keys that need lines to mean anything -- Up and Down in a textarea, Home
+       and End there -- held until layout has made the lines. */
+    ar_u32 post_keys;
+    int    edit_drag; /* a press began in the field and is still held */
+    ar_u32 clicks;
+
+    /* An input method's composition, copied, because ar_input's is borrowed. */
+    char   compose[AR_COMPOSE_CAP];
+    ar_u16 compose_len;
+
+    /* What Ctrl+C or Ctrl+X asked for, borrowed from the buffer or the log. */
+    const char *clip;
+    ar_u32      clip_len;
+
+    /* The document this frame is built from, and what its end has to do. */
+    ar_doc *frame_doc;
+    ar_i32  submit_form, submit_by;
+    ar_i32  reset_form;
+    ar_i32  file_wanted;
+    ar_u32  synth_fire; /* an assistive tool's click, fired at frame end */
+    ar_u32  a11y_gen;
+    ar_i32  a11y_shape; /* the box count the generation was last moved for */
 
     /*
      * A scroll that the surface has not caught up with yet, so the next frame
@@ -563,6 +1012,14 @@ typedef struct ar_layout_env
     ar_text_range_fn measure;
     void            *ud;
 
+    /* The same width in 1/AR_ONE_PIXEL, unrounded, so the line filler can sum
+       a run's pieces and round once. Measuring the run from its start for
+       every word did the same with whole pixels and made a line quadratic in
+       its words -- 15% of layout on a page of wrapped paragraphs. Null when
+       `measure` is exact already, as the bitmap face's whole pixels are: then
+       a run's pieces sum to the run with nothing to correct. */
+    ar_text_range_fn measure_fx;
+
     /* The stylesheet, because a grid template is a list and a style slot is
        sixteen bits -- the slot holds an index into a pool that lives here.
        May be null, in which case a grid has no templates and every track is
@@ -579,6 +1036,10 @@ typedef struct ar_layout_env
     ar_frag *frags;
     ar_i32   frag_cap;
     ar_i32   frag_used;
+
+    /* How many boxes the tree has, so a pass that lays out a subtree again
+       knows where the array ends. Set by ar_layout_solve. */
+    ar_i32 node_count;
 } ar_layout_env;
 
 void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
@@ -591,6 +1052,7 @@ void ar_layout_solve(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_e
 ar_i32 ar_margin_collapse(ar_i32 a, ar_i32 b);
 
 int ar_is_block(const ar_node *n);
+int ar_is_block_container(const ar_node *n);
 int ar_establishes_bfc(const ar_node *n);
 
 /* Whether a child's bottom margin reaches through this box's bottom edge. */
@@ -636,6 +1098,12 @@ int ar_is_floated(const ar_node *n);
 
 /* A stated size, turned into the size the box occupies. See box-sizing. */
 ar_i32 ar_used_size(const ar_node *n, ar_i32 axis, ar_i32 stated);
+
+/* `min-width` / `min-height` and the two `max-*`, turned into the size the box
+   occupies the same way: under `content-box` the limit is the content's, and
+   the padding goes around it. "No maximum" stays no maximum. */
+ar_i32 ar_used_min(const ar_node *n, ar_i32 axis);
+ar_i32 ar_used_max(const ar_node *n, ar_i32 axis);
 
 /* ------------------------------------------------------------------------
  * Scroll containers -- ar_scroll.c
@@ -935,7 +1403,12 @@ void ar_settle_at(ar_node *nodes, ar_layout_env *env, ar_i32 i, ar_rect was);
 
 void ar_position_try(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
-void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport, ar_layout_env *env);
+void ar_position_out_of_flow(ar_node *nodes, ar_i32 count, ar_i32 i, ar_rect viewport,
+                             ar_layout_env *env);
+
+/* Lay a subtree out again at its root's current rectangle -- for a box that
+   positioning gave a width the flow did not. See ar_layout.c. */
+void ar_relayout_subtree(ar_node *nodes, ar_i32 count, ar_i32 root, ar_layout_env *env);
 void ar_position_relative(ar_node *nodes, ar_i32 count, ar_rect viewport, ar_layout_env *env);
 
 int  ar_is_sticky(const ar_node *n);
@@ -982,6 +1455,10 @@ void ar_float_place(ar_float_ctx *fc, ar_node *n, ar_i32 y, ar_i32 side);
 int    ar_is_inline_level(const ar_node *n);
 ar_i32 ar_inline_baseline(const ar_node *n);
 
+/* The same, for a box in its tree: an inline-block's baseline is the last line
+   inside it, which needs the tree to find. */
+ar_i32 ar_inline_baseline_of(const ar_node *nodes, ar_i32 i);
+
 /* Lays a run of inline-level siblings into line boxes and returns how tall
    they came to. Sizes must already be resolved. */
 /*
@@ -998,6 +1475,10 @@ ar_i32 ar_inline_run(ar_node *nodes, ar_i32 first, ar_i32 stop, ar_i32 left, ar_
 
 /* Whether this box's text flows into the lines around it and may be cut. */
 int ar_is_fragmentable(const ar_node *n);
+int ar_flows_children(const ar_node *n);
+
+/* Whether this box is a `<br>`: a forced line break and nothing else. */
+int ar_is_line_break(const ar_node *n);
 
 ar_slot *ar_ctx_slot(ar_ctx *c, ar_u32 key);
 

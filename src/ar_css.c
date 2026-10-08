@@ -121,6 +121,8 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_BORDER_COLLAPSE] = AR_BORDER_SEPARATE;
     s->unit[AR_P_BORDER_COLLAPSE] = AR_UNIT_KEYWORD;
     s->v[AR_P_VISIBILITY] = AR_VIS_VISIBLE;
+    s->v[AR_P_OPACITY] = 1000;
+    s->unit[AR_P_OPACITY] = AR_UNIT_NUMBER;
     s->unit[AR_P_VISIBILITY] = AR_UNIT_KEYWORD;
     s->v[AR_P_CAPTION_SIDE] = AR_CAPTION_TOP;
     s->unit[AR_P_CAPTION_SIDE] = AR_UNIT_KEYWORD;
@@ -208,8 +210,21 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_BACKGROUND] = AR_UNIT_COLOR;
     AR_WIDE(s, AR_P_COLOR) = (ar_i32)0xFF202020u;
     s->unit[AR_P_COLOR] = AR_UNIT_COLOR;
+    /*
+     * `currentColor`, which is what CSS says and not what this was.
+     *
+     * CSS 2.1 §8.5.2: the initial value of `border-color` is the value of the
+     * `color` property. It was zero here -- fully transparent -- so a box
+     * given a width and no colour drew a border that was the right size,
+     * in the right place, and invisible.
+     *
+     * That is exactly what `<table border="1">` is: the attribute maps to a
+     * width and says nothing about colour, so every bordered table on the old
+     * web laid out with room for its lines and drew none of them. The
+     * geometry was right, which is why the table corpus never saw it.
+     */
     AR_WIDE(s, AR_P_BORDER_COLOR) = 0;
-    s->unit[AR_P_BORDER_COLOR] = AR_UNIT_COLOR;
+    s->unit[AR_P_BORDER_COLOR] = AR_UNIT_CURRENTCOLOR;
 
     s->v[AR_P_FONT_SIZE] = 8; /* one face height, meaning scale 1 */
     s->v[AR_P_LINE_HEIGHT] = 0;
@@ -409,6 +424,28 @@ int ar_prop_inherits(ar_i32 prop)
     /* `color-scheme` inherits, which is what makes declaring it once on
        `:root` settle a whole document -- the same reason `color` does. */
     case AR_P_COLOR_SCHEME:
+    /* Text properties inherit, and this is one: a `<pre>` whose children
+       did not keep their spaces would be a `<pre>` in name only. */
+    case AR_P_WHITE_SPACE:
+    /*
+     * `text-decoration` inherits here, and CSS says it does not.
+     *
+     * The specification has an ancestor's decoration *propagate* to its
+     * descendants without being inherited, so a child cannot turn it off --
+     * `text-decoration: none` inside an underlined link does nothing in a
+     * browser. Drawing it that way needs the painter to walk up the ancestor
+     * chain per fragment, which is the one thing the flat-style design is
+     * for not doing.
+     *
+     * Inheritance gets the same picture for every document anyone writes and
+     * differs only for that one declaration. It also has to reach the child:
+     * a document walk puts an element's text in a child box, so a link's
+     * underline is painted by a box the `a` rule never matched.
+     */
+    case AR_P_TEXT_DECORATION:
+    /* `font-family` inherits, which is what makes one rule on `body` settle
+       a document -- the same reason `font-size` does. */
+    case AR_P_FONT_FAMILY:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -438,10 +475,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,        AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,  AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS,  AR_P_CAPTION_SIDE,
-                                      AR_P_COLOR_SCHEME};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,       AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,      AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE,    AR_P_COLOR_SCHEME,
+                                      AR_P_WHITE_SPACE, AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -555,10 +592,13 @@ static int ar__is_space(char c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
 }
 
+/* An identifier's characters, non-ASCII included, as CSS Syntax has them: a
+   class written in Japanese or Cyrillic is an ident like any other, and every
+   byte of its UTF-8 is at or above 0x80. */
 static int ar__is_ident(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
-           c == '_';
+           c == '_' || (unsigned char)c >= 0x80;
 }
 
 static int ar__is_digit(char c)
@@ -679,6 +719,7 @@ enum
     AR_SH_PADDING = AR_P_COUNT + 1,
     AR_SH_MARGIN,
     AR_SH_BORDER,
+    AR_SH_OUTLINE,
     AR_SH_OVERFLOW,
     AR_SH_OVERSCROLL,
     AR_SH_SCROLLBAR_COLOR,
@@ -742,6 +783,13 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border-width", AR_P_BORDER_WIDTH},
                                           {"border-color", AR_P_BORDER_COLOR},
                                           {"color-scheme", AR_P_COLOR_SCHEME},
+                                          {"white-space", AR_P_WHITE_SPACE},
+                                          {"text-decoration", AR_P_TEXT_DECORATION},
+                                          {"text-decoration-line", AR_P_TEXT_DECORATION},
+                                          {"font-family", AR_P_FONT_FAMILY},
+                                          {"outline-width", AR_P_OUTLINE_WIDTH},
+                                          {"outline-color", AR_P_OUTLINE_COLOR},
+                                          {"outline", AR_SH_OUTLINE},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"line-height", AR_P_LINE_HEIGHT},
@@ -794,6 +842,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"table-layout", AR_P_TABLE_LAYOUT},
                                           {"border-collapse", AR_P_BORDER_COLLAPSE},
                                           {"visibility", AR_P_VISIBILITY},
+                                          {"opacity", AR_P_OPACITY},
                                           {"caption-side", AR_P_CAPTION_SIDE},
                                           {"empty-cells", AR_P_EMPTY_CELLS},
                                           {"border-spacing", AR_P_BORDER_SPACING},
@@ -873,6 +922,15 @@ typedef struct ar__kw
 } ar__kw;
 
 static const ar__kw AR_KEYWORDS[] = {
+    /* `normal` and `nowrap` are spelled the same as values of other
+       properties, which costs nothing: the lookup is by property and by name,
+       so two rows may share a word. */
+    {"normal", AR_P_WHITE_SPACE, AR_WS_NORMAL},
+    {"nowrap", AR_P_WHITE_SPACE, AR_WS_NOWRAP},
+    {"pre", AR_P_WHITE_SPACE, AR_WS_PRE},
+    {"pre-wrap", AR_P_WHITE_SPACE, AR_WS_PRE_WRAP},
+    {"pre-line", AR_P_WHITE_SPACE, AR_WS_PRE_LINE},
+
     /*
      * `color-scheme`. `light dark` is two idents and the value loop keeps the
      * first, which gives `light` -- and that is the right answer today rather
@@ -915,6 +973,21 @@ static const ar__kw AR_KEYWORDS[] = {
     {"top", AR_P_VERTICAL_ALIGN, AR_VALIGN_TOP},
     {"middle", AR_P_VERTICAL_ALIGN, AR_VALIGN_MIDDLE},
     {"bottom", AR_P_VERTICAL_ALIGN, AR_VALIGN_BOTTOM},
+    {"underline", AR_P_TEXT_DECORATION, AR_DECOR_UNDERLINE},
+    {"line-through", AR_P_TEXT_DECORATION, AR_DECOR_LINE_THROUGH},
+    /* The commonest thing anyone writes about a link, and it was not a value:
+       `a { text-decoration: none }` was dropped as an unknown keyword and
+       every link kept the user-agent sheet's underline. */
+    {"none", AR_P_TEXT_DECORATION, AR_DECOR_NONE},
+    {"monospace", AR_P_FONT_FAMILY, AR_FAMILY_MONOSPACE},
+    {"serif", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
+    {"sans-serif", AR_P_FONT_FAMILY, AR_FAMILY_SANS},
+    {"system-ui", AR_P_FONT_FAMILY, AR_FAMILY_SANS},
+    {"arial", AR_P_FONT_FAMILY, AR_FAMILY_SANS},
+    {"helvetica", AR_P_FONT_FAMILY, AR_FAMILY_SANS},
+    {"cursive", AR_P_FONT_FAMILY, AR_FAMILY_DEFAULT},
+    {"sub", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUB},
+    {"super", AR_P_VERTICAL_ALIGN, AR_VALIGN_SUPER},
 
     {"row", AR_P_DIRECTION, AR_DIR_ROW},
     {"column", AR_P_DIRECTION, AR_DIR_COLUMN},
@@ -3260,8 +3333,8 @@ static int ar__parse_color_fn(ar__scan *z, const char *name, ar_u32 len, ar_u32 
     else if (ar__same_fold(name, len, "lab") || ar__same_fold(name, len, "lch") ||
              ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch"))
     {
-        int ok = ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch");
-        int polar = ar__same_fold(name, len, "lch") || ar__same_fold(name, len, "oklch");
+        int    ok = ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch");
+        int    polar = ar__same_fold(name, len, "lch") || ar__same_fold(name, len, "oklch");
         ar_i32 lref = ok ? 1 : 100;
         ar_i32 aref = ok ? 1 : 100;
         ar_i32 apct = ok ? (ar_i32)(AR_CFIX * 2 / 5) : (AR_CFIX * 5 / 4);
@@ -3295,8 +3368,8 @@ static int ar__parse_color_fn(ar__scan *z, const char *name, ar_u32 len, ar_u32 
             return 0;
         }
 
-        v.space = (ar_u8)(ok ? (polar ? AR_CS_OKLCH : AR_CS_OKLAB)
-                             : (polar ? AR_CS_LCH : AR_CS_LAB));
+        v.space =
+            (ar_u8)(ok ? (polar ? AR_CS_OKLCH : AR_CS_OKLAB) : (polar ? AR_CS_LCH : AR_CS_LAB));
     }
     else
     {
@@ -3570,6 +3643,30 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             (prop == AR_P_LINE_HEIGHT && !ar__number_has_unit(z)))
         {
             out.v = sign * (n * 1000 + milli);
+            out.ok = 1;
+            out.unit = AR_UNIT_NUMBER;
+            return out;
+        }
+
+        /* `opacity`: a number or a percentage, either way per mille here, and
+           clamped to [0, 1] at parse time as CSS clamps it at computed time --
+           nothing between the two can tell. */
+        if (prop == AR_P_OPACITY)
+        {
+            ar_i32 pm = n * 1000 + milli;
+
+            if (z->p < z->end && *z->p == '%')
+            {
+                z->p++;
+                pm = n * 10 + milli / 100;
+            }
+            else if (ar__number_has_unit(z))
+            {
+                out.ok = 0;
+                return out;
+            }
+            pm *= sign;
+            out.v = pm < 0 ? 0 : (pm > 1000 ? 1000 : pm);
             out.ok = 1;
             out.unit = AR_UNIT_NUMBER;
             return out;
@@ -4263,6 +4360,10 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         {
             as = AR_P_BORDER_WIDTH;
         }
+        if (prop == AR_SH_OUTLINE)
+        {
+            as = AR_P_OUTLINE_WIDTH;
+        }
         if (prop == AR_SH_OVERFLOW)
         {
             as = AR_P_OVERFLOW;
@@ -4424,6 +4525,27 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         if (n >= 2)
         {
             ar__set(rule, AR_P_SCROLLBAR_TRACK, vals[1].v, vals[1].unit);
+        }
+    }
+    else if (prop == AR_SH_OUTLINE)
+    {
+        /*
+         * `<width> [style] <colour>` in any order, which is border's grammar
+         * and is read by border's rules. `outline-style` is not stored: this
+         * engine draws one kind of line, so `solid` is accepted and anything
+         * else is accepted and drawn the same. Saying that here is cheaper
+         * than a property nobody can tell the effect of.
+         */
+        ar_i32 i;
+
+        ar__set(rule, AR_P_OUTLINE_WIDTH, vals[0].v, AR_UNIT_PX);
+        for (i = 0; i < n; ++i)
+        {
+            if (vals[i].unit == AR_UNIT_COLOR || vals[i].unit == AR_UNIT_CURRENTCOLOR ||
+                vals[i].unit == AR_UNIT_SYSCOLOR)
+            {
+                ar__set(rule, AR_P_OUTLINE_COLOR, vals[i].v, vals[i].unit);
+            }
         }
     }
     else if (prop == AR_SH_BORDER)
@@ -4592,6 +4714,33 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
         return 0;
     }
 
+    /*
+     * The document walk's own classes first -- `.ar-link`, `.ar-hidden`, the
+     * control kinds -- whatever order they were written in. They are what the
+     * user-agent sheet keys on, and the walk appends them after the author's;
+     * when an element's own classes filled the set, it was these that were
+     * dropped, and a link drew as text and a `hidden` menu drew open. The
+     * `ar-` prefix is the reserved one, so a page cannot crowd them out.
+     */
+    {
+        const char *q;
+
+        for (q = sel; *q; ++q)
+        {
+            if (q[0] == '.' && q[1] == 'a' && q[2] == 'r' && q[3] == '-')
+            {
+                const char *start = q + 1;
+                const char *e = start;
+
+                while (*e && ar__is_ident(*e))
+                {
+                    ++e;
+                }
+                ar_classes_add(klass, ar_hash(start, (ar_u32)(e - start)));
+            }
+        }
+    }
+
     while (*p)
     {
         const char *start;
@@ -4663,7 +4812,7 @@ int ar_selector_split(const char *sel, ar_u32 *tag, ar_classes *klass, ar_u32 *i
 
 /* One state keyword, or zero if the name is not one. Shared by the compound
    parser and the functional pseudo-classes, which accept the same set. */
-static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
+static ar_u32 ar__state_keyword(const char *name, ar_u32 len)
 {
     if (ar__same(name, len, "hover"))
     {
@@ -4676,6 +4825,36 @@ static ar_u16 ar__state_keyword(const char *name, ar_u32 len)
     if (ar__same(name, len, "focus"))
     {
         return AR_STATE_FOCUS;
+    }
+    /*
+     * Longest first would be the usual worry here, and it is not one: these
+     * compare the whole name rather than a prefix, so `focus` cannot swallow
+     * `focus-visible`. Written in this order anyway, because the next person
+     * to add `:focus-something` will read the order as meaningful.
+     */
+    if (ar__same(name, len, "focus-visible"))
+    {
+        return AR_STATE_FOCUS_VISIBLE;
+    }
+    if (ar__same(name, len, "focus-within"))
+    {
+        return AR_STATE_FOCUS_WITHIN;
+    }
+    if (ar__same(name, len, "checked"))
+    {
+        return AR_STATE_CHECKED;
+    }
+    if (ar__same(name, len, "disabled"))
+    {
+        return AR_STATE_DISABLED;
+    }
+    if (ar__same(name, len, "enabled"))
+    {
+        return AR_STATE_ENABLED;
+    }
+    if (ar__same(name, len, "open"))
+    {
+        return AR_STATE_OPEN;
     }
     if (ar__same(name, len, "root"))
     {
@@ -4755,7 +4934,7 @@ static int ar__parse_simple(ar__scan *z, ar_sel_simple *out, ar_u16 *spec)
             }
             else
             {
-                ar_u16 st = ar__state_keyword(name, len);
+                ar_u32 st = ar__state_keyword(name, len);
 
                 if (!st)
                 {
@@ -4850,7 +5029,7 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
    Returns zero if there was nothing to read, which is how the caller knows a
    combinator was dangling. */
 static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u32 *id,
-                              ar_u16 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
+                              ar_u32 *state, ar_u16 *spec, ar_sel_simple *neg, ar_i32 *nneg,
                               ar_sel_simple *alt, ar_i32 *nalt, ar_u8 *backdrop)
 {
     int any = 0;
@@ -4939,6 +5118,30 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "focus"))
                 {
                     *state |= AR_STATE_FOCUS;
+                }
+                else if (ar__same(name, len, "focus-visible"))
+                {
+                    *state |= AR_STATE_FOCUS_VISIBLE;
+                }
+                else if (ar__same(name, len, "focus-within"))
+                {
+                    *state |= AR_STATE_FOCUS_WITHIN;
+                }
+                else if (ar__same(name, len, "checked"))
+                {
+                    *state |= AR_STATE_CHECKED;
+                }
+                else if (ar__same(name, len, "disabled"))
+                {
+                    *state |= AR_STATE_DISABLED;
+                }
+                else if (ar__same(name, len, "enabled"))
+                {
+                    *state |= AR_STATE_ENABLED;
+                }
+                else if (ar__same(name, len, "open"))
+                {
+                    *state |= AR_STATE_OPEN;
                 }
                 else if (ar__same(name, len, "root"))
                 {
@@ -6931,7 +7134,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
 
 /* The tuple is four small integers, so a multiplicative mix over them is both
    cheaper and better distributed than hashing their bytes. */
-static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
+static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u32 state)
 {
     ar_u32 h = 2166136261u;
     h = (h ^ tag) * 16777619u;
@@ -6942,7 +7145,7 @@ static ar_u32 ar__cache_hash(ar_u32 tag, ar_u32 klass, ar_u32 id, ar_u16 state)
 }
 
 int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                          ar_u16 state)
+                          ar_u32 state)
 {
     if (p->tag && p->tag != tag)
     {
@@ -6972,7 +7175,7 @@ int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *
  * silent wrong answer rather than a loud one.
  */
 static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                                  ar_u16 state)
+                                  ar_u32 state)
 {
     ar_i32 i;
 
@@ -7015,7 +7218,7 @@ static int ar__functional_matches(const ar_rule *r, ar_u32 tag, const ar_classes
  * is the one thing authors write `!important` to prevent.
  */
 static void ar__important_band(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out)
+                               ar_u32 id, ar_u32 state, ar_style *out)
 {
     ar_i32 i;
 
@@ -7215,7 +7418,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
 }
 
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, ar_var_decl *out, ar_i32 cap)
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap)
 {
     ar_i32 i, n = 0;
 
@@ -7296,7 +7499,7 @@ ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes
 }
 
 static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                                 ar_u32 id, ar_u16 state, ar_style *out, int want_backdrop,
+                                 ar_u32 id, ar_u32 state, ar_style *out, int want_backdrop,
                                  const ar_rule *hints)
 {
     ar_i32 i;
@@ -7411,13 +7614,13 @@ void ar_sheet_mark_ua(ar_sheet *sheet)
 }
 
 void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, const ar_rule *hints, ar_style *out)
+                             ar_u32 state, const ar_rule *hints, ar_style *out)
 {
     ar__resolve_uncached(sheet, tag, klass, id, state, out, 0, hints);
 }
 
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                              ar_u16 state, ar_style *out)
+                              ar_u32 state, ar_style *out)
 {
     if (!sheet || !klass || !out)
     {
@@ -7554,7 +7757,7 @@ static int ar__ctx_matches(const ar_rule *r, ar_i32 index, ar_sel_walk find, voi
 }
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 const ar_classes *klass, ar_u32 id, ar_u32 state, ar_sel_walk find,
                                  void *ud, ar_style *out)
 {
     ar_i32 i;
@@ -7618,12 +7821,12 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
 }
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out)
+                               ar_u32 id, ar_u32 state, ar_style *out)
 {
     ar__resolve_uncached(sheet, tag, klass, id, state, out, 1, 0);
 }
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u32 state,
                       ar_style *out)
 {
     ar_u32 slot, probe;

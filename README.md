@@ -6,10 +6,38 @@ No Direct2D. No OpenGL. No Vulkan. No SDL. No GTK. `areole` rasterizes every
 pixel itself and hands the finished buffer to the operating system in a single
 blit. Layout is written in **real CSS**, parsed once at startup.
 
-![the hello example](docs/hello.png)
+![a settings page drawn and used in areole](docs/showcase-live.png)
 
-Every rectangle above came out of a stylesheet. The example that draws it does
-not contain a single coordinate.
+One HTML file with ordinary CSS, [docs/showcase.html](docs/showcase.html), drawn and driven by
+areole. The pointer is added afterwards; areole draws none.
+
+## areole beside a browser
+
+The same file, window and fonts -- areole left, Edge right.
+
+**Settings, light** -- flex, grid, `margin-left: auto`, fourteen form controls
+
+![settings: areole and Edge](docs/vs/settings.png)
+
+**Dashboard, dark** -- a grid of cards, a table, pills, bars
+
+![dashboard: areole and Edge](docs/vs/dashboard.png)
+
+**Article, serif** -- a centred `max-width` column, italic, bold, inline code
+
+![article: areole and Edge](docs/vs/article.png)
+
+**A form with no CSS at all** -- nothing but the browser's own defaults
+
+![form: areole and Edge](docs/vs/form.png)
+
+What still differs is mostly borders: areole paints a border over the padding instead of outside
+it ([on purpose, for now](docs/CSS_REFERENCE.md#form-controls-and-the-one-place-areole-differs-on-purpose)),
+so a bordered box is two pixels smaller. `python tools/readme_shots.py` redraws every picture here.
+
+## Code
+
+An interface, in C, with no HTML:
 
 ```c
 ar_stylesheet(ui,
@@ -22,6 +50,26 @@ ar_begin(ui, "div.rail");
         if (ar_button(ui, "div.nav", pages[i])) selected = i;
 ar_end(ui);
 ```
+
+Or a page, parsed once and built every frame:
+
+```c
+ar_doc *page = ar_html_parse_into(ui, html, html_len);
+ar_doc_stylesheets(ui, page);
+
+while (ar_win_pump(win)) {
+    ar_frame_begin(ui, ar_win_input(win));
+    ar_dom_build(ui, page);
+    ar_frame_end(ui, ar_win_surface(win));
+    for (i = 0; i < ar_damage_count(ui); ++i)
+        ar_win_present(win, ar_damage_rect(ui, i));
+    ar_frame_presented(ui);
+}
+```
+
+And at any render scale: `ar_win_set_render_scale(win, ui, 2000)` draws twice the window's pixels
+and shrinks them into it, smoother; `500` draws half and stretches them, faster. Layout, input and
+hit testing stay in window pixels. Try `example_forms --scale 2`.
 
 ## Why
 
@@ -403,6 +451,7 @@ toolkit breaks that circle.
 - **0.9.4** *It measures in every unit* — the whole of CSS Values Level 4's lengths, and the user-agent sheet rewritten in the `em` it always meant ✅
 - **0.9.5** *It does arithmetic* — `calc()` and the maths functions, custom properties and `var()` ✅
 - **0.9.6** *It knows what colour means* — every notation CSS Color 4 defines, `color-mix()`, `currentColor`, the system colours and `color-scheme` ✅
+- **0.10.0** *It can be used* — focus and tab order, text editing, every form control, forms that submit, and an accessibility tree a screen reader can walk ✅
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -964,7 +1013,7 @@ with the layout explanation and none with an algorithmic one. The first half was
 the second was false: 0.9.6 removed the cost because it happened to fix the bug, not because it
 moved memory again.
 
-**This is the roadmap's 0.4.4****This is the roadmap's 0.4.4****This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
+**This is the roadmap's 0.4.4**, and it ships under 0.9.6's number for the reason 0.4.3's content
 ships under 0.9.5's: a version may not move backwards.
 
 | | |
@@ -1066,6 +1115,137 @@ parser end to end against Edge, thirteen of them exactly. The gap is real and st
 whole and the wire to the window manager is what is missing, which is the same shape 0.4.1 shipped
 `dvh`, `lvh` and `svh` in. `color-scheme: dark` is what selects the dark set today.
 
+### 0.10.0, complete
+
+**This is the release where areole stops being a viewer.** Everything before it renders; this is
+the first version a person can *use* -- Tab through, type into, tick, choose from, submit -- and
+the first one a screen reader can read. [Example 16](examples/16_forms/README.md) is the guide: a
+delivery form of twenty controls in plain markup, with no stylesheet at all.
+
+| | |
+| --- | --- |
+| Controls | text, password, number, textarea, select with groups, range, colour, file, checkbox, radio, button, submit, reset, progress, meter, label, fieldset and legend, details, hidden |
+| Editing | grapheme clusters, words, selection, the clipboard, IME composition; 512 undo steps in 24 KB |
+| Forms | implicit submission, `ar_form_submitted`, `ar_form_encode` |
+| Accessibility | a public tree; MSAA on Windows, read back from another process: 20 of 20 controls named |
+| Against Edge | example 16 with no stylesheet: **59 of 60** elements within a pixel, 3.45% of pixels differ |
+| Checks | **2,044** in `ar_test`, from 1,888; the gallery's 180 gated demos all agree with Chrome |
+| Memory | `AR_MEM_FIXED` 288 KB -> 320 KB; no allocation after init, the undo log included |
+| Binary | the core +125,984 bytes since 0.9.6, against a budget of 60 KB -- see below |
+
+**Six of the eight acceptance criteria are met by a program. Two need a person.**
+
+| criterion | |
+| --- | --- |
+| 1. every control renders, responds and reports its value | met: example 16's selftest per control, `tools/versus.py` against Edge |
+| 2. the caret never lands mid-cluster, 200 strings | met, 100% |
+| 3. 500 steps of undo and redo restore every byte | met |
+| 4. IME composition with a Japanese input method | **owed by hand.** Drawn inline and never stored, in `ar_test`; the Win32 side is written and has not met a real IME |
+| 5. tab order is document order, whatever `order` says | met |
+| 6. twenty controls, each with a role and a name, in Narrator and NVDA | **half.** `ar_a11y_probe` reads all twenty, named, through MSAA and UI Automation; nobody has listened yet |
+| 7. a blink invalidates fewer than 2,000 pixels | met: 15 in example 16 |
+| 8. no allocation after init | met: `ar_bench` checks it on every scene, and on the three written for this release |
+
+**The Pentium II budgets are met**, projected by `ar_require` from this machine to the Pentium II
+400 profile -- the blink's only after it stopped being a frame:
+
+| | budget | projected |
+| --- | --- | --- |
+| keystroke into a 2,000-character textarea | < 12 ms | 7.0 to 8.8 ms |
+| a caret blink, by `ar_frame_blink` | < 0.5 ms | **0.045 to 0.065 ms** |
+| the same blink by a whole frame | | 0.96 to 1.40 ms |
+| the accessibility tree, 500 nodes | < 8 ms | about 1.2 to 1.7 ms (0.27 to 0.39 for 114) |
+| the undo log | <= 128 KB | 24 KB |
+
+The blink repainted 15 pixels and cost a frame: an immediate-mode engine built and laid out the
+whole tree to learn that only the caret had changed. `ar_frame_blink` paints the caret's column from
+the frame that is standing -- the tree, the clips and the paint order are all still there between
+one frame's end and the next one's begin -- and a backend calls it when the caret's timer is all that
+woke it, which `ar_win_idle` reports. 3.7 microseconds here against 81 for the frame. `ar_test`
+holds it to the frame's own answer: the frame that follows a blink finds nothing left to paint, and
+every pixel is what it would have drawn.
+
+**The binary budget is missed by twice.** 0.10.0's document allows 60 KB with accessibility
+separable; the core is 125,984 bytes larger than at 0.9.6, of which `ar_a11y.c` is 13,848.
+`ar_ctx.c` grew 27,824 in the last stretch alone and `ar_dom.c` 22,468 -- the control walk and form
+submission, which tools/check_size.py itemises where it raises the HTML budget to 188 KB. That
+raise is recorded as what it is: set after the work, because the document named no size.
+
+### Eight bugs the pages above found
+
+- A flex item is a block, whatever its display said -- sidebar links drew no words.
+- `text-decoration: none` is a value -- links kept their underline.
+- An auto margin takes a flex line's free space -- the avatar sat beside the tabs.
+- A space does not open a line -- every field after a full-width one sat a line low.
+- A `<br>` ends its line. It never had.
+- White space between flex items is nothing -- 23 pixels between links where Edge has 2.
+- An option takes its select's font size.
+- `min-*` and `max-*` are the content's under `content-box`, like `width` -- an article column was
+  40 pixels narrow.
+
+Left for later: the border model (0.12.2), and a textarea's `rows`, still fifteen pixels a row.
+
+### Four bugs found by checking, not by reading
+
+**No screen reader had ever seen anything in the window.** MinGW's liboleacc.a resolves
+`IID_IAccessible` to the address of an import thunk, so the provider marshalled an interface
+nobody had registered and every reader got `REGDB_E_IIDNOTREG`. The example's README said MSAA had
+been read back by a script; the script did not exist. It does now, as `ar_a11y_probe`, and its
+first run found this.
+
+**Its second run found the containers named with every word inside them.** The form, the fieldset
+with all three radios' labels, and the closed `<details>` with the sentence it hides -- read out by
+whatever contained it. A group, a form and a landmark are now named by markup or not at all, a
+fieldset by its legend, and what is not rendered is not read.
+
+**A run of words was measured quadratically.** Rounding a line's pieces once rather than one by
+one -- a button's two-word label had wrapped inside itself -- was done by measuring from the run's
+start at every word, and the alternating benchmark caught it at 15% of layout on a page of wrapped
+paragraphs before it shipped. The run now keeps its width in fixed point; with the bitmap face,
+whose widths are whole pixels already, it does not round at all.
+
+**An inline-block sat a line low on a padded body**, because the line moved the box and left its
+insides behind to be read for a baseline -- and an `<svg>` sat on the text a CDATA section left
+inside it. Two gallery demos regressed and are back on Chrome's geometry, and `ar_test` holds both.
+
+### What it cost
+
+Measured by alternating runs against the commit before it on the same machine, because the machine
+would not hold still for a baseline. Two full passes over the 52 shared scenes put the median at
+0.986 and 1.025 of the old time, and no scene was slower in every pair by more than 5%. Eight
+rounds each on the suspects:
+
+| scene | p50 | layout phase |
+| --- | --- | --- |
+| `inline_wrap` | +2.2% | +4.6% |
+| `scroll_container` | +2.2% | +1.2% |
+| `html_render` | +2 to 6% | +5 to 7% |
+| `grid_20x20` | code placement | +1% with both builds aligned to 64 bytes |
+
+`html_render`'s cost is spread across the inline-box and inline-block work: nine builds with one
+change each stubbed out left it where it was. It is recorded rather than chased further.
+
+Four scenes were written for what this release added -- `field_keystroke` 0.37 ms, `caret_blink`
+0.004 ms, `caret_blink_frame` 0.08 ms and `a11y_tree` 0.018 ms here -- and they land with the
+stamp, not before it:
+`gen_perf_doc.py --check` fails on a registered scene the baseline does not hold, which is that gate
+doing exactly its job.
+
+**`AR_VERSION_STRING` still says 0.9.6.** The stamp and `bench/baseline.json` move together, and
+the machine read 30 to 55% spread between epochs on the layout group at 10% load -- the numbers
+0.9.2 discarded rather than published. The baseline, with the three new scenes in it, waits for a
+quiet machine, as 0.9.4's and 0.9.6's did, and with the four new scenes in it.
+
+### What this release does not do
+
+- **No network.** A form is submitted to the program; there is no POST.
+- **No date, time or datetime-local pickers** -- they need a calendar and a locale database.
+- **No `<select multiple>` and no `size` list box.** A select is a dropdown.
+- **No colour dialog**, only a palette of sixteen; no `contenteditable`, rich text or spellcheck.
+- **Undo does not survive leaving a field.** The text does; the history is one buffer's.
+- **The caret moves logically through bidirectional text**, not visually.
+- **`accent-color` and `color-scheme` on controls are 0.10.1's.**
+
 ## Building
 
 ```sh
@@ -1133,12 +1313,12 @@ python tools/compare_layout.py --run ./build/example_tour.exe
 | `11_grid` | grid, subgrid, track sizing, the card deck | 217 / 218 |
 | `15_real` | ten documents saved from the web | by eye, 9 / 10 |
 | `ar_hints` | what HTML's legacy attributes compute to | 42 / 43 |
-| `ar_elements` | what every element's defaults compute to | 1066 / 1071 |
+| `ar_elements` | what every element's defaults compute to | 1061 / 1071 |
 | `ar_quirks` | what a document with no doctype does differently | 39 / 39 |
 | `ar_units` | what every CSS length unit computes to | **35 / 35** |
 | `ar_calc` | what calc() and var() compute to | **109 / 109** |
 | `media` | 300 media queries, both engines, four viewports | **1200 / 1200** |
-| `gallery` | one standalone page per feature, both engines | 163 / 163 gated, 13 reported |
+| `gallery` | one standalone page per feature, both engines | 180 / 180 gated, 14 reported |
 | `09_table` | tables: anonymous boxes, collapse, spans | 616 / 624 |
 
 The table corpus is the honest exception and is not gated: **8 of its 624 boxes still land
@@ -1160,6 +1340,17 @@ divided between the boxes either side of it**. It is worth a pixel per line, and
 means working through CSS 17.6.2's conflict resolution rather than fitting the remaining deltas.
 Listed rather than compensated for.
 The grid corpus disagrees on exactly one box, `width-fit-content-function`, named in the same way.
+
+**And whole pages, beside Edge.** `python tools/comparison.py` puts thirteen
+of them in `docs/comparison/` -- the plain form, the document examples, and the
+ten pages saved from the web in `examples/15_real` -- each as areole, Edge, and
+the pixels that differ. It is a folder to look through rather than a gate, and
+the first look found what the corpora had not: an element keeps eight classes
+now and kept four, so a link on a utility-class site drew as text and a menu
+marked `hidden` drew open (nasa.gov: 51.5% of pixels different, then 4.6%); the
+`hidden` attribute itself was never read; an empty line before a heading pushed
+the HTML standard's whole page down 25 px; a body's background stopped at the
+body's box; and no field showed its `placeholder`.
 
 **Flex still has no corpus of its own.** Every layout release from 0.5.0 got one, 0.8.x shipped
 without, and grid's arrived late; flex's has not arrived at all. It is the next one to build, and

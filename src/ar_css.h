@@ -336,7 +336,57 @@ typedef enum ar_prop
      * them. It inherits, so declaring it on `:root` settles the document, and
      * it is narrow because the value is a pair of flags.
      */
+    /*
+     * `outline-width`. The ninety-fifth property, and the reason it exists is
+     * that a border cannot do this job: a border takes space, so a focus ring
+     * drawn with one moves the page every time the focus moves. An outline is
+     * drawn outside the border box and contributes nothing to layout, which is
+     * the whole of what the property is for.
+     */
+    /*
+     * `white-space`, which is two questions in one property and has been since
+     * CSS 2: may the text be wrapped, and may its spaces be collapsed. The
+     * values are the four useful combinations of those two and are named
+     * historically rather than logically, which is why the table below is
+     * written as a pair of flags and not as a scale.
+     */
+    AR_P_WHITE_SPACE,
+
+    AR_P_OUTLINE_WIDTH,
+
+    /* The ninety-seventh. `text-decoration` is one property here and not
+       the four CSS 3 split it into -- line, style, colour, thickness --
+       because nothing in this engine can draw a wavy double underline in
+       a second colour, and three slots for values nothing reads is the
+       catalogue row this project refuses. */
+    AR_P_TEXT_DECORATION,
+
+    /*
+     * The ninety-eighth, and it is a *family slot* rather than a family
+     * name. areole has no font database to look a name up in: it is handed
+     * faces by the embedder and draws with those. So this holds which of
+     * the loaded families a box wants, and `monospace` is the one that
+     * matters -- it is the difference between `<pre>` reading as code and
+     * reading as prose that lost its indentation.
+     *
+     * A named family resolves to the default slot, which is the honest
+     * answer: an engine with one face cannot honour `font-family: Georgia`
+     * and should not pretend by picking something.
+     */
+    AR_P_FONT_FAMILY,
+
     AR_P_COLOR_SCHEME,
+
+    /*
+     * `opacity`, per mille: 0 to 1000, not inherited.
+     *
+     * Partly, and the part is the visible one. Zero draws nothing for the box
+     * or anything inside it -- weather.gov hides its open menus that way, and
+     * every one of them drew -- while the box still takes its space and still
+     * takes the pointer, as in a browser. Anything between draws opaque: a
+     * translucent group needs the group composited first, which is 0.12.0.
+     */
+    AR_P_OPACITY,
 
     AR_P_NARROW_COUNT,
 
@@ -345,6 +395,10 @@ typedef enum ar_prop
     AR_P_BACKGROUND,
     AR_P_COLOR,
     AR_P_BORDER_COLOR,
+
+    /* The ninety-sixth, and the last that fits three words. See
+       AR_PSET_WORDS below, which this commit moves to four. */
+    AR_P_OUTLINE_COLOR,
 
     /* `scrollbar-color` is two colours in one declaration, thumb then track,
        and they cascade as one. Two slots because a colour is a colour. */
@@ -400,6 +454,24 @@ enum
     AR_FONT_STYLE_ITALIC = 1
 };
 
+/*
+ * `white-space`, as the two flags it actually is.
+ *
+ * `pre-line` collapses spaces but keeps newlines, which is the one combination
+ * whose name says what it does.
+ */
+enum
+{
+    AR_WS_NORMAL = 0, /* wrap, collapse            */
+    AR_WS_NOWRAP,     /* no wrap, collapse         */
+    AR_WS_PRE,        /* no wrap, keep             */
+    AR_WS_PRE_WRAP,   /* wrap, keep                */
+    AR_WS_PRE_LINE    /* wrap, collapse but for newlines */
+};
+
+#define AR_WS_WRAPS(v)     ((v) != AR_WS_NOWRAP && (v) != AR_WS_PRE)
+#define AR_WS_COLLAPSES(v) ((v) != AR_WS_PRE && (v) != AR_WS_PRE_WRAP)
+
 /* `color-scheme`. Four values and not two, because `normal` and `light` are
    different declarations that happen to render the same: `normal` means the
    author said nothing about schemes, and `light` means they said light. The
@@ -413,6 +485,22 @@ enum
 };
 
 /*
+ * Four words, a hundred and twenty-eight properties, and ninety-six of them
+ * are spent.
+ *
+ * It was three, and the note below priced the move before it was needed --
+ * which is the point of pricing it. `outline-width` and `outline-color` take
+ * the last two slots of the old ceiling, so this is the commit that pays.
+ *
+ * The measured bill, taken at 0.9.6 and confirmed here: ar_style 316 -> 320
+ * bytes, the ceiling 96 -> 128, and three benchmark passes against the 0.9.6
+ * baseline flagged one scene once, which is the noise floor rather than a
+ * cost. AR_BYTES_PER_BOX at 560 absorbs it without moving.
+ *
+ * What follows is the note as it stood before the bill came due.
+ *
+ * ---
+ *
  * Three words, ninety-six properties, and ninety-four of them are spent.
  *
  * The next release to need a ninety-seventh must make this four, and the price
@@ -427,7 +515,7 @@ enum
  * which was the right call for reasons that had nothing to do with room.
  * ar__prop_mask_fits below stops the build when the ninety-seventh arrives.
  */
-#define AR_PSET_WORDS 3
+#define AR_PSET_WORDS 4
 
 typedef struct ar_pset
 {
@@ -905,10 +993,36 @@ enum
 
 enum
 {
+    AR_FAMILY_DEFAULT = 0,
+    AR_FAMILY_MONOSPACE,
+    /* The face a browser draws controls in -- Arial, on Windows -- while the
+       body text is in the serif default. Two proportional families, because a
+       page of Times with Times in its fields is not what anybody's browser
+       shows. */
+    AR_FAMILY_SANS
+};
+
+enum
+{
+    AR_DECOR_NONE = 0,
+    AR_DECOR_UNDERLINE,
+    AR_DECOR_LINE_THROUGH
+};
+
+enum
+{
     AR_VALIGN_BASELINE = 0,
     AR_VALIGN_TOP,
     AR_VALIGN_MIDDLE,
-    AR_VALIGN_BOTTOM
+    AR_VALIGN_BOTTOM,
+
+    /* Both are the baseline case with the baseline moved, not a fourth and
+       fifth way of aligning: everything on the line still shares one baseline
+       and these two shift where this box's own sits against it. Appended
+       rather than inserted, because the four above are stored in `v[]` and a
+       renumbering would change every sheet already parsed. */
+    AR_VALIGN_SUB,
+    AR_VALIGN_SUPER
 };
 
 enum
@@ -1229,17 +1343,93 @@ enum
     AR_STATE_FLEX_FROZEN = 1 << 13,
 
     /* The ones that cannot be answered until the parent has closed. */
+    /*
+     * The two halves of focus that are not `:focus` itself.
+     *
+     * `:focus-visible` is the one that matters to anyone using a keyboard. A
+     * mouse click focuses a control and must not draw a ring; a Tab focuses it
+     * and must. The difference is not a property of the box, it is a property
+     * of how the focus arrived, so it is carried here rather than derived --
+     * and getting it wrong is the reason so many pages ship `outline: none`.
+     *
+     * `:focus-within` matches a box that contains the focused one, which is
+     * what lets a form group highlight while any field inside it is active.
+     * It is the same ancestor-chain trick `:hover` already uses.
+     *
+     * These are bits 14 and 15, and there are no more: `state` is an ar_u16 and
+     * this fills it. The next state bit widens the field, on every box and in
+     * every rule -- ar_test asserts the width so the build says so rather than
+     * a bit quietly falling off the end.
+     */
+    AR_STATE_FOCUS_VISIBLE = 1 << 14,
+    AR_STATE_FOCUS_WITHIN = 1 << 15,
+
+    /*
+     * The seventeenth state bit, and the one that widened the word.
+     *
+     * The comment above said the next bit past fifteen would cost an ar_u16 on
+     * every box and in every rule. This is it, and the bill came to nothing
+     * measurable: `ar_node` was already eight-aligned with two bytes of padding
+     * where `state` sits, so AR_BYTES_PER_BOX did not move at all.
+     *
+     * `:checked` is a real pseudo-class rather than an attribute selector
+     * because the checked-ness of a control is not what the markup said. The
+     * `checked` attribute is the *default*; what a user has since clicked is
+     * the state, and `[checked]` matching the first is a mistake people make
+     * once.
+     */
+    AR_STATE_CHECKED = 1 << 16,
+
+    /*
+     * `:disabled`, and its opposite.
+     *
+     * Two bits and not one, because `:enabled` is not simply "not disabled":
+     * neither matches an element that cannot be disabled at all. A paragraph
+     * is not an enabled paragraph.
+     */
+    AR_STATE_DISABLED = 1 << 17,
+    AR_STATE_ENABLED = 1 << 18,
+
+    /*
+     * `:open`, for a `<details>` that is showing its contents.
+     *
+     * A pseudo-class and not `[open]`, for the reason `:checked` is not
+     * `[checked]`: the attribute is where it started and the state is what the
+     * user has done since. A stylesheet written against `[open]` styles the
+     * markup and stops agreeing with the screen the first time anyone clicks.
+     */
+    AR_STATE_OPEN = 1 << 19,
+
+    /* The first `<legend>` of a `<fieldset>`: the one a browser draws on the
+       fieldset's top border rather than inside it. Not a pseudo-class -- no
+       selector names it -- but a fact the layout and the painter both need,
+       and the document walk is the one place that knows it. */
+    AR_STATE_LEGEND = 1 << 20,
+
+    /* Drawn at opacity zero: this box or one around it said so. Marked after
+       the cascade, a subtree at a time, because `opacity` does not inherit
+       and a child cannot undo its parent's. */
+    AR_STATE_TRANSPARENT = 1 << 21,
+
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };
 
 /*
  * A selector can name several classes and an element can carry several, and
- * `.card.selected` has to match a box that is both. Four is the ceiling on
- * each: a rule naming five classes and a box carrying five are both things
- * nobody writes, and the alternative is a variable-length list inside a struct
- * that must stay copyable.
+ * `.card.selected` has to match a box that is both. Eight is the ceiling on
+ * each, and the alternative is a variable-length list inside a struct that
+ * must stay copyable.
+ *
+ * It was four, on the grounds that "a box carrying five is something nobody
+ * writes". Every utility-class site writes it on most elements: nasa.gov's
+ * links carry five, its buttons seven. A fifth class was dropped without a
+ * word, and the classes the walk adds itself -- `.ar-link`, `.ar-hidden` --
+ * come after the author's and were the first to go: links drew as plain
+ * text, and a megamenu marked `hidden` drew open, because its own five
+ * classes had filled the set. The walk's classes are now taken first (see
+ * ar_selector_split) and the set is eight.
  */
-#define AR_MAX_CLASSES 4
+#define AR_MAX_CLASSES 8
 
 typedef struct ar_classes
 {
@@ -1300,7 +1490,7 @@ typedef struct ar_sel_simple
     ar_u32 tag;   /* hash, 0 means any */
     ar_u32 klass; /* hash, 0 means any -- one class, not a set */
     ar_u32 id;    /* hash, 0 means any */
-    ar_u16 state; /* required state bits, 0 means any */
+    ar_u32 state; /* required state bits, 0 means any */
 } ar_sel_simple;
 
 typedef struct ar_sel_part
@@ -1354,7 +1544,7 @@ typedef struct ar_rule
        so by here they are the same thing. */
     ar_sel_simple alt[AR_MAX_ALTS];
     ar_i32        nalt;
-    ar_u16        state; /* required state bits, 0 means any */
+    ar_u32        state; /* required state bits, 0 means any */
 
     ar_u16 specificity;
     ar_u16 order; /* source position, to break specificity ties */
@@ -1440,7 +1630,7 @@ typedef struct ar_rule
 typedef struct ar_cache_entry
 {
     ar_u32   tag, klass, id;
-    ar_u16   state;
+    ar_u32   state;
     ar_u8    used;
     ar_style style;
 } ar_cache_entry;
@@ -1856,7 +2046,7 @@ void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_
  * Returns how many were written, up to `cap`.
  */
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, ar_var_decl *out, ar_i32 cap);
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap);
 
 /* The reference at `index`, or 0 if there is none. */
 const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);
@@ -1943,9 +2133,9 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css);
 void ar_sheet_note_tables(ar_sheet *sheet);
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,
-                               ar_u32 id, ar_u16 state, ar_style *out);
+                               ar_u32 id, ar_u32 state, ar_style *out);
 
-void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u16 state,
+void ar_sheet_resolve(ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id, ar_u32 state,
                       ar_style *out);
 
 /* Splits a selector such as div.card#first into its three hashes. Any part may
@@ -1970,7 +2160,7 @@ int ar_sel_part_matches(const ar_sel_part *p, ar_u32 tag, const ar_classes *klas
 /* Does one simple selector describe this element? Used for the contents of
    :not(), :is() and :where(), which are lists of these and nothing else. */
 int ar_sel_simple_matches(const ar_sel_simple *p, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                          ar_u16 state);
+                          ar_u32 state);
 
 /*
  * The contextual pass.
@@ -2006,10 +2196,10 @@ void ar_sheet_mark_ua(ar_sheet *sheet);
  * cached exactly as before.
  */
 void ar_sheet_resolve_hinted(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u16 state, const ar_rule *hints, ar_style *out);
+                             ar_u32 state, const ar_rule *hints, ar_style *out);
 
 void ar_sheet_apply_important(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                              ar_u16 state, ar_style *out);
+                              ar_u32 state, ar_style *out);
 
 /*
  * Parse a declaration list -- `color:red; width:4px` -- into a selectorless
@@ -2023,7 +2213,7 @@ int ar_decls_parse(ar_sheet *sheet, const char *decls, ar_rule *rule);
 void ar_sheet_set_strict_lengths(ar_sheet *sheet, int on);
 
 void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag,
-                                 const ar_classes *klass, ar_u32 id, ar_u16 state, ar_sel_walk find,
+                                 const ar_classes *klass, ar_u32 id, ar_u32 state, ar_sel_walk find,
                                  void *ud, ar_style *out);
 
 #endif /* AR_CSS_H */

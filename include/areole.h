@@ -134,6 +134,47 @@ typedef struct ar_surface
 void ar_surface_clear(ar_surface *s, ar_color c);
 void ar_fill_rect(ar_surface *s, ar_rect r, ar_rect clip, ar_color c);
 
+/*
+ * The largest corner these will draw, and why there is one at all.
+ *
+ * The span walk keeps one inset per row of a corner, and that array is on the
+ * stack because nothing allocates after ar_init. Sixty-four rows is 256 bytes
+ * of it, covers every control and card anyone has asked for, and a radius past
+ * it is clamped rather than refused -- a button that is slightly less round
+ * than it asked for is a better answer than a square one.
+ */
+#define AR_MAX_RADIUS 64
+
+/* The same rectangle with its corners rounded off, and the ring one leaves
+   when it is drawn inside another. `radius` is clamped to half the shorter
+   side, so a radius past that is a capsule rather than a mistake, and a radius
+   of zero is ar_fill_rect exactly. `width` is the ring's thickness, measured
+   inwards from the edge. */
+void ar_fill_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_rect clip, ar_color c);
+/* Which way a triangle points. */
+enum
+{
+    AR_TRI_UP = 0,
+    AR_TRI_RIGHT,
+    AR_TRI_DOWN,
+    AR_TRI_LEFT
+};
+
+/* A filled triangle inscribed in `r`, pointing `dir`. */
+void ar_fill_tri(ar_surface *s, ar_rect r, ar_i32 dir, ar_rect clip, ar_color c);
+
+void ar_stroke_round_rect(ar_surface *s, ar_rect r, ar_i32 radius, ar_i32 width, ar_rect clip,
+                          ar_color c);
+
+/*
+ * Fills the rectangle `d` of `dst` from `src`, a picture `scale` thousandths
+ * of dst's size -- what a backend does with a frame drawn at a render scale
+ * (ar_set_render_scale). Larger than dst, each dst pixel is the average of
+ * the block behind it; smaller, a bilinear mix of the four around its centre.
+ * Integers only, and nothing allocated.
+ */
+void ar_surface_resample(const ar_surface *src, ar_surface *dst, ar_rect d, ar_i32 scale);
+
 /* ------------------------------------------------------------------------
  * Instrumentation
  *
@@ -273,6 +314,45 @@ typedef struct ar_input
      * second-guessing. A backend that repeats sets the bit again.
      */
     ar_u32 keys_pressed;
+
+    /*
+     * The text typed since the last frame, as UTF-8, or null.
+     *
+     * Text and keys are two different things and a backend has to keep them
+     * apart: the key that produced `@` is Shift and 2 on one layout and AltGr
+     * and Q on another, and no table here could tell. The platform turns a key
+     * event into a character and hands over the character; this file never
+     * learns what a keyboard layout is.
+     *
+     * The pointer is borrowed for the length of ar_frame_begin and copied if it
+     * is wanted, which is the same contract every other string in this API has.
+     */
+    const char *text;
+    ar_u32      text_len;
+
+    /*
+     * What an input method is composing, as UTF-8, or null when nothing is.
+     *
+     * A state and not an event, which is the one way this field differs from
+     * `text`: a backend sets it every frame for as long as the composition
+     * lasts, and clears it when the composition ends -- at which point the
+     * committed characters arrive through `text` like anything typed. That
+     * split is what lets the core draw the composition inline, underlined, at
+     * the caret, without ever putting it in the field's buffer: a composition
+     * that is abandoned leaves nothing behind.
+     */
+    const char *compose;
+    ar_u32      compose_len;
+
+    /*
+     * Which press this is in a run of them: 2 for the second click of a double
+     * click, 3 for a triple. Zero reads as one.
+     *
+     * The platform counts, because the platform knows the user's double-click
+     * time and distance and the core has no clock it may call its own. A field
+     * selects a word on 2 and everything on 3.
+     */
+    ar_u32 clicks;
 } ar_input;
 
 /*
@@ -297,7 +377,70 @@ enum
        modifier tracking here, so a backend that wants the second one sets
        AR_KEY_PAGE_UP itself -- which is the honest split: the platform knows
        about shift and this does not. */
-    AR_KEY_SPACE = 1u << 8
+    AR_KEY_SPACE = 1u << 8,
+
+    /*
+     * Tab, and Tab the other way.
+     *
+     * Two bits rather than one bit and a modifier, which is the same split the
+     * comment above makes for shift-space: the platform knows about Shift and
+     * this does not. A backend sets AR_KEY_TAB_BACK when Shift was held, and
+     * the core never learns what a modifier is.
+     */
+    AR_KEY_TAB = 1u << 9,
+    AR_KEY_TAB_BACK = 1u << 10,
+
+    /*
+     * Enter, which activates the focused control.
+     *
+     * Space activates too and already has a bit, because it pages down when
+     * nothing is focused. That is not a conflict to resolve, it is the rule: a
+     * browser pages with Space until the focus is on something that consumes
+     * it, and then the control wins. The focus decides, here as there.
+     */
+    AR_KEY_ENTER = 1u << 11,
+
+    /* The two that delete. Separate bits rather than one and a direction,
+       because a backend has two keys and translating them into one plus a flag
+       is work for the one place that then has to undo it. */
+    AR_KEY_BACKSPACE = 1u << 12,
+    AR_KEY_DELETE = 1u << 13,
+
+    /* Shift, as a qualifier on the arrows: held, it extends the selection. Not
+       a modifier table -- the platform knows about modifiers and this does
+       not -- but the one modifier that changes what an arrow means. */
+    AR_KEY_SHIFT = 1u << 14,
+
+    /* Select all, undo and redo, which every platform spells with a different
+       modifier and which all three arrive here already decided. */
+    AR_KEY_SELECT_ALL = 1u << 15,
+    AR_KEY_UNDO = 1u << 16,
+    AR_KEY_REDO = 1u << 17,
+
+    /* Escape, which closes an open dropdown and does nothing else yet. */
+    AR_KEY_ESCAPE = 1u << 18,
+
+    /*
+     * Ctrl, as a qualifier the way Shift is one: with an arrow it moves by
+     * word, with Backspace or Delete it removes one. Not a modifier table --
+     * Ctrl+A, Ctrl+Z and the clipboard arrive below already decided -- but the
+     * one meaning Ctrl adds to keys that have a meaning without it.
+     */
+    AR_KEY_CTRL = 1u << 19,
+
+    /*
+     * The clipboard, which belongs to the platform.
+     *
+     * Copy and cut are requests: the core works out *what* to copy, and the
+     * backend reads it with ar_clipboard_text after the frame and puts it
+     * wherever its clipboard lives. Paste arrives the other way, as the
+     * clipboard's text in `ar_input.text` with this bit set -- so it is one
+     * undo step rather than a typing run, and a single-line field can drop
+     * its newlines.
+     */
+    AR_KEY_COPY = 1u << 20,
+    AR_KEY_CUT = 1u << 21,
+    AR_KEY_PASTE = 1u << 22
 };
 
 /* ------------------------------------------------------------------------
@@ -531,16 +674,68 @@ typedef ar_i32 ar_scroll_pos;
  * 0.4.3's sixteen-bit field cost eight. Colour's own notations cost nothing
  * here: they resolve to the 0xAARRGGBB the engine already had room for.
  *
- * Worth knowing before the next release adds one: 94 of the 96 the property
- * set can hold. The ninety-seventh forces AR_PSET_WORDS to four, which is four
- * more bytes on every style rather than on every box, and ar__prop_mask_fits
- * will say so on the build.
+ * 560 -> 568 at 0.10.0, for `outline-width` and `outline-color` and the
+ * fourth word of the property mask that the second of them forced. The three
+ * together are ten bytes and alignment rounds them to sixteen; the assertion
+ * in ar_ctx.c refused 560 on the build, which is what it is there for.
+ *
+ * The ceiling is 96 of 128 now, not 94 of 96. The note that said the
+ * ninety-seventh property would force AR_PSET_WORDS to four was right, and
+ * this is the release that paid it -- priced at 0.9.6 before it was needed,
+ * which is the point of pricing things.
+ *
+ * 576 -> 584 for `text-decoration` and `font-family`, the ninety-seventh and
+ * ninety-eighth. Three bytes each -- two in ar_style's narrow array and one in
+ * its unit array -- and alignment rounds the six to eight. The property mask
+ * does not move: four words hold 128 and 98 are used.
+ *
+ * The assertion refused 576 on the build again, which is the second time it
+ * has been the thing that noticed rather than a comment. A property costs
+ * these bytes on every box whether or not any box sets it, which is the trade
+ * the flat-style design makes and the reason `text-decoration` is one
+ * property here rather than the four CSS 3 splits it into.
+ *
+ * 584 -> 600 at 0.10.0, for classes: a box keeps eight now and kept four
+ * (AR_MAX_CLASSES, in ar_css.h, says why four was wrong). Sixteen bytes of
+ * hashes, measured, and `opacity` beside them cost nothing -- three bytes the
+ * style's alignment had already rounded away.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 552u
+#define AR_BYTES_PER_BOX 600u
 #else
-#define AR_BYTES_PER_BOX 560u
+#define AR_BYTES_PER_BOX 600u
 #endif
+
+/*
+ * Per-frame strings, per box, and why this is a reservation rather than
+ * whatever happens to be left over.
+ *
+ * Three things are copied into the frame arena *after* the box tree is
+ * reserved: an element's `style=""` declarations, its presentational hints,
+ * and the text a field is showing. All three are allocated out of what the
+ * tree did not take -- and until 0.10.0 the tree took everything. The clamp
+ * that fits the box count to the arena divided by the size of the three
+ * per-box arrays exactly, so what remained was the alignment rounding: 24 to
+ * 40 bytes for a whole document.
+ *
+ * The result was that the first one or two inline styles on a page applied
+ * and every one after them was silently dropped. Not an error -- the box
+ * renders with what its selectors said, which is a reasonable thing to do when
+ * memory runs out and a disastrous one to do always. A `<progress>` showed an
+ * empty track because the width that fills it is written as an inline style.
+ *
+ * Sixteen is measured, not chosen. Across the ten documents in
+ * examples/15_real the worst case is wikipedia-ja-html at 9,161 bytes over
+ * 4,607 boxes -- **2.0 bytes per box** -- and the rest are between 0 and 0.8.
+ * Sixteen is eight times the worst of them, and costs 16/(552+16) = 2.8% of
+ * the box budget on a block that is arena-bound rather than budget-bound.
+ *
+ * A page can still exhaust it: one `style=""` of a hundred characters on every
+ * element is 100 bytes a box and no reservation that keeps the box budget
+ * usable would cover it. That case sets `overflowed` like any other, which is
+ * the difference between a limit and a silent one.
+ */
+#define AR_FRAME_STR_PER_BOX 16u
 
 /*
  * The part of the block that does not scale with the box count: the context
@@ -632,13 +827,93 @@ typedef ar_i32 ar_scroll_pos;
  *
  * The assertion now names it. Measured: 217,601 of 221,184, which keeps the
  * same uncomfortable four kilobytes 0.4.3 left and for the same reason.
+ *
+ * 216 KB -> 220 KB at 0.10.0, for the frame's control list: a key, a group
+ * hash and a kind for each of 256 controls, which is 2,304 bytes, and the
+ * focus machinery's own arrays beside them.
+ *
+ * On the context rather than in the slot, which is the trade worth naming.
+ * Per-box it would have been three more fields on every box in the interface
+ * for the sake of the handful that are controls at any moment -- the same
+ * argument ar_slot's own comment makes about the scroll positions, and the
+ * same one AR_STATE_COLLAPSED makes about finding a spare bit instead of a
+ * byte. A document with more than 256 controls is a document nobody fills in.
+ *
+ * Measured: 221,304 of 225,280.
+ *
+ * 220 KB -> 224 KB, still at 0.10.0, for `outline`. Two properties and a
+ * fourth word of the property mask grow ar_style, and the style cache holds
+ * sixty-four of those. Measured: 226,936 of 229,376.
+ *
+ * 224 KB -> 231 KB, still at 0.10.0, and most of it is not new storage.
+ *
+ * The focus order arrays are 1 KB. The rest is the assertion in ar_ctx.c
+ * finally accounting for something it never could: the slot table is
+ * `ar__round_pow2(boxes * 2)` entries while AR_BYTES_PER_BOX budgets one slot
+ * per box, so between one and four slots per box are allocated against a
+ * budget for one, and the difference has always landed in the slack. A fixed
+ * slack cannot cover a term that scales with the box count.
+ *
+ * It hid an overflow twice -- the media query pool at 0.9.6 and 1 KB of focus
+ * order here, where the assertion passed while thirteen tests failed. Bisected
+ * this time: satisfied at 227,960, tests needed 230,113. AR_MEM_SLACK is 8 KB
+ * now and the real fix is named in the roadmap: the per-box budget should
+ * count the slots the way they are actually allocated.
+ *
+ * 288 KB -> 320 KB, still at 0.10.0, and it is the price of a textarea.
+ *
+ *     the edit buffer     4,426 -> 27,664   AR_EDIT_CAP 256 -> 4,096 bytes,
+ *                                           and undo as a 512-step diff log
+ *                                           over 16 KB instead of sixteen
+ *                                           whole copies of the buffer
+ *     the value pool      4,096 ->  8,192   one packed run instead of sixteen
+ *                                           256-byte slots, 32 entries
+ *     control tables          0 ->  6,400   element, payload and box per
+ *                                           control; sliders; selects and
+ *                                           colours as left; a 128-entry
+ *                                           element-to-key memo; an input
+ *                                           method's composition
+ *     the shared scratch    257 ->      0   gone: a field's text is built
+ *                                           straight into the frame arena
+ *
+ * The context goes 31,720 -> 65,208 bytes. Measured: 322,232 of 327,680,
+ * against 288,744 of 294,912 before -- the same five-to-six kilobytes of
+ * headroom, kept for the same reason.
+ *
+ * The buffer is the only large term and it is set by the release's own
+ * budget, which is written against a 2,000 character text area and a
+ * 500-step undo session: 256 bytes and sixteen snapshots could meet neither.
+ * The pool was 16 KB in the first draft of this and was halved, because two
+ * full textareas is a form nobody fills in, and every embedder pays for it.
+ *
+ * 320 KB -> 340 KB, for eight classes rather than four. A rule carries four
+ * class sets -- its subject's and three for the boxes above it -- so each set
+ * growing by sixteen bytes is sixty-four a rule, and the default table of 320
+ * rules is the 20,480 bytes this moves by: 342,712 measured of 348,160, the
+ * same five kilobytes of headroom as before. The rule table is the whole of
+ * it; nothing else in the fixed block holds a class.
  */
-#define AR_MEM_FIXED  221184u
+#define AR_MEM_FIXED  348160u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
-/* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
-   slots a rule carries; see ar_init_rules. */
-#define AR_BYTES_PER_RULE 588u
+/*
+ * What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
+ * slots a rule carries; see ar_init_rules.
+ *
+ * 588 -> 636, and it had been wrong since a rule last grew. Only this macro
+ * used it -- ar_init_ex measures with `sizeof(ar_rule)` and so was right -- so
+ * a caller sizing a block with AR_MEM_RULES for more than 256 rules got one
+ * 48 bytes a rule too small and was refused at init. A refusal and not a
+ * corruption, which is why it went unnoticed, and exactly the "a block that is
+ * checked and a block that is used are two different numbers" hazard the
+ * assertion in ar_ctx.c exists for.
+ *
+ * The assertion below now ties the two together, because a comment could not.
+ *
+ * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
+ * it was four.
+ */
+#define AR_BYTES_PER_RULE 700u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting
@@ -807,6 +1082,18 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
  */
 int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight, int italic);
 
+/* The face `font-family: monospace` draws with: a different axis from the
+   one above, which picks a weight inside a family. One face, because `<pre>`
+   and `<code>` are what it is for and neither is commonly bold. Without it a
+   document asking for monospace draws in the body face, as it always did. */
+int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size);
+
+/* The face `font-family: sans-serif` draws with, which is also what controls
+   draw in: a browser sets body text in a serif and its fields and buttons in a
+   sans, and a page that matches one has to be able to do both. Without it,
+   sans-serif draws in the body face, as it always did. */
+int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size);
+
 int ar_font_loaded(const ar_ctx *c);
 
 /*
@@ -933,6 +1220,26 @@ void ar_set_clock(ar_ctx *c, ar_u32 (*clock_us)(void));
 void ar_set_resolution(ar_ctx *c, ar_i32 dppx_thousandths);
 
 /*
+ * Draws at a scale of the layout, in thousandths: 2000 paints every box,
+ * border, corner and glyph twice as large in each direction, 500 at half.
+ *
+ * Layout does not change. ar_frame_end lays the page out in the surface's
+ * size divided by the scale -- hand it a surface 2000x1280 at 2000 and the
+ * page is laid out at 1000x640 -- and every rectangle the API reports, from
+ * ar_node_rect to the damage, is in those layout pixels, so the pointer and
+ * hit testing need nothing new. What a backend does with the bigger or
+ * smaller picture is its own business: ar_win_set_render_scale shrinks it into
+ * the window for smoother edges and text, or stretches it for speed.
+ *
+ * Glyphs are rasterized at the scaled size, so a face has to be loaded with a
+ * `max_px` that covers the largest text times the scale: text larger than that
+ * is not drawn, here as at 1000. Clamped to 250..8000; 1000 is the default,
+ * and costs one comparison per drawing call.
+ */
+void   ar_set_render_scale(ar_ctx *c, ar_i32 thousandths);
+ar_i32 ar_render_scale(const ar_ctx *c);
+
+/*
  * What media queries are answered against, stated rather than inferred.
  *
  * Without this the size comes from the viewport the last frame was drawn
@@ -953,6 +1260,104 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in);
    "div", ".card", "#sidebar", or any combination such as "div.card#first". */
 void ar_begin(ar_ctx *c, const char *selector);
 void ar_end(ar_ctx *c);
+
+/* ------------------------------------------------------------------------
+ * Focus
+ *
+ * Until 0.10.0 there was none: `:focus` was a selector state nothing ever set,
+ * and keyboard scrolling followed the mouse cursor because there was nothing
+ * better to follow. Everything in 0.10.0 stands on this -- a control that
+ * cannot be reached by Tab cannot be operated without a mouse, and an
+ * accessibility tree with no notion of where the user is has nothing to say.
+ *
+ * A box is a tab stop only if it says so. `ar_focusable` marks the box most
+ * recently begun, which for a parsed document the HTML side calls for anything
+ * carrying `tabindex`, and which an immediate-mode caller calls itself.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Mark the box just begun as a tab stop, with its `tabindex`.
+ *
+ * Zero is the ordinary case and means document order. A positive value sorts
+ * ahead of every zero and in ascending order among themselves, which is the
+ * rule nobody should rely on and every engine has to honour anyway. A negative
+ * one is not a tab stop at all and is refused here rather than filtered later.
+ */
+void ar_focusable(ar_ctx *c, ar_i32 tabindex);
+
+/* Move focus to the next or previous tab stop, in document order. Returns 1 if
+   the focus moved. This is what AR_KEY_TAB does, exposed so an embedder can
+   drive it from a menu or a shortcut. Focus moved this way is visible: it
+   draws a ring, because a keyboard put it there. */
+int ar_focus_next(ar_ctx *c, int backwards);
+
+/* Drop focus entirely. A document with nothing focused is where every document
+   starts, and this is how it gets back there. */
+void ar_focus_clear(ar_ctx *c);
+
+/* Whether anything is focused, and whether the focus should be drawn. */
+int ar_has_focus(const ar_ctx *c);
+int ar_focus_is_visible(const ar_ctx *c);
+
+/* Which box has it, as an index for ar_node_rect, or -1 when nothing is
+   focused or the focused box is not in this frame's tree. An embedder wanting
+   to scroll the focus into view, place an IME window beside it, or check that
+   the ring is where it should be has no other way to ask. */
+ar_i32 ar_focus_node(const ar_ctx *c);
+
+/* The text of the field being edited, or null when none is. Borrowed for the
+   frame, like everything else this API hands back. */
+const char *ar_field_text(ar_ctx *c, ar_u32 *len);
+
+/* How many tab stops the last frame published. */
+ar_i32 ar_tab_stops(const ar_ctx *c);
+
+/*
+ * Where the caret was drawn, or an empty rectangle when no field has it.
+ *
+ * What an input method's candidate window is placed against, and what a
+ * screen magnifier follows. Settled after layout, so it is the caret this
+ * frame painted rather than the one it was going to.
+ */
+ar_rect ar_caret_rect(const ar_ctx *c);
+
+/*
+ * How long until the caret next blinks, in microseconds, or 0 when there is
+ * nothing to blink.
+ *
+ * The core owns no clock and never wakes itself, so a backend that blocks
+ * when idle asks this after each frame and sleeps no longer than it says.
+ * When it wakes for that and nothing else, ar_frame_blink is the whole of
+ * what the blink needs. Without a clock (ar_set_clock) the caret is steady
+ * and this returns 0.
+ */
+ar_u32 ar_caret_wait_us(const ar_ctx *c);
+
+/*
+ * A caret blink, without a frame.
+ *
+ * Call it in place of a whole frame when nothing has happened but time -- the
+ * wake ar_caret_wait_us asked for, with no input in between. It repaints the
+ * caret's column from the frame already built, into the surface that frame
+ * was painted into, and returns the rectangle to present: one pixel by a line.
+ * Empty when the caret's phase has not changed, when no field has it, or when
+ * there is no finished frame to repaint from (after ar_frame_begin and before
+ * ar_frame_end). Any input at all needs a real frame instead, because only a
+ * frame can learn what the input changed.
+ *
+ * A blink by a whole frame was correct and cost the frame: the tree built,
+ * styled and laid out to learn that one column of pixels differed. Projected
+ * to the Pentium II tier that was 1 to 1.4 ms against a budget of 0.5. This
+ * paints the column and nothing else.
+ */
+ar_rect ar_frame_blink(ar_ctx *c, ar_surface *s);
+
+/*
+ * What the last frame's Ctrl+C or Ctrl+X asked to put on the clipboard, or
+ * null. Borrowed until the next ar_frame_begin; a password field never offers
+ * anything, because that is what a password field is for.
+ */
+const char *ar_clipboard_text(const ar_ctx *c, ar_u32 *len);
 
 /*
  * A box with its own declaration list, which is what an HTML `style=""`
@@ -1413,6 +1818,20 @@ typedef struct ar_dom_node
 
     ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
     ar_i32 attr_count;
+
+    /*
+     * The box this node became in the most recent ar_dom_build, as an index
+     * into that frame's tree, or -1 if it made none -- a node inside a closed
+     * `<details>`, the head, a comment.
+     *
+     * On the document rather than on the box because the document is what
+     * outlives the frame, and because the cost lands where the nodes are:
+     * four bytes a node, against four bytes on every box in every interface
+     * whether it was parsed or declared. The accessibility tree, a label's
+     * click and a form's submission all have a DOM node and need the box --
+     * its rectangle, its state, its key.
+     */
+    ar_i32 box;
 } ar_dom_node;
 
 typedef struct ar_doc
@@ -1477,6 +1896,198 @@ typedef struct ar_doc
  * set.
  */
 ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/* ------------------------------------------------------------------------
+ * Accessibility
+ *
+ * The core computes a tree; a backend adapts it to MSAA, UI Automation,
+ * AT-SPI or NSAccessibility. The split runs one way: the core never learns
+ * what an IAccessible is, and the backend never has to work out what a
+ * `<summary>` announces as.
+ *
+ * Public because an embedder is the one who owns the platform layer, and a
+ * tree nobody outside the library can read is a tree that helps nobody.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Roles, and the list is short because a role is only worth having when it
+ * changes what a reader says or does.
+ *
+ * There is no generic "group" for a `<div>`. A reader that announces one for
+ * every wrapper on the page buries the three things that mattered under forty
+ * that did not, and AR_ROLE_NONE means "walk through me to my children" rather
+ * than "I am nothing".
+ *
+ * Public as of the tree below, because a backend adapting the tree has to be
+ * able to name what it is adapting -- these lived in src/ and the forms
+ * example spelled out the one value it needed rather than reach for them.
+ */
+enum
+{
+    AR_ROLE_NONE = 0,
+    AR_ROLE_BUTTON,
+    AR_ROLE_LINK,
+    AR_ROLE_CHECKBOX,
+    AR_ROLE_RADIO,
+    AR_ROLE_TEXTBOX,
+    AR_ROLE_SEARCHBOX,
+    AR_ROLE_SLIDER,
+    AR_ROLE_COMBOBOX,
+    AR_ROLE_OPTION,
+    AR_ROLE_HEADING,
+    AR_ROLE_PARAGRAPH,
+    AR_ROLE_LIST,
+    AR_ROLE_LISTITEM,
+    AR_ROLE_TABLE,
+    AR_ROLE_ROW,
+    AR_ROLE_CELL,
+    AR_ROLE_COLUMNHEADER,
+    AR_ROLE_IMAGE,
+    AR_ROLE_DIALOG,
+    AR_ROLE_PROGRESSBAR,
+    AR_ROLE_METER,
+    AR_ROLE_GROUP,
+    AR_ROLE_FORM,
+    AR_ROLE_MAIN,
+    AR_ROLE_NAVIGATION,
+    AR_ROLE_BANNER,
+    AR_ROLE_CONTENTINFO,
+    AR_ROLE_COMPLEMENTARY,
+    AR_ROLE_REGION,
+    AR_ROLE_ARTICLE,
+    AR_ROLE_SPINBUTTON, /* a number field: a text box with a step */
+    AR_ROLE_LISTBOX,    /* an open dropdown's list */
+    AR_ROLE_COUNT
+};
+
+/* The states a reader announces alongside the role and the name. */
+enum
+{
+    AR_A11Y_CHECKED = 1u << 0,
+    AR_A11Y_DISABLED = 1u << 1,
+    AR_A11Y_EXPANDED = 1u << 2,
+    AR_A11Y_FOCUSED = 1u << 3,
+    AR_A11Y_FOCUSABLE = 1u << 4,
+    AR_A11Y_READONLY = 1u << 5,
+    AR_A11Y_COLLAPSED = 1u << 6, /* can expand and has not: a shut details  */
+    AR_A11Y_PROTECTED = 1u << 7, /* a password: say "protected", not the text */
+    AR_A11Y_SELECTED = 1u << 8,  /* the option a select is showing          */
+    AR_A11Y_OFFSCREEN = 1u << 9  /* clipped or scrolled out of the viewport */
+};
+
+/* The role, as one of the AR_ROLE_* values above. */
+ar_u8 ar_a11y_role(const ar_doc *d, ar_i32 node);
+
+/* The accessible name, by the ARIA algorithm. Returns its length. */
+ar_u32 ar_a11y_name(const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap);
+
+/* An attribute by name, or an empty span. */
+ar_span ar_a11y_attr(const ar_doc *d, ar_i32 node, const char *name);
+
+/*
+ * One node of the accessibility tree, flattened.
+ *
+ * `parent` is an index into the same array, or -1 for a node directly under
+ * the document. A parent always comes before its children and children are in
+ * document order, so a backend can rebuild the hierarchy in one pass or
+ * present it flat -- MSAA's simple children are flat, UI Automation is a
+ * tree, and both can be read off this.
+ *
+ * `rect` is the box in surface pixels, which every platform API wants once the
+ * window's own origin is added.
+ */
+typedef struct ar_a11y_item
+{
+    ar_i32  node;   /* the DOM node, for ar_a11y_name and the rest */
+    ar_i32  box;    /* its box in the frame the tree was built from */
+    ar_i32  parent; /* index into the array, or -1 */
+    ar_u32  state;  /* AR_A11Y_* */
+    ar_rect rect;
+    ar_u8   role;
+    ar_u8   level; /* a heading's 1 to 6, otherwise 0 */
+    ar_u8   pad_[2];
+} ar_a11y_item;
+
+/*
+ * The accessibility tree of the frame just built, from the document and the
+ * boxes it produced. Returns how many items there are, which may be more than
+ * `cap`; only `cap` are written.
+ *
+ * Call it between ar_frame_end and the next ar_frame_begin, which is the one
+ * window in which both the document and the tree it became are complete. A
+ * node with no role is walked through rather than listed, and a node that made
+ * no box -- inside a closed `<details>`, under `display:none` -- is not in the
+ * tree, because a reader announcing what nobody can see is the opposite of
+ * accessible.
+ */
+ar_i32 ar_a11y_tree(const ar_ctx *c, const ar_doc *d, ar_a11y_item *out, ar_i32 cap);
+
+/*
+ * What a control holds, as a reader would say it: a field's text, a slider's
+ * number, the option a select is showing, a gauge's percentage. A password
+ * field reports one bullet per character and never the characters. Returns
+ * the length; 0 for a node with no value.
+ */
+ar_u32 ar_a11y_value(const ar_ctx *c, const ar_doc *d, ar_i32 node, char *buf, ar_u32 cap);
+
+/*
+ * Do what a click would, or move the focus, on behalf of an assistive tool:
+ * MSAA's accDoDefaultAction and accSelect, UI Automation's Invoke and SetFocus.
+ * Both take effect on the next frame, which is when a click would have, so a
+ * backend calls them and asks for a frame. Return 0 when the node cannot be
+ * activated or focused in the frame just built.
+ */
+int ar_a11y_activate(ar_ctx *c, const ar_doc *d, ar_i32 node);
+int ar_a11y_focus(ar_ctx *c, const ar_doc *d, ar_i32 node);
+
+/*
+ * A number that changes whenever the tree's shape might have, so a backend can
+ * tell a reader to look again (EVENT_OBJECT_REORDER) without diffing two
+ * trees. It moves with the box count and with anything opening or closing,
+ * which over-reports a little and never under-reports.
+ */
+ar_u32 ar_a11y_generation(const ar_ctx *c);
+
+/* ------------------------------------------------------------------------
+ * Forms
+ *
+ * No network, by design: a `<form>` is submitted *to the embedder*, which
+ * decides what to do with it -- post it, save it, act on it. The core does the
+ * part every embedder would otherwise get wrong, which is which controls take
+ * part and how their values are encoded.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The form the last frame submitted, as a DOM node, or -1. `submitter` gets
+ * the button that did it, or -1 for an implicit submission -- Enter in a text
+ * field, which submits its form in every browser.
+ *
+ * Read it after ar_frame_end. `action` and `method` are attributes of the
+ * returned node, and ar_a11y_attr reads them.
+ */
+ar_i32 ar_form_submitted(const ar_ctx *c, ar_i32 *submitter);
+
+/*
+ * The submission, as application/x-www-form-urlencoded: what the user typed,
+ * ticked and chose -- which is what the markup said wherever nobody has.
+ *
+ * Writes at most `cap` bytes and returns the length the whole encoding needs,
+ * the way snprintf does, so a caller can size a buffer and ask again. Disabled
+ * and unnamed controls are left out, an unchecked box is absent rather than
+ * "off", and a button is included only when it is the submitter. Valid
+ * between ar_frame_end and the next ar_frame_begin.
+ */
+ar_u32 ar_form_encode(const ar_ctx *c, ar_i32 form, ar_i32 submitter, char *buf, ar_u32 cap);
+
+/*
+ * `<input type=file>` asks for a file, and the core cannot open a dialog -- it
+ * has no platform and no file system. This is the node whose chooser the last
+ * frame asked for, or -1; the backend opens whatever it opens and hands back
+ * the chosen name. The field then shows it and submits it, which is what a
+ * file input does without a network: the name, not the bytes.
+ */
+ar_i32 ar_file_wanted(const ar_ctx *c);
+void   ar_file_chosen(ar_ctx *c, ar_i32 node, const char *name, ar_u32 len);
 
 /*
  * Parse into storage the caller points at, with no context involved.

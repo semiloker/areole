@@ -85,7 +85,7 @@ css/media/prefers-color-scheme  engine: the documented default is light until 0.
 # so `<b>` and `<i>` are drawn in the one face there is, with its advances,
 # while a browser synthesises a heavier and a slanted one and gets wider ones.
 
-css/text/weight          engine: no bold or italic face is loaded, so their advances are the roman ones
+css/text/weight          engine: no bold or italic face is loaded, so their advances are the roman ones, and an inline box reports the line box height rather than the font one -- 22 against 22.4/1.4 = 16
 
 # ---- a border reserves no space ----------------------------------------
 #
@@ -154,3 +154,32 @@ css/units/ch             engine: the built-in face states no advance for "0", so
 
 css/units/percentage-references  engine: a percentage padding is read as pixels -- see 0.4.1's stated debt
 css/color/system-colors  browser: the system colours come from the OS theme there and from a fixed table here, so the two disagree by design until the theme hook lands at 0.16.1 -- geometry still agrees
+
+# ---- an inline at a smaller font-size measures narrow -------------------
+#
+# `vertical-align: sub` and `super` are right in this demo and are what it was
+# written to settle: the two offsets were picked by reading Chrome's boxes out
+# of this file rather than by arithmetic, and both subscript and superscript
+# now land on exactly the y a browser gives them.
+#
+# What is left is a width, and it is not about vertical-align at all. Setting
+# the demo to `vertical-align: baseline` leaves the same two boxes 7 px wide
+# against Chrome's 11 -- so it is there whatever the alignment says.
+#
+# The cause is the built-in face and not layout. `n->scale` is `font-size / 8`
+# in integers, so the 13 px these subscripts compute to draws and measures in
+# an 8 px cell, while the browser sets the same text at 13 with the outline
+# face the gallery ships. Every demo at a multiple of eight agrees; this one
+# asks for 0.8125em of 16 and does not.
+#
+# So it is 0.2.1's fractional bitmap scaling, or an areole that loads the
+# gallery's own TrueType the way the browser does -- the same choice
+# `css/units/cap` and `css/units/ch` are waiting on. Not a layout fault, and
+# the alignment either side of it is exact: with the two offsets in, the demo
+# went from four disagreeing boxes to two.
+#
+# The demo stays, amber, because the two that remain are the thing that will
+# go green.
+
+css/text/sub-super  engine: the built-in face scales in whole 8 px cells, so 13 px text measures as 8 -- the offsets are exact
+

@@ -18,6 +18,8 @@
 #include "ar_supports_props.h"
 #include "ar_node.h"
 #include "ar_html.h"
+#include "ar_a11y.h"
+#include "ar_edit.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -3136,6 +3138,274 @@ static void test_the_bar_repaints_when_only_its_colour_changed(void)
                bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
                (unsigned long)g_dmg_b[bad_px]);
     }
+}
+
+/*
+ * Every box gets its inline style, not just the first two.
+ *
+ * An inline declaration list is copied into the frame arena, and the frame
+ * arena is what the box tree did not take. The clamp that fits the box count
+ * to the arena divided by the size of the three per-box arrays *exactly*, so
+ * what was left for strings was the alignment rounding -- 24 to 40 bytes for a
+ * whole document, which is one or two declarations. Everything after them was
+ * dropped.
+ *
+ * Silently, and that is the part worth a test rather than a comment: running
+ * out makes a box render with what its selectors said, which is a defensible
+ * thing to do when memory is gone and a disastrous one to do on every page. It
+ * reads as "inline styles do not work sometimes", and on a parsed document it
+ * reads as something much stranger, because `<progress>`'s fill is written as
+ * an inline width -- so a gauge showed an empty track and the bug looked like
+ * it was about gauges.
+ *
+ * Two hundred boxes, because two was enough to pass. The count has to be past
+ * whatever the rounding happens to afford or the test cannot fail.
+ */
+static void test_every_box_gets_its_inline_style(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_i32     i, applied = 0, first_bad = -1;
+
+    ar__ui_reset("#root { display:block; } div { display:block; height:19px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    for (i = 0; i < 200; ++i)
+    {
+        ar_begin_styled(g_ui, "div", "height:10px");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    for (i = 1; i <= 200 && i < g_ui->node_count; ++i)
+    {
+        if (ar__box(i).h == 10)
+        {
+            ++applied;
+        }
+        else if (first_bad < 0)
+        {
+            first_bad = i;
+        }
+    }
+
+    CHECK(g_ui->node_count >= 201, "inline: the tree fits, so the budget is not what is measured");
+    CHECK(applied == 200, "inline: every box's own declaration list reaches it");
+    if (applied != 200)
+    {
+        printf("      %d of 200 applied, first without one is box %d\n", (int)applied,
+               (int)first_bad);
+    }
+}
+
+/*
+ * And the reservation that makes it true, stated as itself.
+ *
+ * The test above is the behaviour; this is the invariant behind it, so that a
+ * change to the frame layout fails with the reason rather than with a box of
+ * the wrong height. Anything the frame copies in after the tree -- inline
+ * styles, presentational hints, a field's text -- comes out of this.
+ */
+static void test_the_frame_keeps_room_for_its_strings(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+    ar_u32     want;
+
+    ar__ui_reset("#root { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_end(g_ui);
+
+    want = (ar_u32)g_ui->node_cap * AR_FRAME_STR_PER_BOX;
+
+    CHECK(g_ui->node_cap > 0, "inline: the frame reserved a tree");
+    CHECK(ar_arena_available(&g_ui->arena) >= want,
+          "inline: and left its strings room to be copied into");
+    if (ar_arena_available(&g_ui->arena) < want)
+    {
+        printf("      %lu bytes free, %lu wanted for %d boxes\n",
+               (unsigned long)ar_arena_available(&g_ui->arena), (unsigned long)want,
+               (int)g_ui->node_cap);
+    }
+    ar_frame_end(g_ui, &s);
+}
+
+/*
+ * The focus ring has to survive damage tracking, and it did not.
+ *
+ * 0.10.0 shipped a release about interaction whose focus ring never reached
+ * the screen, and the reason is entirely here: a ring appears *between* two
+ * frames and changes nothing else about the box. So the digest is the only
+ * thing that can notice it, and `outline-width` and `outline-color` were not
+ * in the list of what the paint pass reads -- the third time that list has
+ * been left behind by a property, and the first time it cost a whole feature.
+ *
+ * The second half is the same mistake in the other direction: even once the
+ * box is known to be dirty, an outline is drawn *outside* the border box, and
+ * the damage added was the border box. The repaint happened and clipped the
+ * ring away.
+ *
+ * Pixel identity against a context that repaints everything is what catches
+ * both, and nothing weaker can: every assertion about state and geometry is
+ * true throughout. The two contexts are given identical input and must produce
+ * identical surfaces -- if damage tracking skips anything the ring needs, the
+ * tracked surface is missing pixels the full one has.
+ *
+ * The two boxes are styled differently on purpose, because the two halves of
+ * the fix are caught by different things and a test that only does one of them
+ * cannot say so:
+ *
+ *   #a has no outline until it is focused, so its *painted bounds* change, and
+ *   the geometry comparison catches that on its own once the slot remembers
+ *   bounds rather than the border box.
+ *
+ *   #b always has a ring and only its colour changes, so its bounds never
+ *   move. Nothing but the digest can see it -- which is the case the digest
+ *   exists for and the one that was missing.
+ *
+ * Stubbing either half out has to turn this red, and with #a alone, stubbing
+ * the digest did not.
+ *
+ * The rings are stated in literal colours rather than AccentColor so that this
+ * test fails for one reason. A system colour that never resolves is a separate
+ * fault with a separate check; mixing them would leave a red test that does
+ * not say which.
+ */
+static const char *const FOCUS_RING_DMG_CSS =
+    "#root { display:block; padding:8px; background:#101014; }"
+    "div { display:block; height:20px; margin:6px; background:#3a4a5a; }"
+    "div#a:focus { outline:3px solid #ff0000; }"
+    "div#b { outline:3px solid #00ff00; }"
+    "div#b:focus { outline:3px solid #ff0000; }";
+
+static void ar__ring_declare(ar_ctx *c)
+{
+    ar_begin(c, "#root");
+    ar_begin(c, "div#a");
+    ar_focusable(c, 0);
+    ar_end(c);
+    ar_begin(c, "div#b");
+    ar_focusable(c, 0);
+    ar_end(c);
+    ar_end(c);
+}
+
+static void test_a_focus_ring_survives_damage_tracking(void)
+{
+    ar_surface tracked = ar__dmg_surface(g_dmg_a);
+    ar_surface full = ar__dmg_surface(g_dmg_b);
+    ar_ctx    *ref;
+    int        i, frame;
+    int        bad_frame = -1, bad_px = -1;
+    int        saw_ring = 0;
+
+    /* Settle, Tab onto the first box, hold, Tab onto the second. The hold
+       frame is there because a digest that reports a change once and then
+       forgets would pass the two edges and fail in between; the second Tab is
+       what makes the *first* box have to erase a ring it had. */
+    static const ar_u32 KEYS[4] = {0, AR_KEY_TAB, 0, AR_KEY_TAB};
+
+    for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+    {
+        g_dmg_a[i] = 0;
+        g_dmg_b[i] = 0;
+    }
+
+    ar__ui_reset(FOCUS_RING_DMG_CSS);
+    ref = ar_init(g_dmg_mem, (ar_u32)sizeof g_dmg_mem);
+    CHECK(ref != 0, "ring: the reference context initialises");
+    if (!ref || !g_ui)
+    {
+        return;
+    }
+    ar_stylesheet(ref, FOCUS_RING_DMG_CSS);
+
+    for (frame = 0; frame < 4; ++frame)
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        in.keys_pressed = KEYS[frame];
+
+        ar_frame_begin(g_ui, &in);
+        ar__ring_declare(g_ui);
+        ar_frame_end(g_ui, &tracked);
+        ar_frame_presented(g_ui);
+
+        ar_frame_begin(ref, &in);
+        ar_invalidate_all(ref);
+        ar__ring_declare(ref);
+        ar_frame_end(ref, &full);
+        ar_frame_presented(ref);
+
+        /* That the reference drew a ring at all. Without this the comparison
+           below is satisfied by two blank surfaces, which is exactly how a
+           gate ends up unable to go red. */
+        for (i = 0; i < AR_DMG_W * AR_DMG_H; ++i)
+        {
+            if ((g_dmg_b[i] & 0xFFFFFFu) == 0xFF0000u)
+            {
+                saw_ring = 1;
+                break;
+            }
+        }
+
+        for (i = 0; i < AR_DMG_W * AR_DMG_H && bad_frame < 0; ++i)
+        {
+            if (g_dmg_a[i] != g_dmg_b[i])
+            {
+                bad_frame = frame;
+                bad_px = i;
+            }
+        }
+    }
+
+    CHECK(saw_ring, "ring: a focused box draws an outline at all");
+    CHECK(bad_frame < 0, "ring: and damage tracking paints every pixel of it");
+    if (bad_frame >= 0)
+    {
+        printf("      frame %d, pixel (%d,%d): tracked %08lX, full %08lX\n", bad_frame,
+               bad_px % AR_DMG_W, bad_px / AR_DMG_W, (unsigned long)g_dmg_a[bad_px],
+               (unsigned long)g_dmg_b[bad_px]);
+    }
+}
+
+/*
+ * A system colour on an outline resolves to a colour.
+ *
+ * The third of the three faults, and the one the comment beside COLOR_PROPS in
+ * ar_ctx.c predicted in as many words: the list that turns a system colour
+ * index into a colour is written out by name, and `outline-color` was added to
+ * the engine without being added to it. So the user-agent sheet's `outline:
+ * 2px solid AccentColor` arrived at the paint pass holding 17 -- the *index* --
+ * whose alpha byte is zero, and the paint pass correctly declined to draw a
+ * transparent outline.
+ *
+ * Checked as a resolved value rather than as pixels because that is where the
+ * fault is. A pixel test would also go red, and would not say why.
+ */
+static void test_a_system_colour_on_an_outline_resolves(void)
+{
+    ar_surface s = ar__ui_surface(200, 200);
+    ar_u32     oc;
+
+    ar__ui_reset("#root { display:block; }"
+                 "div#a { display:block; height:20px; outline:2px solid AccentColor; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    oc = (ar_u32)AR_WIDE(&g_ui->nodes[1].style, AR_P_OUTLINE_COLOR);
+
+    CHECK(g_ui->nodes[1].style.v[AR_P_OUTLINE_WIDTH] == 2, "outline: the width is stated");
+    CHECK(g_ui->nodes[1].style.unit[AR_P_OUTLINE_COLOR] == AR_UNIT_COLOR,
+          "outline: and its system colour was resolved rather than left as an index");
+    CHECK(AR_ALPHA_OF(oc) != 0, "outline: so it has an alpha, and something will be drawn");
 }
 
 /*
@@ -17204,8 +17474,7 @@ static void test_border_shorthand_takes_a_deferred_colour(void)
 {
     ar_surface s = ar__ui_surface(600, 400);
 
-    ar__render_html(&s,
-                    "<html><body><div id=\"a\"></div><div id=\"b\"></div></body></html>",
+    ar__render_html(&s, "<html><body><div id=\"a\"></div><div id=\"b\"></div></body></html>",
                     "#a { color:#3366cc; border:4px solid currentColor; }"
                     "#b { color-scheme:dark; border:4px solid CanvasText; }");
 
@@ -17217,6 +17486,1375 @@ static void test_border_shorthand_takes_a_deferred_colour(void)
           "border: a system colour in the shorthand does not eat the width either");
     CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("b")), AR_P_BORDER_COLOR) == 0xFFFFFFFFu,
           "border: and follows the dark scheme");
+}
+
+/*
+ * Focus, which until now did not exist.
+ *
+ * `AR_STATE_FOCUS` has been a selector state since 0.4.0 and nothing ever set
+ * it, so `:focus` matched no box in any stylesheet. Keyboard scrolling followed
+ * the mouse cursor instead, and ar_ctx.c said so in a comment: "There is no
+ * focus in areole, so the honest answer is the cursor."
+ *
+ * Everything in 0.10.0 stands on this. A control that cannot be reached by Tab
+ * cannot be operated without a mouse, and an accessibility tree with no notion
+ * of where the user is has nothing to say about it.
+ */
+static void ar__focus_frame(ar_surface *s)
+{
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui, 0);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div#b");
+    ar_focusable(g_ui, 0);
+    ar_begin(g_ui, "span#inner");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div#plain"); /* no ar_focusable: not a tab stop */
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_focus_moves_by_tab_and_wraps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:block; } div { height:20px; }");
+
+    /* One frame to publish the tab stops: the list Tab walks is a property of
+       the tree, and the first frame is where the tree first exists. */
+    ar__focus_frame(&s);
+    CHECK(!ar_has_focus(g_ui), "focus: a document starts with nothing focused");
+
+    CHECK(ar_focus_next(g_ui, 0) == 1, "focus: tab moves");
+    ar__focus_frame(&s);
+    CHECK(ar_has_focus(g_ui), "focus: and something is focused after it");
+    CHECK(ar_focus_is_visible(g_ui), "focus: focus put there by a key is visible");
+
+    /* Two stops were declared, so a third tab wraps to the first. */
+    ar_focus_next(g_ui, 0);
+    ar__focus_frame(&s);
+    {
+        ar_u32 second = g_ui->focus_key;
+
+        ar_focus_next(g_ui, 0);
+        ar__focus_frame(&s);
+        CHECK(g_ui->focus_key != second, "focus: a third tab moved again");
+
+        ar_focus_next(g_ui, 1);
+        ar__focus_frame(&s);
+        CHECK(g_ui->focus_key == second, "focus: shift-tab goes back the way it came");
+    }
+
+    ar_focus_clear(g_ui);
+    ar__focus_frame(&s);
+    CHECK(!ar_has_focus(g_ui), "focus: and it can be dropped");
+}
+
+static void test_focus_within_matches_the_ancestors(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__ui_reset("#root { display:block; }"
+                 "div { height:20px; }"
+                 "#b:focus { width:11px; }"
+                 "#inner:focus-within { width:22px; }"
+                 "#b:focus-visible { height:33px; }");
+
+    ar__focus_frame(&s);
+    ar_focus_next(g_ui, 0); /* #a */
+    ar__focus_frame(&s);
+    ar_focus_next(g_ui, 0); /* #b */
+    ar__focus_frame(&s);
+
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_WIDTH] == 11,
+          "focus: :focus matches the focused box");
+
+    /*
+     * The inner span is a *descendant* of the focused box, so :focus-within on
+     * it must not match -- the chain runs from the focused box up to the root,
+     * not down. Getting this backwards is easy and gives a rule that matches
+     * the whole subtree, which looks right on a one-deep tree and wrong on
+     * anything real.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("inner"))->v[AR_P_WIDTH] != 22,
+          "focus: :focus-within does not match a descendant of the focused box");
+
+    /* Put there by a key, so the ring is drawn. */
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_HEIGHT] == 33,
+          "focus: :focus-visible matches when a key moved the focus");
+}
+
+static void test_a_click_focuses_without_a_ring(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__ui_reset("#root { display:block; } div { height:20px; }");
+    ar__focus_frame(&s);
+
+    /*
+     * The distinction the whole pseudo-class exists for: a click focuses so
+     * that typing arrives, and draws no ring; a Tab focuses the same box and
+     * draws one. Pages ship `outline: none` because engines used to draw a
+     * ring for both.
+     */
+    memset(&in, 0, sizeof in);
+    in.mouse_x = 5;
+    in.mouse_y = 5; /* inside #a */
+    in.mouse_inside = 1;
+
+    /*
+     * One frame to put the cursor somewhere, and only then the press.
+     *
+     * Which box is under the cursor is settled by the previous frame's layout,
+     * exactly as `:hover` is and for the same reason -- so the first frame the
+     * mouse appears in has no box under it yet. A click delivered on that
+     * frame lands on nothing. This is not a quirk of the test; it is the one
+     * frame of lag the hover machinery has always had, and focus inherits it
+     * by using the same chain.
+     */
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui, 0);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    in.mouse_pressed = AR_MOUSE_LEFT;
+    in.mouse_down = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div#a");
+    ar_focusable(g_ui, 0);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_has_focus(g_ui), "focus: a click on a tab stop focuses it");
+    CHECK(!ar_focus_is_visible(g_ui), "focus: and the ring is not drawn for a click");
+}
+
+/*
+ * Tab order in a parsed document, which is where focus actually has to work.
+ *
+ * The immediate-mode tests above drive ar_focusable by hand. A document does
+ * not: the element type decides, and the list of types is the list of things
+ * that do something when you press them.
+ */
+/* The same document again, on the same context -- ar__render_html builds a
+   fresh one every call, which is right for every other test and wrong for this
+   one: focus is the state that has to survive a frame. */
+static void ar__reframe(ar_surface *s)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_tab_order_in_a_document(void)
+{
+    ar_surface  s = ar__ui_surface(600, 400);
+    const char *DOC = "<html><body>"
+                      "<a name=\"top\">not a link</a>"
+                      "<a href=\"#x\" id=\"link\">a link</a>"
+                      "<p id=\"para\">ordinary text</p>"
+                      "<button id=\"btn\">press</button>"
+                      "<input id=\"box\" type=\"checkbox\">"
+                      "<input id=\"gone\" type=\"hidden\">"
+                      "<div id=\"tabbed\" tabindex=\"0\">reachable</div>"
+                      "<div id=\"untabbed\" tabindex=\"-1\">clickable only</div>"
+                      "</body></html>";
+    ar_i32      stops;
+
+    ar__render_html(&s, DOC, "");
+    stops = g_ui->focusable_prev_n;
+
+    /*
+     * Five: the link, the button, the checkbox, and the div with tabindex=0.
+     * Not the anchor without href -- an anchor used as a scroll target is
+     * markup rather than a control, and putting it in the tab order is how a
+     * page becomes unusable by keyboard while looking more accessible. Not the
+     * hidden input, which has no box to focus. Not tabindex=-1, which means
+     * reachable by click and never by Tab -- the whole reason the attribute
+     * takes a number instead of a boolean. Not the paragraph.
+     */
+    CHECK(stops == 4, "focus: a document's tab stops are the things you can press");
+
+    /* And the order is the document's. */
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[0], "focus: tab takes the first stop");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[1], "focus: and then the second");
+
+    /* Shift-Tab from the first wraps to the last rather than falling off. */
+    ar_focus_clear(g_ui);
+    ar_focus_next(g_ui, 1);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[stops - 1],
+          "focus: shift-tab from nothing takes the last stop");
+}
+
+/*
+ * `:checked`, `:disabled` and `:enabled` from the markup.
+ *
+ * These are the first state bits past the sixteenth, and adding the first of
+ * them is what widened `state` from an ar_u16 to an ar_u32 on every box and in
+ * every rule -- which the comment beside AR_STATE_FOCUS_WITHIN had said the
+ * next bit would cost. It cost nothing measurable: ar_node was already
+ * eight-aligned with two bytes of padding exactly where `state` sits.
+ */
+static void test_control_states_from_markup(void)
+{
+    ar_surface s = ar__ui_surface(600, 400);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"on\" type=\"checkbox\" checked>"
+                    "<input id=\"off\" type=\"checkbox\">"
+                    "<input id=\"no\" type=\"text\" disabled>"
+                    "<input id=\"yes\" type=\"text\">"
+                    "<p id=\"para\">not a control</p>"
+                    "<input id=\"liar\" type=\"checkbox\" checked=\"false\">"
+                    "</body></html>",
+                    "#on:checked { width:11px }"
+                    "#off:checked { width:22px }"
+                    "#no:disabled { width:33px }"
+                    "#yes:enabled { width:44px }"
+                    "#para:enabled { width:55px }"
+                    "#liar:checked { width:66px }");
+
+    CHECK(ar__box_style(ar__first_tag_id("on"))->v[AR_P_WIDTH] == 11,
+          "control: a checked attribute is :checked");
+    CHECK(ar__box_style(ar__first_tag_id("off"))->v[AR_P_WIDTH] != 22,
+          "control: and one without it is not");
+    CHECK(ar__box_style(ar__first_tag_id("no"))->v[AR_P_WIDTH] == 33,
+          "control: a disabled attribute is :disabled");
+    CHECK(ar__box_style(ar__first_tag_id("yes"))->v[AR_P_WIDTH] == 44,
+          "control: and one without it is :enabled");
+
+    /*
+     * `:enabled` is not the absence of `:disabled`. Neither matches something
+     * that cannot be disabled at all -- a paragraph is not an enabled
+     * paragraph -- which is why both bits come from one short list of elements
+     * rather than one bit and its negation.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("para"))->v[AR_P_WIDTH] != 55,
+          "control: a paragraph is neither enabled nor disabled");
+
+    /*
+     * `checked="false"` checks the box. It is a boolean attribute: present
+     * means true whatever the value says. Writing this check any other way is
+     * how an engine ends up disagreeing with every browser about one line of
+     * somebody's markup.
+     */
+    CHECK(ar__box_style(ar__first_tag_id("liar"))->v[AR_P_WIDTH] == 66,
+          "control: a boolean attribute is true when present, whatever it says");
+}
+
+/*
+ * Controls that can be operated, which is the difference between markup that
+ * describes a checkbox and a checkbox.
+ *
+ * Activation is settled at frame end, where both halves are known -- the tree
+ * is complete so every control is registered, and the click has been resolved
+ * against it -- and takes effect on the next frame. That is the same one-frame
+ * model hover and focus use, and for the same reason: the state a box is
+ * styled with has to be settled before it is styled.
+ */
+static void ar__press_at(ar_surface *s, ar_i32 x, ar_i32 y)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = x;
+    in.mouse_y = y;
+    in.mouse_inside = 1;
+
+    /* One frame to settle which box is under the cursor, as the hover
+       machinery has always needed, and then the press and its release --
+       a click is only a click when it goes down and comes up on one box. */
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    in.mouse_pressed = AR_MOUSE_LEFT;
+    in.mouse_down = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    in.mouse_pressed = 0;
+    in.mouse_down = 0;
+    in.mouse_released = AR_MOUSE_LEFT;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+
+    /* And one more, because the toggle lands on the frame after the click. */
+    ar__reframe(s);
+}
+
+static int ar__is_checked(const char *id)
+{
+    return (ar__box_style(ar__first_tag_id(id))->v[AR_P_WIDTH]) == 77;
+}
+
+static void test_a_checkbox_toggles(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"checkbox\">"
+                    "</body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    CHECK(!ar__is_checked("a"), "control: a checkbox starts unchecked");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__is_checked("a"), "control: a click checks it");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(!ar__is_checked("a"), "control: and another click unchecks it");
+}
+
+static void test_a_checked_attribute_is_a_starting_point(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"checkbox\" checked></body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    CHECK(ar__is_checked("a"), "control: a checked attribute starts it checked");
+
+    /*
+     * And a click must be able to turn it off and keep it off. Reading the
+     * markup every frame makes a box with `checked` spring back the instant it
+     * is unchecked, which is the bug this half of the slot exists to prevent:
+     * TOUCHED is what tells "unchecked by the user" from "never visited".
+     */
+    ar__press_at(&s, 5, 5);
+    CHECK(!ar__is_checked("a"), "control: and a click can turn it off");
+    ar__reframe(&s);
+    CHECK(!ar__is_checked("a"), "control: and it stays off on the frame after");
+}
+
+static void test_radios_of_one_name_exclude_each_other(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"x\" type=\"radio\" name=\"g\">"
+                    "<input id=\"y\" type=\"radio\" name=\"g\">"
+                    "<input id=\"z\" type=\"radio\" name=\"other\">"
+                    "</body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "input:checked { width:77px }");
+
+    ar__press_at(&s, 5, 5); /* x */
+    CHECK(ar__is_checked("x"), "control: a click selects a radio");
+
+    ar__press_at(&s, 5, 25); /* y */
+    CHECK(ar__is_checked("y"), "control: clicking another selects it");
+    CHECK(!ar__is_checked("x"), "control: and deselects the first of the same name");
+
+    /*
+     * A radio turns on and never off by its own activation, which is the
+     * asymmetry that makes it a radio: a group with nothing selected is
+     * reachable from the markup and not from the user.
+     */
+    ar__press_at(&s, 5, 25);
+    CHECK(ar__is_checked("y"), "control: clicking a selected radio leaves it selected");
+
+    /* And a different name is a different group. */
+    ar__press_at(&s, 5, 45); /* z */
+    CHECK(ar__is_checked("z"), "control: a radio of another name selects");
+    CHECK(ar__is_checked("y"), "control: and leaves the first group alone");
+}
+
+static void test_space_activates_the_focused_control(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"checkbox\"></body></html>",
+                    "input { display:block; width:20px; height:20px; margin:0 }"
+                    "body { margin:0 }"
+                    "#a:checked { width:77px }");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(ar_has_focus(g_ui), "control: tab reaches the checkbox");
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = AR_KEY_SPACE;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    ar__reframe(&s);
+
+    CHECK(ar__is_checked("a"), "control: space activates what the keyboard is on");
+}
+
+/*
+ * `<details>` and `<summary>`, which is a control whose activation acts on a
+ * different box from the one that was pressed.
+ *
+ * The summary is what takes the click and the details is what opens, so the
+ * summary carries its parent's key -- filled in where the parent is known,
+ * which is the box walk and not the document walk.
+ */
+static void test_details_opens_and_closes(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<details id=\"d\">"
+                    "<summary id=\"s\">head</summary>"
+                    "<p id=\"body\">contents</p>"
+                    "</details>"
+                    "</body></html>",
+                    "body { margin:0 } details, summary, p { display:block; margin:0 }"
+                    "summary { height:20px }");
+
+    /* Closed: the summary is built and the contents are not. Not built rather
+       than not painted -- a document of collapsed sections should cost
+       nothing for the parts nobody has opened. */
+    CHECK(ar__first_tag_id("s") >= 0, "details: a closed one still shows its summary");
+    CHECK(ar__first_tag_id("body") < 0, "details: and builds no box for its contents");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") >= 0, "details: a click on the summary opens it");
+
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") < 0, "details: and another click closes it");
+}
+
+static void test_details_open_attribute_is_a_starting_point(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<details id=\"d\" open>"
+                    "<summary id=\"s\">head</summary>"
+                    "<p id=\"body\">contents</p>"
+                    "</details>"
+                    "</body></html>",
+                    "body { margin:0 } details, summary, p { display:block; margin:0 }"
+                    "summary { height:20px }");
+
+    CHECK(ar__first_tag_id("body") >= 0, "details: an open attribute starts it open");
+
+    /* And it must be possible to close it and have it stay closed, which is
+       the same TOUCHED question the checkbox asks. */
+    ar__press_at(&s, 5, 5);
+    CHECK(ar__first_tag_id("body") < 0, "details: a click closes it");
+    ar__reframe(&s);
+    CHECK(ar__first_tag_id("body") < 0, "details: and it stays closed the frame after");
+}
+
+/*
+ * A control that looks like a control.
+ *
+ * Boxes and borders rather than a bitmap, which is the whole argument for
+ * building them this way: an author can restyle a checkbox because a checkbox
+ * is a box. And the colours are the system ones 0.4.4 shipped, so this is the
+ * first thing in the engine to use those nineteen names for their purpose.
+ */
+static void test_controls_are_boxes(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"c\" type=\"checkbox\">"
+                    "<input id=\"r\" type=\"radio\">"
+                    "<input id=\"t\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 }");
+
+    /* The synthetic class is what lets the sheet tell a checkbox from a text
+       field, there being no attribute selectors here yet. */
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_WIDTH] == 13,
+          "ua: a checkbox is square whatever the font is");
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_WIDTH] == 13, "ua: and so is a radio");
+    CHECK(ar__box_style(ar__first_tag_id("t"))->v[AR_P_WIDTH] != 13,
+          "ua: a text field is not sized like either");
+
+    /* The radio is round and the checkbox is a square with the two-pixel
+       corners Edge draws on it -- it was flat-cornered until the controls were
+       measured against a browser rather than drawn from memory. */
+    CHECK(ar__box_style(ar__first_tag_id("r"))->v[AR_P_BORDER_RADIUS] >= 6, "ua: a radio is round");
+    CHECK(ar__box_style(ar__first_tag_id("c"))->v[AR_P_BORDER_RADIUS] == 2,
+          "ua: and a checkbox is square, with a browser's small corners");
+
+    /* The system colours reach a control, which is what those names are for. */
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("t")), AR_P_BACKGROUND) == 0xFFFFFFFFu,
+          "ua: a field takes the system Field colour");
+}
+
+static void test_the_mark_is_a_box_that_appears(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"c\" type=\"checkbox\"></body></html>",
+                    "body { margin:0 } input { display:block; margin:0 }");
+
+    /*
+     * The mark is built whether or not it is shown, so that checking a box
+     * costs no layout: it is already the right size in the right place, and
+     * only its background changes.
+     */
+    CHECK(ar__first_tag_id("c") >= 0, "ua: the checkbox is there");
+    {
+        ar_i32 box = ar__first_tag_id("c");
+        ar_i32 mark = box + 1; /* its only child */
+
+        CHECK(mark < g_ui->node_count, "ua: a checkbox has a mark child");
+        CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(mark), AR_P_COLOR)) == 0u,
+              "ua: and the tick is transparent while unchecked");
+
+        /* Checked, the box itself turns the browser's blue and the tick inside
+           it white -- what Edge draws, sampled from its pixels. */
+        ar__press_at(&s, 5, 5);
+        CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c")), AR_P_BACKGROUND) == 0xFF0075FFu,
+              "ua: and the box turns blue once checked");
+        CHECK(AR_ALPHA_OF((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("c") + 1), AR_P_COLOR)) !=
+                  0u,
+              "ua: with its tick showing");
+    }
+}
+
+/*
+ * `outline`, and the focus ring it exists for.
+ *
+ * The ninety-fifth and ninety-sixth properties, and the pair that widened the
+ * property mask to four words -- priced at 0.9.6 before it was needed, which
+ * is the point of pricing a thing.
+ */
+static void test_an_outline_costs_no_layout(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">one</div>"
+                    "<div id=\"b\">two</div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block; height:20px; margin:0 }"
+                    "#a { outline:4px solid #f00 }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_OUTLINE_WIDTH] == 4,
+          "outline: the shorthand sets a width");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("a")), AR_P_OUTLINE_COLOR) == 0xFFFF0000u,
+          "outline: and a colour");
+
+    /*
+     * The whole reason the property exists: the box below an outlined box must
+     * not move. A ring drawn with a border shifts every box after it the
+     * moment somebody presses Tab, which is worse than no ring at all.
+     */
+    CHECK(ar__box(ar__first_tag_id("b")).y == 20, "outline: and the box after it does not move");
+    CHECK(ar__box(ar__first_tag_id("a")).h == 20, "outline: nor does the outlined box grow");
+}
+
+static void test_the_focus_ring_is_drawn_for_a_key_and_not_a_click(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><button id=\"b\">go</button></body></html>",
+                    "body { margin:0 } button { display:block; margin:0 }");
+
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
+          "outline: an untouched control has no ring");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 2,
+          "outline: a tab draws one");
+
+    /*
+     * And a click takes the same focus without the ring, which is the
+     * distinction :focus-visible exists for and the reason pages ship
+     * `outline: none` when an engine gets it wrong.
+     */
+    ar__press_at(&s, 5, 5);
+    CHECK(ar_has_focus(g_ui), "outline: a click focuses the button");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OUTLINE_WIDTH] == 0,
+          "outline: and draws no ring");
+}
+
+/*
+ * Gauges, tab order and focus trapping -- the rest of what a form needs before
+ * anyone can type into it.
+ */
+static void test_a_gauge_is_a_track_with_a_bar(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<progress id=\"p\" value=\"0.25\" max=\"1\"></progress>"
+                    "<meter id=\"m\" min=\"10\" max=\"20\" value=\"15\"></meter>"
+                    "<progress id=\"e\"></progress>"
+                    "</body></html>",
+                    "body { margin:0 } progress, meter { display:block; width:200px }");
+
+    /* A quarter of 200 is 50, and `value="0.25"` is the common way to write
+       it -- an integer parse would make it zero, which is a full bar reading
+       empty rather than an error anybody notices. */
+    /* The fill is inside a track now -- a gauge is the same pill a slider is
+       drawn as -- so it is the second box under the gauge, not the first. */
+    CHECK(ar__box(ar__first_tag_id("p") + 2).w == 50, "gauge: a progress bar is its value");
+
+    /* A meter has a `min` and a progress bar does not: a meter measures a
+       range, a progress bar counts up from nothing. Half of 10..20 is 100px. */
+    CHECK(ar__box(ar__first_tag_id("m") + 2).w == 100, "gauge: a meter measures from its min");
+
+    /* Indeterminate reads as empty, which is written down rather than
+       pretended about: there is no animation here to say "waiting". */
+    CHECK(ar__box(ar__first_tag_id("e") + 2).w == 0, "gauge: one with no value reads empty");
+}
+
+static void test_a_positive_tabindex_sorts_first(void)
+{
+    ar_surface  s = ar__ui_surface(400, 300);
+    const char *DOC = "<html><body>"
+                      "<a href=\"#\" id=\"one\">a</a>"
+                      "<a href=\"#\" id=\"two\">b</a>"
+                      "<div id=\"first\" tabindex=\"1\">x</div>"
+                      "</body></html>";
+
+    ar__render_html(&s, DOC, "");
+
+    /*
+     * The div is last in the document and first in the tab order, which is the
+     * rule nobody should rely on and every engine has to honour: an author who
+     * numbers one field and leaves the rest alone expects that one first.
+     */
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+    CHECK(g_ui->focus_key == g_ui->focusables_prev[0], "tabindex: tab takes the first stop");
+    CHECK(g_ui->focus_order_prev[0] == 1, "tabindex: and a positive index is that stop");
+    CHECK(g_ui->focus_order_prev[1] == 0, "tabindex: with the document-order ones behind it");
+}
+
+static void test_inert_traps_the_focus(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"off\"><a href=\"#\" id=\"out\">outside</a></div>"
+                    "<a href=\"#\" id=\"in\">inside</a>"
+                    "</body></html>",
+                    "#off { inert:auto }");
+
+    /*
+     * An inert subtree is not in the tab order, and that is the whole of focus
+     * trapping: not a mode with a stack of its own, but the ordinary traversal
+     * refusing to enter a subtree that has been switched off. The top layer has
+     * set this bit for everything outside a modal since 0.6.3 and nothing had
+     * ever asked about it.
+     *
+     * Driven here through the `inert` property rather than through a modal,
+     * because `<dialog open>` is *not* modal -- only `showModal()` is, and that
+     * needs script. Writing the test the other way is how one ends up asserting
+     * that a non-modal dialog traps focus, which no engine does.
+     */
+    CHECK(g_ui->focusable_prev_n >= 1, "inert: a link outside the inert subtree is a stop");
+    {
+        ar_i32 i;
+        ar_i32 outside = ar__first_tag_id("out");
+        int    found = 0;
+
+        for (i = 0; i < g_ui->focusable_prev_n; ++i)
+        {
+            if (outside >= 0 && g_ui->focusables_prev[i] == g_ui->nodes[outside].key)
+            {
+                found = 1;
+            }
+        }
+        CHECK(!found, "inert: and a link outside it is not");
+    }
+}
+
+/*
+ * The accessibility tree.
+ *
+ * A role is a lookup and a name is an algorithm, and the name is where every
+ * real failure lives: "button button button" is what a screen reader says when
+ * an engine gets the order wrong, and it cannot be debugged from the outside,
+ * because the page looks right.
+ */
+static ar_i32 ar__doc_id(const char *id)
+{
+    ar_i32 i;
+
+    for (i = 0; i < g_doc.node_count; ++i)
+    {
+        if (g_doc.nodes[i].kind == AR_DOM_ELEMENT)
+        {
+            ar_span a = ar_a11y_attr(&g_doc, i, "id");
+
+            if (a.p && a.n == (ar_u32)strlen(id) && memcmp(a.p, id, a.n) == 0)
+            {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+static const char *ar__name_of(const char *id)
+{
+    static char buf[128];
+
+    buf[0] = 0;
+    ar_a11y_name(&g_doc, ar__doc_id(id), buf, sizeof buf);
+    return buf;
+}
+
+static int ar__name_is(const char *id, const char *want)
+{
+    const char *got = ar__name_of(id);
+
+    /* No trimming here on purpose: a name with whitespace on it is a bug in
+       ar_a11y_name and not something a test should paper over. */
+    return strcmp(got, want) == 0;
+}
+
+static void test_a11y_roles(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<button id=\"b\">go</button>"
+                    "<a id=\"link\" href=\"#\">here</a>"
+                    "<a id=\"anchor\">not a link</a>"
+                    "<input id=\"cb\" type=\"checkbox\">"
+                    "<input id=\"tx\" type=\"text\">"
+                    "<input id=\"plain\">"
+                    "<input id=\"hid\" type=\"hidden\">"
+                    "<h2 id=\"h\">title</h2>"
+                    "<div id=\"fake\" role=\"button\">looks like one</div>"
+                    "<div id=\"plainbox\">nothing</div>"
+                    "</body></html>",
+                    "");
+
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("b")) == AR_ROLE_BUTTON, "a11y: a button is a button");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("link")) == AR_ROLE_LINK, "a11y: an anchor with href");
+
+    /* Without an href it is markup, not a control. Announcing it as a link
+       sends somebody to press Enter on nothing. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("anchor")) == AR_ROLE_NONE,
+          "a11y: and without one it is not a link");
+
+    /*
+     * `<input>` is not one element, it is fourteen. A checkbox and a text
+     * field share a tag and share nothing else, and a table keyed on the tag
+     * alone would call both of them a textbox.
+     */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("cb")) == AR_ROLE_CHECKBOX, "a11y: a checkbox");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("tx")) == AR_ROLE_TEXTBOX, "a11y: a text field");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("plain")) == AR_ROLE_TEXTBOX,
+          "a11y: an input with no type is a text field");
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("hid")) == AR_ROLE_NONE, "a11y: a hidden input is not");
+
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("h")) == AR_ROLE_HEADING, "a11y: a heading");
+
+    /* `role=` wins over the tag, which is the entire point of the attribute. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("fake")) == AR_ROLE_BUTTON,
+          "a11y: role= beats the tag it is written on");
+
+    /* And a plain div has none, deliberately: a reader that announces "group"
+       for every wrapper buries the three things that mattered. */
+    CHECK(ar_a11y_role(&g_doc, ar__doc_id("plainbox")) == AR_ROLE_NONE,
+          "a11y: a div is not announced at all");
+}
+
+static void test_a11y_the_name_algorithm_is_an_order(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body>"
+        "<span id=\"other\">from elsewhere</span>"
+        "<button id=\"all\" aria-labelledby=\"other\" aria-label=\"ignored\">text</button>"
+        "<button id=\"lbl\" aria-label=\"spoken\">text</button>"
+        "<label for=\"f1\">Your name</label><input id=\"f1\" type=\"text\">"
+        "<label>Wrapped <input id=\"f2\" type=\"text\"></label>"
+        "<button id=\"content\">Save file</button>"
+        "<button id=\"rich\">Save <b>now</b></button>"
+        "<input id=\"btn\" type=\"submit\" value=\"Send\">"
+        "<input id=\"bare\" type=\"text\" value=\"typed text\">"
+        "</body></html>",
+        "");
+
+    /*
+     * The order is the algorithm. `aria-labelledby` names another element and
+     * outranks everything local, including an `aria-label` on the same
+     * element -- taking these two in the other order is how the label somebody
+     * added to fix a bad name gets ignored.
+     */
+    CHECK(ar__name_is("all", "from elsewhere"), "a11y: labelledby outranks label and content");
+    CHECK(ar__name_is("lbl", "spoken"), "a11y: aria-label outranks content");
+
+    /* Both spellings of `<label>`, and the wrapping one is the commoner. */
+    CHECK(ar__name_is("f1", "Your name"), "a11y: a label naming a field by for=");
+    CHECK(ar__name_is("f2", "Wrapped"), "a11y: and a label wrapping one");
+
+    CHECK(ar__name_is("content", "Save file"), "a11y: an element's own text names it");
+    CHECK(ar__name_is("rich", "Save now"), "a11y: across child elements, with a space between");
+
+    /* `value` names a push button. */
+    CHECK(ar__name_is("btn", "Send"), "a11y: value names a submit button");
+
+    /*
+     * And never a text field, where `value` is what the user typed. Announcing
+     * that as the field's name is how a form comes to have five fields all
+     * called by whatever was last entered into them.
+     */
+    CHECK(!ar__name_is("bare", "typed text"), "a11y: but never a text field's contents");
+}
+
+static void test_a11y_states(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"on\" type=\"checkbox\" checked>"
+                    "<input id=\"off\" type=\"checkbox\">"
+                    "<input id=\"no\" type=\"text\" disabled>"
+                    "<details id=\"d\" open><summary>s</summary><p>x</p></details>"
+                    "</body></html>",
+                    "");
+
+    CHECK(ar_a11y_state(ar__box_style(ar__first_tag_id("on"))->set.w[0] ? AR_STATE_CHECKED : 0,
+                        0) == AR_A11Y_CHECKED,
+          "a11y: a checked box reports checked");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("on")].state, 0) & AR_A11Y_CHECKED) != 0,
+          "a11y: from the box state");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("off")].state, 0) & AR_A11Y_CHECKED) == 0,
+          "a11y: and an unchecked one does not");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("no")].state, 0) & AR_A11Y_DISABLED) != 0,
+          "a11y: a disabled control reports disabled");
+    CHECK((ar_a11y_state(g_ui->nodes[ar__first_tag_id("d")].state, 0) & AR_A11Y_EXPANDED) != 0,
+          "a11y: an open details reports expanded");
+    CHECK((ar_a11y_state(0, 1) & AR_A11Y_FOCUSED) != 0, "a11y: and focus is a state too");
+}
+
+/*
+ * Text editing, which is the part that is always underestimated -- and is
+ * underestimated because every mistake in it is invisible in English.
+ *
+ * A caret that steps by codepoint works perfectly on "hello" and cuts a family
+ * emoji in half. A word selection built on `isspace` takes "don" out of
+ * "don't". Both look right in a test written in English, which is why the
+ * corpus below is not.
+ */
+static const char *const AR__CLUSTERS[] = {
+    "hello",
+    "a\xCC\x80",                                    /* a + combining grave      */
+    "e\xCC\x81\xCC\xA7",                            /* e + acute + cedilla      */
+    "\xF0\x9F\x91\x8D",                             /* thumbs up                */
+    "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD",             /* thumbs up + skin tone    */
+    "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7", /* woman ZWJ girl        */
+    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8",             /* flag: two regionals      */
+    "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", /* two flags */
+    "\xEA\xB0\x80",                         /* precomposed Hangul       */
+    "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xAB", /* Hangul L + V + T         */
+    "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D",     /* Hebrew, right to left    */
+    "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85",     /* Arabic                   */
+    "\xE3\x81\x93\xE3\x82\x93",             /* Japanese                 */
+    "x\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBDy",   /* an emoji between letters */
+    "caf\xC3\xA9",
+    "a\xCC\x80\xCC\x81\xCC\x82\xCC\x83" /* four marks on one letter */
+};
+
+#define AR__CLUSTER_N ((ar_i32)(sizeof AR__CLUSTERS / sizeof AR__CLUSTERS[0]))
+
+/*
+ * The acceptance criterion, swept rather than sampled: walk the caret across
+ * every string in both directions and assert that every stop is a cluster
+ * boundary, and that the walk terminates.
+ */
+static void test_the_caret_never_lands_inside_a_cluster(void)
+{
+    ar_i32 i;
+    int    bad = 0;
+    int    stuck = 0;
+    ar_i32 stops = 0;
+
+    for (i = 0; i < AR__CLUSTER_N; ++i)
+    {
+        ar_edit e;
+        ar_u16  at;
+        ar_i32  guard;
+
+        ar_edit_init(&e, AR__CLUSTERS[i]);
+
+        at = 0;
+        for (guard = 0; guard < 64 && at < e.len; ++guard)
+        {
+            ar_u16 next = ar_edit_next(&e, at);
+
+            if (next <= at)
+            {
+                stuck = 1;
+                break;
+            }
+            at = next;
+            ++stops;
+            if (!ar_edit_is_boundary(&e, at))
+            {
+                bad = 1;
+            }
+        }
+        if (at != e.len)
+        {
+            stuck = 1;
+        }
+
+        at = e.len;
+        for (guard = 0; guard < 64 && at > 0; ++guard)
+        {
+            ar_u16 prev = ar_edit_prev(&e, at);
+
+            if (prev >= at)
+            {
+                stuck = 1;
+                break;
+            }
+            at = prev;
+            ++stops;
+            if (!ar_edit_is_boundary(&e, at))
+            {
+                bad = 1;
+            }
+        }
+        if (at != 0)
+        {
+            stuck = 1;
+        }
+    }
+
+    CHECK(!stuck, "edit: the caret reaches both ends of every string in the corpus");
+    CHECK(!bad, "edit: and every stop it makes is a cluster boundary");
+    CHECK(stops > 60, "edit: and the sweep actually walked");
+}
+
+static void test_a_cluster_is_one_backspace(void)
+{
+    ar_edit e;
+
+    /* The case everybody has hit: one press, one character gone, however many
+       codepoints that character happens to be. */
+    ar_edit_init(&e, "a\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 1, "edit: one backspace takes a whole ZWJ sequence");
+
+    ar_edit_init(&e, "e\xCC\x81\xCC\xA7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 0, "edit: and a letter with two marks on it");
+
+    ar_edit_init(&e, "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 0, "edit: and a flag, which is two regional indicators");
+
+    /* And half a flag is a flag again, not a flag and a half: the parity of
+       the run is what decides, not the pair. */
+    ar_edit_init(&e, "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7");
+    ar_edit_backspace(&e);
+    CHECK(e.len == 8, "edit: two flags lose one flag");
+}
+
+static void test_words_are_not_split_on_spaces(void)
+{
+    ar_edit e;
+    ar_u16  lo, hi;
+
+    ar_edit_init(&e, "I don't think so");
+
+    /* The apostrophe joins, which `isspace` cannot see: a double click in
+       "don't" selects the word and not "don". */
+    ar_edit_word_at(&e, 4, &lo, &hi);
+    CHECK(lo == 2 && hi == 7, "edit: an apostrophe is inside the word");
+
+    ar_edit_word_at(&e, 0, &lo, &hi);
+    CHECK(lo == 0 && hi == 1, "edit: and a one letter word is a word");
+
+    /* A trailing apostrophe is not inside anything. */
+    ar_edit_init(&e, "boys' toys");
+    ar_edit_word_at(&e, 1, &lo, &hi);
+    CHECK(hi == 4, "edit: an apostrophe with nothing after it is not");
+}
+
+static void test_selection_has_a_direction(void)
+{
+    ar_edit e;
+    ar_u16  lo, hi;
+
+    ar_edit_init(&e, "abcdef");
+    e.caret = 3;
+    e.anchor = 3;
+
+    /* Shift-left then shift-right gives the text back, which needs to know
+       which end is moving -- a start and a length cannot. */
+    ar_edit_move(&e, -2, 1);
+    CHECK(ar_edit_selection(&e, &lo, &hi) && lo == 1 && hi == 3, "edit: shift-left selects back");
+    ar_edit_move(&e, 2, 1);
+    CHECK(!ar_edit_selection(&e, &lo, &hi), "edit: and shift-right gives it back");
+
+    /* A plain arrow with a selection collapses to the near end rather than
+       moving from the caret, which is what every editor does. */
+    ar_edit_init(&e, "abcdef");
+    ar_edit_select_all(&e);
+    ar_edit_move(&e, -1, 0);
+    CHECK(e.caret == 0 && e.anchor == 0, "edit: a left arrow collapses a selection to its start");
+}
+
+static void test_undo_coalesces_a_typing_run(void)
+{
+    ar_edit e;
+
+    ar_edit_init(&e, "");
+    ar_edit_insert(&e, "h", 1);
+    ar_edit_insert(&e, "e", 1);
+    ar_edit_insert(&e, "l", 1);
+    ar_edit_insert(&e, "l", 1);
+    ar_edit_insert(&e, "o", 1);
+    CHECK(e.len == 5, "edit: five characters typed");
+
+    /* One step, not five: a word typed is one thing that happened. */
+    CHECK(ar_edit_undo(&e), "edit: undo has something to do");
+    CHECK(e.len == 0, "edit: and a typing run is one step");
+    CHECK(ar_edit_redo(&e), "edit: redo has something to do");
+    CHECK(e.len == 5, "edit: and puts it back");
+
+    /* A deletion breaks the run, so typing after it is a separate step. */
+    ar_edit_backspace(&e);
+    ar_edit_insert(&e, "p", 1);
+    CHECK(e.len == 5, "edit: backspace then a character");
+    ar_edit_undo(&e);
+    CHECK(e.len == 4, "edit: undo takes the character and not the deletion");
+}
+
+static void test_insert_replaces_a_selection(void)
+{
+    ar_edit e;
+
+    ar_edit_init(&e, "hello world");
+    ar_edit_select_word(&e, 0);
+    ar_edit_insert(&e, "goodbye", 7);
+    CHECK(e.len == 13, "edit: typing over a selection replaces it");
+    CHECK(memcmp(e.text, "goodbye world", 13) == 0, "edit: with what was typed");
+}
+
+/*
+ * Typing into a field, end to end: a key event to a character to a buffer.
+ *
+ * Text and keys stay two different inputs all the way through. The platform
+ * turns a key event into a character, because the key that produced `@` is
+ * Shift and 2 on one layout and AltGr and Q on another, and no table in this
+ * engine could tell them apart.
+ */
+static void ar__type(ar_surface *s, const char *text, ar_u32 keys)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.text = text;
+    in.text_len = text ? (ar_u32)strlen(text) : 0;
+    in.keys_pressed = keys;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static int ar__field_is(const char *want)
+{
+    ar_u32      n = 0;
+    const char *t = ar_field_text(g_ui, &n);
+
+    if (!t)
+    {
+        return want == 0;
+    }
+    return n == (ar_u32)strlen(want) && memcmp(t, want, n) == 0;
+}
+
+static void test_typing_reaches_the_focused_field(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\">"
+                    "<input id=\"b\" type=\"text\" value=\"start\">"
+                    "</body></html>",
+                    "body { margin:0 }");
+
+    /* Nothing focused: typing goes nowhere rather than into the first field. */
+    ar__type(&s, "x", 0);
+    CHECK(ar_field_text(g_ui, 0) == 0, "field: typing with no focus goes nowhere");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is(""), "field: tab reaches the first field, which is empty");
+
+    ar__type(&s, "hi", 0);
+    CHECK(ar__field_is("hi"), "field: and typing lands in it");
+
+    ar__type(&s, 0, AR_KEY_BACKSPACE);
+    CHECK(ar__field_is("h"), "field: backspace takes a character");
+
+    /*
+     * Tab to the next field, which starts from its markup. Its `value` is the
+     * starting point and the buffer is where it goes after anybody types --
+     * the same relationship `checked` has with a checkbox.
+     */
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("start"), "field: the next field starts from its value attribute");
+
+    ar__type(&s, "!", 0);
+    CHECK(ar__field_is("start!"), "field: and takes typing of its own");
+
+    /*
+     * Back to the first, which must still hold what was typed into it. Losing
+     * that is not a trade-off, it is a bug -- which is why the text lives in a
+     * pool even though the undo history does not.
+     */
+    ar_focus_next(g_ui, 1);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("h"), "field: going back finds what was typed there");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("start!"), "field: and forward again finds the other");
+}
+
+static void test_shift_extends_and_typing_replaces(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"a\" type=\"text\" value=\"hello\"></body></html>",
+                    "body { margin:0 }");
+
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, 0, 0);
+    CHECK(ar__field_is("hello"), "field: starts from its value");
+
+    /* Shift-Left twice selects two clusters back; typing replaces them. */
+    ar__type(&s, 0, AR_KEY_LEFT | AR_KEY_SHIFT);
+    ar__type(&s, 0, AR_KEY_LEFT | AR_KEY_SHIFT);
+    ar__type(&s, "p", 0);
+    CHECK(ar__field_is("help"), "field: shift-left selects and typing replaces the selection");
+
+    /* Select all and replace. */
+    ar__type(&s, 0, AR_KEY_SELECT_ALL);
+    ar__type(&s, "x", 0);
+    CHECK(ar__field_is("x"), "field: select all then type replaces everything");
+
+    /* And undo puts back what select-all replaced. */
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is("help"), "field: undo restores it");
+}
+
+/*
+ * The field's text is on the screen, and the caret is in it.
+ *
+ * A box like any other text, so that it is measured, laid out and painted by
+ * the machinery that already does all three -- rather than by a special case
+ * that would have to learn them.
+ */
+static void test_a_field_shows_what_it_holds(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\" value=\"abc\">"
+                    "<input id=\"b\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:120px; margin:0 }");
+
+    /* The text child exists and carries the markup's value. */
+    {
+        ar_i32 f = ar__first_tag_id("a");
+
+        CHECK(f >= 0 && f + 1 < g_ui->node_count, "field: a field has a text box");
+        CHECK(g_ui->nodes[f + 1].text != 0, "field: which holds text");
+        CHECK(memcmp(g_ui->nodes[f + 1].text, "abc", 3) == 0, "field: and it is the value");
+    }
+
+    /*
+     * An empty field still gets its text box. Without one the caret has
+     * nothing to measure against and no line box to sit in, so the first
+     * character typed would move it -- and an empty field would be the one
+     * place the caret is drawn somewhere else.
+     */
+    {
+        ar_i32 f = ar__first_tag_id("b");
+
+        CHECK(f >= 0 && f + 1 < g_ui->node_count, "field: an empty field has one too");
+        CHECK(g_ui->nodes[f + 1].text != 0 && g_ui->nodes[f + 1].text[0] == 0,
+              "field: holding nothing");
+    }
+
+    /* And what is typed replaces what the markup said, on the screen and not
+       only in the buffer. */
+    ar_focus_next(g_ui, 0);
+    ar__type(&s, "Z", 0);
+    {
+        ar_i32 f = ar__first_tag_id("a");
+
+        CHECK(memcmp(g_ui->nodes[f + 1].text, "abcZ", 4) == 0,
+              "field: typing shows up in the box, not just the buffer");
+    }
+}
+
+/*
+ * `white-space`, which is two questions in one property and has been since
+ * CSS 2: may the text wrap, and may its spaces collapse.
+ *
+ * Both were decided by the tag before this -- `<pre>` and nothing else -- so
+ * the property was wrong in both directions at once: `white-space: pre` on a
+ * div collapsed anyway, and `white-space: normal` on a `<pre>` did not.
+ */
+static void test_white_space_collapsing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">a    b</div>"
+                    "<div id=\"b\">a    b</div>"
+                    "<pre id=\"c\">a    b</pre>"
+                    "<pre id=\"d\">a    b</pre>"
+                    "</body></html>",
+                    "body { margin:0 } div, pre { display:block }"
+                    "#b { white-space:pre }"
+                    "#d { white-space:normal }");
+
+    /* The text box of each, and its length: collapsed is "a b", kept is the
+       four spaces as typed. */
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("a") + 1].text) == 3,
+          "white-space: a div collapses by default");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("b") + 1].text) == 6,
+          "white-space: and pre on a div keeps the spaces");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("c") + 1].text) == 6,
+          "white-space: a pre keeps them by default");
+    CHECK(strlen(g_ui->nodes[ar__first_tag_id("d") + 1].text) == 3,
+          "white-space: and normal on a pre collapses them");
+}
+
+static void test_nowrap_does_not_wrap(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<div id=\"a\">one two three four five six seven eight</div>"
+                    "<div id=\"b\">one two three four five six seven eight</div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block; width:60px }"
+                    "#b { white-space:nowrap }");
+
+    /*
+     * The wrapping one is several lines tall and the other is one. Compared
+     * against each other rather than against a pixel count, so the test says
+     * what it means without depending on the face.
+     */
+    CHECK(ar__box(ar__first_tag_id("a")).h > ar__box(ar__first_tag_id("b")).h,
+          "white-space: nowrap runs off the end instead of folding");
+}
+
+/*
+ * A field does not wrap, and the property is the reason.
+ *
+ * This test spent most of 0.10.0 asserting the opposite as a known fault: the
+ * computed value reached the field's text box as `pre` and the text folded
+ * onto three lines anyway, because a block carrying its own text was wrapped
+ * by a path that never asked `white-space`. It asks now (ar__wrap_lines), and
+ * the long value is one line that the field scrolls.
+ */
+static void test_white_space_reaches_a_field_but_does_not_hold_it(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\" value=\"a much longer value than fits\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:40px; height:20px }");
+
+    CHECK(ar__box_style(ar__first_tag_id("a") + 1)->v[AR_P_WHITE_SPACE] == AR_WS_PRE,
+          "white-space: the user-agent sheet reaches a field's text");
+
+    CHECK(ar__box(ar__first_tag_id("a") + 1).h == g_ui->nodes[ar__first_tag_id("a") + 1].text_h,
+          "white-space: and a block with its own text keeps it to one line");
+}
+
+/*
+ * `:focus` on a parsed document, which is not the same path as the
+ * immediate-mode tests above and turned out not to work.
+ *
+ * Those drive ar_focusable by hand and match. A document goes through
+ * ar_dom_build, and the ring never appeared in the rendered example -- so this
+ * asks the question directly rather than through a picture.
+ */
+static void test_focus_styles_reach_a_parsed_document(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body>"
+                    "<input id=\"a\" type=\"text\">"
+                    "<input id=\"b\" type=\"text\">"
+                    "</body></html>",
+                    "body { margin:0 } input { display:block; width:100px; height:20px }"
+                    "#a:focus { width:111px }"
+                    "#a:focus-visible { height:33px }");
+
+    ar_focus_next(g_ui, 0);
+    ar__reframe(&s);
+
+    CHECK(ar_has_focus(g_ui), "focus: tab focuses something in a document");
+    CHECK(g_ui->focus_key == g_ui->nodes[ar__first_tag_id("a")].key,
+          "focus: and it is the first field's own box");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_WIDTH] == 111, "focus: :focus matches it");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_HEIGHT] == 33,
+          "focus: and :focus-visible does too");
 }
 
 static void test_current_color(void)
@@ -17703,8 +19341,36 @@ static void test_the_ua_stylesheet_fits_the_table_every_caller_gets(void)
     }
 
     CHECK(sheet.rules_refused == 0, "ua: the whole sheet fits a table of 512 with nothing refused");
-    CHECK(sheet.count <= 200,
-          "ua: and it fits the 256 every caller gets, with fifty-odd rules to spare");
+    /*
+     * 200 -> 220 at 0.10.0, which spent 203 of it on controls, then 220 -> 232
+     * for list markers, a link's colour and underline and `sub`/`sup`, and now
+     * 232 -> 244 for the control appearances and the monospace family.
+     * **240 today.**
+     *
+     * The wall was AR_MAX_RULES at 256, the warning fired three times in one
+     * sitting, and sixteen rules of headroom in front of a silent cliff is not
+     * a margin -- so the wall moved to 320 and this warning to 280.
+     *
+     * A rule costs a selector, not a declaration block: `pre, code, kbd, samp
+     * { ... }` is four of them. That is why a sheet grows faster than it
+     * reads, and it is the number to have in mind before adding anything here.
+     *
+     * The move cost 40,704 bytes of AR_MEM_FIXED, which is priced beside
+     * AR_MAX_RULES along with the cheaper answer nobody has taken yet: 600 of
+     * an ar_rule's 636 bytes are property slots the rule does not set.
+     *
+     * The move has been priced so nobody has to guess. `ar_rule` is 624 bytes,
+     * so the table is 159,744 of AR_MEM_FIXED already -- by a long way the
+     * largest thing in it -- and sixty-four more rules cost 39,936 bytes. That
+     * is not the four bytes the property mask cost; it is a real decision and
+     * should be made with the number in front of whoever makes it.
+     *
+     * The cheaper answer is the one named in ar_css.h: a rule carries a whole
+     * ar_style to state the two or three properties it actually sets. A
+     * property-value pool would cut the 624 by an order of magnitude and make
+     * this ceiling stop mattering instead of moving it.
+     */
+    CHECK(sheet.count <= 280, "ua: and it fits the 320 every caller gets, with headroom to spare");
 }
 
 static void test_a_document_lays_out_as_blocks(void)
@@ -17806,9 +19472,290 @@ static void test_whitespace_between_blocks_is_dropped(void)
         printf("      %ld boxes with whitespace, %ld without\n", (long)with_space, (long)without);
     }
 
-    /* html, head, body, ul, two li and two text spans. Stated so a change in
-       what the walk generates is visible rather than merely consistent. */
-    CHECK(without == 8, "html: and a two-item list is eight boxes");
+    /* html, head, body, ul, two li, two text spans -- and, since list markers
+       exist, an `ar-bullet` for each item. Ten.
+
+       This number is stated rather than derived precisely so that a change in
+       what the walk generates has to be noticed and explained, and it did its
+       job: it went red the moment markers were added, which is the only
+       assertion in the suite that saw them arrive. */
+    CHECK(without == 10, "html: and a two-item list is ten boxes, two of them markers");
+}
+
+/*
+ * A superscript is above the line and a subscript is below it.
+ *
+ * `vertical-align` had four keywords and neither of these was one, so `<sub>`
+ * and `<sup>` were small text on the same baseline as everything around them
+ * -- which is the one thing they are not, and the only thing either element
+ * exists to do.
+ *
+ * The two offsets are not arithmetic: the specification says "an appropriate
+ * offset" and leaves it to the font. They were read off Chrome's own boxes in
+ * examples/gallery/css/text/sub-super, where both now land on exactly the y a
+ * browser gives them. This check is the part of that which runs without a
+ * browser -- the direction and the ordering, which is what a regression would
+ * break first.
+ */
+/*
+ * An underline is drawn, and it is drawn on the text.
+ *
+ * `text-decoration` did not exist, so a link was the same black as the words
+ * around it and `<s>` struck nothing out. Counting pixels is the only way to
+ * see a decoration: it moves no box, so every assertion about geometry is
+ * true with it and without it -- the same blindness that kept the focus ring
+ * off the screen for a whole release.
+ *
+ * Two renders of the same markup, one decorated and one not, and the
+ * difference has to be ink below the baseline. Comparing against a control
+ * rather than against a pixel count says the line is *new* rather than that
+ * something dark happens to be there.
+ */
+/*
+ * A `<summary>` has a disclosure triangle, and it points the right way.
+ *
+ * A browser draws one as a glyph and this engine cannot: the built-in face is
+ * ASCII 32 to 126, so U+25B8 comes out as a question mark on any build without
+ * a TrueType face. It is a box the painter draws instead, and the only thing
+ * that distinguishes the two directions is the tag the walk chose -- which is
+ * exactly the kind of decision that is easy to get backwards and impossible to
+ * see in a box rectangle, because both tags make the same sized box.
+ *
+ * So this counts ink on the two halves. A right-pointing triangle has its
+ * base down the left edge and its apex on the right, so the left half holds
+ * more of it; a down-pointing one is symmetric left to right and top-heavy
+ * instead. Comparing halves rather than totals is what makes the check about
+ * the direction and not merely about something being drawn.
+ */
+/*
+ * An inline element's text joins the line its siblings are on.
+ *
+ * `ar_inline_run` walked one level of siblings, and a document walk puts an
+ * element's text in a child box -- so `<span>` arrived with no text of its
+ * own, failed ar_is_fragmentable and was placed as one unbreakable item. It
+ * took a whole line to itself, gained a space either side that nothing asked
+ * for, and everything past the first line's worth of its text was never drawn.
+ *
+ * Two things are asserted because the bug had two faces. That the three pieces
+ * share one line and touch exactly -- which is what says the element is not an
+ * item on the line -- and that a long one wraps to more than one line rather
+ * than being cut off at the first.
+ */
+static void test_an_inline_elements_text_joins_the_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     a, b, cc;
+
+    ar__render_html(&s, "<p>aaa<span id=\"m\">bbb</span>ccc</p>",
+                    "body { margin:0px; } p { margin:0px; }");
+
+    /* The paragraph's three children in order: text, the span, text. */
+    a = -1;
+    b = ar__first_tag_id("m");
+    CHECK(b > 0, "inline: the span is in the tree");
+    if (b <= 0)
+    {
+        return;
+    }
+    a = b - 1;  /* the text before it */
+    cc = b + 2; /* the span's text child, then the text after */
+
+    CHECK(ar__box(a).y == ar__box(b).y && ar__box(b).y == ar__box(cc).y,
+          "inline: the text, the span and the text after share one line");
+    CHECK(ar__box(a).x + ar__box(a).w == ar__box(b).x,
+          "inline: and the span starts exactly where the text before it ended");
+    CHECK(ar__box(b).x + ar__box(b).w == ar__box(cc).x,
+          "inline: with nothing inserted after it either");
+    if (ar__box(a).y != ar__box(b).y || ar__box(a).x + ar__box(a).w != ar__box(b).x)
+    {
+        printf("      before %ld,%ld %ldx%ld  span %ld,%ld %ldx%ld  after %ld,%ld %ldx%ld\n",
+               (long)ar__box(a).x, (long)ar__box(a).y, (long)ar__box(a).w, (long)ar__box(a).h,
+               (long)ar__box(b).x, (long)ar__box(b).y, (long)ar__box(b).w, (long)ar__box(b).h,
+               (long)ar__box(cc).x, (long)ar__box(cc).y, (long)ar__box(cc).w, (long)ar__box(cc).h);
+    }
+
+    /* And it breaks across lines rather than stopping at the first. */
+    ar__render_html(&s,
+                    "<p>Before <span id=\"w\">a nested inline long enough that it has to wrap"
+                    " across the end of more than one line</span> after.</p>",
+                    "body { margin:0px; } p { margin:0px; width:120px; }");
+    b = ar__first_tag_id("w");
+    CHECK(b > 0 && ar__box(b).h > 30,
+          "inline: a long one wraps instead of being cut off at one line");
+    if (b > 0 && ar__box(b).h <= 30)
+    {
+        printf("      the inline is %ldx%ld, which is one line\n", (long)ar__box(b).w,
+               (long)ar__box(b).h);
+    }
+}
+
+static void test_a_summary_has_a_triangle_that_points(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+    ar_i32     shut_left = 0, shut_right = 0, open_top = 0, open_bottom = 0;
+
+#define AR__HALVES(x0, x1, y0, y1, out)                                                            \
+    do                                                                                             \
+    {                                                                                              \
+        ar_i32 x, y;                                                                               \
+        (out) = 0;                                                                                 \
+        for (y = (y0); y < (y1); ++y)                                                              \
+        {                                                                                          \
+            for (x = (x0); x < (x1); ++x)                                                          \
+            {                                                                                      \
+                if ((g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu) != 0xFFFFFFu)                    \
+                {                                                                                  \
+                    ++(out);                                                                       \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+
+    /* The marker is the first thing on the line, so the first 8 px of the
+       content box is all triangle and no text. */
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<details><summary>x</summary><p>b</p></details>",
+                    "body { margin:0px; } details, summary, p { margin:0px; }");
+    AR__HALVES(0, 4, 0, 20, shut_left);
+    AR__HALVES(4, 8, 0, 20, shut_right);
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<details open><summary>x</summary><p>b</p></details>",
+                    "body { margin:0px; } details, summary, p { margin:0px; }");
+    {
+        /* Split the marker's *own* rows rather than a guessed midpoint: it is
+           eight pixels of a nineteen pixel line and where it sits in that line
+           depends on the baseline. Splitting at a fixed y measured the blank
+           space above it and called the triangle upside down. */
+        ar_i32 yy, first = -1, last = -1, xx;
+
+        for (yy = 0; yy < 20; ++yy)
+        {
+            for (xx = 0; xx < 8; ++xx)
+            {
+                if ((g_ui_pixels[yy * AR_LAY_MAX + xx] & 0xFFFFFFu) != 0xFFFFFFu)
+                {
+                    if (first < 0)
+                    {
+                        first = yy;
+                    }
+                    last = yy;
+                    break;
+                }
+            }
+        }
+        if (first >= 0)
+        {
+            ar_i32 mid = first + (last - first + 1) / 2;
+
+            AR__HALVES(0, 8, first, mid, open_top);
+            AR__HALVES(0, 8, mid, last + 1, open_bottom);
+        }
+    }
+#undef AR__HALVES
+
+    CHECK(shut_left > 0, "summary: a shut details draws a marker at all");
+    CHECK(shut_left > shut_right, "summary: and it points right, so its base is on the left");
+    CHECK(open_top > open_bottom, "summary: an open one points down, so its base is on top");
+    if (!(shut_left > shut_right && open_top > open_bottom))
+    {
+        printf("      shut %ld|%ld  open %ld|%ld\n", (long)shut_left, (long)shut_right,
+               (long)open_top, (long)open_bottom);
+    }
+}
+
+static void test_an_underline_is_drawn_under_the_text(void)
+{
+    ar_surface s = ar__ui_surface(200, 60);
+    ar_i32     plain_px, lined_px;
+
+/* The buffer is wider than the surface -- `stride` is AR_LAY_MAX and `w` is
+   what was asked for -- so a flat walk of `w * h` reads the wrong pixels.
+   And it is cleared first, because the two renders share it and ink the
+   first one left would be counted again by the second. */
+#define AR__INK(out)                                                                               \
+    do                                                                                             \
+    {                                                                                              \
+        ar_i32 x, y;                                                                               \
+        (out) = 0;                                                                                 \
+        for (y = 0; y < s.h; ++y)                                                                  \
+        {                                                                                          \
+            for (x = 0; x < s.w; ++x)                                                              \
+            {                                                                                      \
+                if ((g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu) != 0xFFFFFFu)                    \
+                {                                                                                  \
+                    ++(out);                                                                       \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<p>Hello</p>", "body { margin:0px; } p { margin:0px; color:#000000; }");
+    AR__INK(plain_px);
+
+    memset(g_ui_pixels, 0xFF, sizeof g_ui_pixels);
+    ar__render_html(&s, "<p>Hello</p>",
+                    "body { margin:0px; } p { margin:0px; color:#000000;"
+                    "        text-decoration:underline; }");
+    AR__INK(lined_px);
+#undef AR__INK
+
+    CHECK(plain_px > 0, "decoration: the control rendered some text at all");
+    CHECK(lined_px > plain_px, "decoration: and underlining it puts more ink on the surface");
+    if (lined_px <= plain_px)
+    {
+        printf("      %ld px undecorated, %ld decorated\n", (long)plain_px, (long)lined_px);
+    }
+}
+
+static void test_sub_and_super_leave_the_baseline(void)
+{
+    ar_surface s = ar__ui_surface(400, 200);
+    ar_i32     plain, sub, sup;
+    ar_i32     i = 0;
+
+    ar__render_html(&s, "<p>x<span id=\"p\">n</span><sub id=\"b\">n</sub><sup id=\"u\">n</sup></p>",
+                    "body { margin:0px; } p { margin:0px; font-size:16px; }");
+
+    plain = ar__first_tag_id("p");
+    sub = ar__first_tag_id("b");
+    sup = ar__first_tag_id("u");
+    (void)i;
+
+    CHECK(plain >= 0 && sub >= 0 && sup >= 0, "valign: the three spans are in the tree");
+    if (plain < 0 || sub < 0 || sup < 0)
+    {
+        return;
+    }
+
+    /*
+     * Baselines, not box tops, and the difference is the whole point: a
+     * subscript is smaller, so its box is shorter, and a shorter box raised
+     * off the line can still have its top edge lower than a taller box's.
+     * Comparing `y` asks where the boxes are; `vertical-align` moves where
+     * their baselines are, and that is what has to be asserted. The first
+     * version of this check compared `y` and went red against a correct
+     * engine, which is the reason the distinction is written down.
+     *
+     * Ordering rather than exact pixels, because the offsets are a fraction of
+     * a font size and a face with different metrics moves both. The gallery
+     * demo is where the exact numbers are checked, against Chrome.
+     */
+    {
+        ar_i32 b_plain = ar__box(plain).y + g_ui->nodes[plain].ascent;
+        ar_i32 b_sub = ar__box(sub).y + g_ui->nodes[sub].ascent;
+        ar_i32 b_sup = ar__box(sup).y + g_ui->nodes[sup].ascent;
+
+        CHECK(b_sup < b_plain, "valign: a superscript's baseline is above the text it follows");
+        CHECK(b_sub > b_plain, "valign: a subscript's is below it");
+        CHECK(b_sup < b_sub, "valign: and the two are the right way round");
+        if (!(b_sup < b_plain && b_sub > b_plain))
+        {
+            printf("      baselines: sup %ld, plain %ld, sub %ld\n", (long)b_sup, (long)b_plain,
+                   (long)b_sub);
+        }
+    }
 }
 
 static void test_a_table_from_markup_uses_the_table_model(void)
@@ -20228,6 +22175,1545 @@ static void test_the_adoption_agency_terminates_on_anything(void)
     CHECK(bad == 0, "html: and terminates on every chain of misnested formatting");
 }
 
+/* ------------------------------------------------------------------------
+ * 0.10.0, the rest of interaction
+ *
+ * The controls a browser has that a viewer does not, the editing a textarea
+ * needs, and the layout faults the comparison against Edge turned up -- each
+ * with a check that fails when the thing it pins is taken out.
+ * ------------------------------------------------------------------------ */
+
+/* The DOM node carrying `id`, in the document the last render parsed. */
+static ar_i32 ar__dom_id(const char *id)
+{
+    ar_i32 i;
+    size_t n = strlen(id);
+
+    for (i = 0; i < g_doc.node_count; ++i)
+    {
+        ar_span v = ar_a11y_attr(&g_doc, i, "id");
+
+        if (v.p && v.n == n && memcmp(v.p, id, n) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* What a reader would be told an element holds. */
+static int ar__value_is(const char *id, const char *want)
+{
+    char   buf[256];
+    ar_u32 n = ar_a11y_value(g_ui, &g_doc, ar__dom_id(id), buf, sizeof buf);
+
+    return n == (ar_u32)strlen(want) && memcmp(buf, want, n) == 0;
+}
+
+/* Tab until the element is focused, the way a keyboard gets anywhere. */
+static int ar__tab_to(ar_surface *s, const char *id)
+{
+    ar_i32 guard;
+
+    for (guard = 0; guard < 40; ++guard)
+    {
+        ar_i32 dom = ar__dom_id(id);
+
+        if (dom >= 0 && g_doc.nodes[dom].box >= 0 && ar_focus_node(g_ui) == g_doc.nodes[dom].box)
+        {
+            return 1;
+        }
+        ar__type(s, 0, AR_KEY_TAB);
+    }
+    return 0;
+}
+
+/* --- the caret corpus ---------------------------------------------------- */
+
+static ar_u32 ar__cp_of(const char *s, ar_u32 at, ar_u32 *len)
+{
+    const unsigned char *p = (const unsigned char *)s + at;
+
+    if (p[0] < 0x80)
+    {
+        *len = 1;
+        return p[0];
+    }
+    if ((p[0] & 0xE0) == 0xC0)
+    {
+        *len = 2;
+        return ((ar_u32)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    }
+    if ((p[0] & 0xF0) == 0xE0)
+    {
+        *len = 3;
+        return ((ar_u32)(p[0] & 0x0F) << 12) | ((ar_u32)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    }
+    *len = 4;
+    return ((ar_u32)(p[0] & 0x07) << 18) | ((ar_u32)(p[1] & 0x3F) << 12) |
+           ((ar_u32)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+
+/*
+ * May a caret stand at `at`? Answered without the engine's own rules, from the
+ * handful of facts no reading of UAX #29 disputes: never inside a UTF-8
+ * sequence, never in front of a combining mark, a skin tone or a joiner,
+ * never just after a joiner, never between the jamo of one syllable.
+ */
+static int ar__caret_may_stand(const char *s, ar_u32 len, ar_u32 at)
+{
+    ar_u32 n, prev_at, cp, prev = 0;
+
+    if (at == 0 || at >= len)
+    {
+        return 1;
+    }
+    if (((unsigned char)s[at] & 0xC0) == 0x80)
+    {
+        return 0;
+    }
+    cp = ar__cp_of(s, at, &n);
+    prev_at = at - 1;
+    while (prev_at > 0 && ((unsigned char)s[prev_at] & 0xC0) == 0x80)
+    {
+        --prev_at;
+    }
+    prev = ar__cp_of(s, prev_at, &n);
+    if ((cp >= 0x300 && cp <= 0x36F) || (cp >= 0x1F3FB && cp <= 0x1F3FF) || cp == 0x200D)
+    {
+        return 0;
+    }
+    if (prev == 0x200D)
+    {
+        return 0;
+    }
+    if (prev >= 0x1100 && prev <= 0x115F && cp >= 0x1160 && cp <= 0x11A7)
+    {
+        return 0;
+    }
+    if (prev >= 0x1160 && prev <= 0x11A7 && cp >= 0x11A8 && cp <= 0x11FF)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * 0.10.0's second criterion as it is written: two hundred strings, every stop
+ * the caret makes checked against a rule that is not the engine's own. The
+ * strings are the sixteen of the corpus above, two at a time, so a mark or a
+ * joiner meets everything else on both sides of it.
+ */
+static void test_the_caret_corpus_of_two_hundred(void)
+{
+    static ar_edit e;
+    char           buf[160];
+    ar_i32         a, b, count = 0, stops = 0;
+    int            bad = 0;
+
+    for (a = 0; a < AR__CLUSTER_N && count < 200; ++a)
+    {
+        for (b = 0; b < AR__CLUSTER_N && count < 200; ++b)
+        {
+            ar_u16 at;
+            ar_i32 guard;
+
+            strcpy(buf, AR__CLUSTERS[a]);
+            strcat(buf, AR__CLUSTERS[b]);
+            ar_edit_init(&e, buf);
+            for (at = 0, guard = 0; at < e.len && guard < 80; ++guard)
+            {
+                at = ar_edit_next(&e, at);
+                ++stops;
+                bad |= !ar__caret_may_stand(buf, e.len, at);
+            }
+            for (at = e.len, guard = 0; at > 0 && guard < 80; ++guard)
+            {
+                at = ar_edit_prev(&e, at);
+                ++stops;
+                bad |= !ar__caret_may_stand(buf, e.len, at);
+            }
+            ++count;
+        }
+    }
+    CHECK(count == 200, "edit: the corpus is two hundred strings");
+    CHECK(stops > 1000, "edit: and the caret walked all of them, both ways");
+    CHECK(!bad, "edit: and never stood inside a cluster, by a rule that is not its own");
+}
+
+/*
+ * 0.10.0's third criterion: a five-hundred-operation session, and undo and redo
+ * restore the text byte for byte at every step.
+ *
+ * The text before each step is kept as the session runs; a typing run that
+ * coalesces into the step before it adds no step and so no snapshot, which is
+ * the coalescing the log is meant to do.
+ */
+static void test_undo_and_redo_over_five_hundred_steps(void)
+{
+    static ar_edit e;
+    static char    snap[520][96];
+    static ar_u16  snap_n[520];
+    char           before[96];
+    ar_u16         before_n;
+    ar_u32         seed = 2463534242u;
+    ar_i32         op, k;
+    ar_u16         depth;
+    int            bad = 0;
+
+    ar_edit_init(&e, "start");
+    for (op = 0; op < 500; ++op)
+    {
+        ar_u16 d = ar_edit_undo_depth(&e);
+        ar_u32 r;
+
+        memcpy(before, e.text, e.len);
+        before_n = e.len;
+
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        r = seed;
+
+        if (e.len > 60)
+        {
+            ar_edit_select_all(&e);
+            ar_edit_paste(&e, "reset", 5);
+        }
+        else
+        {
+            switch (r % 6)
+            {
+            case 0:
+                ar_edit_paste(&e, AR__CLUSTERS[(r >> 8) % 4],
+                              (ar_u32)strlen(AR__CLUSTERS[(r >> 8) % 4]));
+                break;
+            case 1:
+                ar_edit_insert(&e, "ty", 2);
+                break;
+            case 2:
+                ar_edit_backspace(&e);
+                break;
+            case 3:
+                ar_edit_move(&e, (r >> 8) % 2 ? 1 : -2, 0);
+                ar_edit_delete(&e);
+                break;
+            case 4:
+                ar_edit_move(&e, -1, 1);
+                ar_edit_paste(&e, "Q", 1);
+                break;
+            default:
+                ar_edit_move_word(&e, (r >> 8) % 2 ? 1 : -1, 0);
+                ar_edit_paste(&e, " w", 2);
+                break;
+            }
+        }
+        if (ar_edit_undo_depth(&e) == d + 1 && d < 520)
+        {
+            memcpy(snap[d], before, before_n);
+            snap_n[d] = before_n;
+        }
+    }
+    depth = ar_edit_undo_depth(&e);
+    memcpy(snap[depth], e.text, e.len);
+    snap_n[depth] = e.len;
+
+    for (k = depth; k > 0; --k)
+    {
+        if (!ar_edit_undo(&e) || e.len != snap_n[k - 1] || memcmp(e.text, snap[k - 1], e.len) != 0)
+        {
+            bad = 1;
+        }
+    }
+    CHECK(!ar_edit_undo(&e), "undo: and stops at the start of the history");
+    for (k = 1; k <= depth; ++k)
+    {
+        if (!ar_edit_redo(&e) || e.len != snap_n[k] || memcmp(e.text, snap[k], e.len) != 0)
+        {
+            bad = 1;
+        }
+    }
+    CHECK(depth >= 300, "undo: the session left hundreds of steps to undo");
+    CHECK(!bad, "undo: every step back and every step forward is byte for byte");
+}
+
+/* --- focus ---------------------------------------------------------------- */
+
+/*
+ * 0.10.0's fifth criterion: `order` moves boxes and must not move the focus.
+ * The specification is explicit, and a tab order taken from the boxes rather
+ * than the document is exactly how it gets broken by accident.
+ */
+static void test_tab_order_ignores_flex_order(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"row\">"
+                    "<input id=\"a\"><input id=\"b\"><input id=\"c\">"
+                    "</div></body></html>",
+                    "body { margin:0 } #row { display:flex } #a { order:3 } #c { order:1 }");
+
+    CHECK(ar__box(ar__first_tag_id("c")).x < ar__box(ar__first_tag_id("a")).x,
+          "focus: order puts the third field first on the screen");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("a"), "focus: and Tab still starts at the first");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("b"), "focus: then the second");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar_focus_node(g_ui) == ar__first_tag_id("c"), "focus: then the third, in document order");
+}
+
+/* --- the new controls ----------------------------------------------------- */
+
+static void test_a_textarea_holds_its_content_and_takes_newlines(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     ta, kid;
+
+    ar__render_html(&s, "<html><body><textarea id=\"t\">one</textarea></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    CHECK(ar__field_is("one"), "textarea: starts from its content, not a value attribute");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    ar__type(&s, "two", 0);
+    CHECK(ar__field_is("one\ntwo"), "textarea: Enter is a newline in it");
+
+    ta = ar__first_tag_id("t");
+    kid = ta >= 0 ? g_ui->nodes[ta].first_child : -1;
+    while (kid >= 0 && !g_ui->nodes[kid].text)
+    {
+        kid = g_ui->nodes[kid].next_sibling;
+    }
+    CHECK(kid >= 0 && ar__box(kid).h >= 2 * g_ui->nodes[kid].text_h,
+          "textarea: and the newline is a second line on the screen");
+    CHECK(ar__tags("span", &kid, 1) == 0, "textarea: its content is drawn once, by the field");
+}
+
+static void test_a_password_draws_masks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     p;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"p\" type=\"password\" value=\"abc\"></body></html>",
+                    "body { margin:0 }");
+    p = ar__first_tag_id("p");
+    CHECK(p >= 0 && p + 1 < g_ui->node_count && strcmp(g_ui->nodes[p + 1].text, "***") == 0,
+          "password: one mask a character, and never the characters");
+    CHECK(ar__value_is("p", "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2"),
+          "password: a reader is told its length and not its text");
+}
+
+static void test_a_number_steps_within_its_limits(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"n\" type=\"number\" value=\"5\" min=\"1\" "
+                    "max=\"6\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_UP);
+    CHECK(ar__field_is("6"), "number: up steps it");
+    ar__type(&s, 0, AR_KEY_UP);
+    CHECK(ar__field_is("6"), "number: and stops at max");
+    ar__type(&s, "x9", 0);
+    CHECK(ar__field_is("69"), "number: typing takes digits and drops the rest");
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is("6"), "number: and a step is one undo");
+}
+
+static void test_a_select_opens_and_chooses(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     one;
+
+    ar__render_html(&s,
+                    "<html><body><select id=\"s\"><option>a</option><option selected>b</option>"
+                    "<option>c</option></select></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__value_is("s", "b"), "select: shows its selected option");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_DOWN);
+    CHECK(ar__value_is("s", "c"), "select: down chooses the next");
+    ar__type(&s, 0, AR_KEY_SPACE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__tags("ar-listbox", &one, 1) == 1, "select: space opens its list");
+    ar__type(&s, 0, AR_KEY_ESCAPE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__tags("ar-listbox", &one, 1) == 0, "select: and Escape closes it");
+    CHECK(ar__value_is("s", "c"), "select: on the choice it had");
+}
+
+static void test_a_select_is_as_wide_as_its_widest_option(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><select id=\"s\"><option>a</option>"
+                    "<option>a much longer option</option></select></body></html>",
+                    "body { margin:0 }");
+    {
+        ar_i32 i, longest = -1;
+
+        /* Against the option's own text, measured: the built-in face is
+           proportional, so a character count says nothing about a width. */
+        for (i = 0; i < g_ui->node_count; ++i)
+        {
+            if (g_ui->nodes[i].text && strcmp(g_ui->nodes[i].text, "a much longer option") == 0)
+            {
+                longest = i;
+            }
+        }
+        CHECK(longest >= 0 && ar__box(ar__first_tag_id("s")).w >= ar__box(longest).w + 22,
+              "select: sized by the widest option, which it is not showing");
+    }
+}
+
+static void test_a_slider_steps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"r\" type=\"range\" min=\"0\" max=\"10\" "
+                    "value=\"5\"></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__value_is("r", "5"), "range: starts at its value");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_RIGHT);
+    CHECK(ar__value_is("r", "6"), "range: right steps it up");
+    ar__type(&s, 0, AR_KEY_END);
+    CHECK(ar__value_is("r", "10"), "range: End is its max");
+    ar__type(&s, 0, AR_KEY_HOME);
+    CHECK(ar__value_is("r", "0"), "range: Home its min");
+}
+
+/*
+ * A press puts the thumb's centre under the pointer, and a press on the thumb
+ * leaves it where it is. The fill was taken for the thumb, and a click on the
+ * thumb at 65 moved it to 55.
+ */
+static void test_a_slider_follows_the_pointer(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+    ar_i32     span;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"r\" type=\"range\" min=\"0\" max=\"100\" "
+                    "value=\"65\"></body></html>",
+                    "body { margin:0 }");
+    r = ar__box(ar__first_tag_id("r"));
+    span = r.w - 16; /* the rail: the track less one thumb */
+    ar__press_at(&s, r.x + 8 + (span * 65 + 50) / 100, r.y + r.h / 2);
+    CHECK(ar__value_is("r", "65"), "range: a press on the thumb leaves it where it is");
+    ar__press_at(&s, r.x + 8 + (span * 20 + 50) / 100, r.y + r.h / 2);
+    CHECK(ar__value_is("r", "20"), "range: a press on the track brings the thumb under it");
+}
+
+static void test_a_label_passes_its_click(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"c\" type=\"checkbox\">"
+                    "<label id=\"l\" for=\"c\">tick me</label></body></html>",
+                    "body { margin:0 }");
+    r = ar__box(ar__first_tag_id("l"));
+    ar__press_at(&s, r.x + r.w / 2, r.y + r.h / 2);
+    ar__reframe(&s);
+    CHECK((g_ui->nodes[ar__first_tag_id("c")].state & AR_STATE_CHECKED) != 0,
+          "label: a click on the words ticks the box");
+}
+
+static void test_a_form_submits_what_was_done(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     form, by = -9;
+    char       data[256];
+    ar_u32     n;
+
+    ar__render_html(&s,
+                    "<html><body><form id=\"f\">"
+                    "<input id=\"a\" name=\"a\" value=\"x\">"
+                    "<input type=\"checkbox\" name=\"b\" checked>"
+                    "<input type=\"checkbox\" name=\"c\">"
+                    "<select name=\"d\"><option value=\"1\">1</option>"
+                    "<option value=\"2\" selected>2</option></select>"
+                    "<textarea name=\"e\">l1\nl2</textarea>"
+                    "<input type=\"hidden\" name=\"h\" value=\"z z\">"
+                    "<input id=\"go\" type=\"submit\" name=\"go\" value=\"Go\">"
+                    "<input id=\"rs\" type=\"reset\">"
+                    "</form></body></html>",
+                    "body { margin:0 }");
+    ar__tab_to(&s, "a");
+    ar__type(&s, "y", 0);
+    ar__tab_to(&s, "go");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    form = ar_form_submitted(g_ui, &by);
+    CHECK(form == ar__dom_id("f"), "form: a submit button submits its form");
+    CHECK(by == ar__dom_id("go"), "form: and says which button did it");
+    n = ar_form_encode(g_ui, form, by, data, sizeof data);
+    CHECK(n == (ar_u32)strlen(data) && strcmp(data, "a=xy&b=on&d=2&e=l1%0D%0Al2&h=z+z&go=Go") == 0,
+          "form: encoded with what was typed and ticked, urlencoded");
+
+    ar__tab_to(&s, "rs");
+    ar__type(&s, 0, AR_KEY_SPACE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__value_is("a", "x"), "form: reset puts a field back to its markup");
+
+    ar__tab_to(&s, "a");
+    ar__type(&s, 0, AR_KEY_ENTER);
+    CHECK(ar_form_submitted(g_ui, &by) == ar__dom_id("f") && by == ar__dom_id("go"),
+          "form: Enter in a field submits it through its first submit button");
+}
+
+/*
+ * What the tree said when it was finally read back through MSAA, by a client in
+ * another process: every control right, and the containers around them wrong.
+ * The form was named with every word in it, the fieldset with its legend and
+ * all three radios' labels, the closed `<details>` with the sentence it was
+ * hiding, and the paragraph around a textarea with what had been typed into
+ * it. Each is a rule of accname or HTML-AAM that the name walk did not have.
+ */
+static void test_containers_are_named_by_markup_not_content(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    ar__render_html(
+        &s,
+        "<html><body><form id=\"f\">"
+        "<fieldset id=\"fs\"><legend>When</legend>"
+        "<label><input type=\"radio\" name=\"w\"> Soon</label></fieldset>"
+        "<p id=\"p\"><label for=\"t\">Address</label>"
+        "<textarea id=\"t\">12 Mill Lane</textarea></p>"
+        "<p id=\"q\">Size <select><option>Small<option>Large</select></p>"
+        "<details id=\"d\"><summary id=\"s\">More</summary>"
+        "<p>The gate code is 4417.</p></details>"
+        "<ul><li id=\"li\">Item<details><summary>Sum</summary>Secret</details></li></ul>"
+        "</form></body></html>",
+        "body { margin:0 }");
+    /* A list item is named by its content, so what a closed details inside
+       it hides must be skipped by the walk and not by the role. */
+    CHECK(ar__name_is("li", "Item"), "accname: content nobody can see is not read out");
+    CHECK(ar__name_is("f", ""), "accname: a form is not named by its content");
+    CHECK(ar__name_is("fs", "When"), "accname: a fieldset is named by its legend, and only that");
+    CHECK(ar__name_is("p", "Address"), "accname: a textarea's text is not its paragraph's name");
+    CHECK(ar__name_is("q", "Size"), "accname: and a select's options are not either");
+    CHECK(ar__name_is("d", ""), "accname: a details group is not named by its content");
+    CHECK(ar__name_is("s", "More"), "accname: its summary is, as a button is");
+    CHECK(ar__name_is("t", "Address"), "accname: and the textarea is named by its label");
+}
+
+static void test_the_a11y_tree(void)
+{
+    ar_surface   s = ar__ui_surface(400, 300);
+    ar_a11y_item items[32];
+    ar_i32       n, k, form = -1, box = -1, head = -1;
+
+    ar__render_html(&s,
+                    "<html><body><h2>Title</h2><form>"
+                    "<input id=\"c\" type=\"checkbox\" checked>"
+                    "<div><button>Go</button></div>"
+                    "</form></body></html>",
+                    "body { margin:0 }");
+    n = ar_a11y_tree(g_ui, &g_doc, items, 32);
+    for (k = 0; k < n && k < 32; ++k)
+    {
+        if (items[k].role == AR_ROLE_FORM)
+        {
+            form = k;
+        }
+        if (items[k].role == AR_ROLE_CHECKBOX)
+        {
+            box = k;
+        }
+        if (items[k].role == AR_ROLE_HEADING)
+        {
+            head = k;
+        }
+    }
+    CHECK(n == 4, "a11y: four things a reader needs, and no div among them");
+    CHECK(head >= 0 && items[head].level == 2, "a11y: a heading carries its level");
+    CHECK(box >= 0 && (items[box].state & AR_A11Y_CHECKED) &&
+              (items[box].state & AR_A11Y_FOCUSABLE),
+          "a11y: a checkbox says it is checked and focusable");
+    CHECK(box >= 0 && items[box].parent == form, "a11y: and is a child of its form");
+    CHECK(items[n - 1].parent == form && items[n - 1].role == AR_ROLE_BUTTON,
+          "a11y: the div around the button is walked through, not listed");
+}
+
+/* --- the caret on the screen ---------------------------------------------- */
+
+static ar_u32 g_test_clock_us = 1000000u;
+
+static ar_u32 ar__test_clock(void)
+{
+    return g_test_clock_us;
+}
+
+/*
+ * 0.10.0's seventh criterion: a blink invalidates fewer than 2,000 pixels. It
+ * repaints one column -- the caret's -- because nothing else changed.
+ */
+/*
+ * A blink without a frame paints what the frame would have, and only that.
+ *
+ * ar_frame_blink repaints the caret's column from the frame that is standing.
+ * The proof that it is the same blink is the frame that follows: built at the
+ * same moment, it must find nothing left to paint -- every pixel already what
+ * it would have made -- or the two disagree about what the screen shows.
+ */
+static ar_u32 g_blink_copy[400 * 300];
+
+static int ar__surface_matches_copy(const ar_surface *s)
+{
+    ar_i32 x, y;
+
+    for (y = 0; y < s->h; ++y)
+    {
+        for (x = 0; x < s->w; ++x)
+        {
+            if (s->pixels[y * s->stride + x] != g_blink_copy[y * 400 + x])
+            {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void test_a_blink_needs_no_frame(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+    ar_i32     x, y;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar_set_clock(g_ui, ar__test_clock);
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    ar__type(&s, 0, 0);
+
+    r = ar_frame_blink(g_ui, &s);
+    CHECK(ar_rect_is_empty(r), "blink: nothing to paint while the caret's phase holds");
+
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            g_blink_copy[y * 400 + x] = s.pixels[y * s.stride + x];
+        }
+    }
+    g_test_clock_us += 530000u;
+    r = ar_frame_blink(g_ui, &s);
+    CHECK(!ar_rect_is_empty(r) && r.w * r.h < 2000,
+          "blink: a phase change paints the caret's column and nothing more");
+    CHECK(!ar__surface_matches_copy(&s), "blink: and the column did change");
+    CHECK(ar_rect_is_empty(ar_frame_blink(g_ui, &s)), "blink: once, not again");
+
+    /* The frame at the same moment: nothing for it to do. */
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            g_blink_copy[y * 400 + x] = s.pixels[y * s.stride + x];
+        }
+    }
+    ar__type(&s, 0, 0);
+    CHECK(ar_damage_count(g_ui) == 0, "blink: the next frame agrees, and finds nothing to paint");
+    CHECK(ar__surface_matches_copy(&s), "blink: every pixel what that frame would have drawn");
+
+    /* With a frame begun and not ended there is no tree to paint from. */
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        g_test_clock_us += 530000u;
+        ar_frame_begin(g_ui, &in);
+        CHECK(ar_rect_is_empty(ar_frame_blink(g_ui, &s)),
+              "blink: refuses while a frame is being built");
+        ar_dom_build(g_ui, &g_doc);
+        ar_frame_end(g_ui, &s);
+    }
+    ar_set_clock(g_ui, 0);
+}
+
+static void test_a_blink_is_one_column(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     k, px = 0;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar_set_clock(g_ui, ar__test_clock);
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    ar__type(&s, 0, 0);
+    g_test_clock_us += 530000u;
+    ar__type(&s, 0, 0);
+    for (k = 0; k < ar_damage_count(g_ui); ++k)
+    {
+        ar_rect r = ar_damage_rect(g_ui, k);
+
+        px += r.w * r.h;
+    }
+    CHECK(px > 0 && px < 2000, "caret: a blink repaints the caret's column and nothing else");
+    CHECK(ar_caret_wait_us(g_ui) > 0 && ar_caret_wait_us(g_ui) <= 530000u,
+          "caret: and says how long until the next");
+    ar_set_clock(g_ui, 0);
+}
+
+/* One frame of the parsed document into `s`, at whatever scale is set. */
+static void ar__frame_into(ar_surface *s)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+/* How many pixels of a surface-space rectangle are dark: ink, not paper. */
+static ar_i32 ar__ink_in(ar_rect r)
+{
+    ar_i32 x, y, n = 0;
+
+    for (y = r.y; y < r.y + r.h; ++y)
+    {
+        for (x = r.x; x < r.x + r.w; ++x)
+        {
+            n += (ar__pixel_at(x, y) & 0xFFu) < 0x80u;
+        }
+    }
+    return n;
+}
+
+/*
+ * A render scale paints the same layout into a surface that many times the
+ * size, and lays out in the surface's size divided by it -- so every box keeps
+ * its layout rectangle, and its pixels land where the scale puts them.
+ */
+static void test_a_render_scale_paints_the_same_layout(void)
+{
+    ar_surface s = ar__ui_surface(300, 150);
+    ar_rect    one, two, half, t;
+    ar_i32     ink_one;
+    ar_u32     red = 0xFF0000u;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"b\" style=\"position:absolute; left:20px; top:10px; "
+                    "width:40px; height:30px; background:#ff0000\"></div><p id=\"t\" "
+                    "style=\"position:absolute; left:20px; top:60px; margin:0\">Hello</p>"
+                    "</body></html>",
+                    "body { margin:0; background:#ffffff }");
+    one = ar__box(ar__first_tag_id("b"));
+    t = ar__box(ar__first_tag_id("t"));
+    ink_one = ar__ink_in(t);
+    CHECK(ar_render_scale(g_ui) == 1000 && ar__pixel_at(20, 10) == red && ink_one > 0,
+          "scale: 1000 draws as it always did");
+
+    ar_set_render_scale(g_ui, 2000);
+    s = ar__ui_surface(600, 300);
+    ar__frame_into(&s);
+    two = ar__box(ar__first_tag_id("b"));
+    CHECK(two.x == one.x && two.y == one.y && two.w == one.w && two.h == one.h,
+          "scale: 2000 lays out the same page in a surface twice the size");
+    CHECK(ar__pixel_at(40, 20) == red && ar__pixel_at(119, 79) == red &&
+              ar__pixel_at(120, 20) != red && ar__pixel_at(40, 80) != red,
+          "scale: and the box fills exactly twice its pixels each way");
+    CHECK(ar__ink_in(ar_rect_make(t.x * 2, t.y * 2, t.w * 2, t.h * 2)) > ink_one * 2,
+          "scale: and its text is drawn larger, not left out");
+
+    ar_set_render_scale(g_ui, 500);
+    s = ar__ui_surface(150, 75);
+    ar__frame_into(&s);
+    half = ar__box(ar__first_tag_id("b"));
+    CHECK(half.x == one.x && half.w == one.w, "scale: 500 lays out the same page too");
+    CHECK(ar__pixel_at(10, 5) == red && ar__pixel_at(29, 19) == red && ar__pixel_at(30, 5) != red,
+          "scale: in half the pixels");
+    ar_set_render_scale(g_ui, 1000);
+}
+
+/*
+ * Resampling a render-scale picture into a window: a larger picture averages
+ * the block behind each pixel, a smaller one mixes the four around its centre.
+ */
+static ar_u32 g_rs_src[8], g_rs_dst[8];
+
+static void test_resampling_a_scaled_picture(void)
+{
+    ar_surface src, dst;
+
+    /* 4x2 at 2000 into 2x1: a black-and-white block averages to grey, and a
+       red block stays red. */
+    g_rs_src[0] = 0x000000u;
+    g_rs_src[1] = 0xFFFFFFu;
+    g_rs_src[4] = 0xFFFFFFu;
+    g_rs_src[5] = 0x000000u;
+    g_rs_src[2] = g_rs_src[3] = g_rs_src[6] = g_rs_src[7] = 0xFF0000u;
+    src.pixels = g_rs_src;
+    src.w = 4;
+    src.h = 2;
+    src.stride = 4;
+    dst.pixels = g_rs_dst;
+    dst.w = 2;
+    dst.h = 1;
+    dst.stride = 2;
+    ar_surface_resample(&src, &dst, ar_rect_make(0, 0, 2, 1), 2000);
+    CHECK((g_rs_dst[0] & 0xFFFFFFu) == 0x7F7F7Fu, "resample: a block shrinks to its average");
+    CHECK((g_rs_dst[1] & 0xFFFFFFu) == 0xFF0000u, "resample: and a flat one keeps its colour");
+
+    /* 2x1 at 500 into 4x1: black to white, in order, ends exact. */
+    g_rs_src[0] = 0x000000u;
+    g_rs_src[1] = 0xFFFFFFu;
+    src.w = 2;
+    src.h = 1;
+    src.stride = 2;
+    dst.w = 4;
+    dst.stride = 4;
+    ar_surface_resample(&src, &dst, ar_rect_make(0, 0, 4, 1), 500);
+    CHECK((g_rs_dst[0] & 0xFFu) == 0x00u && (g_rs_dst[3] & 0xFFu) == 0xFFu &&
+              (g_rs_dst[1] & 0xFFu) < (g_rs_dst[2] & 0xFFu) && (g_rs_dst[1] & 0xFFu) > 0u,
+          "resample: a smaller picture is mixed between its pixels, not blocked");
+}
+
+/* Enter at the end of a textarea puts the caret on the new line at once. */
+static void test_enter_moves_the_caret_down(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    start, typed, entered;
+
+    ar__render_html(&s, "<html><body><textarea id=\"t\"></textarea></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    start = ar_caret_rect(g_ui);
+    ar__type(&s, "ab", 0);
+    typed = ar_caret_rect(g_ui);
+    ar__type(&s, 0, AR_KEY_ENTER);
+    entered = ar_caret_rect(g_ui);
+    CHECK(entered.y > typed.y, "enter: the caret goes down a line with the newline");
+    CHECK(entered.x == start.x, "enter: and back to the start of it");
+}
+
+static void test_a_field_scrolls_rather_than_wraps(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\" value=\"a much longer value than fits\">"
+                    "</body></html>",
+                    "body { margin:0 } input { width:40px }");
+    f = ar__first_tag_id("f");
+    CHECK(ar__box(f + 1).h == g_ui->nodes[f + 1].text_h,
+          "field: a long value is one line, not three");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_END);
+    CHECK(g_ui->edit_scroll_x > 0, "field: and scrolls to keep the caret in view");
+    ar__type(&s, 0, AR_KEY_HOME);
+    CHECK(g_ui->edit_scroll_x == 0, "field: and back");
+}
+
+static void test_a_composition_is_drawn_and_not_stored(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+    ar_i32     f;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"ab\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.compose = "XY";
+    in.compose_len = 2;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    f = ar__first_tag_id("f");
+    CHECK(strcmp(g_ui->nodes[f + 1].text, "abXY") == 0,
+          "ime: the composition is drawn at the caret");
+    CHECK(ar__field_is("ab"), "ime: and is not in the buffer");
+    ar__type(&s, "XY", 0);
+    CHECK(ar__field_is("abXY"), "ime: until it is committed, as typing");
+}
+
+static void test_the_clipboard(void)
+{
+    ar_surface  s = ar__ui_surface(400, 300);
+    ar_u32      n = 0;
+    const char *t;
+
+    ar__render_html(&s, "<html><body><input id=\"f\" value=\"hello\"></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_SELECT_ALL);
+    ar__type(&s, 0, AR_KEY_COPY);
+    t = ar_clipboard_text(g_ui, &n);
+    CHECK(t && n == 5 && memcmp(t, "hello", 5) == 0, "clipboard: copy offers the selection");
+    ar__type(&s, 0, AR_KEY_CUT);
+    t = ar_clipboard_text(g_ui, &n);
+    CHECK(t && n == 5 && memcmp(t, "hello", 5) == 0 && ar__field_is(""),
+          "clipboard: cut offers it and removes it");
+    ar__type(&s, "two\nlines", AR_KEY_PASTE);
+    CHECK(ar__field_is("twolines"), "clipboard: a paste into one line loses its newlines");
+    ar__type(&s, 0, AR_KEY_UNDO);
+    CHECK(ar__field_is(""), "clipboard: and is one undo step");
+}
+
+/* --- the layout faults the comparison with Edge found --------------------- */
+
+static void test_an_inline_block_sits_on_its_text(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a, b;
+
+    ar__render_html(&s,
+                    "<html><body><p><span id=\"a\">Ab</span>"
+                    "<span id=\"ib\" style=\"display:inline-block; padding:10px 0px\">"
+                    "<span id=\"b\">Cd</span></span></p></body></html>",
+                    "body { margin:0 }");
+    /* Padding below as well as above, because the built-in face has no
+       descent: without it the last line's baseline and the box's bottom edge
+       are the same height, and the test could not tell the rule from the
+       exception it replaced. */
+    a = ar__first_tag_id("a") + 1;
+    b = ar__first_tag_id("b") + 1;
+    CHECK(ar__box(a).y == ar__box(b).y,
+          "inline-block: sits on the baseline of its last line, so the words line up");
+}
+
+static void test_an_inline_block_lays_out_its_children_as_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a, b;
+
+    ar__render_html(&s,
+                    "<html><body><span style=\"display:inline-block; width:100px\">"
+                    "<div id=\"a\">a</div><div id=\"b\">b</div></span></body></html>",
+                    "body { margin:0 } div { display:block }");
+    a = ar__first_tag_id("a");
+    b = ar__first_tag_id("b");
+    CHECK(ar__box(a).w == 100, "inline-block: a block inside fills it");
+    CHECK(ar__box(b).y >= ar__box(a).y + ar__box(a).h,
+          "inline-block: and blocks stack, not sit in a row");
+}
+
+static void test_an_absolute_box_lays_its_contents_out_at_its_width(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"position:relative; width:200px\">"
+                    "<div style=\"position:absolute; left:0px; right:0px\">"
+                    "<p id=\"p\">x</p></div></div></body></html>",
+                    "body { margin:0 } div, p { display:block; margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("p")).w == 200,
+          "position: an absolute box's contents fill the width it was given");
+}
+
+static void test_a_relative_percentage_is_of_the_parent(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"width:200px\">"
+                    "<div id=\"r\" style=\"position:relative; left:50%\">x</div></div>"
+                    "</body></html>",
+                    "body { margin:0 } div { display:block }");
+    CHECK(ar__box(ar__first_tag_id("r")).x == 100,
+          "position: left 50% is half the parent, not half the window");
+}
+
+/*
+ * An inline-block on a padded body sits on the body's first line, not one
+ * below it. The line filler wrote the box's rectangle at its place on the
+ * line and left its insides where they had been laid out to measure it, so
+ * the baseline read off them was off by however far the box had moved -- the
+ * body's sixteen pixels of padding. css/text/shared-font in the gallery sat a
+ * whole line low that way: a body 64 tall where Chrome makes it 48.
+ */
+static void test_an_inline_block_carries_its_contents(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     ib, body;
+
+    ar__render_html(&s, "<html><body><span id=\"ib\">HHHH</span></body></html>",
+                    "html { font-size:16px; line-height:1 }"
+                    " body { margin:0; padding:16px } #ib { display:inline-block }");
+    ib = ar__first_tag_id("ib");
+    body = g_ui->nodes[ib].parent;
+    CHECK(ar__box(ib).y == 16, "inline-block: on the padded body's first line, not a line below");
+    CHECK(ar__box(body).h == 48, "inline-block: and the body one line tall, as Chrome has it");
+}
+
+/*
+ * A replaced element sits on its bottom edge, whatever is inside it. An
+ * `<svg>` is an inline-block in the user-agent sheet, and the text a CDATA
+ * section leaves inside it was taken for its last line of text -- so it was
+ * set on that text's baseline and dropped a line. html/parsing/cdata in the
+ * gallery: the svg at 72 and the div after it at 102, where Chrome has 36 and
+ * 69.
+ */
+static void test_a_replaced_element_sits_on_its_bottom_edge(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     v, b;
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:20px\"></div>"
+                    "<svg id=\"v\" width=\"100\" height=\"30\"><![CDATA[ x ]]></svg>"
+                    "<div id=\"b\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 } svg { font-size:8px }");
+    /* The text inside at a different size from the line's, or the two rules
+       land the svg in the same place: the built-in face has no descent, so a
+       16-pixel line of text's baseline and its bottom are the same height. */
+    v = ar__first_tag_id("v");
+    b = ar__first_tag_id("b");
+    CHECK(ar__box(v).y == 20, "replaced: the tallest thing on its line, so at the line's top");
+    CHECK(ar__box(b).y - (ar__box(v).y + ar__box(v).h) < 8,
+          "replaced: on its bottom edge, so its line ends just under it");
+}
+
+static void test_an_inline_boxs_padding_moves_its_words(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     r, l;
+
+    ar__render_html(&s,
+                    "<html><body><p><input id=\"r\" type=\"radio\">"
+                    "<label id=\"l\" style=\"padding-left:8px\">x</label></p></body></html>",
+                    "body { margin:0 } input { margin:0 }");
+    r = ar__first_tag_id("r");
+    l = ar__first_tag_id("l");
+    CHECK(ar__box(l + 1).x >= ar__box(r).x + ar__box(r).w + 8,
+          "inline: a label's padding is between the radio and its words");
+}
+
+static void test_a_hidden_input_has_no_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s, "<html><body><input id=\"h\" type=\"hidden\" value=\"x\"></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("h"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: an input of type hidden draws nothing");
+}
+
+/*
+ * The `hidden` attribute hides anything, and an author can still show it.
+ *
+ * nasa.gov beside Edge: its `<ul hidden>` submenus drawn open. The
+ * user-agent rule is `[hidden] { display: none }`, and like every user-agent
+ * rule it loses to the page's own `display`.
+ */
+/*
+ * The body's background is the canvas's, everywhere the body is not.
+ *
+ * CSS 2.1 14.2. The surface starts green so that a pixel the canvas did not
+ * reach shows up as green rather than passing for white.
+ */
+static void test_the_body_background_fills_the_canvas(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     x, y;
+
+    for (y = 0; y < s.h; ++y)
+    {
+        for (x = 0; x < s.w; ++x)
+        {
+            s.pixels[y * s.stride + x] = 0xFF00FF00u;
+        }
+    }
+    ar__render_html(&s, "<html><body><p>x</p></body></html>",
+                    "body { margin:20px; background:#ff0000 } p { margin:0 }");
+    CHECK(ar__pixel_at(5, 5) == 0xFF0000u,
+          "canvas: the body's colour outside its box, in its margin");
+    CHECK(ar__pixel_at(390, 290) == 0xFF0000u,
+          "canvas: and below the content, to the window's edge");
+
+    ar__render_html(&s, "<html><body><p>x</p></body></html>",
+                    "html { background:#0000ff } body { margin:20px; background:#ff0000 }"
+                    " p { margin:0 }");
+    CHECK(ar__pixel_at(5, 5) == 0x0000FFu, "canvas: the root's own colour wins when it has one");
+    CHECK(ar__pixel_at(25, 25) == 0xFF0000u, "canvas: and the body keeps its box then");
+}
+
+/*
+ * A placeholder shows while the field is empty -- with the caret in it too --
+ * and goes with the first character. Wikipedia's and nasa.gov's search boxes
+ * were blank beside Edge's "Search Wikipedia".
+ */
+static void test_a_placeholder_shows_until_typed(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f, t;
+    char       name[64];
+
+    ar__render_html(&s, "<html><body><input id=\"f\" placeholder=\"Search here\"></body></html>",
+                    "body { margin:0 }");
+    f = ar__first_tag_id("f");
+    t = f + 1;
+    CHECK(g_ui->nodes[t].text && strcmp(g_ui->nodes[t].text, "Search here") == 0,
+          "placeholder: an empty field shows it");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(t), AR_P_COLOR) == 0xFF757575u,
+          "placeholder: in the grey a browser draws it in");
+    ar_a11y_name(&g_doc, ar__dom_id("f"), name, sizeof name);
+    CHECK(strcmp(name, "Search here") == 0, "placeholder: and names a field nobody labelled");
+
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, 0);
+    CHECK(strcmp(g_ui->nodes[ar__first_tag_id("f") + 1].text, "Search here") == 0,
+          "placeholder: still shown with the caret in the field");
+    CHECK(ar_caret_rect(g_ui).x == g_ui->nodes[ar__first_tag_id("f") + 1].rect.x,
+          "placeholder: and the caret stands at its start");
+
+    ar__type(&s, "a", 0);
+    ar__type(&s, 0, 0);
+    CHECK(strcmp(g_ui->nodes[ar__first_tag_id("f") + 1].text, "a") == 0,
+          "placeholder: gone with the first character");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("f") + 1), AR_P_COLOR) != 0xFF757575u,
+          "placeholder: and the text is not grey");
+}
+
+/*
+ * `opacity: 0` draws nothing for a box or anything inside it, and the box
+ * keeps its space. weather.gov hides its open menus with an inline
+ * `opacity: 0`, and every one of them drew.
+ */
+static void test_opacity_zero_draws_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     x, y, red = 0;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"a\" style=\"opacity:0\">"
+                    "<div id=\"b\" style=\"opacity:1\">menu</div></div>"
+                    "<p id=\"p\" style=\"opacity:50%\">after</p>"
+                    "<p id=\"q\" style=\"opacity:0.25\">q</p></body></html>",
+                    "body { margin:0 } #a { height:40px; background:#ff0000 }"
+                    " #b { background:#ff0000; color:#ff0000 } p { margin:0 }");
+    for (y = 0; y < 40; ++y)
+    {
+        for (x = 0; x < 200; ++x)
+        {
+            red += ar__pixel_at(x, y) == 0xFF0000u;
+        }
+    }
+    CHECK(red == 0, "opacity: zero draws nothing, and nothing inside it either");
+    CHECK(ar__box(ar__first_tag_id("p")).y == 40, "opacity: and the box keeps its space");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_OPACITY] == 1000,
+          "opacity: a child's own opacity is still one; it is the parent's that hides it");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_OPACITY] == 500,
+          "opacity: a percentage is read as a fraction");
+    CHECK(ar__box_style(ar__first_tag_id("q"))->v[AR_P_OPACITY] == 250,
+          "opacity: and so is a number");
+}
+
+/*
+ * An element with many classes keeps them -- and keeps the walk's own.
+ *
+ * A box held four classes and dropped the rest without a word, and the walk
+ * appends `.ar-link` and `.ar-hidden` after the author's: nasa.gov's links,
+ * five classes each, drew as plain text, and a `hidden` megamenu with five
+ * classes drew open.
+ */
+static void test_many_classes_are_all_kept(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><a id=\"a\" class=\"c1 c2 c3 c4 c5 c6 c7\" href=\"x\">link</a>"
+                    "<div id=\"d\" class=\"c1 c2 c3 c4 c5\" hidden>menu</div></body></html>",
+                    "body { margin:0 } .c7 { padding-left:7px }");
+    CHECK(ar__box_style(ar__first_tag_id("a") + 1)->v[AR_P_TEXT_DECORATION] != 0,
+          "classes: a link with seven classes is still a link");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_PAD_LEFT] == 7,
+          "classes: and a rule naming its seventh class still matches");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "classes: and a hidden element with five of its own is still hidden");
+}
+
+/*
+ * A line with nothing on it is not there: no height, and the margins either
+ * side of it still meet (CSS 2.1 9.4.2). The HTML standard's page opens
+ * `<header><a class=logo></a><hgroup><h1>`, and the empty link made a line
+ * that stood between the header's edge and the heading's margin: everything
+ * on the page sat 25 px below Edge's.
+ */
+static void test_a_line_with_nothing_on_it_is_not_there(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"d\"><a></a> <h1 id=\"h\">T</h1></div>"
+                    "<div id=\"e\"><a>x</a> <h1 id=\"g\">T</h1></div></body></html>",
+                    "body { margin:0 } h1 { margin:20px 0 } div { background:#eee }");
+    CHECK(ar__box(ar__first_tag_id("d")).y == 20,
+          "phantom: the heading's margin collapses through a parent whose line is empty");
+    CHECK(ar__box(ar__first_tag_id("h")).y == ar__box(ar__first_tag_id("d")).y,
+          "phantom: and the empty line takes no height above the heading");
+    CHECK(ar__box(ar__first_tag_id("g")).y > ar__box(ar__first_tag_id("e")).y + 20,
+          "phantom: a line with a word on it is still a line");
+}
+
+/*
+ * A font collection's first face loads. Every CJK face Windows ships is a
+ * .ttc, and refusing them made Japanese text a page of notdef boxes.
+ */
+static ar_u8 g_ttc[16 + sizeof AR_TEST_FONT];
+
+static void test_a_font_collection_loads_its_first_face(void)
+{
+    ar_face f;
+    ar_u32  i, tables;
+    ar_u8  *t = g_ttc + 16;
+
+    memcpy(g_ttc, "ttcf\0\1\0\0\0\0\0\1\0\0\0\x10", 16);
+    memcpy(t, AR_TEST_FONT, sizeof AR_TEST_FONT);
+    tables = ((ar_u32)t[4] << 8) | t[5];
+    for (i = 0; i < tables; ++i)
+    {
+        ar_u8 *rec = t + 12 + i * 16 + 8;
+        ar_u32 off =
+            ((ar_u32)rec[0] << 24) | ((ar_u32)rec[1] << 16) | ((ar_u32)rec[2] << 8) | rec[3];
+
+        off += 16; /* a collection's table offsets count from the file's start */
+        rec[0] = (ar_u8)(off >> 24);
+        rec[1] = (ar_u8)(off >> 16);
+        rec[2] = (ar_u8)(off >> 8);
+        rec[3] = (ar_u8)off;
+    }
+    CHECK(ar_face_init(&f, g_ttc, (ar_u32)sizeof g_ttc) && f.ok,
+          "ttc: a collection's first face initialises");
+    CHECK(ar_face_glyph(&f, 'A') == 1 && ar_face_advance(&f, 1) == 1000,
+          "ttc: and maps and measures like the font it holds");
+
+    g_ttc[15] = 0xF0; /* the first face's offset, now past the end */
+    CHECK(!ar_face_init(&f, g_ttc, (ar_u32)sizeof g_ttc), "ttc: an offset past the end is refused");
+}
+
+/*
+ * A `<style>` inside a `<template>` does not style the document. MDN keeps all
+ * of its styles in declarative shadow roots, and read as the page's they made
+ * every link transparent.
+ */
+static void test_template_styles_stay_in_the_template(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_input   in;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<html><body><template shadowrootmode=\"open\"><style>p { color:#ff0000 }</style>"
+              "</template><p id=\"p\">x</p><style>#p { padding-left:3px }</style></body></html>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    CHECK((ar_u32)AR_WIDE(ar__box_style(ar__first_tag_id("p")), AR_P_COLOR) != 0xFFFF0000u,
+          "template: a style inside it does not reach the document");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_PAD_LEFT] == 3,
+          "template: while the document's own style still does");
+}
+
+/*
+ * An element nothing names is inline, as CSS's initial value says -- and an
+ * inline holding a block stacks around it rather than putting it on a line.
+ * MDN's `<mdn-dropdown>` drew its button stretched down beside its menu.
+ */
+static void test_an_unknown_element_is_inline(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    b, d;
+
+    ar__render_html(
+        &s,
+        "<html><body><p><my-word id=\"w\">word</my-word></p>"
+        "<my-menu id=\"m\"><button id=\"b\">b</button><div id=\"d\">panel</div></my-menu>"
+        "</body></html>",
+        "body { margin:0 } p { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("w"))->v[AR_P_DISPLAY] == AR_DISPLAY_INLINE,
+          "unknown: an element nothing names is inline");
+    b = ar__box(ar__first_tag_id("b"));
+    d = ar__box(ar__first_tag_id("d"));
+    CHECK(d.y >= b.y + b.h, "unknown: a block inside an inline goes below what came before it");
+    CHECK(b.h < 40, "unknown: and nothing is stretched to the block's height");
+}
+
+/*
+ * A list item's marker sits beside its first block, not on a line above it:
+ * `<li><p>`, and Wikipedia's contents, `<li><a><div>`.
+ */
+static void test_a_marker_sits_beside_the_first_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     li;
+
+    ar__render_html(&s,
+                    "<html><body><ul><li id=\"l\"><div id=\"t\">text</div></li></ul></body></html>",
+                    "body { margin:0 } ul { margin:0 }");
+    li = ar__first_tag_id("l");
+    CHECK(ar__box(li + 1).y < ar__box(ar__first_tag_id("t")).y + ar__box(ar__first_tag_id("t")).h,
+          "marker: on the block's first line");
+    CHECK(ar__box(ar__first_tag_id("t")).y == ar__box(li).y,
+          "marker: and the block does not move down a line for it");
+}
+
+/*
+ * Margins pass through empty blocks, however deep, and past an empty first
+ * child to the one after it (CSS 2.1 8.3.1). Wikipedia's empty menus added
+ * sixteen pixels each, and its first heading's margin stopped at an empty
+ * `#siteNotice`.
+ */
+static void test_margins_pass_through_empty_blocks(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:10px\"></div>"
+                    "<div id=\"a\"><div><ul> </ul></div></div>"
+                    "<div id=\"b\"><div><ul> </ul></div></div>"
+                    "<div id=\"c\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("a")).y == 26 && ar__box(ar__first_tag_id("b")).y == 26 &&
+              ar__box(ar__first_tag_id("c")).y == 26,
+          "collapse: two empty lists' margins are one margin, as Edge has it");
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"height:10px\"></div>"
+                    "<div id=\"o\"><div></div><div id=\"i\" style=\"margin-top:20px; height:5px\">"
+                    "</div></div></body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("o")).y == 30,
+          "collapse: a margin after an empty first child still meets the parent's edge");
+    CHECK(ar__box(ar__first_tag_id("i")).y == 30, "collapse: and is not applied again inside");
+}
+
+static void test_the_hidden_attribute_hides(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><ul id=\"u\" hidden><li>x</li></ul>"
+                    "<p id=\"p\" hidden=\"until-found\">y</p>"
+                    "<div id=\"d\" class=\"shown\" hidden>z</div></body></html>",
+                    "body { margin:0 } .shown { display:block }");
+    CHECK(ar__box_style(ar__first_tag_id("u"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: the attribute hides a list");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_DISPLAY] == AR_DISPLAY_NONE,
+          "hidden: until-found hides too, with no find-in-page to reveal it");
+    CHECK(ar__box_style(ar__first_tag_id("d"))->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK,
+          "hidden: and the page's own display still wins, as in a browser");
+}
+
+static void test_a_legend_sits_on_the_border(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     f, l, p;
+
+    ar__render_html(&s,
+                    "<html><body><fieldset id=\"f\"><legend id=\"l\">L</legend>"
+                    "<p id=\"p\">x</p></fieldset></body></html>",
+                    "body { margin:0 }");
+    f = ar__first_tag_id("f");
+    l = ar__first_tag_id("l");
+    p = ar__first_tag_id("p");
+    CHECK(ar__box(l).y == ar__box(f).y, "fieldset: the legend stands on the top border");
+    CHECK(ar__box(l).w < ar__box(f).w / 2, "fieldset: as wide as its words");
+    CHECK(ar__box(p).y > ar__box(l).y + ar__box(l).h, "fieldset: and the content starts under it");
+}
+
+/*
+ * A flex item is a block whatever its display said (Flexbox 4): a navigation
+ * bar's `<a>` links laid out as blocks, with their words in them. They were
+ * left inline, and an inline flex item drew no text.
+ */
+static void test_a_flex_item_is_a_block(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     a;
+
+    ar__render_html(&s,
+                    "<html><body><nav style=\"display:flex\"><a id=\"a\" href=\"#\">Home</a>"
+                    "<span id=\"b\">About</span></nav></body></html>",
+                    "body { margin:0 }");
+    a = ar__first_tag_id("a");
+    CHECK(ar__box_style(a)->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK &&
+              ar__box_style(ar__first_tag_id("b"))->v[AR_P_DISPLAY] == AR_DISPLAY_BLOCK,
+          "flex item: an inline child of a flex container is a block");
+    CHECK(ar__box(a).w > 0 && ar__box(a).h > 0, "flex item: with its words in it");
+    CHECK(ar__box(ar__first_tag_id("b")).x >= ar__box(a).x + ar__box(a).w,
+          "flex item: and the next one beside it");
+}
+
+/*
+ * White space between flex items is no item (Flexbox 4). The newline after a
+ * sidebar's last link was one, a line tall, above the next heading.
+ */
+static void test_white_space_between_flex_items_is_nothing(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    a, d;
+
+    ar__render_html(&s,
+                    "<html><body><nav style=\"display:flex; flex-direction:column\">"
+                    "<a id=\"a\" href=\"#\">one</a>\n  <div id=\"d\">two</div></nav></body></html>",
+                    "body { margin:0 }");
+    a = ar__box(ar__first_tag_id("a"));
+    d = ar__box(ar__first_tag_id("d"));
+    CHECK(d.y == a.y + a.h, "flex: the newline between two items takes no room");
+}
+
+/* An option takes its select's font size, the page's as well as the sheet's. */
+static void test_an_option_takes_its_selects_size(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><select><option id=\"o\">x</option></select>"
+                    "<select style=\"font-size:20px\"><option id=\"p\">y</option></select>"
+                    "</body></html>",
+                    "body { margin:0 }");
+    CHECK(ar__box_style(ar__first_tag_id("o"))->v[AR_P_FONT_SIZE] == 13,
+          "option: a select's own 13 pixels by default");
+    CHECK(ar__box_style(ar__first_tag_id("p"))->v[AR_P_FONT_SIZE] == 20,
+          "option: and the page's size when it sets one");
+}
+
+/* A max-width is the content's under content-box, like a width. */
+static void test_max_width_is_the_contents(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><div id=\"a\" style=\"max-width:200px; padding:0 20px\">x</div>"
+        "<div id=\"b\" style=\"max-width:200px; padding:0 20px; box-sizing:border-box\">"
+        "x</div></body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("a")).w == 240, "max-width: the padding goes around it");
+    CHECK(ar__box(ar__first_tag_id("b")).w == 200, "max-width: and inside it under border-box");
+}
+
+/* `text-decoration: none` takes a link's underline away. */
+static void test_text_decoration_none(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><a id=\"a\" href=\"#\">x</a> <a id=\"b\" class=\"n\" href=\"#\">y</a>"
+        "</body></html>",
+        "body { margin:0 } .n { text-decoration:none }");
+    CHECK(ar__box_style(ar__first_tag_id("a"))->v[AR_P_TEXT_DECORATION] == AR_DECOR_UNDERLINE,
+          "decoration: a link is underlined");
+    CHECK(ar__box_style(ar__first_tag_id("b"))->v[AR_P_TEXT_DECORATION] == AR_DECOR_NONE,
+          "decoration: and none takes it away");
+}
+
+/*
+ * An auto margin on the main axis takes the free space before
+ * `justify-content` sees it (Flexbox 9.5): the far-end item of a toolbar, and
+ * a box centred with `margin: 0 auto`.
+ */
+static void test_a_flex_auto_margin_takes_the_free_space(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(
+        &s,
+        "<html><body><div style=\"display:flex; width:400px; justify-content:center\">"
+        "<div style=\"width:20px; height:10px\"></div>"
+        "<div id=\"r\" style=\"width:30px; height:10px; margin-left:auto\"></div></div>"
+        "<div style=\"display:flex; width:400px\">"
+        "<div id=\"c\" style=\"width:100px; height:10px; margin:0 auto\"></div></div>"
+        "<div style=\"display:flex; flex-direction:column; height:100px\">"
+        "<div id=\"v\" style=\"height:10px; margin-top:auto\"></div></div></body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("r")).x == 370,
+          "auto margin: margin-left pushes the last item to the far end, over justify-content");
+    CHECK(ar__box(ar__first_tag_id("c")).x == 150, "auto margin: two of them centre the item");
+    CHECK(ar__box(ar__first_tag_id("v")).y == 20 + 90,
+          "auto margin: and in a column, margin-top pushes it to the bottom");
+}
+
+/* A `<br>` ends its line: in text, between fields, twice, and at the end. */
+static void test_a_br_breaks_the_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_i32     line;
+    ar_rect    i1, i2;
+
+    ar__render_html(&s,
+                    "<html><body><div id=\"r\">one</div><div id=\"a\">one<br>two</div>"
+                    "<div id=\"b\">one<br><br>three</div><div id=\"c\">one<br></div>"
+                    "<div><input id=\"i1\"><br><input id=\"i2\"></div>"
+                    "<div id=\"f\" style=\"float:left\">one<br>three</div>"
+                    "<div id=\"g\" style=\"float:left; clear:left\">three</div></body></html>",
+                    "body { margin:0 }");
+    line = ar__box(ar__first_tag_id("r")).h;
+    CHECK(line > 0 && ar__box(ar__first_tag_id("a")).h == 2 * line, "br: one<br>two is two lines");
+    CHECK(ar__box(ar__first_tag_id("b")).h == 3 * line,
+          "br: two of them leave an empty line between, a line tall");
+    CHECK(ar__box(ar__first_tag_id("c")).h == line, "br: and one at the end adds nothing");
+    i1 = ar__box(ar__first_tag_id("i1"));
+    i2 = ar__box(ar__first_tag_id("i2"));
+    CHECK(i2.y >= i1.y + i1.h && i2.x == i1.x, "br: a field after one goes under the field before");
+    CHECK(ar__box(ar__first_tag_id("f")).w == ar__box(ar__first_tag_id("g")).w,
+          "br: and a shrink-to-fit box is as wide as its widest line, not both");
+}
+
+/*
+ * White space that would begin a line, or does not fit at the end of one,
+ * is no line's content (CSS Text 4.1.3). The newline after a field as wide as
+ * its line made a line of its own, and every form field sat one line lower.
+ */
+static void test_a_space_does_not_open_a_line(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+
+    ar__render_html(&s,
+                    "<html><body><div style=\"width:300px\">"
+                    "<span style=\"display:inline-block; width:100%; height:20px\"></span>\n"
+                    "<p id=\"p\">x</p></div>"
+                    "<div id=\"d\" style=\"width:300px\">"
+                    "<span style=\"display:inline-block; width:100%; height:20px\"></span> "
+                    "<span id=\"w\">word</span></div></body></html>",
+                    "body { margin:0 } p { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("p")).y == 20,
+          "space: the newline after a full-width box makes no line");
+    CHECK(ar__box(ar__first_tag_id("w")).x == 0 &&
+              ar__box(ar__first_tag_id("w")).y == ar__box(ar__first_tag_id("d")).y + 20,
+          "space: and the next word starts its line at the left edge");
+
+    ar__render_html(
+        &s,
+        "<html><body><div style=\"width:20px; white-space:nowrap\">"
+        "<span id=\"a\">aaaaaaaa</span> <span id=\"b\">b</span></div>"
+        "<div><span style=\"display:inline-block\"></span> <span id=\"e\">x</span></div>"
+        "</body></html>",
+        "body { margin:0 }");
+    CHECK(ar__box(ar__first_tag_id("b")).x >
+              ar__box(ar__first_tag_id("a")).x + ar__box(ar__first_tag_id("a")).w,
+          "space: a line that may not wrap keeps its spaces past the edge");
+    CHECK(ar__box(ar__first_tag_id("e")).x > 0,
+          "space: and the space after an empty inline-block is content");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
@@ -20269,6 +23755,9 @@ int main(void)
     test_css_relative_units_parse();
     test_css_absurd_numbers();
     test_css_colors();
+    test_focus_moves_by_tab_and_wraps();
+    test_focus_within_matches_the_ancestors();
+    test_a_click_focuses_without_a_ring();
     test_sheet_init_leaves_no_field_behind();
     test_css_color_notations();
     test_css_wide_gamut_and_mixing();
@@ -20679,6 +24168,10 @@ int main(void)
     test_damage_output_is_identical_to_a_full_repaint();
     test_a_region_move_is_identical_to_a_full_repaint();
     test_the_bar_repaints_when_only_its_colour_changed();
+    test_every_box_gets_its_inline_style();
+    test_the_frame_keeps_room_for_its_strings();
+    test_a_focus_ring_survives_damage_tracking();
+    test_a_system_colour_on_an_outline_resolves();
     test_a_bar_that_appears_because_content_grew();
 
     test_the_entity_table_is_sorted();
@@ -20725,6 +24218,87 @@ int main(void)
     test_calc_round_mod_rem();
     test_system_colors_and_color_scheme();
     test_border_shorthand_takes_a_deferred_colour();
+    test_tab_order_in_a_document();
+    test_focus_styles_reach_a_parsed_document();
+    test_control_states_from_markup();
+    test_a_checkbox_toggles();
+    test_a_checked_attribute_is_a_starting_point();
+    test_radios_of_one_name_exclude_each_other();
+    test_space_activates_the_focused_control();
+    test_details_opens_and_closes();
+    test_details_open_attribute_is_a_starting_point();
+    test_controls_are_boxes();
+    test_the_mark_is_a_box_that_appears();
+    test_an_outline_costs_no_layout();
+    test_the_focus_ring_is_drawn_for_a_key_and_not_a_click();
+    test_a_gauge_is_a_track_with_a_bar();
+    test_a_positive_tabindex_sorts_first();
+    test_inert_traps_the_focus();
+    test_a11y_roles();
+    test_a11y_the_name_algorithm_is_an_order();
+    test_a11y_states();
+    test_the_caret_never_lands_inside_a_cluster();
+    test_a_cluster_is_one_backspace();
+    test_words_are_not_split_on_spaces();
+    test_selection_has_a_direction();
+    test_undo_coalesces_a_typing_run();
+    test_insert_replaces_a_selection();
+    test_typing_reaches_the_focused_field();
+    test_shift_extends_and_typing_replaces();
+    test_a_field_shows_what_it_holds();
+    test_white_space_collapsing();
+    test_nowrap_does_not_wrap();
+    test_white_space_reaches_a_field_but_does_not_hold_it();
+    test_the_caret_corpus_of_two_hundred();
+    test_undo_and_redo_over_five_hundred_steps();
+    test_tab_order_ignores_flex_order();
+    test_a_textarea_holds_its_content_and_takes_newlines();
+    test_a_password_draws_masks();
+    test_a_number_steps_within_its_limits();
+    test_a_select_opens_and_chooses();
+    test_a_select_is_as_wide_as_its_widest_option();
+    test_a_slider_steps();
+    test_a_label_passes_its_click();
+    test_a_form_submits_what_was_done();
+    test_the_a11y_tree();
+    test_containers_are_named_by_markup_not_content();
+    test_a_blink_is_one_column();
+    test_a_blink_needs_no_frame();
+    test_a_field_scrolls_rather_than_wraps();
+    test_a_composition_is_drawn_and_not_stored();
+    test_the_clipboard();
+    test_an_inline_block_sits_on_its_text();
+    test_an_inline_block_lays_out_its_children_as_blocks();
+    test_an_absolute_box_lays_its_contents_out_at_its_width();
+    test_a_relative_percentage_is_of_the_parent();
+    test_an_inline_block_carries_its_contents();
+    test_a_replaced_element_sits_on_its_bottom_edge();
+    test_an_inline_boxs_padding_moves_its_words();
+    test_a_hidden_input_has_no_box();
+    test_the_hidden_attribute_hides();
+    test_template_styles_stay_in_the_template();
+    test_an_unknown_element_is_inline();
+    test_a_marker_sits_beside_the_first_block();
+    test_margins_pass_through_empty_blocks();
+    test_a_line_with_nothing_on_it_is_not_there();
+    test_a_font_collection_loads_its_first_face();
+    test_many_classes_are_all_kept();
+    test_opacity_zero_draws_nothing();
+    test_a_placeholder_shows_until_typed();
+    test_the_body_background_fills_the_canvas();
+    test_a_legend_sits_on_the_border();
+    test_a_flex_item_is_a_block();
+    test_text_decoration_none();
+    test_a_flex_auto_margin_takes_the_free_space();
+    test_a_space_does_not_open_a_line();
+    test_a_br_breaks_the_line();
+    test_white_space_between_flex_items_is_nothing();
+    test_an_option_takes_its_selects_size();
+    test_max_width_is_the_contents();
+    test_a_slider_follows_the_pointer();
+    test_enter_moves_the_caret_down();
+    test_a_render_scale_paints_the_same_layout();
+    test_resampling_a_scaled_picture();
     test_current_color();
     test_custom_properties();
     test_custom_properties_in_calc();
@@ -20744,6 +24318,10 @@ int main(void)
     test_a_document_lays_out_as_blocks();
     test_the_class_and_id_reach_the_style();
     test_whitespace_between_blocks_is_dropped();
+    test_an_inline_elements_text_joins_the_line();
+    test_a_summary_has_a_triangle_that_points();
+    test_an_underline_is_drawn_under_the_text();
+    test_sub_and_super_leave_the_baseline();
     test_a_table_from_markup_uses_the_table_model();
     test_head_content_draws_nothing();
     test_a_document_survives_the_round_trip();

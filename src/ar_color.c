@@ -409,7 +409,7 @@ void ar_hsl_to_rgb(ar_i32 h, ar_i32 s, ar_i32 l, ar_i32 *rgb)
     }
     c = AR_CMUL(AR_CFIX - c, s);
 
-    hp = h / 60;            /* H' = h/60, in AR_CFIX scale, 0..6 */
+    hp = h / 60; /* H' = h/60, in AR_CFIX scale, 0..6 */
     seg = hp / AR_CFIX;
 
     /*
@@ -435,12 +435,36 @@ void ar_hsl_to_rgb(ar_i32 h, ar_i32 s, ar_i32 l, ar_i32 *rgb)
 
     switch (seg)
     {
-    case 0:  r = c; g = x; b = 0; break;
-    case 1:  r = x; g = c; b = 0; break;
-    case 2:  r = 0; g = c; b = x; break;
-    case 3:  r = 0; g = x; b = c; break;
-    case 4:  r = x; g = 0; b = c; break;
-    default: r = c; g = 0; b = x; break;
+    case 0:
+        r = c;
+        g = x;
+        b = 0;
+        break;
+    case 1:
+        r = x;
+        g = c;
+        b = 0;
+        break;
+    case 2:
+        r = 0;
+        g = c;
+        b = x;
+        break;
+    case 3:
+        r = 0;
+        g = x;
+        b = c;
+        break;
+    case 4:
+        r = x;
+        g = 0;
+        b = c;
+        break;
+    default:
+        r = c;
+        g = 0;
+        b = x;
+        break;
     }
 
     rgb[0] = r + m;
@@ -552,9 +576,12 @@ void ar_linear_to_oklab(const ar_i32 *lin, ar_i32 *lab)
     ar_i32 m_ = ar_cbrt_fix(m);
     ar_i32 s_ = ar_cbrt_fix(s);
 
-    lab[0] = AR_CMUL(K(0.2104542553), l_) + AR_CMUL(K(0.7936177850), m_) - AR_CMUL(K(0.0040720468), s_);
-    lab[1] = AR_CMUL(K(1.9779984951), l_) - AR_CMUL(K(2.4285922050), m_) + AR_CMUL(K(0.4505937099), s_);
-    lab[2] = AR_CMUL(K(0.0259040371), l_) + AR_CMUL(K(0.7827717662), m_) - AR_CMUL(K(0.8086757660), s_);
+    lab[0] =
+        AR_CMUL(K(0.2104542553), l_) + AR_CMUL(K(0.7936177850), m_) - AR_CMUL(K(0.0040720468), s_);
+    lab[1] =
+        AR_CMUL(K(1.9779984951), l_) - AR_CMUL(K(2.4285922050), m_) + AR_CMUL(K(0.4505937099), s_);
+    lab[2] =
+        AR_CMUL(K(0.0259040371), l_) + AR_CMUL(K(0.7827717662), m_) - AR_CMUL(K(0.8086757660), s_);
 }
 
 /* --- CIE Lab, through XYZ ------------------------------------------------
@@ -643,8 +670,8 @@ void ar_xyz_to_lab(const ar_i32 *xyz, ar_i32 *lab)
 
     /* Back out to the stored scale: L = 116 fy - 16, over 100. */
     lab[0] = (116 * f[1] - 16 * AR_CFIX) / 100;
-    lab[1] = 5 * (f[0] - f[1]);  /* 500 (fx - fy), over 100 */
-    lab[2] = 2 * (f[1] - f[2]);  /* 200 (fy - fz), over 100 */
+    lab[1] = 5 * (f[0] - f[1]); /* 500 (fx - fy), over 100 */
+    lab[2] = 2 * (f[1] - f[2]); /* 200 (fy - fz), over 100 */
 }
 
 /* D50 XYZ to linear sRGB, Bradford-adapted. Same cancellation as the Oklab

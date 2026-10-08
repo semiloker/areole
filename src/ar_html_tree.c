@@ -245,6 +245,7 @@ static ar_i32 ar__node(ar__tree *t, ar_dom_kind kind)
     n->next_sibling = -1;
     n->prev_sibling = -1;
     n->attr_first = -1;
+    n->box = -1; /* no box until a walk builds one */
     return d->node_count++;
 }
 

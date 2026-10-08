@@ -52,6 +52,64 @@ void ar_win_present(ar_win *win, ar_rect dirty);
    and dimensions are new and everything must be redrawn. */
 int ar_win_resized(const ar_win *win);
 
+/*
+ * Renders at a scale of the window, in thousandths, and sets the same scale on
+ * the context: 2000 draws twice the pixels each way and shrinks them into the
+ * window -- smoother edges and text -- and 500 draws a quarter as many and
+ * stretches them, for a slow machine. 1000 is the window's own pixels.
+ *
+ * ar_win_surface then hands back a buffer of the scaled size, which is what
+ * ar_frame_end is given; layout, hit testing, the pointer and the damage all
+ * stay in window pixels, and ar_win_present scales what changed into the
+ * window. Returns 0, and keeps the old scale, if the buffer cannot be had.
+ */
+int ar_win_set_render_scale(ar_win *win, ar_ctx *c, ar_i32 thousandths);
+
+/* ------------------------------------------------------------------------
+ * Interaction, 0.10.0
+ *
+ * The core never wakes itself, owns no clipboard, opens no dialog and speaks
+ * to no screen reader; these are the backend's half of each.
+ * ------------------------------------------------------------------------ */
+
+/* Have the next pump return after `us` microseconds even if nothing happens
+   -- for a caret that blinks. Zero cancels. */
+void ar_win_wake_after(ar_win *win, ar_u32 us);
+
+/* True when the last pump woke for that and nothing else: the timer fired, and
+   no input, resize or requested wake came with it. Then ar_frame_blink is all
+   the frame there needs to be. */
+int ar_win_idle(const ar_win *win);
+
+/* Put text on the system clipboard, for what ar_clipboard_text handed back. */
+void ar_win_set_clipboard(ar_win *win, const char *utf8, ar_u32 len);
+
+/* Where the caret is, in client pixels, so an input method opens its
+   candidate list beside it rather than in a corner of the screen. */
+void ar_win_set_caret(ar_win *win, ar_rect caret);
+
+/* The system's open-file dialog. Writes the chosen file's name -- not its path
+   -- and returns its length, or 0 if the dialog was cancelled. */
+ar_u32 ar_win_choose_file(ar_win *win, char *out, ar_u32 cap);
+
+/*
+ * Expose a document to screen readers, through MSAA -- which Narrator and NVDA
+ * read directly and UI Automation reads through its proxy. Call once after
+ * parsing; pass a null document to stop.
+ */
+void ar_win_a11y(ar_win *win, ar_ctx *c, const ar_doc *d);
+
+/* Tell readers what the frame changed: focus, values, shape. */
+void ar_win_a11y_update(ar_win *win);
+
+/*
+ * Everything a window with fields in it does after each frame, in one call:
+ * the clipboard, the input method's position, the caret's next blink, a file
+ * chooser if one was asked for, and the accessibility events. A program that
+ * wants to do any of them differently calls the five functions above instead.
+ */
+void ar_win_after_frame(ar_win *win, ar_ctx *c);
+
 /* ------------------------------------------------------------------------
  * Clock
  *
