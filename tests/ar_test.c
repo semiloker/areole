@@ -13653,6 +13653,38 @@ static void test_a_buttons_own_label_sits_in_the_middle(void)
           "own label: as much room above it as below it in a 40px button");
 }
 
+/*
+ * A padded scroll container that its contents fit cannot scroll and draws no
+ * bar. The range was taken against the height inside the padding while
+ * content_h already counted the padding, so any padding at all was scrollable
+ * twice over -- four options in a select list with 4px of padding showed a
+ * bar with a thumb as long as its track.
+ */
+static void test_a_padded_scroll_box_that_fits_does_not_scroll(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_i32     k;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".list { display:block; overflow-y:auto; padding:4px; }"
+                 ".row { display:block; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (k = 0; k < 4; ++k)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_scroll_range(&g_ui->nodes[1]) == 0, "padded scroll box: nothing to scroll when it all fits");
+    CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "padded scroll box: and no bar drawn over nothing");
+}
+
 /* With no offsets it stays at the static position: where the flow had reached.
    That is what makes `position: absolute` alone look like nothing happened. */
 static void test_absolute_with_no_offsets_keeps_the_static_position(void)
@@ -24411,6 +24443,7 @@ int main(void)
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_a_buttons_own_label_sits_in_the_middle();
+    test_a_padded_scroll_box_that_fits_does_not_scroll();
     test_absolute_with_no_offsets_keeps_the_static_position();
     test_absolute_takes_its_children_with_it();
     test_a_shifted_box_takes_its_fragments_with_it();

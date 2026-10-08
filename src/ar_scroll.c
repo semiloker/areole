@@ -99,11 +99,20 @@ int ar_scrolls_x(const ar_node *n)
     return ar__scrollable(ar_overflow_x(n));
 }
 
-/* How far this container can be scrolled: nothing, if it all fits. */
+/*
+ * How far this container can be scrolled: nothing, if it all fits.
+ *
+ * content_h is padding and all -- the box's height as its contents would have
+ * it -- so it is measured against the box's height and not against the height
+ * inside the padding. Taking the padding off this side too counted it twice:
+ * every padded scroll container could scroll twice its padding further than it
+ * had anything to show, and one whose contents fitted drew a scrollbar over
+ * nothing. PetalSoft's select lists, four options in a box with 4px of
+ * padding, each wore a bar.
+ */
 ar_i32 ar_scroll_range(const ar_node *n)
 {
-    ar_i32 inner = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
-    ar_i32 over = n->content_h - inner;
+    ar_i32 over = n->content_h - n->rect.h;
 
     return over > 0 ? over : 0;
 }
