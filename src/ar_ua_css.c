@@ -322,12 +322,14 @@ static const char *const AR__UA[] = {
      * a browser's 21.
      */
     "input { width:169px; padding:3px 4px; border:1px solid #767676;"
+    "        border-color:var(--ar-edge, #767676);"
     "        border-radius:2px; background:Field; color:FieldText; overflow:hidden; }"
     "input:disabled { color:#6D6D6D; background:#FAFAFA; border-color:#C8C8C8; }",
 
     /* A push button: the label plus six pixels a side, on #EFEFEF. */
     "button, .ar-button { width:auto; padding:3px 8px; border:1px solid #767676;"
-    "                     border-radius:2px; background:#EFEFEF; color:#000000;"
+    "                     border-color:var(--ar-edge, #767676);"
+    "                     border-radius:2px; background:var(--ar-face, #EFEFEF); color:#000000;"
     "                     text-align:center; }"
     "button:disabled, .ar-button:disabled { color:#6D6D6D; }",
 
@@ -339,6 +341,7 @@ static const char *const AR__UA[] = {
      * dropdown by everything it could show, and shows one.
      */
     "select { position:relative; padding:2px 15px 2px 3px; border:1px solid #767676;"
+    "         border-color:var(--ar-edge, #767676);"
     "         border-radius:2px; background:Field; color:FieldText; }"
     "select > option, select > optgroup > option { display:block; height:0px;"
     "  padding:0px 2px; visibility:hidden; }",
@@ -369,6 +372,7 @@ static const char *const AR__UA[] = {
      * grip drawn in the corner.
      */
     "textarea { width:162px; height:30px; padding:3px; border:1px solid #767676;"
+    "           border-color:var(--ar-edge, #767676);"
     "           border-radius:2px; background:Field; color:FieldText; overflow:auto;"
     "           position:relative; }"
     "textarea > ar-value { white-space:pre-wrap; }",
@@ -385,8 +389,10 @@ static const char *const AR__UA[] = {
      * Edge draw unless a page sets `accent-color`.
      */
     ".ar-checkbox { width:13px; height:13px; padding:0px; margin:3px 3px 3px 4px;"
-    "               border:1px solid #767676; border-radius:2px; background:#FFFFFF; }"
-    ".ar-checkbox:checked { background:#0075FF; border-color:#0075FF; }"
+    "               border:1px solid #767676; border-color:var(--ar-edge, #767676);"
+    "               border-radius:2px; background:#FFFFFF; }"
+    ".ar-checkbox:checked { background:var(--ar-accent, #0075FF);"
+    "                       border-color:var(--ar-accent, #0075FF); }"
     "ar-tick { display:block; width:9px; height:9px; margin:2px 0px 0px 2px;"
     "          color:transparent; }",
 
@@ -394,12 +400,13 @@ static const char *const AR__UA[] = {
     /* A radio: the same box, round, margins 3 3 0 5; checked, a blue ring and
        a seven-pixel blue dot three pixels in. */
     ".ar-radio { width:13px; height:13px; padding:0px; margin:3px 3px 0px 5px;"
-    "            border:1px solid #767676; border-radius:7px; background:#FFFFFF; }"
-    ".ar-radio:checked { border-color:#0075FF; }",
+    "            border:1px solid #767676; border-color:var(--ar-edge, #767676);"
+    "            border-radius:7px; background:#FFFFFF; }"
+    ".ar-radio:checked { border-color:var(--ar-accent, #0075FF); }",
 
     "ar-mark { display:block; width:7px; height:7px; margin:3px 0px 0px 3px;"
     "          border-radius:4px; background:transparent; }"
-    "ar-mark:checked { background:#0075FF; }",
+    "ar-mark:checked { background:var(--ar-accent, #0075FF); }",
 
     /*
      * The focus ring, and `:focus-visible` rather than `:focus` on purpose: a
@@ -425,20 +432,22 @@ static const char *const AR__UA[] = {
     "progress { width:160px; height:16px; vertical-align:-0.2em; }"
     "meter { width:80px; height:16px; vertical-align:-0.2em; }",
 
-    "ar-track { display:block; height:8px; margin-top:4px; background:#EFEFEF;"
-    "           border:1px solid #B2B2B2; border-radius:4px; }"
-    "ar-fill { display:block; height:8px; background:#0075FF; border-radius:4px; }"
+    "ar-track { display:block; height:8px; margin-top:4px; background:var(--ar-face, #EFEFEF);"
+    "           border:1px solid #B2B2B2; border-color:var(--ar-rail, #B2B2B2);"
+    "           border-radius:4px; }"
+    "ar-fill { display:block; height:8px; background:var(--ar-accent, #0075FF);"
+    "          border-radius:4px; }"
     "meter ar-fill { background:#107C10; }",
 
     "ar-rail { display:block; height:16px; margin-top:-12px; margin-right:16px; }"
     "ar-thumb { display:block; position:relative; width:16px; height:16px;"
-    "           border-radius:8px; background:#0075FF; }",
+    "           border-radius:8px; background:var(--ar-accent, #0075FF); }",
 
     /* A colour field: a #EFEFEF button 50 by 27 with the colour in it, framed
        in #777777; and when it is open, sixteen chips hanging under it. */
     ".ar-color { width:40px; height:19px; padding:4px 5px; position:relative;"
     "            overflow:visible; border:1px solid #767676; border-radius:2px;"
-    "            background:#EFEFEF; }"
+    "            border-color:var(--ar-edge, #767676); background:var(--ar-face, #EFEFEF); }"
     "ar-swatch { display:block; height:19px; border:1px solid #777777; }",
 
     "ar-palette { display:block; position:absolute; left:0px; top:100%; z-index:10;"
@@ -451,9 +460,30 @@ static const char *const AR__UA[] = {
     ".ar-file { width:253px; height:auto; padding:0px; border-width:0px;"
     "           background:transparent; overflow:hidden; white-space:nowrap; }"
     "ar-pick { display:inline-block; padding:3px 8px; margin-right:4px;"
-    "          border:1px solid #767676; border-radius:2px; background:#EFEFEF;"
+    "          border:1px solid #767676; border-color:var(--ar-edge, #767676);"
+    "          border-radius:2px; background:var(--ar-face, #EFEFEF);"
     "          color:#000000; }"
     "ar-name { display:inline; }",
+
+    /*
+     * Hover and pressed, as Edge draws its controls -- measured, not recalled:
+     * the pointer driven through the DevTools protocol and the pixels read
+     * (#23). Three colours do all of it: a face's #EFEFEF goes to #E5E5E5 and
+     * #F5F5F5, an edge's #767676 to #4F4F4F and #8D8D8D, the accent's #0075FF
+     * to #005CC8 and #3793FF, and a slider's rail #B2B2B2 to #9A9A9A and
+     * #C1C1C1.
+     *
+     * Two rules, not twenty-six. A rule is a selector and the table is shared
+     * with the page, so every control's colours above read four custom
+     * properties, falling back to the colours at rest, and these change the
+     * properties. They inherit, so a slider's thumb, fill and track and a
+     * radio's dot follow their control without rules of their own; and
+     * `:enabled` keeps a disabled control as it is under the pointer.
+     */
+    ".ar-edge:enabled:hover { --ar-edge:#4F4F4F; --ar-face:#E5E5E5; --ar-accent:#005CC8;"
+    "                         --ar-rail:#9A9A9A; }"
+    ".ar-edge:enabled:active { --ar-edge:#8D8D8D; --ar-face:#F5F5F5; --ar-accent:#3793FF;"
+    "                          --ar-rail:#C1C1C1; }",
 
     /* An open select's list hangs under it, over whatever follows, and is part
        of it -- so a press on a row lands inside the select. */
@@ -639,7 +669,7 @@ static const char *const AR__UA[] = {
      * the gap between them. A border would take space in the line and box
      * each piece instead.
      */
-    ".ar-link { color:LinkText; text-decoration:underline; }"
+    ".ar-link { color:LinkText; text-decoration:underline; cursor:pointer; }"
     "u, ins { text-decoration:underline; }"
     "s, del, strike { text-decoration:line-through; }",
 

@@ -43,11 +43,14 @@ PAGE = os.path.join(ROOT, 'docs', 'showcase.html')
 W, H = 1000, 640
 
 # (name, page, faces, size): the styles the README shows beside Edge.
-SEGOE = {'body': 'segoeui.ttf', 'bold': 'segoeuib.ttf', 'sans': 'segoeui.ttf', 'mono': 'consola.ttf'}
+SEGOE = {'body': 'segoeui.ttf', 'bold': 'segoeuib.ttf', 'sans': 'segoeui.ttf', 'sans-bold': 'segoeuib.ttf',
+         'mono': 'consola.ttf'}
 GEORGIA = {'body': 'georgia.ttf', 'bold': 'georgiab.ttf', 'italic': 'georgiai.ttf',
-           'bold-italic': 'georgiaz.ttf', 'sans': 'arial.ttf', 'mono': 'consola.ttf'}
+           'bold-italic': 'georgiaz.ttf', 'sans': 'arial.ttf', 'sans-bold': 'arialbd.ttf',
+           'mono': 'consola.ttf'}
 DEFAULTS = {'body': 'times.ttf', 'bold': 'timesbd.ttf', 'italic': 'timesi.ttf',
-            'bold-italic': 'timesbi.ttf', 'sans': 'arial.ttf', 'mono': 'consola.ttf'}
+            'bold-italic': 'timesbi.ttf', 'sans': 'arial.ttf', 'sans-bold': 'arialbd.ttf',
+            'mono': 'consola.ttf', 'mono-bold': 'consolab.ttf'}
 STYLES = [
     ('settings', 'docs/showcase.html', SEGOE, (1000, 640)),
     ('dashboard', 'docs/styles/dashboard.html', SEGOE, (1000, 640)),

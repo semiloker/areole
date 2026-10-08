@@ -1812,6 +1812,15 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
             ar__put_lit(sel, ".ar-hidden");
         }
 
+        /* Every control answers the pointer through the user-agent sheet's
+           one pair of rules on this class (#23). */
+        if (kind == AR_CTL_CHECKBOX || kind == AR_CTL_RADIO || AR_CTL_IS_BUTTON(kind) ||
+            kind == AR_CTL_TEXT || kind == AR_CTL_SELECT || kind == AR_CTL_RANGE ||
+            kind == AR_CTL_COLOR || kind == AR_CTL_FILE)
+        {
+            ar__put_lit(sel, ".ar-edge");
+        }
+
         /*
          * The `hidden` attribute, on anything: html.css's `[hidden] { display:
          * none }`, spelled as the same class. Put beside a browser, nasa.gov

@@ -868,6 +868,12 @@ int ar_face_init(ar_face *f, const void *data, ar_u32 size)
         f->x_height = ar__i16at(f, f->os2 + 86);
         f->cap_height = ar__i16at(f, f->os2 + 88);
     }
+    /* Every OS/2 version has these two. */
+    if (f->os2)
+    {
+        f->win_ascent = (ar_i32)ar__u16at(f, f->os2 + 74);
+        f->win_descent = (ar_i32)ar__u16at(f, f->os2 + 76);
+    }
 
     if (f->units_per_em <= 0 || f->num_glyphs <= 0)
     {
