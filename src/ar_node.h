@@ -200,6 +200,21 @@ struct ar_ctx
     ar_arena arena;
     ar_sheet sheet;
 
+    /* What the backend has said about the display it is drawing on: the
+       safe-area insets, the titlebar rectangle, and whether the stylesheet
+       asked for the whole display. Read by env(). */
+    ar_env env;
+
+    /* Things this frame noticed that are probably not what was meant. Fixed
+       and small: a frame that produces sixteen of these has one cause, and the
+       seventeenth would say nothing the first sixteen did not. */
+    struct
+    {
+        ar_i32 code;
+        ar_i32 node;
+    } diag[AR_DIAG_MAX];
+    ar_i32 diag_count;
+
     ar_node *nodes;
     ar_i32   node_cap;
     ar_i32   box_budget; /* what AR_MEM was sized for */

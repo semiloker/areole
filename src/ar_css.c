@@ -731,6 +731,47 @@ static const ar__kw AR_KEYWORDS[] = {{"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
 
 #define AR_KEYWORD_COUNT ((ar_i32)(sizeof AR_KEYWORDS / sizeof AR_KEYWORDS[0]))
 
+/*
+ * The env() names, in AR_ENV_* order so the index is the slot.
+ *
+ * Only the two families CSS defines that mean anything to a renderer with no
+ * browser chrome around it: the safe-area insets, and the titlebar rectangle a
+ * backend drawing its own window controls needs. The rest are not here because
+ * nothing can supply them.
+ */
+static const char *const AR_ENV_NAMES[AR_ENV_COUNT] = {
+    "safe-area-inset-top",  "safe-area-inset-right", "safe-area-inset-bottom",
+    "safe-area-inset-left", "titlebar-area-x",       "titlebar-area-y",
+    "titlebar-area-width",  "titlebar-area-height"};
+
+ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback)
+{
+    if (!e || slot < 0 || slot >= AR_ENV_COUNT)
+    {
+        return fallback;
+    }
+
+    /*
+     * The safe-area insets are only reported to a stylesheet that asked for
+     * the whole display. With `viewport-fit: auto` the layout viewport has
+     * already been shrunk to the safe rectangle, so telling the stylesheet to
+     * avoid the inset as well would move everything twice.
+     *
+     * The titlebar rectangle is not part of that bargain: it says where the
+     * window controls are, which does not change because the viewport was
+     * inset.
+     */
+    if (slot <= AR_ENV_SAFE_LEFT && !e->fit_cover)
+    {
+        return 0;
+    }
+    if (!e->known[slot])
+    {
+        return fallback;
+    }
+    return e->v[slot];
+}
+
 static int ar__lookup_keyword(ar_u8 prop, const char *name, ar_u32 len, ar_i32 *out)
 {
     ar_i32 i;
@@ -918,6 +959,84 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         {
             out.unit = AR_UNIT_COLOR;
             out.v = 0;
+            out.ok = 1;
+            return out;
+        }
+
+        /*
+         * env(name) and env(name, fallback).
+         *
+         * The fallback is parsed rather than kept as text: it is always a
+         * length in the places areole accepts env() at all, and keeping text
+         * would mean storing a pointer into a stylesheet the caller is free to
+         * free the moment ar_stylesheet returns.
+         *
+         * A missing fallback is zero. That is a stated deviation -- CSS makes
+         * an unknown env() with no fallback invalid at computed-value time,
+         * and there is no way to say that here yet. It is in
+         * docs/CSS_REFERENCE.md rather than only in this comment.
+         */
+        if (ar__same(name, len, "env") && z->p < z->end && *z->p == '(')
+        {
+            const char *ename;
+            ar_u32      elen;
+            ar_i32      slot;
+
+            int have_fallback = 0;
+
+            z->p++;
+            ar__skip_ws(z);
+            elen = ar__ident(z, &ename);
+            for (slot = 0; slot < AR_ENV_COUNT; ++slot)
+            {
+                if (ar__same(ename, elen, AR_ENV_NAMES[slot]))
+                {
+                    break;
+                }
+            }
+
+            /* The fallback is read whether or not the name was recognised, and
+               the whole function call is consumed either way. Bailing out at
+               the unknown name instead left the scanner in the middle of the
+               parentheses, and the declaration parser picked the fallback back
+               up as though it were the value -- the right answer by accident,
+               which is the kind that stops being right the moment the grammar
+               changes. */
+            ar__skip_ws(z);
+            out.v = 0;
+            if (z->p < z->end && *z->p == ',')
+            {
+                ar__value fb;
+
+                z->p++;
+                fb = ar__parse_value(z, prop);
+                if (fb.ok && fb.unit == AR_UNIT_PX)
+                {
+                    out.v = fb.v;
+                    have_fallback = 1;
+                }
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+
+            if (slot == AR_ENV_COUNT)
+            {
+                /* Nothing can ever supply this name, so it behaves exactly as
+                   a name whose backend stayed silent: the fallback stands, and
+                   without one there is no value and the declaration goes. */
+                if (!have_fallback)
+                {
+                    return out;
+                }
+                out.unit = AR_UNIT_PX;
+                out.ok = 1;
+                return out;
+            }
+
+            out.unit = (ar_u8)(AR_UNIT_ENV_FIRST + slot);
             out.ok = 1;
             return out;
         }
