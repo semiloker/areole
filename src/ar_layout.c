@@ -360,6 +360,21 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
         ar_block_margins(n, nodes);
         ar__min_content(nodes, i);
 
+        if (ar_is_table(n))
+        {
+            /* Every cell beneath this box has been visited, so its column
+               constraints are answerable -- and nothing else here is, because
+               the table has no width yet. */
+            ar_table_measure(nodes, i);
+            continue;
+        }
+        if (ar_is_table_internal(n) || ar_is_table_block(n))
+        {
+            /* Both stack their contents vertically rather than laying them out
+               along an axis, which is what block measurement already means. */
+            ar__measure_block(nodes, i);
+            continue;
+        }
         if (ar_is_block(n))
         {
             ar__measure_block(nodes, i);
@@ -473,10 +488,39 @@ static ar_i32 ar__resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int
  * stretched by align-items has already been told how tall to be, and text that
  * does not fit that is the caller's decision to make.
  */
-static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env)
+static void ar__wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch,
+                            ar_layout_env *env)
 {
+    /*
+     * A table answers this question too, and answering it *here* is what lets
+     * a table stack like any other box.
+     *
+     * Its parent fixes its y-position while stacking its children, which
+     * happens before the forward sweep ever reaches the table node -- so a
+     * height corrected any later would leave every following sibling where the
+     * wrong height had put it. This is the one place that already means "the
+     * width is settled, now fix the height", and it has five callers between
+     * them covering block flow, flex flow and shrink-to-fit. A table gets all
+     * five for free.
+     */
     ar_i32 inner_w;
     ar_i32 h;
+
+    if (nodes && ar_is_table(n))
+    {
+        ar_i32 th = ar_table_height(nodes, (ar_i32)(n - nodes), env);
+
+        /* A table is still a box: a stated height is a floor and min/max still
+           clamp it. Returning the solved height raw skipped both, so
+           `display:table; height:400px` computed a height and threw it away --
+           every other box in this function gets clamped and a table did not. */
+        if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_PX && n->style.v[AR_P_HEIGHT] > th)
+        {
+            th = n->style.v[AR_P_HEIGHT];
+        }
+        n->rect.h = ar__clamp(th, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        return;
+    }
 
     if (!env->wrap || !n->text)
     {
@@ -522,7 +566,7 @@ typedef struct ar__stack_ud
 
 /* Gives an out-of-flow or inline-level box its size, which for both is
    shrink-to-fit rather than "fill the container". */
-static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *env)
+static void ar__size_shrink_to_fit(ar_node *nodes, ar_node *ch, ar_i32 inner_w, ar_layout_env *env)
 {
     /*
      * A box whose text will be cut into fragments is one line tall, and the
@@ -577,7 +621,7 @@ static void ar__size_shrink_to_fit(ar_node *ch, ar_i32 inner_w, ar_layout_env *e
     ch->rect.h =
         ar__clamp(ch->rect.h, ch->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&ch->style, AR_P_MAX_HEIGHT));
 
-    ar__wrap_height(ch, 1, 0, env);
+    ar__wrap_height(nodes, ch, 1, 0, env);
 }
 
 static ar_i32 ar__rect_height_of(void *ud, ar_i32 index)
@@ -607,7 +651,7 @@ static ar_i32 ar__place_run(void *ud, ar_i32 first, ar_i32 stop, ar_i32 y)
         {
             continue;
         }
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
     }
 
     return ar_inline_run(nodes, first, stop, su->left, su->top + y, su->inner_w, su->align,
@@ -624,7 +668,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
        handed to the float list to be pushed to its side. */
     if (real == -1)
     {
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ar_float_place(&su->floats, ch, su->top + y, ch->style.v[AR_P_FLOAT]);
         return;
     }
@@ -634,7 +678,7 @@ static void ar__place_child_at(void *ud, ar_i32 index, ar_i32 y, int real)
        resolves whichever of those its offsets override. */
     if (real == -2)
     {
-        ar__size_shrink_to_fit(ch, su->inner_w, su->env);
+        ar__size_shrink_to_fit(su->nodes, ch, su->inner_w, su->env);
         ch->rect.x = su->left;
         ch->rect.y = su->top + y;
         return;
@@ -753,6 +797,29 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
                 ch->rect.w = ar_used_size(ch, 0, inner_w * ch->style.v[AR_P_WIDTH] / 100);
                 break;
             default:
+                if (ar_is_table(ch))
+                {
+                    /*
+                     * A table with no stated width is as wide as its contents.
+                     *
+                     * Every other block child fills what it is offered; a table
+                     * shrinks to fit, which is CSS 2.1 chapter 17 and is what
+                     * makes a two-column table of dates sit at the left of the
+                     * page rather than stretching across it. The corpus found
+                     * it on the generated tables -- a `tr` written with no
+                     * table around it gets one, and areole gave that one the
+                     * full width of the page where a browser sized it to the
+                     * row.
+                     */
+                    ar_i32 room = inner_w - ml - mr;
+
+                    ch->rect.w = ch->fit[0] < room ? ch->fit[0] : room;
+                    if (ch->rect.w < ch->min_w)
+                    {
+                        ch->rect.w = ch->min_w;
+                    }
+                    break;
+                }
                 ch->rect.w = inner_w - ml - mr;
                 break;
             }
@@ -782,7 +849,7 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
 
         /* The width is settled, so the text can be wrapped into it and the
            height corrected before anything is stacked on top. */
-        ar__wrap_height(ch, 1, 0, env);
+        ar__wrap_height(nodes, ch, 1, 0, env);
     }
 
     /* The stack, by the same walk the measure pass used. */
@@ -830,7 +897,18 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     /* The root keeps the viewport, whatever it says about itself and whatever
        its contents come to -- the window is not negotiable, which is already
        true of its width. */
-    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0)
+    /*
+     * A table cell is the exception, and it has to be.
+     *
+     * Its height is the row's, and the row's is the tallest cell in it -- so a
+     * cell with less in it than its neighbour is deliberately taller than its
+     * contents, and writing its contents' height back over it undoes the only
+     * thing a row height means. Every cell in the suite either stated a height
+     * or held nothing, which is why this survived: with no children the block
+     * pass is never reached, and with a stated height this branch is not taken.
+     * A caption is settled by the table for the same reason.
+     */
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0 && !ar_is_table_block(n))
     {
         ar_i32 used = cursor;
 
@@ -864,6 +942,29 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
             continue;
         }
 
+        if (ar_is_table(n))
+        {
+            ar_table_place(nodes, i, env);
+            continue;
+        }
+        if (ar_is_table_internal(n))
+        {
+            /* The table already placed every cell in this row. Falling through
+               would hand them to the flex algorithm, which would place them
+               again and undo the columns. */
+            continue;
+        }
+        if (ar_is_table_block(n))
+        {
+            ar__place_block(nodes, i, env);
+            if (ar_is_table_cell(n))
+            {
+                /* After, not before: where the contents go depends on how tall
+                   they turned out, and that is what the block pass works out. */
+                ar_table_align_cell(nodes, i);
+            }
+            continue;
+        }
         if (ar_is_block(n))
         {
             ar__place_block(nodes, i, env);
@@ -921,7 +1022,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                produces is the one that feeds `used`. */
             if (!(axis == 0 && ch->style.unit[AR_P_WIDTH] == AR_UNIT_GROW))
             {
-                ar__wrap_height(ch, axis, stretch, env);
+                ar__wrap_height(nodes, ch, axis, stretch, env);
             }
 
             used += *ar__size(&ch->rect, axis) + ar__margin_lead(&ch->style, axis) +
@@ -970,7 +1071,7 @@ static void ar__place(ar_node *nodes, ar_i32 count, ar_layout_env *env)
                    main-axis arithmetic above, so doing it late costs nothing. */
                 if (axis == 0)
                 {
-                    ar__wrap_height(ch, axis, stretch, env);
+                    ar__wrap_height(nodes, ch, axis, stretch, env);
                 }
             }
             leftover = 0; /* absorbed, so justify-content has nothing to place */
