@@ -13549,6 +13549,63 @@ static void test_absolute_is_out_of_the_flow(void)
     CHECK(ar__box(3).y == 10, "absolute: the block after it ignores it entirely");
 }
 
+/*
+ * Out of the flow is out of the parent's size as well (CSS 2.1 10.3.5,
+ * Flexbox 4.1). The width measures counted an absolutely positioned child, so
+ * a sliding highlight behind two buttons -- absolutely positioned, as wide as
+ * one of them -- made a shrink-to-fit row of two buttons three buttons wide.
+ * PetalSoft's theme switch, Light and Dark, found it.
+ */
+static void test_an_absolute_child_does_not_widen_a_flex_row(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+
+    ar__ui_reset("#root { display:flex; }"
+                 ".seg { display:flex; position:relative; padding:3px; }"
+                 ".pill { position:absolute; left:3px; top:3px; width:90px; height:20px; }"
+                 ".opt { display:block; width:90px; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.seg");
+    ar_begin(g_ui, "div.pill");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.opt");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.opt");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 186,
+          "absolute child: two 90px items and 3px of padding make a 186px row, highlight or not");
+}
+
+/* The same for a shrink-to-fit block: its widest line, not its widest box. */
+static void test_an_absolute_child_does_not_widen_a_shrink_to_fit_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".fit { display:inline-block; position:relative; }"
+                 ".abs { position:absolute; left:0; top:0; width:300px; height:10px; }"
+                 ".in { display:block; width:50px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.fit");
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.in");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 50, "absolute child: an inline-block is as wide as what is in flow");
+}
+
 /* With no offsets it stays at the static position: where the flow had reached.
    That is what makes `position: absolute` alone look like nothing happened. */
 static void test_absolute_with_no_offsets_keeps_the_static_position(void)
@@ -24304,6 +24361,8 @@ int main(void)
     test_relative_moves_its_children();
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
+    test_an_absolute_child_does_not_widen_a_flex_row();
+    test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_absolute_with_no_offsets_keeps_the_static_position();
     test_absolute_takes_its_children_with_it();
     test_a_shifted_box_takes_its_fragments_with_it();

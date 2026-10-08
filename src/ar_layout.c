@@ -23,6 +23,22 @@ static int ar__hidden(const ar_node *n)
     return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE;
 }
 
+/*
+ * Whether a child takes part in its parent's intrinsic size.
+ *
+ * A box that is absolutely positioned or fixed is out of flow: it is placed
+ * against its containing block after the parent is sized, and CSS 2.1 10.3.5
+ * and Flexbox 4.1 both leave it out of the parent's min- and max-content. The
+ * stacking pass in ar_layout_block.c always left it out of the height; the
+ * three width measures below counted it, so a sliding highlight behind two
+ * buttons -- one absolutely positioned box, the width of a button -- made a
+ * flex row of two buttons three buttons wide.
+ */
+static int ar__sized_by(const ar_node *ch)
+{
+    return !ar__hidden(ch) && !ar_is_out_of_flow(ch);
+}
+
 /* Height of a text block, counting the lines rather than assuming one. */
 /* The intrinsic height: what the text wants before anything tells it how wide
    to be, which is its explicit lines only. Wrapping is not intrinsic -- it is
@@ -135,7 +151,7 @@ static void ar__measure_block(ar_node *nodes, ar_i32 i)
         ar_node *ch = &nodes[c];
         ar_i32   w;
 
-        if (ar__hidden(ch))
+        if (!ar__sized_by(ch))
         {
             continue;
         }
@@ -219,7 +235,7 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
         ar_node *ch = &nodes[c];
         ar_i32   w;
 
-        if (ar__hidden(ch) || ar_is_floated(ch))
+        if (!ar__sized_by(ch) || ar_is_floated(ch))
         {
             continue;
         }
@@ -434,7 +450,7 @@ static void ar__measure(ar_node *nodes, ar_i32 count)
             ar_node *ch = &nodes[c];
             ar_i32   m, x;
 
-            if (ar__hidden(ch))
+            if (!ar__sized_by(ch))
             {
                 continue;
             }
