@@ -498,8 +498,83 @@ typedef enum ar_unit
     AR_UNIT_ENV_TITLEBAR_Y,
     AR_UNIT_ENV_TITLEBAR_W,
     AR_UNIT_ENV_TITLEBAR_H,
-    AR_UNIT_ENV_LAST = AR_UNIT_ENV_TITLEBAR_H
+    AR_UNIT_ENV_LAST = AR_UNIT_ENV_TITLEBAR_H,
+
+    /*
+     * The relative lengths.
+     *
+     * A unit rather than a converted number for the reason env() is one: the
+     * number is not known when the sheet is parsed. `em` waits for the font
+     * size inheritance settles, `vh` waits for a viewport that can change
+     * while the stylesheet does not, and both are resolved on the copy the
+     * style cache hands back rather than inside it.
+     *
+     * The value slot carries **hundredths of the unit**, not pixels: `1.5em`
+     * is 150 here. Sixteen bits of whole units would have made `0.5em` round
+     * to zero at parse time, which is where relative units are most often
+     * written.
+     *
+     * **The order is load-bearing three times over** and adding a unit in the
+     * middle breaks all three. The six font metrics run em, ex, ch, cap, ic,
+     * lh; the root-relative six repeat them in that order, so `u - AR_UNIT_EM`
+     * modulo six is which metric and divided by six is whether it is the
+     * element's font or the root's. The four viewport families repeat w, h,
+     * min, max, i, b for the same arithmetic.
+     */
+    AR_UNIT_REL_FIRST,
+
+    AR_UNIT_EM = AR_UNIT_REL_FIRST,
+    AR_UNIT_EX,
+    AR_UNIT_CH,
+    AR_UNIT_CAP,
+    AR_UNIT_IC,
+    AR_UNIT_LH,
+
+    AR_UNIT_REM,
+    AR_UNIT_REX,
+    AR_UNIT_RCH,
+    AR_UNIT_RCAP,
+    AR_UNIT_RIC,
+    AR_UNIT_RLH,
+
+    AR_UNIT_VIEW_FIRST,
+
+    AR_UNIT_VW = AR_UNIT_VIEW_FIRST,
+    AR_UNIT_VH,
+    AR_UNIT_VMIN,
+    AR_UNIT_VMAX,
+    AR_UNIT_VI,
+    AR_UNIT_VB,
+
+    AR_UNIT_SVW,
+    AR_UNIT_SVH,
+    AR_UNIT_SVMIN,
+    AR_UNIT_SVMAX,
+    AR_UNIT_SVI,
+    AR_UNIT_SVB,
+
+    AR_UNIT_LVW,
+    AR_UNIT_LVH,
+    AR_UNIT_LVMIN,
+    AR_UNIT_LVMAX,
+    AR_UNIT_LVI,
+    AR_UNIT_LVB,
+
+    AR_UNIT_DVW,
+    AR_UNIT_DVH,
+    AR_UNIT_DVMIN,
+    AR_UNIT_DVMAX,
+    AR_UNIT_DVI,
+    AR_UNIT_DVB,
+
+    AR_UNIT_VIEW_LAST = AR_UNIT_DVB,
+    AR_UNIT_REL_LAST = AR_UNIT_DVB
 } ar_unit;
+
+/* The six font metrics, and the six viewport axes, in the order the enum
+   above fixes. Resolution indexes both by subtraction. */
+#define AR_UNIT_METRIC_COUNT 6
+#define AR_UNIT_VIEW_AXES    6
 
 /*
  * The environment a stylesheet can ask about.
@@ -1367,6 +1442,32 @@ typedef struct ar_sheet
     /* Whether any rule says `display: grid`, on the same terms as has_table:
        a sheet without one never runs the grid pass. */
     int has_grid;
+
+    /*
+     * Whether any declaration in this sheet is a viewport length, on the same
+     * terms: a sheet with no `vh` in it never runs the pass that resolves one.
+     *
+     * That pass cannot live with the others in ar__resolve, because style is
+     * resolved while the tree is being declared and the surface for this frame
+     * is not known until ar_frame_end. Resolving there instead is what makes
+     * `100vh` right on the first frame and on the frame a window is resized,
+     * rather than one frame behind the way a media query is.
+     */
+    int has_view_units;
+
+    /*
+     * Whether any declaration in this sheet is a relative length at all.
+     *
+     * The gate on the whole of ar__resolve_units, and it is here because the
+     * pass underneath it is O(property count) per box -- which is precisely
+     * the shape 0.8.2 spent a release removing from ar_style_inherit, and
+     * which style resolution must never grow back. A sheet stating `16px`
+     * everywhere pays one branch per box for units it does not use.
+     *
+     * Set by the parser rather than derived, because the answer is known when
+     * the sheet is read and never changes afterwards.
+     */
+    int has_rel_units;
 
     /* Dropped wholesale whenever a stylesheet is added, which is the only
        thing that can invalidate it. Adding a stylesheet is a startup

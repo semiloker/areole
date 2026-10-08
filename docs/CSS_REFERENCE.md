@@ -566,9 +566,52 @@ tooltip shoved sideways to fit stops pointing at anything.
 
 ## Values
 
-**Lengths.** `12px` or a bare `12`; both are pixels. A fraction such as
-`12.75px` is floored at parse time, because the layout is integer end to end
-and rounding it later in two different places is how a one pixel seam appears.
+**Lengths.** Every unit CSS Values Level 4 defines a length in.
+
+| group | units | resolved against |
+| --- | --- | --- |
+| absolute | `px` `pt` `pc` `in` `cm` `mm` `Q` | nothing — `1in` is 96px by definition |
+| font | `em` `ex` `ch` `cap` `ic` `lh` | the element's own font |
+| root font | `rem` `rex` `rch` `rcap` `ric` `rlh` | the root element's font |
+| viewport | `vw` `vh` `vmin` `vmax` `vi` `vb` | the surface |
+| and three more families | `sv*` `lv*` `dv*` | the same surface — see below |
+| flexible | `fr` | what is left over, in a grid track |
+| percentage | `%` | depends on the property |
+
+Units are case-insensitive: `10PX` is ten pixels. A bare number is a length
+only where quirks mode allows one — in a document with a doctype `width: 100`
+is dropped, and in an interface stylesheet it is a hundred pixels, because an
+interface has no doctype to read a mode from and `gap: 8` there is what
+somebody meant.
+
+**A length is a whole number of pixels.** The layout is integer end to end, so
+`0.9em` at a 16px font is 14 here and 14.4 in a browser. The number is carried
+in hundredths of its unit through resolution and rounded **once**, at the end,
+so the error is never more than half a pixel and never accumulates. `12.75px`
+is 13. It used to be 12: flooring stopped being tenable when relative units
+arrived, because `0.75em` floored to zero em is zero pixels rather than twelve.
+
+**`vw` and its family are one per cent of the surface**, resolved when the frame
+is laid out rather than when the stylesheet is read — so `height: 100vh` is
+right on the very first frame and on the frame a window is resized. The small,
+large and dynamic families (`svh`, `lvh`, `dvh` and the rest) exist for a browser
+whose toolbar retracts during a scroll; areole draws into a window that is one
+size, so all four families answer alike. That is the specified answer rather
+than a shortcut, and the mechanism is there for a backend with a retracting
+panel to use.
+
+**`em` on `font-size` measures against the parent's font**, and every other unit
+on that box measures against the result. `ex`, `ch`, `cap` and `ic` come from the
+loaded face; a face that does not state them falls back to half an em for `ex`
+and `ch`, seven tenths for `cap` and a whole em for `ic`. `lh` is the element's
+own line box and `rlh` the root's.
+
+Two limits worth knowing. A **track list takes absolute units only** —
+`grid-template-columns: 10em 1fr` is refused, because a track list is parsed
+once and shared by every box using the rule, and `10em` is a different number
+for each of them. And **`font-size` in a viewport unit is one frame behind** on
+a resize, because a font size has to be a number before the next box inherits
+it; every other viewport length is current.
 
 **Colours.** `#rgb`, `#rrggbb`, `#rrggbbaa`, and `transparent`. Named colours
 are absent: a table of a hundred and forty names earns its place in a browser,
@@ -634,8 +677,9 @@ Named so that their absence is a decision rather than an oversight:
 - named grid lines on a subgrid declaration, and subgrids nested inside
   subgrids
 - `box-shadow`, gradients, `opacity` on a whole subtree
-- media queries, container queries, `@` rules of any kind
-- custom properties, `var()`, `calc()`
+- container queries and `@container`; `@media` and `@supports` are built
+- custom properties, `var()`, `calc()`; angle, time and frequency units, which
+  wait for a property that reads one
 - attribute selectors, pseudo-elements, `:nth-child(an+b)`
 - writing modes and logical properties, so no `-inline` or `-block` longhands
 - the `display: contents` exceptions for replaced elements, form controls and
@@ -645,7 +689,7 @@ Named so that their absence is a decision rather than an oversight:
   width and origin and not by style
 - table fragmentation across pages or columns
 - `env()` names beyond safe-area and titlebar — nothing can supply them
-- `<dialog>`, `popover`, `popovertarget` — HTML, and there is no parser yet
+- `<dialog>`, `popover`, `popovertarget` — the parser is built, these are not
 - focus of any kind, so no focus trap, no `autofocus`, no Escape to dismiss
 - `position-try-fallbacks` as a list — the grammar is still moving
 - `position-area` — tracked, no version

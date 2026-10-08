@@ -163,7 +163,8 @@ enum
     AR__V_WEIGHT,
     AR__V_SLANT,
     AR__V_USED_W,
-    AR__V_USED_H
+    AR__V_USED_H,
+    AR__V_LINE_HEIGHT
 };
 
 static const struct
@@ -187,7 +188,8 @@ static const struct
                  {"text-align", AR_P_TEXT_ALIGN, AR__V_ALIGN},
                  {"font-weight", AR_P_FONT_WEIGHT, AR__V_WEIGHT},
                  {"font-style", AR_P_FONT_STYLE, AR__V_SLANT},
-                 {"display", AR_P_DISPLAY, AR__V_DISPLAY}};
+                 {"display", AR_P_DISPLAY, AR__V_DISPLAY},
+                 {"line-height", AR_P_LINE_HEIGHT, AR__V_LINE_HEIGHT}};
 
 #define AR__PROPS_N ((int)(sizeof AR__PROPS / sizeof AR__PROPS[0]))
 
@@ -293,6 +295,30 @@ static void ar__value_of(const ar_ctx *c, ar_i32 node, const char *prop, char *o
         case AR__V_USED_H:
             sprintf(out, "%ldpx",
                     (long)(ar_node_rect(c, node).h - st->v[AR_P_PAD_TOP] - st->v[AR_P_PAD_BOTTOM]));
+            return;
+        /*
+         * `line-height` is a multiplier or a length, and a browser reports
+         * both as pixels -- `getComputedStyle` resolves the multiplier
+         * against the font size before it answers. So this has to as well, or
+         * the two would be spelling the same line box two different ways.
+         *
+         * `normal` is the exception a browser keeps as a word, and areole
+         * carries it as a keyword unit for the same reason.
+         */
+        case AR__V_LINE_HEIGHT:
+            if (st->unit[AR_P_LINE_HEIGHT] == AR_UNIT_KEYWORD)
+            {
+                strcpy(out, "normal");
+            }
+            else if (st->unit[AR_P_LINE_HEIGHT] == AR_UNIT_NUMBER)
+            {
+                sprintf(out, "%ldpx",
+                        (long)((st->v[AR_P_FONT_SIZE] * st->v[AR_P_LINE_HEIGHT] + 500) / 1000));
+            }
+            else
+            {
+                sprintf(out, "%ldpx", (long)st->v[AR_P_LINE_HEIGHT]);
+            }
             return;
         default:
             /* `auto` is a value and not a number. A browser says `auto` for a

@@ -40,10 +40,14 @@
  *     first user-agent stylesheet written for this engine had lists of
  *     eighteen and twenty-four, both silently discarded, and the page laid
  *     out as flex because the rules that said otherwise had vanished.
- *   - Heading margins are stated rather than inherited. areole's user-agent
- *     sheet gives an `h4` a fixed 21px where CSS says `1.33em`, so an 11px
- *     heading is six pixels out per margin and a sidebar with four of them
- *     had drifted twenty-five by the bottom. Relative units are 0.4.1's.
+ *   - Heading margins are stated rather than inherited, and this note is kept
+ *     because the reason for it has gone. areole's user-agent sheet used to
+ *     give an `h4` a fixed 21px where CSS says `1.33em`, so an 11px heading
+ *     was six pixels out per margin and a sidebar with four of them had
+ *     drifted twenty-five by the bottom. 0.4.1 put the sheet into `em`, so
+ *     the fixed pixels are gone; the explicit `margin: 0` below stays because
+ *     this sidebar wants no margin at all, which is a design decision rather
+ *     than a workaround.
  *
  * That third one is why `--selftest` asserts `ar_stylesheet_rules_refused()`
  * is zero before it asserts anything about the layout. It deliberately does
@@ -190,11 +194,12 @@ static const char *const PAGE[] = {
     "           grid-template-rows: 833px; height: 833px; }\n"
     "  .side { background: #ffffff; padding: 22px 16px;\n"
     "          display: flex; flex-direction: column; gap: 3px; }\n"
-    /* The margin is stated rather than inherited from the user-agent sheet,
-       and it has to be: areole's heading margins are fixed pixels where CSS
-       says `1.33em`, so an 11px `h4` gets 21px of margin here and about 15 in
-       a browser. Six pixels per margin, and by the fourth heading the sidebar
-       had drifted twenty-five. Relative units are 0.4.1's. */
+    /* The margin is stated rather than inherited from the user-agent sheet.
+       It used to *have* to be: areole's heading margins were fixed pixels
+       where CSS says `1.33em`, so an 11px `h4` got 21px of margin here and
+       about 15 in a browser -- six per margin, and twenty-five of drift by the
+       fourth heading. 0.4.1 put the sheet into `em` and that is fixed. This
+       stays because a sidebar label wants no margin, not because it must. */
     "  .side h4 { font-size: 11px; color: #9c968c; margin: 0px;\n"
     "             padding: 22px 10px 4px; }\n",
 

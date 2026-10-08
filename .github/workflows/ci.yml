@@ -253,6 +253,19 @@ jobs:
           ./build/ar_quirks.exe --html > /tmp/quirks.html
           diff -u tests/quirks.html /tmp/quirks.html
 
+      # 0.4.1 acceptance criterion 2: what every CSS length unit computes to.
+      # The comparison against a browser needs one and runs locally; what runs
+      # here is that the corpus still answers every case, and that its twin
+      # still mirrors the C source -- every hand-written twin in this tree has
+      # drifted, and a generated one that nothing diffs drifts just as well.
+      - name: Unit dumps
+        run: ./build/ar_units.exe > /dev/null
+
+      - name: The units twin is up to date
+        run: |
+          ./build/ar_units.exe --html > /tmp/units.html
+          diff -u tests/units.html /tmp/units.html
+
       # 0.9.1 acceptance criterion 4: the gallery harness, end to end. The
       # browser half needs a browser and runs locally like every other
       # comparison; what runs here is the half that can, which is that every
