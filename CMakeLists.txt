@@ -81,6 +81,26 @@ target_include_directories(ar_html5lib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 target_link_libraries(ar_html5lib PRIVATE areole)
 areole_set_warnings(ar_html5lib)
 
+add_executable(ar_hints tests/ar_hints.c)
+target_include_directories(ar_hints PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_hints PRIVATE areole)
+areole_set_warnings(ar_hints)
+
+add_executable(ar_elements tests/ar_elements.c)
+target_include_directories(ar_elements PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_elements PRIVATE areole)
+areole_set_warnings(ar_elements)
+
+add_executable(ar_quirks tests/ar_quirks.c)
+target_include_directories(ar_quirks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_quirks PRIVATE areole)
+areole_set_warnings(ar_quirks)
+
+add_executable(ar_gallery tests/ar_gallery.c)
+target_include_directories(ar_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(ar_gallery PRIVATE areole)
+areole_set_warnings(ar_gallery)
+
 # --- the fuzzer ---------------------------------------------------------------
 # HTML is the one input this library takes that somebody else wrote, so the
 # parser gets a gate rather than an exercise. Links against the plain library:

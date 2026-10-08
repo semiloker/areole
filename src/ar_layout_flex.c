@@ -540,18 +540,32 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
     ar_node *n = &nodes[i];
     ar_i32   axis = ar_axis_main(n);
     ar_i32   cross = axis ^ 1;
-    ar_i32   gap = n->style.v[AR_P_GAP];
-    ar_i32   wrap = n->style.v[AR_P_FLEX_WRAP];
-    int      ordered = ar__flex_ordered(nodes, i);
-    ar_i32   inner_main, inner_cross;
-    int      cross_definite;
-    ar_i32   first, c;
-    ar_i32   cross_total = 0;
-    ar_i32   line_count = 0;
-    ar_i32   align_items = n->style.v[AR_P_ALIGN];
-    ar_i32   pass;
-    ar_i32   line_lead = 0, line_between = 0;
-    ar_i32   line_grow = 0, line_grow_rest = 0;
+    /*
+     * Two gaps, because a flex container has two axes and `gap` sets both.
+     *
+     * `gap: 10px` is `row-gap: 10px; column-gap: 10px`, and which of the two
+     * separates the *items* depends on the direction: in a row it is the
+     * column gap, and in a column it is the row gap. The other one separates
+     * the wrapped lines.
+     *
+     * Resolved the way the grid resolves them, which is the same rule and was
+     * already written down one file over.
+     */
+    ar_i32 col_gap = n->style.v[AR_P_COL_GAP] ? n->style.v[AR_P_COL_GAP] : n->style.v[AR_P_GAP];
+    ar_i32 row_gap = n->style.v[AR_P_ROW_GAP] ? n->style.v[AR_P_ROW_GAP] : n->style.v[AR_P_GAP];
+    ar_i32 gap = ar_axis_main(n) == 0 ? col_gap : row_gap;
+    ar_i32 cross_gap = ar_axis_main(n) == 0 ? row_gap : col_gap;
+    ar_i32 wrap = n->style.v[AR_P_FLEX_WRAP];
+    int    ordered = ar__flex_ordered(nodes, i);
+    ar_i32 inner_main, inner_cross;
+    int    cross_definite;
+    ar_i32 first, c;
+    ar_i32 cross_total = 0;
+    ar_i32 line_count = 0;
+    ar_i32 align_items = n->style.v[AR_P_ALIGN];
+    ar_i32 pass;
+    ar_i32 line_lead = 0, line_between = 0;
+    ar_i32 line_grow = 0, line_grow_rest = 0;
 
     inner_main = *ar_axis_size(&n->rect, axis) - ar_axis_pad_lead(&n->style, axis) -
                  ar_axis_pad_trail(&n->style, axis);
@@ -668,6 +682,18 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             ar_i32 line_cross = 0;
             ar_i32 main_used = 0;
             ar_i32 lead, between, cursor;
+
+            /*
+             * The gap goes *before* the line, not after it, because the items
+             * are positioned from `cross_cursor` further down and a gap added
+             * on the way out arrives one line too late: the height came out
+             * right and every line after the first was still flush against its
+             * predecessor.
+             */
+            if (line_count > 0)
+            {
+                cross_cursor += cross_gap;
+            }
 
             /*
              * §9.3: collect a line.
@@ -858,15 +884,22 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
                 (void)index;
             }
 
+            /*
+             * And the total counts the same gaps: one for every line after the
+             * first.
+             *
+             * There were none at all. The comment that stood here said `gap`
+             * was main-axis only "until row-gap exists, at 0.8.1"; row-gap has
+             * existed since 0.8.1 and the grid two files over has resolved it
+             * correctly the whole time.
+             */
+            if (line_count > 0)
+            {
+                cross_total += cross_gap;
+            }
+            ++line_count;
             cross_cursor += line_cross + (pass == 1 ? line_between : 0);
             cross_total += line_cross;
-            ++line_count;
-
-            if (line_count > 1)
-            {
-                cross_total += 0; /* no gap between lines: `gap` is main-axis
-                                     only until row-gap exists, at 0.8.1 */
-            }
             first = stop;
         }
     }

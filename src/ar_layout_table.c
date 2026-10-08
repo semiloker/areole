@@ -51,7 +51,8 @@
 typedef struct ar__col
 {
     ar_i32 min, max; /* content constraints, accumulated over the column */
-    ar_i32 w, x;     /* what it got, and where it starts */
+
+    ar_i32 w, x; /* what it got, and where it starts */
     /* Whether any cell in this column stated a width. A column that did keeps
        what it asked for when there is room to spare; the surplus goes to the
        columns that did not, which is where a browser puts it. */
@@ -214,9 +215,27 @@ static ar_i32 ar__scan_rows(const ar_node *nodes, ar_i32 at, ar_i32 p)
  * gets its bottom edge exactly rather than approximately, which is where the
  * corner cases in collapsed borders were always going to be.
  */
-static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
+/*
+ * What a row contributes to the table's left and right edges.
+ *
+ * Its own border and its group's, and **not** its cells'. A vertical line at
+ * the table's edge is a conflict between the table, the row, the row group,
+ * the first or last column, and the cells *in that column* -- CSS 17.6.2 lists
+ * exactly those. A cell in the middle of the row does not touch either side
+ * edge and has no business widening it.
+ *
+ * ar__row_border_max below does include the cells, and is right to: it answers
+ * the *horizontal* question, where every cell in the row sits on the line
+ * above and the line below. Using it for both was one function answering two
+ * questions, and it made a wide border on any column widen the table on both
+ * sides -- `col-one-wider` put five pixels on the first column of a pair and
+ * the table came out five wider on the right as well.
+ */
+static ar_i32 ar__row_frame_border(const ar_node *nodes, ar_i32 row)
 {
-    ar_i32 c = nodes[row].first_child;
+    /* The group stays here: it spans the whole width, so it does meet both of
+       the table's side edges -- unlike the horizontal case, where it meets only
+       its own first and last line. */
     ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
 
     if (nodes[row].parent >= 0 && ar__is_group(&nodes[nodes[row].parent]) &&
@@ -224,6 +243,57 @@ static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
     {
         m = nodes[nodes[row].parent].style.v[AR_P_BORDER_WIDTH];
     }
+    return m;
+}
+
+/*
+ * A row group's border, and only where the group has an edge.
+ *
+ * A `tbody` with a border draws it around the *group*, not around every row in
+ * it -- so it meets the horizontal line above its first row and the one below
+ * its last, and none of the lines in between. Counting it on every row made a
+ * five-pixel group border into a five-pixel line between each of its rows, and
+ * every row in `col-group-alone` came out two pixels taller than a browser
+ * makes it.
+ *
+ * The same shape as the vertical fix beside it: a border belongs to the edges
+ * the box actually has.
+ */
+static ar_i32 ar__group_edge(const ar_node *nodes, ar_i32 row, int top)
+{
+    ar_i32 g = nodes[row].parent;
+    ar_i32 r, first = -1, last = -1;
+
+    if (g < 0 || !ar__is_group(&nodes[g]))
+    {
+        return 0;
+    }
+    for (r = nodes[g].first_child; r >= 0; r = nodes[r].next_sibling)
+    {
+        if (!ar__is_row(&nodes[r]) || nodes[r].style.v[AR_P_DISPLAY] == AR_DISPLAY_NONE)
+        {
+            continue;
+        }
+        if (first < 0)
+        {
+            first = r;
+        }
+        last = r;
+    }
+    if (row != (top ? first : last))
+    {
+        return 0;
+    }
+    return nodes[g].style.v[AR_P_BORDER_WIDTH];
+}
+
+/* The row and its cells. The group is asked for separately, by
+   ar__group_edge, because it has two edges and not one per row. */
+static ar_i32 ar__row_border_max(const ar_node *nodes, ar_i32 row)
+{
+    ar_i32 c = nodes[row].first_child;
+    ar_i32 m = nodes[row].style.v[AR_P_BORDER_WIDTH];
+
     for (; c >= 0; c = nodes[c].next_sibling)
     {
         if (ar__is_cell(&nodes[c]) && nodes[c].style.v[AR_P_DISPLAY] != AR_DISPLAY_NONE &&
@@ -381,6 +451,19 @@ static ar_i32 ar__cell_stated_h(const ar_node *n)
  * ar_i32. Dividing first when it would costs a pixel of precision and is
  * always right, which is the better trade for a layout nobody can see.
  */
+static ar_i32 ar__scale_round(ar_i32 a, ar_i32 b, ar_i32 d)
+{
+    if (a <= 0 || b <= 0 || d <= 0)
+    {
+        return 0;
+    }
+    if (a <= (2147483647 - d / 2) / b)
+    {
+        return (a * b + d / 2) / d;
+    }
+    return (a / d) * b;
+}
+
 static ar_i32 ar__scale(ar_i32 a, ar_i32 b, ar_i32 d)
 {
     if (a <= 0 || b <= 0 || d <= 0)
@@ -432,7 +515,7 @@ static ar_i32 ar__lines(const ar_node *nodes, ar_i32 table, ar_i32 *vline)
     {
         ar_i32 c = nodes[row].first_child;
         ar_i32 at = 0;
-        ar_i32 rb = ar__row_border_max(nodes, row);
+        ar_i32 rb = ar__row_frame_border(nodes, row);
 
         if (rb > outer)
         {
@@ -632,23 +715,42 @@ static ar_i32 ar__grid(const ar_node *nodes, ar_i32 table, ar__col *col, ar_i32 
                 cs = AR_MAX_COLUMNS - at;
             }
 
-            chrome = ar__cell_border_x(&nodes[c]);
+            /*
+             * A collapsed cell has no border of its own to pay for.
+             *
+             * It became the grid line -- that is what collapsing is -- and the
+             * halves of that line are added below. Counting both charged the
+             * border twice and made every cell in a collapsed table wider than
+             * a browser's by its own border: `td { width:80px; border:2px }`
+             * came to 85 where Chrome gives 82.
+             *
+             * Nothing else in this engine had noticed, because the table
+             * corpus gives every cell the same border and a mistake every
+             * column makes equally moves no boundary between them. It took a
+             * demo with a stated cell width, where the wrong number has
+             * nowhere to hide.
+             */
+            chrome = collapse ? 0 : ar__cell_border_x(&nodes[c]);
 
             if (collapse && vline)
             {
                 /*
-                 * Half the line at each end, which is what this cell's own box
-                 * has to be wide enough to hold.
+                 * Half the line at each end, which is what this cell's box has
+                 * to hold on top of what is written in it.
                  *
-                 * The lines are not subtracted from the table's width -- the
-                 * columns partition the whole of it and the lines straddle the
-                 * boundaries between them. Taking the lines out *and* handing
-                 * each cell its share back paid for them twice, which is what
-                 * made every collapsed case in the corpus come out narrow.
+                 * The two halves come to exactly the line -- half_far and
+                 * half_near of the same number always do -- so the columns
+                 * together claim every pixel of every interior line and half
+                 * of each outer one, and the table's box carries the other two
+                 * halves outside them. Nothing is counted twice.
+                 *
+                 * A cell whose *own* border is wider than its content is not a
+                 * counter-example. In this model the cell has no border of its
+                 * own -- it has become the grid line.
                  */
                 ar_i32 rk = at + cs <= AR_MAX_COLUMNS ? at + cs : AR_MAX_COLUMNS;
 
-                chrome += ar__half_far(vline[at]) + ar__half_near(vline[rk]);
+                chrome += ar__half_near(vline[at] + vline[rk]);
             }
 
             if (cs == 1)
@@ -832,23 +934,15 @@ static void ar__fold_spans(const ar_node *nodes, ar_i32 table, ar__col *col, ar_
                 continue;
             }
 
-            chrome = ar__cell_border_x(&nodes[c]);
+            /* No border of its own when collapsed; see the grid pass. */
+            chrome = collapse ? 0 : ar__cell_border_x(&nodes[c]);
 
             if (collapse && vline)
             {
-                /*
-                 * Half the line at each end, which is what this cell's own box
-                 * has to be wide enough to hold.
-                 *
-                 * The lines are not subtracted from the table's width -- the
-                 * columns partition the whole of it and the lines straddle the
-                 * boundaries between them. Taking the lines out *and* handing
-                 * each cell its share back paid for them twice, which is what
-                 * made every collapsed case in the corpus come out narrow.
-                 */
-                ar_i32 rk = at + cs <= AR_MAX_COLUMNS ? at + cs : AR_MAX_COLUMNS;
+                /* Half the line at each end; see the grid pass above. */
+                ar_i32 rk = at + cs <= ncol ? at + cs : ncol;
 
-                chrome += ar__half_far(vline[at]) + ar__half_near(vline[rk]);
+                chrome += ar__half_near(vline[at] + vline[rk]);
             }
             want_min = nodes[c].min_w + chrome;
             want_max = nodes[c].fit[0] + chrome;
@@ -958,11 +1052,58 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
 
     if (fixed_layout)
     {
-        /* Every column the same share, which is what `fixed` buys: one pass
-           and no dependence on any cell past the first row. */
+        /*
+         * A column that stated a width gets it; the rest share what is left,
+         * equally.
+         *
+         * That is what `table-layout: fixed` buys and it is not what this used
+         * to do: every column got `avail / ncol` and a stated width was
+         * ignored outright, so `<td width=100>` in a 300px table came out 150.
+         * The saving is that nothing past the first row is consulted, not that
+         * nothing is consulted at all -- CSS 2.1 17.5.2.1 says the first row's
+         * widths are exactly what decides it.
+         *
+         * Stated widths that come to more than the table has are honoured and
+         * overflow, which is also what a browser does: `fixed` means the
+         * author is deciding, including deciding wrong.
+         */
+        ar_i32 stated_total = 0, autos = 0, rest, share;
+
         for (i = 0; i < ncol; ++i)
         {
-            col[i].w = (i == ncol - 1) ? avail - given : avail / ncol;
+            if (col[i].fixed)
+            {
+                stated_total += col[i].min;
+            }
+            else
+            {
+                ++autos;
+            }
+        }
+        rest = avail - stated_total;
+        if (rest < 0)
+        {
+            rest = 0;
+        }
+        share = autos > 0 ? rest / autos : 0;
+
+        for (i = 0; i < ncol; ++i)
+        {
+            if (i == ncol - 1)
+            {
+                /* The last column absorbs the rounding, so the columns come to
+                   the table's width exactly rather than a pixel or two short
+                   of it. */
+                col[i].w = avail - given;
+                if (col[i].w < 0)
+                {
+                    col[i].w = 0;
+                }
+            }
+            else
+            {
+                col[i].w = col[i].fixed ? col[i].min : share;
+            }
             given += col[i].w;
         }
     }
@@ -1080,7 +1221,7 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
             }
             else if (pool > 0)
             {
-                share = ar__scale(col[i].max, surplus, pool);
+                share = ar__scale_round(col[i].max, surplus, pool);
             }
             else
             {
@@ -1203,6 +1344,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     ar__col  col[AR_MAX_COLUMNS];
     ar_i32   vline[AR_MAX_COLUMNS + 1];
     ar_i32   ncol, row, y, inner_w, avail;
+    ar_i32   lead_x;
     ar_node *t = &nodes[table];
     int      fixed_layout = t->style.v[AR_P_TABLE_LAYOUT] == AR_TABLE_LAYOUT_FIXED;
     int      collapse = ar__collapsed(t);
@@ -1216,8 +1358,27 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
     /* Where the grid itself begins and ends, which is not where the table
        does: a caption is a table-level box above or below every column. */
     ar_i32 grid_top = 0, grid_bot = 0;
+    ar_i32 last_far = 0;
 
     ncol = ar__grid(nodes, table, col, vline);
+
+    /*
+     * The half of the table's own outer line that lies inside its box.
+     *
+     * In the collapsed model a border is a line *between* two boxes, and the
+     * table's outermost lines are shared with nothing -- so each is split the
+     * same way every internal line is, and the half on the inside pushes the
+     * grid in. A browser puts the first cell of a table with a 3px collapsed
+     * border two pixels in, not at the content origin, and the table's box is
+     * three pixels wider than its columns.
+     *
+     * Nothing here did that: rows, groups and cells all started at the padding
+     * edge. It is one offset and it was worth 208 of the 624 boxes in the
+     * table corpus -- every failure in it, on all twenty-six `col-*` pages,
+     * and every one of them a page that sets `border-collapse: collapse`.
+     */
+    lead_x = collapse ? ar__half_near(vline[0]) : 0;
+
     if (ncol <= 0)
     {
         /*
@@ -1239,7 +1400,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 {
                     ar_i32 r;
 
-                    nodes[e].rect.x = t->rect.x + pad_l;
+                    nodes[e].rect.x = t->rect.x + pad_l + lead_x;
                     nodes[e].rect.y = t->rect.y + pad_t;
                     nodes[e].rect.w = t->rect.w - pad_l - t->style.v[AR_P_PAD_RIGHT];
                     nodes[e].rect.h = 0;
@@ -1283,7 +1444,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
          * stays where it was. Recomputing would make the remaining columns
          * jump, which is what the value exists to avoid.
          */
-        ar_i32 k, acc = 0, lost = 0;
+        ar_i32 k, acc = lead_x, lost = 0;
 
         for (k = 0; k < ncol; ++k)
         {
@@ -1396,6 +1557,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         ar_i32 nxt = ar__next_row(nodes, table, row);
         ar_i32 mine = 0, hl = 0, hb = 0;
+        ar_i32 top, bot, band;
         int    closed;
 
         /* `rowspan: 9` on the second row of a two-row table covers the rows
@@ -1417,9 +1579,24 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
         if (collapse)
         {
+            ar_i32 gt = ar__group_edge(nodes, row, 1);
+            ar_i32 gb = ar__group_edge(nodes, row, 0);
+
             mine = ar__row_border_max(nodes, row);
             hl = mine > prev_bot ? mine : prev_bot;
+            if (gt > hl)
+            {
+                hl = gt; /* the group's top line, if this row is its first */
+            }
             hb = last ? t->style.v[AR_P_BORDER_WIDTH] : ar__row_border_max(nodes, nxt);
+            if (!last && ar__group_edge(nodes, nxt, 1) > hb)
+            {
+                hb = ar__group_edge(nodes, nxt, 1); /* and the next group's top */
+            }
+            if (gb > hb)
+            {
+                hb = gb; /* the group's bottom line, if this row is its last */
+            }
             if (mine > hb)
             {
                 hb = mine;
@@ -1428,10 +1605,25 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 hl = t->style.v[AR_P_BORDER_WIDTH];
             }
-            /* Only the half that is inside the table. The other half of the
-               first line lies above the content box, as a browser puts it. */
-            y += prev_row < 0 ? ar__half_far(hl) : hl;
+            /*
+             * Only the first row opens the grid.
+             *
+             * The near half of the first line is outside the rows and inside
+             * the table, exactly as the near half of the leading vertical line
+             * is -- the two axes are the same rule and used to disagree, which
+             * put every collapsed table's first row a pixel too high.
+             *
+             * After that `y` is already where the next row's box starts,
+             * because the rows tile: a row's box ends where the one below it
+             * begins, and the line between them is inside both. Adding the
+             * whole line here as well made the second row overlap the first by
+             * the top line's far half, which is what left every table with a
+             * wide outer border and thin cells two pixels short.
+             */
+            y += prev_row < 0 ? ar__half_near(hl) : 0;
         }
+        top = ar__half_far(hl);
+        bot = ar__half_near(hb);
 
         for (; c >= 0; c = nodes[c].next_sibling)
         {
@@ -1569,7 +1761,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     rh = share;
                 }
                 col[at].span_node = c;
-                col[at].span_y = y - ar__half_far(hl);
+                col[at].span_y = y;
                 col[at].span_h = h;
                 col[at].span_rows = rs;
             }
@@ -1591,7 +1783,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         {
             if ((col[k].span_left == 1 || last) && col[k].span_node >= 0)
             {
-                ar_i32 covered = (y + rh) - col[k].span_y;
+                ar_i32 covered = (y + top + rh + bot) - col[k].span_y;
 
                 if (covered < col[k].span_h)
                 {
@@ -1600,18 +1792,34 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             }
         }
 
+        /*
+         * The band is the row's two halves rounded *together*.
+         *
+         * `top + bot` is where the next row starts, and it has to be, because
+         * the rows tile. The box the row reports is a different sum: the two
+         * halves of one row belong to one box, and a box is a whole number of
+         * pixels once, not twice. A 1px line above and a 4px line below is
+         * half of five, which is three -- not zero and two.
+         *
+         * The difference is a pixel and only when the line above is odd and
+         * the one below is even, and it is the pixel by which a row overlaps
+         * the row beneath it. A browser reports the same overlap.
+         */
+        band = rh + ar__half_near(hl + hb);
+
         if (assign)
         {
-            ar_i32 top = ar__half_far(hl);
-            ar_i32 bot = ar__half_near(hb);
-
             /* A row's box spans its cells, not the table -- so in the
                separate model it starts one border-spacing in and is two
                narrower, which is where a browser puts it. */
-            nodes[row].rect.x = t->rect.x + pad_l + spacing;
-            nodes[row].rect.y = t->rect.y + y;
+            nodes[row].rect.x = t->rect.x + pad_l + spacing + lead_x;
             nodes[row].rect.w = inner_w - 2 * spacing;
-            nodes[row].rect.h = rh;
+            /* In the collapsed model a row's box is the band its cells occupy,
+               half-lines included -- a browser reports the row and its cells
+               with the same rectangle. In the separate model the lines are not
+               shared and the band is the row itself. */
+            nodes[row].rect.y = t->rect.y + y;
+            nodes[row].rect.h = band;
 
             c = nodes[row].first_child;
             for (; c >= 0; c = nodes[c].next_sibling)
@@ -1631,7 +1839,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                        same place as one shift by the sum. */
                     ar_rect was = nodes[c].rect;
 
-                    nodes[c].rect.y = t->rect.y + y - top;
+                    nodes[c].rect.y = t->rect.y + y;
                     ar_settle_at(nodes, env, c, was);
                 }
 
@@ -1639,7 +1847,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                    so writing the row's height over it here would undo that. */
                 if (ar__cell_span(&nodes[c], AR_P_ROWSPAN) == 1)
                 {
-                    nodes[c].rect.h = closed ? 0 : rh + top + bot;
+                    nodes[c].rect.h = closed ? 0 : band;
                 }
             }
         }
@@ -1653,28 +1861,36 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 if (assign)
                 {
-                    /* The band's bottom, plus this row's share of the line
-                       under it -- the span started half a line above its own
-                       first band, so both ends have to be paid for. */
-                    ar_i32 sb = ar__half_near(hb);
-
-                    nodes[col[k].span_node].rect.h = (y + rh + sb) - col[k].span_y;
-                    nodes[col[k].span_node].edge[2] = (ar_u8)sb;
+                    /* From the top of the band it opened in to the bottom
+                       of this one -- the same two edges every other cell in
+                       this row gets, over more rows. */
+                    nodes[col[k].span_node].rect.h = (y + top + rh + bot) - col[k].span_y;
+                    nodes[col[k].span_node].edge[2] = (ar_u8)bot;
                 }
                 col[k].span_node = -1;
             }
         }
-        y += rh + spacing;
         if (collapse)
         {
+            /* A row advances by its own box, so the next one starts exactly
+               where this one ended and the line between them is inside both.
+               `rect.h` is this same sum, and the two have to stay the same
+               sum: when they drifted apart the rows overlapped. */
+            y += top + rh + bot;
             prev_bot = mine;
             prev_row = row;
             if (last)
             {
-                /* Nothing follows to open the last line, so the table closes
-                   it here -- and again only with the half that is inside. */
-                y += ar__half_near(hb);
+                /* Nothing follows to close the bottom line. Its near half is
+                   inside the last row's band already; its far half is the
+                   table's own outer edge. */
+                last_far = ar__half_far(hb);
+                y += last_far;
             }
+        }
+        else
+        {
+            y += rh + spacing;
         }
         row = nxt;
     }
@@ -1821,6 +2037,8 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 for (; r >= 0; r = nodes[r].next_sibling)
                 {
+                    ar_i32 end;
+
                     if (!ar__is_row(&nodes[r]))
                     {
                         continue;
@@ -1829,13 +2047,30 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                     {
                         top = nodes[r].rect.y;
                     }
-                    if (!any || nodes[r].rect.y + nodes[r].rect.h > bot)
+                    /*
+                     * Where the next row starts is where this one ends.
+                     *
+                     * A collapsed row's box can reach a pixel past that, into
+                     * the row below, because the band rounds its two halves
+                     * together and the tiling adds them apart. That pixel is
+                     * the row's and not the group's: a group that took the
+                     * union of its rows' boxes inherited it and came out a
+                     * pixel taller than the grid it holds.
+                     */
+                    end = nodes[r].rect.y + nodes[r].rect.h;
+                    if (collapse)
                     {
-                        bot = nodes[r].rect.y + nodes[r].rect.h;
+                        ar_i32 nx = ar__next_row(nodes, table, r);
+
+                        end = nx >= 0 ? nodes[nx].rect.y : t->rect.y + grid_bot - last_far;
+                    }
+                    if (!any || end > bot)
+                    {
+                        bot = end;
                     }
                     any = 1;
                 }
-                nodes[g].rect.x = t->rect.x + pad_l + spacing;
+                nodes[g].rect.x = t->rect.x + pad_l + spacing + lead_x;
                 nodes[g].rect.w = inner_w - 2 * spacing;
                 nodes[g].rect.y = any ? top : t->rect.y + pad_t;
                 nodes[g].rect.h = any ? bot - top : 0;
@@ -1843,6 +2078,27 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
         }
     }
 
+    /*
+     * And the box is wider than its columns by its own outer lines.
+     *
+     * In the collapsed model `width` on a table sets the *content* -- the grid
+     * -- and the two outer half-lines are drawn outside it, exactly as a
+     * border is. So the columns are solved against the width that was asked
+     * for and the box then grows by the halves, which is what a browser
+     * reports: a 240px table with a 3px collapsed border is 243 wide with two
+     * 120px columns inside it.
+     *
+     * Added here rather than to `fit[0]` in the measure, and it has to be one
+     * or the other: `fit[0]` is what a shrink-to-fit table asks its parent
+     * for, and if that already included the halves then growing the box here
+     * would count them twice. This way the meaning is uniform -- `rect.w` is
+     * the border box, `inner_w` is the grid -- for a stated width and an
+     * intrinsic one alike.
+     */
+    if (assign && collapse)
+    {
+        t->rect.w += lead_x + ar__half_far(vline[ncol > 0 ? ncol : 0]);
+    }
     return y + t->style.v[AR_P_PAD_BOTTOM];
 }
 
@@ -1945,8 +2201,23 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
     ar_i32   vline[AR_MAX_COLUMNS + 1];
     ar_i32   ncol, i, sum_min = 0, sum_max = 0;
     ar_node *t = &nodes[table];
-    ar_i32   spacing = t->style.v[AR_P_BORDER_SPACING];
-    ar_i32   chrome = t->style.v[AR_P_PAD_LEFT] + t->style.v[AR_P_PAD_RIGHT];
+    int      collapse = ar__collapsed(t);
+    /*
+     * The same rule the solve uses, and it was not being used here.
+     *
+     * `border-spacing` has no meaning in the collapsed model -- the gap
+     * between two cells is the shared line and nothing else -- and the solve
+     * says so. This function did not ask, so a collapsed table's *intrinsic*
+     * width carried a gap per column that its laid-out width did not: a
+     * shrink-to-fit table of two 80px cells came out 166 wide and put its
+     * cells at 83, where a browser gives 160 and 80.
+     *
+     * The table corpus could not see it. Every table in it is given a width,
+     * so the intrinsic number is computed and then discarded; it took a demo
+     * with no width on the table and a width on the cells.
+     */
+    ar_i32 spacing = collapse ? 0 : t->style.v[AR_P_BORDER_SPACING];
+    ar_i32 chrome = t->style.v[AR_P_PAD_LEFT] + t->style.v[AR_P_PAD_RIGHT];
 
     ar_i32 cap_min = 0, cap_max = 0;
     ar_i32 e;
@@ -1980,6 +2251,13 @@ void ar_table_measure(ar_node *nodes, ar_i32 table)
         sum_max += col[i].max;
     }
     chrome += spacing * (ncol + 1);
+    /*
+     * The two outer half-lines are deliberately *not* added here. This is the
+     * grid's width and the solve grows the box by them at the end, so a table
+     * whose width came from this number would carry them twice -- which is
+     * what the first version of this fix did, and it made every shrink-to-fit
+     * collapsed table two pixels wide of a browser's.
+     */
 
     t->min_w = sum_min + chrome;
     t->fit[0] = sum_max + chrome;

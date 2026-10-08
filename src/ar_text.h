@@ -166,12 +166,35 @@ ar_i32 ar_text_draw(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char 
  * which is what keeps a document looking like one typeface rather than a
  * ransom note.
  * ------------------------------------------------------------------------ */
-#define AR_MAX_FACES 4
+/*
+ * Eight, because a chain is now per style as well as per coverage.
+ *
+ * Four was the fallback chain: a primary face and three faces for the scripts
+ * it does not cover. Weight and slant add a second axis -- regular, bold,
+ * italic, bold italic -- and the two multiply. Eight is four styles with a
+ * fallback each, or one style with a deep chain, and a face is 184 bytes, so
+ * the whole table is under one and a half kilobytes of the context and nothing
+ * per box.
+ */
+#define AR_MAX_FACES 8
 
 typedef struct ar_font_chain
 {
     const ar_face *face[AR_MAX_FACES];
-    ar_i32         count;
+
+    /*
+     * Which face in the *context* each entry is, which is not the same as
+     * which entry of this chain it is.
+     *
+     * The glyph cache keys on it, and once there is a chain per style the two
+     * numbers come apart: entry zero of the regular chain and entry zero of
+     * the bold chain are different faces, and keying on the entry index would
+     * put a bold A and a roman A in the same slot. Whichever was drawn first
+     * would be drawn for both, and it would look like the weight was being
+     * ignored rather than like a cache bug.
+     */
+    ar_u8  id[AR_MAX_FACES];
+    ar_i32 count;
 } ar_font_chain;
 
 /* Which face has this codepoint, and its glyph in that face. Falls back to
