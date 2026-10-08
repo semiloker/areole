@@ -748,6 +748,11 @@ struct ar_ctx
     ar_u32 focusables_prev[AR_MAX_FOCUSABLES];
     ar_i32 focusable_prev_n;
 
+    /* The previous frame's text fields, by key: a press that focuses one of
+       these keeps :focus-visible, as a browser's does (#25). */
+    ar_u32 text_keys_prev[AR_MAX_FOCUSABLES];
+    ar_i32 text_keys_prev_n;
+
     /* The `tabindex` of each stop, in the same order. A positive one sorts
        ahead of every zero, which is the rule nobody should rely on and every
        engine has to honour. */

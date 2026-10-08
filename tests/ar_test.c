@@ -22986,6 +22986,35 @@ static void test_resampling_a_scaled_picture(void)
           "resample: a smaller picture is mixed between its pixels, not blocked");
 }
 
+/*
+ * A text field clicked into shows its focus ring, as in a browser; a button
+ * clicked does not (#25). Tab rings both.
+ */
+static void test_a_field_clicked_into_is_ringed(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    f, b, t;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\"><button id=\"b\">Go</button>"
+                    "<textarea id=\"t\"></textarea></body></html>",
+                    "body { margin:0 }");
+    ar__reframe(&s);
+    f = ar__box(ar__first_tag_id("f"));
+    b = ar__box(ar__first_tag_id("b"));
+    t = ar__box(ar__first_tag_id("t"));
+    ar__press_at(&s, f.x + f.w / 2, f.y + f.h / 2);
+    CHECK(g_ui->nodes[ar__first_tag_id("f")].state & AR_STATE_FOCUS_VISIBLE,
+          "focus ring: a text field clicked into is ringed");
+    ar__press_at(&s, b.x + b.w / 2, b.y + b.h / 2);
+    CHECK(!(g_ui->nodes[ar__first_tag_id("b")].state & AR_STATE_FOCUS_VISIBLE) &&
+              (g_ui->nodes[ar__first_tag_id("b")].state & AR_STATE_FOCUS),
+          "focus ring: a button clicked is focused and not ringed");
+    ar__press_at(&s, t.x + t.w / 2, t.y + t.h / 2);
+    CHECK(g_ui->nodes[ar__first_tag_id("t")].state & AR_STATE_FOCUS_VISIBLE,
+          "focus ring: and so is a textarea");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24297,6 +24326,7 @@ int main(void)
     test_max_width_is_the_contents();
     test_a_slider_follows_the_pointer();
     test_enter_moves_the_caret_down();
+    test_a_field_clicked_into_is_ringed();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();
