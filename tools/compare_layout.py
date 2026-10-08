@@ -201,6 +201,16 @@ def main(argv):
         print()
 
     print('GEOMETRY, boxes not sized by their own text -- this is the verdict')
+    if not matched:
+        # An empty browser dump used to arrive here and print "all agree
+        # exactly", because nothing disagreed -- nothing had been compared. The
+        # harness is flaky enough that this happens on roughly one run in three,
+        # and a verdict of "agrees" over zero boxes is worse than no verdict:
+        # it is the same words a passing run prints. Run it again.
+        print('  NOTHING WAS COMPARED -- the browser matched 0 boxes.')
+        print('  This is not a pass. The dump was empty; run it again on its own.')
+        print()
+        return 2
     if geom_bad:
         print('  %d disagree' % len(geom_bad))
         for page_id, box, a, b, d in geom_bad[:20]:

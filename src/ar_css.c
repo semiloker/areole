@@ -528,6 +528,13 @@ static void ar__fail(ar__scan *z)
     z->sheet->errors++;
 }
 
+/* A failure that costs the whole rule rather than one declaration. */
+static void ar__fail_rule(ar__scan *z)
+{
+    ar__fail(z);
+    z->sheet->rules_refused++;
+}
+
 static int ar__is_space(char c)
 {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
@@ -3043,6 +3050,7 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->count = 0;
     sheet->capacity = capacity;
     sheet->errors = 0;
+    sheet->rules_refused = 0;
     sheet->first_error_offset = 0;
     sheet->has_contextual = 0;
     sheet->has_late_state = 0;
@@ -3231,7 +3239,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         }
         if (sel_count == 0)
         {
-            ar__fail(&z);
+            ar__fail_rule(&z);
             while (z.p < z.end && *z.p != '}')
             {
                 z.p++;
@@ -3246,7 +3254,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
         ar__skip_ws(&z);
         if (z.p >= z.end || *z.p != '{')
         {
-            ar__fail(&z);
+            ar__fail_rule(&z);
             while (z.p < z.end && *z.p != '}')
             {
                 z.p++;

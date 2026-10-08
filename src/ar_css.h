@@ -1244,6 +1244,23 @@ typedef struct ar_sheet
        discard the ninety that follow it, so errors are counted and reported
        rather than thrown. */
     ar_u32 errors;
+
+    /*
+     * Of those, the ones that cost a whole rule.
+     *
+     * The two are not the same failure and conflating them hides the one
+     * that matters. A declaration naming a property areole does not
+     * implement is *dropped*, and the rule around it still applies -- which
+     * is what CSS itself says to do, and means real-world stylesheets full
+     * of `font-family` and `box-shadow` still style what they can. A rule
+     * whose selector list is longer than AR_MAX_SEL_LIST is refused whole,
+     * and nothing it said happens at all.
+     *
+     * Only the second is worth failing a build over, and until this counter
+     * existed there was no way to ask.
+     */
+    ar_u32 rules_refused;
+
     ar_u32 first_error_offset;
 } ar_sheet;
 

@@ -1,0 +1,85 @@
+name: fuzz
+
+# 0.9.0 acceptance criterion 8: fifty million iterations with no crash, no hang
+# and no out-of-bounds read.
+#
+# Not on every push. Fifty million iterations is minutes rather than seconds,
+# and the value of a fuzzer is in the long tail rather than in the same first
+# hundred thousand inputs run again on every commit. `ctest` runs a short one
+# on every push for the "it still builds and still terminates" question; this
+# is the criterion.
+on:
+  schedule:
+    # 03:00 UTC daily. A different day is a different set of seeds below only
+    # if somebody changes them -- the stream is deterministic on purpose, so a
+    # finding here reproduces exactly on a laptop.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      # A change to the parser or the fuzzer itself does not wait for tonight.
+      - "src/ar_html*"
+      - "src/ar_dom.c"
+      - "src/ar_encoding.c"
+      - "tests/ar_fuzz.c"
+      - ".github/workflows/fuzz.yml"
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: "seed ${{ matrix.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Five seeds rather than one long run of one. Ten million iterations
+        # from five starting points covers more of the input space than fifty
+        # million from one, because a lineage that wanders into a corner stays
+        # there -- this is a blind mutator with no coverage feedback, and the
+        # cheapest correction for that is to start again somewhere else.
+        #
+        # Five times ten million is the criterion's fifty million, and the jobs
+        # run in parallel so the wall clock is one of them.
+        seed: [1, 2, 3, 5, 8]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ar_fuzz
+
+      - name: Ten million iterations
+        run: ./build/ar_fuzz --seed ${{ matrix.seed }} --iters 10000000
+
+  # A failing seed prints its own replay line. This says so in one place so
+  # nobody has to work it out from the log.
+  report:
+    name: how to reproduce a failure
+    runs-on: ubuntu-latest
+    needs: fuzz
+    if: failure()
+    steps:
+      - name: Say it
+        run: |
+          echo "A seed failed. The log line beginning 'replay:' is a complete"
+          echo "command; it reproduces the exact input on any machine, because"
+          echo "the stream is a seeded xorshift and iteration N of seed S is"
+          echo "always the same bytes."
+          echo
+          echo "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release"
+          echo "  cmake --build build --target ar_fuzz"
+          echo "  ./build/ar_fuzz --seed S --skip N --iters N+1 --out bad.bin"
+          echo "  ./build/ar_fuzz --file bad.bin --caps <the caps it printed>"
+          echo
+          echo "The last form is one parse of one file, which is what a"
+          echo "minimiser drives. The three-byte and nineteen-byte inputs this"
+          echo "fuzzer has already found were both shrunk that way."
+          exit 1

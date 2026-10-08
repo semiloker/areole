@@ -16,8 +16,8 @@ extern "C" {
 #endif
 
 #define AR_VERSION_MAJOR 0
-#define AR_VERSION_MINOR 8
-#define AR_VERSION_PATCH 2
+#define AR_VERSION_MINOR 9
+#define AR_VERSION_PATCH 0
 
 /* Names the release that has landed, bumped when the next one does -- which is
    exactly the discipline that failed here: this said 0.1.0-dev through 0.1.1,
@@ -43,7 +43,7 @@ extern "C" {
    against the version stamped into the baseline -- which is the half a test
    cannot see, because the macros and the string can be stale together and
    agree with each other perfectly. */
-#define AR_VERSION_STRING "0.8.2-dev"
+#define AR_VERSION_STRING "0.9.0"
 
 /* ------------------------------------------------------------------------
  * Fixed width types
@@ -500,8 +500,54 @@ typedef ar_i32 ar_scroll_pos;
 #define AR_MEM_FIXED  196608u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
+/* What one stylesheet rule costs, for AR_MEM_RULES. Most of it is the property
+   slots a rule carries; see ar_init_rules. */
+#define AR_BYTES_PER_RULE 588u
+
+/* A block with room for a larger rule table. Hand the same count to
+   ar_init_rules; a smaller one there wastes the space rather than corrupting
+   anything. */
+#define AR_MEM_RULES(boxes, rules)                                                                 \
+    (AR_MEM(boxes) + ((ar_u32)(rules) > 256u ? ((ar_u32)(rules) - 256u) * AR_BYTES_PER_RULE : 0u))
+
+/*
+ * A block with room for a parsed document as well.
+ *
+ * A document is per-parse rather than per-frame, so it lives in the persistent
+ * half of the arena and cannot come out of the box budget -- a caller that
+ * asked for two thousand boxes must still get two thousand. `bytes` is what
+ * ar_html_parse_into may spend: nodes, attributes, text and, when the document
+ * is not already UTF-8, the decoded copy of it.
+ *
+ * A page of ordinary prose needs roughly four times its own size. Ask for more
+ * than you think; the failure is clean and reported, but it is still a failure.
+ */
+#define AR_MEM_DOC(boxes, bytes) (AR_MEM(boxes) + (ar_u32)(bytes))
+
 /* Returns NULL if the block is too small to be useful. */
 ar_ctx *ar_init(void *mem, ar_u32 size);
+
+/*
+ * The same, for a caller that needs more than the defaults.
+ *
+ * `max_rules` -- an ar_rule is 588 bytes, most of it the property slots a rule
+ * carries to hold the two or three it states, so the default 256 already
+ * occupy 150 KB of the 192 KB AR_MEM_FIXED promises. Raising that constant
+ * would charge every application for a stylesheet only some of them have: a
+ * browser user-agent sheet is around 400 rules and an embedded panel is
+ * eleven. A count below the default is raised to it.
+ *
+ * `doc_bytes` -- what ar_html_parse_into may spend on a parsed document.
+ *
+ * Both come **out of the block and not out of the box budget**. Size the block
+ * with AR_MEM_RULES or AR_MEM_DOC and pass the same numbers here; asking for
+ * more than the block holds is refused at init rather than discovered as an
+ * overflow in the middle of a frame.
+ *
+ *     static unsigned char mem[AR_MEM_DOC(2000, 96 * 1024)];
+ *     ar_ctx *c = ar_init_ex(mem, sizeof mem, 256, 96 * 1024);
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes);
 
 /* Parses a stylesheet into the context. Call it as many times as you like at
    startup; each call appends. Never call it per frame: the whole point is that
@@ -511,6 +557,22 @@ void ar_stylesheet(ar_ctx *c, const char *css);
 /* Non-zero if the stylesheet had anything wrong with it. Parsing never aborts,
    so this is the only way to find out. */
 ar_u32 ar_stylesheet_errors(const ar_ctx *c);
+
+/*
+ * How many rules were refused outright, which is the number that matters.
+ *
+ * `ar_stylesheet_errors` counts every complaint, and most of them are
+ * harmless: a declaration naming a property areole has not implemented is
+ * dropped and the rule around it still applies, which is what CSS says to do
+ * and what lets a real stylesheet full of `font-family` and `box-shadow`
+ * style everything it can.
+ *
+ * This counts the other kind: a rule areole threw away entire, so nothing it
+ * said happened. A selector list longer than AR_MAX_SEL_LIST is the way to
+ * get one, and it fails silently -- the page still lays out, just not the way
+ * it was written. Assert this is zero; the other number is information.
+ */
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c);
 
 /* ------------------------------------------------------------------------
  * Fonts
@@ -929,6 +991,342 @@ ar_i32 ar_node_frag_count(const ar_ctx *c, ar_i32 i);
 /* One fragment's rectangle, and the byte range of the node's text on it. The
    two out parameters may be null. */
 ar_rect ar_node_frag(const ar_ctx *c, ar_i32 i, ar_i32 k, ar_i32 *out_from, ar_i32 *out_to);
+
+/* ------------------------------------------------------------------------
+ * HTML
+ *
+ * A second front end, not a second engine. `ar_html_parse_into` builds a
+ * document and `ar_dom_build` walks it through the same `ar_begin`/`ar_text`
+ * calls a hand-written interface makes -- so style resolution, the stable keys
+ * hover and damage tracking depend on, and the pre-order invariant the layout
+ * passes require are the ones every other caller already gets.
+ *
+ * The tokenizer is not here. It is thirty states and a token struct, it is of
+ * no use to somebody who wants a document laid out, and a header is a promise:
+ * everything in this file has to keep working. `src/ar_html.h` has it for
+ * anyone who wants to drive the parser directly, and that one is not installed
+ * and not promised.
+ *
+ * ------------------------------------------------------------------------
+ * Who owns the text
+ *
+ * A span points into one of three places and never copies unless it must.
+ * Usually it points at the caller's own bytes, which is why the input has to
+ * outlive the document. Text that had a character reference in it cannot be a
+ * span of the input any more -- `&amp;` is five bytes in and one out -- so
+ * exactly those are copied into the document's own buffer. And an element the
+ * parser *implied*, the `<html>` a document without one is given, has no bytes
+ * anywhere to point at, so its name is a string literal that outlives
+ * everything.
+ *
+ * That is not an optimisation for its own sake. Ordinary prose contains almost
+ * no character references, so almost nothing is copied, and what is copied is
+ * bounded by the entities present rather than by the size of the document.
+ * ------------------------------------------------------------------------ */
+
+/* A run of bytes somewhere. Not NUL-terminated: `n` is the length. */
+typedef struct ar_span
+{
+    const char *p;
+    ar_u32      n;
+} ar_span;
+
+/*
+ * The namespace an attribute is in.
+ *
+ * Only three exist in HTML, and all three arrive the same way: an attribute
+ * written with a colon inside foreign content. `xlink:href` on an SVG element
+ * is the `href` attribute in the XLink namespace, and it is not the same
+ * attribute as a plain `href` -- which matters because that is how an SVG
+ * `<a>` carries its destination.
+ *
+ * Nothing outside foreign content ever has one, so this is zero on every
+ * attribute in an ordinary document.
+ */
+typedef enum ar_attr_ns
+{
+    AR_ATTR_NS_NONE = 0,
+    AR_ATTR_NS_XLINK,
+    AR_ATTR_NS_XML,
+    AR_ATTR_NS_XMLNS
+} ar_attr_ns;
+
+typedef struct ar_attr
+{
+    ar_span name;
+    ar_span value;
+
+    /* AR_ATTR_NS_NONE for everything an HTML document contains. */
+    ar_attr_ns ns;
+} ar_attr;
+
+/*
+ * The namespace an element is in.
+ *
+ * HTML has exactly three and the parser decides which by where the element
+ * appeared, not by anything the author wrote: everything inside `<svg>` is in
+ * the SVG namespace until the subtree ends, and `<math>` likewise. There is no
+ * `xmlns` handling -- an `xmlns` attribute in HTML is an ordinary attribute
+ * that changes nothing.
+ *
+ * It is not cosmetic. `<title>` in HTML is raw text and `<title>` in SVG is an
+ * ordinary element that may contain markup; `<a>` in SVG takes its destination
+ * from `xlink:href`. The namespace is what tells them apart.
+ */
+typedef enum ar_ns
+{
+    AR_NS_HTML = 0,
+    AR_NS_SVG,
+    AR_NS_MATHML
+} ar_ns;
+
+typedef enum ar_dom_kind
+{
+    AR_DOM_DOCUMENT = 0,
+    AR_DOM_ELEMENT,
+    AR_DOM_TEXT,
+    AR_DOM_COMMENT,
+    AR_DOM_DOCTYPE,
+
+    /*
+     * A processing instruction: `<?target data>`.
+     *
+     * `name` is the target and `text` is the data. HTML had no such node for
+     * twenty years -- `<?php ... ?>` in a file served as HTML became a comment
+     * -- and the specification changed: a `<?` followed by something that is a
+     * valid XML name now produces one of these. `<?a$>` still becomes a
+     * comment, because `a$` is not a name.
+     *
+     * Nothing renders it. It is in the tree because it is in the document.
+     */
+    AR_DOM_PI,
+
+    /*
+     * A `<template>` element's contents.
+     *
+     * Every template gets exactly one of these as its only child, and
+     * everything written inside the template goes under it rather than under
+     * the element. That is not bookkeeping: it is what makes a template inert.
+     * Its contents are parsed but are not in the document, so an `<img>` in a
+     * template does not load and a `<script>` in one does not run.
+     *
+     * Nothing else in HTML produces one.
+     */
+    AR_DOM_FRAGMENT
+} ar_dom_kind;
+
+/*
+ * The three quirks modes, selected from the doctype by the specification's own
+ * table.
+ *
+ * Not a curiosity. Quirks changes the box model to content-box-plus-padding,
+ * changes table cell inheritance and changes line height. A document with no
+ * doctype has to render the way a browser renders it or the engine is wrong
+ * about a large fraction of the web.
+ */
+typedef enum ar_quirks
+{
+    AR_QUIRKS_NO = 0,
+    AR_QUIRKS_LIMITED,
+    AR_QUIRKS_YES
+} ar_quirks;
+
+/*
+ * A node. Index-referenced rather than pointer-linked, for the reasons the box
+ * tree gives: indices survive the array moving, they halve the size of a link
+ * on a 64 bit target, and a flat array makes a walk a linear sweep.
+ *
+ * Every link is an index into `ar_doc.nodes`, or -1.
+ */
+typedef struct ar_dom_node
+{
+    ar_dom_kind kind;
+    ar_ns       ns; /* AR_NS_HTML unless this is inside <svg> or <math> */
+
+    ar_span name; /* element tag name, or the doctype's name */
+    ar_span text; /* text data, or a comment's body */
+
+    ar_i32 parent;
+    ar_i32 first_child;
+    ar_i32 last_child;
+    ar_i32 next_sibling;
+    ar_i32 prev_sibling;
+
+    ar_i32 attr_first; /* into ar_doc.attrs, or -1 */
+    ar_i32 attr_count;
+} ar_dom_node;
+
+typedef struct ar_doc
+{
+    ar_dom_node *nodes;
+    ar_i32       node_cap;
+    ar_i32       node_count;
+
+    ar_attr *attrs;
+    ar_i32   attr_cap;
+    ar_i32   attr_count;
+
+    /* Where text that could not stay a span of the input goes. */
+    char  *text;
+    ar_u32 text_cap;
+    ar_u32 text_used;
+
+    ar_quirks quirks;
+
+    /*
+     * The doctype's public and system identifiers, or empty spans.
+     *
+     * On the document rather than on the node because a document has exactly
+     * one doctype and every node would otherwise carry thirty-two bytes it
+     * never uses. `quirks` is here for the same reason and was decided from
+     * these two.
+     *
+     * `p` is null when the identifier was absent, which is not the same as
+     * present and empty: `<!DOCTYPE html PUBLIC "">` has one and
+     * `<!DOCTYPE html>` does not.
+     */
+    ar_span doctype_public;
+    ar_span doctype_system;
+
+    /* Parse errors. Never fatal: the specification defines a recovery for
+       every one of them, and a parser that stops disagrees with every
+       browser. This is a count of how odd the document was, not a verdict. */
+    ar_u32 errors;
+
+    /* Set when any budget ran out -- nodes, attributes, text, or the scratch a
+       character reference decodes into. A document larger than the budget
+       fails cleanly and says so rather than truncating in silence, and the
+       tree holds as much as fitted. */
+    int overflowed;
+} ar_doc;
+
+/*
+ * Parse into the context's own arena, sniffing and decoding the encoding
+ * first.
+ *
+ * How much it may spend was fixed at init: size the block with AR_MEM_DOC and
+ * hand the same figure to ar_init_ex. A document is per-parse rather than
+ * per-frame, so it cannot come out of the box budget -- a caller that asked
+ * for two thousand boxes must still get two thousand.
+ *
+ * Call it **before the first frame**: a frame reserves the whole box budget
+ * from the other end of the arena and does not release it until the next
+ * ar_frame_begin.
+ *
+ * Returns the document, or null if the context could not spare the space at
+ * all. A document that was built but did not fit comes back with `overflowed`
+ * set.
+ */
+ar_doc *ar_html_parse_into(ar_ctx *c, const char *bytes, ar_u32 len);
+
+/*
+ * Parse into storage the caller points at, with no context involved.
+ *
+ * Returns non-zero if the whole document was built, zero if anything
+ * overflowed. Set `nodes`, `node_cap`, `attrs`, `attr_cap`, `text` and
+ * `text_cap` on `doc` first; everything else is written by the parse.
+ *
+ * `scratch` is where a decoded character reference goes and may be null, in
+ * which case a reference is passed through as the literal bytes that spell it
+ * -- which is what a caller rendering only its own markup wants. A few hundred
+ * bytes is plenty for a document; the parser reuses it per token.
+ *
+ * The input is not copied and must outlive the document.
+ */
+int ar_html_parse(ar_doc *doc, const char *bytes, ar_u32 len, char *scratch, ar_u32 scratch_cap);
+
+/*
+ * Parse a *fragment*, the way `innerHTML` does.
+ *
+ * `context` is the element the markup is being parsed as if it were inside --
+ * `"td"`, `"select"`, `"title"` -- and `context_ns` its namespace. The result
+ * is the children of the document's root element: `ar_dom_root(doc)` is a
+ * synthetic `<html>` that is not part of the answer, and everything under it
+ * is.
+ *
+ * The context changes almost everything. `<td>x` parsed with a `tr` context
+ * is a cell; with a `div` context the tag is dropped and only the text
+ * survives. `a<b>` inside a `title` is text including the angle brackets,
+ * because a title is RCDATA. The same bytes are a different document
+ * depending on where they were going.
+ *
+ * Same storage rules as ar_html_parse, and the same return: non-zero if the
+ * whole fragment was built.
+ */
+int ar_html_parse_fragment(ar_doc *doc, const char *bytes, ar_u32 len, const char *context,
+                           ar_ns context_ns, char *scratch, ar_u32 scratch_cap);
+
+/*
+ * The document into the box tree.
+ *
+ * Call it between ar_frame_begin and ar_frame_end, exactly where the
+ * equivalent ar_begin/ar_end block would go.
+ */
+void ar_dom_build(ar_ctx *c, ar_doc *d);
+
+/*
+ * Every `<style>` element in the document, handed to ar_stylesheet in tree
+ * order -- which is cascade order, and is why it is a walk rather than a
+ * search. Returns how many sheets were found.
+ *
+ * Call it after parsing and before the first frame.
+ */
+ar_i32 ar_doc_stylesheets(ar_ctx *c, const ar_doc *d);
+
+/*
+ * The user-agent stylesheet: the default style for every element, which is
+ * what makes <h1> large and <table> use the table model.
+ *
+ * Not optional for a document. areole's own default display is `flex`, so
+ * without this every paragraph lays out in a row.
+ */
+void ar_ua_stylesheet(ar_ctx *c);
+
+/* The root element, or -1. Almost always <html>. */
+ar_i32 ar_dom_root(const ar_doc *doc);
+
+/* First child of `i` that is an element with this tag, or -1. */
+ar_i32 ar_dom_child_element(const ar_doc *doc, ar_i32 i, const char *tag);
+
+/* Case-insensitive ASCII comparison of a span against a C string, which is the
+   question every tag name is asked. */
+int ar_span_is(ar_span s, const char *lit);
+
+/* ------------------------------------------------------------------------
+ * Encoding
+ *
+ * The parser reads UTF-8 and a document on disk is whatever somebody saved it
+ * as. Reading windows-1252 as UTF-8 does not fail -- every byte is valid on
+ * its own -- it renders every accented letter as a replacement character and
+ * looks like a font problem.
+ *
+ * ar_html_parse_into does all of this for you. These are for a caller doing
+ * its own reading.
+ * ------------------------------------------------------------------------ */
+typedef enum ar_encoding
+{
+    AR_ENC_UNKNOWN = 0,
+    AR_ENC_UTF8,
+    AR_ENC_UTF16LE,
+    AR_ENC_UTF16BE,
+    AR_ENC_WINDOWS1252
+} ar_encoding;
+
+/*
+ * What these bytes are, and how many of them are a byte order mark.
+ *
+ * A BOM beats a `<meta charset>` that disagrees with it, which is the
+ * specification's rule and matters because authoring tools write both and
+ * contradict themselves constantly.
+ */
+ar_encoding ar_encoding_sniff(const char *bytes, ar_u32 len, ar_u32 *skip);
+
+/* A label such as "utf-8" or "iso-8859-1" to an encoding, or AR_ENC_UNKNOWN. */
+ar_encoding ar_encoding_from_label(const char *label, ar_u32 n);
+
+/* Into UTF-8, in the caller's buffer. Returns the bytes written, truncated
+   rather than overrun if the buffer is too small. */
+ar_u32 ar_encoding_decode(ar_encoding enc, const char *in, ar_u32 len, char *out, ar_u32 cap);
 
 const char *ar_version(void);
 

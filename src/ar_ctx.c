@@ -176,14 +176,39 @@ static ar_u32 ar__round_pow2(ar_u32 v)
     return p;
 }
 
-ar_ctx *ar_init(void *mem, ar_u32 size)
+/*
+ * The rule table is the caller's to size, and this is why.
+ *
+ * An ar_rule is 588 bytes -- most of it an ar_style, because a rule carries a
+ * full set of property slots to hold the two or three it actually states. So
+ * 256 rules is 150 KB of the 192 KB AR_MEM_FIXED promises, and doubling the
+ * count would nearly double the floor every application pays, including the
+ * ones whose stylesheet is eleven rules.
+ *
+ * The floor stays where it is and the caller asks for more, which is exactly
+ * what AR_MEM already does for boxes: size the block with AR_MEM_RULES and
+ * hand the same number here.
+ *
+ * A browser user-agent stylesheet is around 400 rules, so 0.9.1 is the first
+ * caller that needs this -- and it needs it rather than a bigger constant,
+ * because a document viewer wanting 400 rules and an embedded panel wanting 11
+ * should not be charged the same 235 KB.
+ */
+ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
 {
     ar_arena a;
     ar_ctx  *c;
     ar_rule *rules;
-    ar_u32   boxes, slots;
+    ar_u32   boxes, slots, extra;
 
-    if (!mem || size < AR_MEM_FIXED)
+    /* Below the floor there is not room for the fixed structures at all, and
+       above it every extra rule is the caller's own arithmetic. */
+    if (max_rules < AR_MAX_RULES)
+    {
+        max_rules = AR_MAX_RULES;
+    }
+    extra = (max_rules - AR_MAX_RULES) * (ar_u32)sizeof(ar_rule) + doc_bytes;
+    if (!mem || size < AR_MEM_FIXED + extra)
     {
         return 0;
     }
@@ -198,12 +223,12 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     memset(c, 0, sizeof *c);
     c->arena = a; /* from here on the arena lives inside the thing it allocated */
 
-    rules = (ar_rule *)ar_arena_persist(&c->arena, AR_MAX_RULES * (ar_u32)sizeof(ar_rule));
+    rules = (ar_rule *)ar_arena_persist(&c->arena, max_rules * (ar_u32)sizeof(ar_rule));
     if (!rules)
     {
         return 0;
     }
-    ar_sheet_init(&c->sheet, rules, AR_MAX_RULES);
+    ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
 
     {
         ar_cache_entry *cache = (ar_cache_entry *)ar_arena_persist(
@@ -228,7 +253,16 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
         ar_sheet_set_tracks(&c->sheet, tracks, AR_TRACK_POOL);
     }
 
-    boxes = (size - AR_MEM_FIXED) / AR_BYTES_PER_BOX;
+    /*
+     * The box budget is what is left after everything the caller asked for on
+     * top of the floor -- a larger rule table, and a document.
+     *
+     * Subtracting them is the whole point. AR_MEM_RULES and AR_MEM_DOC add
+     * those bytes to the block, so counting them as boxes here would promise a
+     * budget the frame region cannot deliver, and the caller would find out as
+     * an overflow in the middle of a frame rather than as a refusal at init.
+     */
+    boxes = (size - AR_MEM_FIXED - extra) / AR_BYTES_PER_BOX;
     if (boxes < 32u)
     {
         boxes = 32u;
@@ -245,9 +279,15 @@ ar_ctx *ar_init(void *mem, ar_u32 size)
     c->slot_cap = (ar_i32)slots;
 
     c->box_budget = (ar_i32)boxes;
+    c->doc_budget = doc_bytes;
     c->frame = 1; /* zero means an unused slot, so frames start at one */
     ar_perf_reset(&c->perf);
     return c;
+}
+
+ar_ctx *ar_init(void *mem, ar_u32 size)
+{
+    return ar_init_ex(mem, size, AR_MAX_RULES, 0);
 }
 
 static ar_u32 ar__now(ar_ctx *c)
@@ -275,6 +315,11 @@ void ar_stylesheet(ar_ctx *c, const char *css)
 ar_u32 ar_stylesheet_errors(const ar_ctx *c)
 {
     return c->sheet.errors;
+}
+
+ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
+{
+    return c ? c->sheet.rules_refused : 0;
 }
 
 /* ------------------------------------------------------------------------
@@ -1698,7 +1743,18 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
        toolkit does and what people expect. */
     if (c->mouse_pressed & AR_MOUSE_LEFT)
     {
+        ar_i32 k;
+
         c->active = c->hot;
+
+        /* The ancestors latch with it, for the reason `:hover` has them: the
+           box under the cursor in a document is the text, and the rule that
+           says what a pressed item looks like is on its parent. */
+        c->active_chain_n = c->hot_chain_n;
+        for (k = 0; k < c->hot_chain_n; ++k)
+        {
+            c->active_chain[k] = c->hot_chain[k];
+        }
     }
     c->clicked = 0;
     if (c->mouse_released & AR_MOUSE_LEFT)
@@ -1708,6 +1764,7 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             c->clicked = c->active;
         }
         c->active = 0;
+        c->active_chain_n = 0;
     }
 
     /* The tree has to be contiguous to be indexed, so the whole array is
@@ -1767,6 +1824,26 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
             : 0;
 }
 
+/* Is this box the hot one, or an ancestor of it? The chain is a root path, so
+   it is as long as the tree is deep and usually about eight. */
+static int ar__in_chain(const ar_u32 *chain, ar_i32 n, ar_u32 key)
+{
+    ar_i32 i;
+
+    if (!key)
+    {
+        return 0;
+    }
+    for (i = 0; i < n; ++i)
+    {
+        if (chain[i] == key)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------------
  * Tree building
  * ------------------------------------------------------------------------ */
@@ -1809,11 +1886,11 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
     /* Hover and active come from where this box was last frame, because where
        it is this frame is not known until after layout. See ar_node.h. */
     slot = ar_ctx_slot(c, key);
-    if (key == c->hot)
+    if (ar__in_chain(c->hot_chain, c->hot_chain_n, key))
     {
         state |= AR_STATE_HOVER;
     }
-    if (key == c->active)
+    if (ar__in_chain(c->active_chain, c->active_chain_n, key))
     {
         state |= AR_STATE_ACTIVE;
     }
@@ -1855,6 +1932,7 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text)
        another box's text. */
     n->frag_first = 0;
     n->frag_count = 0;
+    n->measured_w = -1;
     n->rect = ar_rect_make(0, 0, 0, 0);
     /* A node is reused frame to frame, and a collapsed edge is written only by
        a table. Without this, a cell that was in a collapsed table one frame
@@ -3012,6 +3090,26 @@ static void ar__update_hot(ar_ctx *c)
         }
     }
 
+    /*
+     * And its ancestors, because `:hover` matches them too.
+     *
+     * The hit test finds one box, the topmost. CSS matches `:hover` on that
+     * box *and every ancestor of it*, which for a hand-declared tree is
+     * usually the same thing and for a parsed document never is: every
+     * element's text is a child box, so the hit is always the child and the
+     * rule is always on the parent.
+     */
+    c->hot_chain_n = 0;
+    {
+        ar_i32 at = c->hot_index;
+
+        while (at >= 0 && c->hot_chain_n < AR_MAX_DEPTH)
+        {
+            c->hot_chain[c->hot_chain_n++] = c->nodes[at].key;
+            at = c->nodes[at].parent;
+        }
+    }
+
     /* Hover is resolved from the previous frame, so the frame that discovers
        a new box under the cursor is not the frame that can style it. A caller
        whose event pump blocks when idle would therefore show the highlight one
@@ -3147,7 +3245,7 @@ static void ar__shift_subtree(ar_ctx *c, ar_i32 root, ar_i32 dy)
     {
         if (ar__is_within(c, c->nodes[j].parent, root))
         {
-            c->nodes[j].rect.y -= dy;
+            ar_shift_node(c->nodes, c->frags, c->frag_count, j, 0, -dy);
         }
     }
 }

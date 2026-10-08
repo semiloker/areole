@@ -1137,14 +1137,16 @@ static void ar__distribute(ar__col *col, ar_i32 ncol, ar_i32 avail, int fixed_la
  *
  * ponytail: a cell's own text is re-measured at the settled width, and a cell
  * whose content is other boxes falls back to the max-content height the
- * measure sweep produced. That is right for the common cell -- text, or one
- * block of text -- and too tall for a cell whose children would themselves
- * wrap. Closing it needs a measure(subtree, width) entry point, which layout
- * does not have for anything: `ar__wrap_height` answers for one node. That
- * entry point is worth building for its own sake, since grid will want it too.
+ * measure sweep produced. That was right for the common cell -- text, or one
+ * block of text -- and too short for a cell whose children would themselves
+ * wrap, because fit[1] is the height nothing wrapping would give.
+ *
+ * `ar_content_height` is the measure(subtree, width) entry point this comment
+ * used to ask for. Grid wanted it too, and asks the same way.
  */
-static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
+static ar_i32 ar__cell_height(ar_node *nodes, ar_i32 i, ar_i32 inner_w, ar_layout_env *env)
 {
+    ar_node *n = &nodes[i];
     /*
      * A border box, from whichever of the two answers is larger.
      *
@@ -1160,6 +1162,18 @@ static ar_i32 ar__cell_height(ar_node *n, ar_i32 inner_w, ar_layout_env *env)
     if (stated > h)
     {
         h = stated;
+    }
+
+    /* A cell holding boxes rather than words: lay them out at the column width
+       and take what they came to. This is the row height a browser gives. */
+    if (n->first_child >= 0)
+    {
+        ar_i32 sub = ar_content_height(nodes, i, inner_w, env) + ar__cell_border_y(n);
+
+        if (sub > h)
+        {
+            h = sub;
+        }
     }
 
     if (n->text && env && env->wrap)
@@ -1343,14 +1357,19 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
                             nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
-                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+                ar_i32 ch = ar__cell_height(nodes, e, cw < 0 ? 0 : cw, env);
 
                 if (assign)
                 {
+                    /* A caption is a table block like a cell, and moves the
+                       same way. */
+                    ar_rect was = nodes[e].rect;
+
                     nodes[e].rect.x = t->rect.x + pad_l;
                     nodes[e].rect.y = t->rect.y + y;
                     nodes[e].rect.w = inner_w;
                     nodes[e].rect.h = ch;
+                    ar_settle_at(nodes, env, e, was);
                 }
                 y += ch;
             }
@@ -1473,19 +1492,39 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
 
                 if (assign)
                 {
+                    ar_rect was = nodes[c].rect;
+
                     nodes[c].rect.x = t->rect.x + pad_l + col[at < ncol ? at : ncol - 1].x;
                     nodes[c].rect.w = w;
                     nodes[c].edge[3] = (ar_u8)ar__half_far(vline[at]);
                     nodes[c].edge[1] = (ar_u8)ar__half_near(vline[rk]);
                     nodes[c].edge[0] = (ar_u8)ar__half_far(hl);
                     nodes[c].edge[2] = (ar_u8)ar__half_near(hb);
+                    /* The column decides where the cell goes, and this is the
+                       same one line every other placer now ends with.
+
+                       It is a no-op today and should say so: a cell is never
+                       memoised, because ar__place_block's automatic-height
+                       branch excludes table blocks -- a cell's height is its
+                       row's, not its contents'. So there is never a settled
+                       subtree here to strand, and no check can be written that
+                       goes red when this is removed.
+
+                       Kept because the rule is "every placer settles", and a
+                       rule with an exception in it is one somebody has to
+                       remember. If a cell ever is sized by its own contents,
+                       this is already right. */
+                    ar_settle_at(nodes, env, c, was);
                 }
             }
             else if (assign)
             {
+                ar_rect was = nodes[c].rect;
+
                 nodes[c].rect.x = t->rect.x + pad_l + spacing + col[at < ncol ? at : ncol - 1].x +
                                   spacing * (at < ncol ? at : ncol - 1);
                 nodes[c].rect.w = w;
+                ar_settle_at(nodes, env, c, was);
             }
 
             {
@@ -1496,7 +1535,7 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 ar_i32 inner = w - ar__cell_border_x(&nodes[c]) - nodes[c].style.v[AR_P_PAD_LEFT] -
                                nodes[c].style.v[AR_P_PAD_RIGHT];
 
-                h = ar__cell_height(&nodes[c], inner < 0 ? 0 : inner, env);
+                h = ar__cell_height(nodes, c, inner < 0 ? 0 : inner, env);
             }
 
             if (closed)
@@ -1585,7 +1624,16 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
                 /* The band is what the row's content occupies; a collapsed
                    cell starts half a line above it and ends half a line below,
                    which is the whole difference between the two models. */
-                nodes[c].rect.y = t->rect.y + y - top;
+                {
+                    /* The row decides the cell's y the way the column decided
+                       its x, and the contents follow it here too. Two writes,
+                       two shifts, each by its own delta -- which comes to the
+                       same place as one shift by the sum. */
+                    ar_rect was = nodes[c].rect;
+
+                    nodes[c].rect.y = t->rect.y + y - top;
+                    ar_settle_at(nodes, env, c, was);
+                }
 
                 /* A spanning cell's height is settled when its countdown ends,
                    so writing the row's height over it here would undo that. */
@@ -1644,14 +1692,19 @@ static ar_i32 ar__table_solve(ar_node *nodes, ar_i32 table, ar_layout_env *env, 
             {
                 ar_i32 cw = inner_w - ar__cell_border_x(&nodes[e]) -
                             nodes[e].style.v[AR_P_PAD_LEFT] - nodes[e].style.v[AR_P_PAD_RIGHT];
-                ar_i32 ch = ar__cell_height(&nodes[e], cw < 0 ? 0 : cw, env);
+                ar_i32 ch = ar__cell_height(nodes, e, cw < 0 ? 0 : cw, env);
 
                 if (assign)
                 {
+                    /* A caption is a table block like a cell, and moves the
+                       same way. */
+                    ar_rect was = nodes[e].rect;
+
                     nodes[e].rect.x = t->rect.x + pad_l;
                     nodes[e].rect.y = t->rect.y + y;
                     nodes[e].rect.w = inner_w;
                     nodes[e].rect.h = ch;
+                    ar_settle_at(nodes, env, e, was);
                 }
                 y += ch;
             }
@@ -1821,18 +1874,18 @@ int ar_box_paints(const ar_node *n)
     return 1;
 }
 
-/* Every box under this one moves with it. Walked through the child links
-   rather than the node array, so a cell costs its own subtree and not the
-   whole tree after it -- which on a ten-thousand-row table is the difference
-   between linear and not. */
-static void ar__shift_kids(ar_node *nodes, ar_i32 i, ar_i32 dy)
+/* Every box under this one moves with it -- ar_shift_subtree, which is the one
+   walk, because a second copy is a second place to forget the fragments. This
+   moves the children without the box, which is the one shape that walk does not
+   have: a cell's own rectangle is the row's and does not move with its
+   contents. */
+static void ar__shift_kids(ar_node *nodes, ar_frag *frags, ar_i32 frag_n, ar_i32 i, ar_i32 dy)
 {
     ar_i32 c;
 
     for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
     {
-        nodes[c].rect.y += dy;
-        ar__shift_kids(nodes, c, dy);
+        ar_shift_subtree(nodes, frags, frag_n, c, 0, dy);
     }
 }
 
@@ -1851,7 +1904,7 @@ static void ar__shift_kids(ar_node *nodes, ar_i32 i, ar_i32 dy)
  * answers are identical, which is most tables. Named here so its absence is a
  * decision.
  */
-void ar_table_align_cell(ar_node *nodes, ar_i32 i)
+void ar_table_align_cell(ar_node *nodes, ar_i32 i, ar_frag *frags, ar_i32 frag_n)
 {
     ar_node *n = &nodes[i];
     ar_i32   va = n->style.v[AR_P_VERTICAL_ALIGN];
@@ -1875,7 +1928,7 @@ void ar_table_align_cell(ar_node *nodes, ar_i32 i)
     {
         return;
     }
-    ar__shift_kids(nodes, i, va == AR_VALIGN_MIDDLE ? slack / 2 : slack);
+    ar__shift_kids(nodes, frags, frag_n, i, va == AR_VALIGN_MIDDLE ? slack / 2 : slack);
 }
 
 /*
