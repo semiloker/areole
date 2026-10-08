@@ -410,6 +410,12 @@ typedef struct ar_layout_env
     ar_text_range_fn measure;
     void            *ud;
 
+    /* The stylesheet, because a grid template is a list and a style slot is
+       sixteen bits -- the slot holds an index into a pool that lives here.
+       May be null, in which case a grid has no templates and every track is
+       implicit, which is a grid nobody wrote but a solver that still works. */
+    const ar_sheet *sheet;
+
     /* Where a scroll container currently is. Null means nothing scrolls,
        which is what every caller before scrolling got. */
     ar_i32 (*scroll_of)(void *ud, ar_i32 index);
@@ -554,14 +560,58 @@ int ar_is_table(const ar_node *n);
 int ar_is_table_internal(const ar_node *n);
 
 /* A cell, which is a block for whatever is inside it. */
+int ar_is_grid(const ar_node *n);
 int ar_is_table_block(const ar_node *n);
 
 /* Whether this box paints itself -- its background, its border and its text.
    Its children are asked the same question separately, because `visibility`
    inherits and a child may say `visible` and come back. */
-int  ar_box_paints(const ar_node *n);
-void ar_table_align_cell(ar_node *nodes, ar_i32 i);
-int  ar_is_table_cell(const ar_node *n);
+int ar_box_paints(const ar_node *n);
+
+/* ------------------------------------------------------------------------
+ * Shared box alignment, in ar_align.c
+ *
+ * Axis 0 is x, axis 1 is y. These were static in ar_layout.c until flexbox
+ * got a file of its own and needed every one of them.
+ * ------------------------------------------------------------------------ */
+ar_i32  ar_axis_main(const ar_node *n);
+ar_i32  ar_axis_pad_lead(const ar_style *s, ar_i32 axis);
+ar_i32  ar_axis_pad_trail(const ar_style *s, ar_i32 axis);
+ar_i32  ar_axis_margin_lead(const ar_style *s, ar_i32 axis);
+ar_i32  ar_axis_margin_trail(const ar_style *s, ar_i32 axis);
+ar_i32  ar_axis_size_prop(ar_i32 axis);
+ar_i32  ar_axis_min_prop(ar_i32 axis);
+ar_i32  ar_axis_max_prop(ar_i32 axis);
+ar_i32 *ar_axis_pos(ar_rect *r, ar_i32 axis);
+ar_i32 *ar_axis_size(ar_rect *r, ar_i32 axis);
+ar_i32  ar_clamp(ar_i32 v, ar_i32 lo, ar_i32 hi);
+
+void   ar_align_distribute(ar_i32 mode, ar_i32 free, ar_i32 count, ar_i32 *out_lead,
+                           ar_i32 *out_between);
+ar_i32 ar_align_from_justify(ar_i32 justify);
+ar_i32 ar_align_self_offset(ar_i32 mode, ar_i32 free);
+
+/* ------------------------------------------------------------------------
+ * The flex formatting context, in ar_layout_flex.c
+ * ------------------------------------------------------------------------ */
+void   ar_flex_place(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+ar_i32 ar_flex_content_cross(ar_node *nodes, ar_i32 i, ar_layout_env *env);
+
+/* ------------------------------------------------------------------------
+ * The grid formatting context, in ar_layout_grid.c
+ *
+ * It takes the sheet because a track list lives in a pool there rather than in
+ * the style -- see the comment beside AR_P_GRID_COLS.
+ * ------------------------------------------------------------------------ */
+void   ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
+ar_i32 ar_grid_content_height(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_env *env);
+
+/* Both defined in ar_layout.c, which owns the sizing rules; the flex solver
+   is the second caller and the reason they stopped being static. */
+ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch);
+void   ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_layout_env *env);
+void   ar_table_align_cell(ar_node *nodes, ar_i32 i);
+int    ar_is_table_cell(const ar_node *n);
 
 /* The backward sweep's share: column constraints, and the two intrinsic widths
    they give the table box. No width exists yet, so nothing is placed. */

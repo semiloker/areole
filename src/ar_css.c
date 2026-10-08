@@ -126,6 +126,46 @@ void ar_style_defaults(ar_style *s)
     s->v[AR_P_EMPTY_CELLS] = AR_EMPTY_SHOW;
     s->unit[AR_P_EMPTY_CELLS] = AR_UNIT_KEYWORD;
 
+    s->v[AR_P_FLEX_WRAP] = AR_WRAP_NOWRAP;
+    s->unit[AR_P_FLEX_WRAP] = AR_UNIT_KEYWORD;
+    /*
+     * `flex-basis: auto`, `flex-grow: 0`, `flex-shrink: 1` -- the initial
+     * values CSS specifies, and the reason a flex item that says nothing keeps
+     * its own width and gives ground when the container is too small.
+     */
+    s->v[AR_P_FLEX_BASIS] = 0;
+    s->unit[AR_P_FLEX_BASIS] = AR_UNIT_AUTO;
+    s->v[AR_P_FLEX_GROW] = 0;
+    s->unit[AR_P_FLEX_GROW] = AR_UNIT_NUMBER;
+    s->v[AR_P_FLEX_SHRINK] = 1000;
+    s->unit[AR_P_FLEX_SHRINK] = AR_UNIT_NUMBER;
+    s->v[AR_P_ALIGN_SELF] = AR_ALIGN_AUTO;
+    s->unit[AR_P_ALIGN_SELF] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ALIGN_CONTENT] = AR_ALIGN_STRETCH;
+    s->unit[AR_P_ALIGN_CONTENT] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ORDER] = 0;
+    s->unit[AR_P_ORDER] = AR_UNIT_PX;
+
+    /* Zero is "no track list" and "auto placement" alike, which is why CSS's
+       lines start at one: there is no line zero for a real value to collide
+       with. */
+    s->v[AR_P_GRID_COLS] = 0;
+    s->v[AR_P_GRID_ROWS] = 0;
+    s->v[AR_P_GRID_AUTO_COLS] = 0;
+    s->v[AR_P_GRID_AUTO_ROWS] = 0;
+    s->v[AR_P_GRID_FLOW] = AR_GRID_FLOW_ROW;
+    s->unit[AR_P_GRID_FLOW] = AR_UNIT_KEYWORD;
+    s->v[AR_P_GRID_COL_START] = 0;
+    s->v[AR_P_GRID_COL_END] = 0;
+    s->v[AR_P_GRID_ROW_START] = 0;
+    s->v[AR_P_GRID_ROW_END] = 0;
+    s->v[AR_P_JUSTIFY_ITEMS] = AR_ALIGN_STRETCH;
+    s->unit[AR_P_JUSTIFY_ITEMS] = AR_UNIT_KEYWORD;
+    s->v[AR_P_JUSTIFY_SELF] = AR_ALIGN_AUTO;
+    s->unit[AR_P_JUSTIFY_SELF] = AR_UNIT_KEYWORD;
+    s->v[AR_P_ROW_GAP] = 0;
+    s->v[AR_P_COL_GAP] = 0;
+
     s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
     s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
     s->unit[AR_P_OVERSCROLL] = AR_UNIT_KEYWORD;
@@ -561,14 +601,41 @@ enum
     AR_SH_OVERSCROLL,
     AR_SH_SCROLLBAR_COLOR,
     AR_SH_SCROLL_PADDING,
-    AR_SH_SCROLL_MARGIN
+    AR_SH_SCROLL_MARGIN,
+    AR_SH_FLEX,
+    AR_SH_GRID_COLUMN,
+    AR_SH_GRID_ROW,
+    AR_SH_GAP,
+    AR_SH_PLACE_ITEMS,
+    AR_SH_PLACE_CONTENT,
+    AR_SH_PLACE_SELF
 };
 
 static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"flex-direction", AR_P_DIRECTION},
                                           {"justify-content", AR_P_JUSTIFY},
                                           {"align-items", AR_P_ALIGN},
-                                          {"gap", AR_P_GAP},
+                                          {"gap", AR_SH_GAP},
+                                          {"flex-wrap", AR_P_FLEX_WRAP},
+                                          {"flex-basis", AR_P_FLEX_BASIS},
+                                          {"flex-grow", AR_P_FLEX_GROW},
+                                          {"flex-shrink", AR_P_FLEX_SHRINK},
+                                          {"align-self", AR_P_ALIGN_SELF},
+                                          {"align-content", AR_P_ALIGN_CONTENT},
+                                          {"order", AR_P_ORDER},
+                                          {"grid-template-columns", AR_P_GRID_COLS},
+                                          {"grid-template-rows", AR_P_GRID_ROWS},
+                                          {"grid-auto-columns", AR_P_GRID_AUTO_COLS},
+                                          {"grid-auto-rows", AR_P_GRID_AUTO_ROWS},
+                                          {"grid-auto-flow", AR_P_GRID_FLOW},
+                                          {"grid-column-start", AR_P_GRID_COL_START},
+                                          {"grid-column-end", AR_P_GRID_COL_END},
+                                          {"grid-row-start", AR_P_GRID_ROW_START},
+                                          {"grid-row-end", AR_P_GRID_ROW_END},
+                                          {"justify-items", AR_P_JUSTIFY_ITEMS},
+                                          {"justify-self", AR_P_JUSTIFY_SELF},
+                                          {"row-gap", AR_P_ROW_GAP},
+                                          {"column-gap", AR_P_COL_GAP},
                                           {"padding", AR_SH_PADDING},
                                           {"padding-top", AR_P_PAD_TOP},
                                           {"padding-right", AR_P_PAD_RIGHT},
@@ -614,6 +681,12 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"scrollbar-gutter", AR_P_SCROLLBAR_GUTTER},
                                           {"scrollbar-color", AR_SH_SCROLLBAR_COLOR},
                                           {"overscroll-behavior", AR_SH_OVERSCROLL},
+                                          {"flex", AR_SH_FLEX},
+                                          {"grid-column", AR_SH_GRID_COLUMN},
+                                          {"grid-row", AR_SH_GRID_ROW},
+                                          {"place-items", AR_SH_PLACE_ITEMS},
+                                          {"place-content", AR_SH_PLACE_CONTENT},
+                                          {"place-self", AR_SH_PLACE_SELF},
                                           {"overscroll-behavior-x", AR_P_OVERSCROLL_X},
                                           {"overscroll-behavior-y", AR_P_OVERSCROLL},
                                           {"text-align", AR_P_TEXT_ALIGN},
@@ -724,6 +797,53 @@ static const ar__kw AR_KEYWORDS[] = {
     {"flex-end", AR_P_JUSTIFY, AR_JUSTIFY_END},
     {"end", AR_P_JUSTIFY, AR_JUSTIFY_END},
     {"space-between", AR_P_JUSTIFY, AR_JUSTIFY_BETWEEN},
+    {"space-around", AR_P_JUSTIFY, AR_JUSTIFY_AROUND},
+    {"space-evenly", AR_P_JUSTIFY, AR_JUSTIFY_EVENLY},
+
+    {"grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
+    {"inline-grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
+
+    {"row", AR_P_GRID_FLOW, AR_GRID_FLOW_ROW},
+    {"column", AR_P_GRID_FLOW, AR_GRID_FLOW_COLUMN},
+    {"dense", AR_P_GRID_FLOW, AR_GRID_FLOW_DENSE},
+
+    {"flex-start", AR_P_JUSTIFY_ITEMS, AR_ALIGN_START},
+    {"start", AR_P_JUSTIFY_ITEMS, AR_ALIGN_START},
+    {"center", AR_P_JUSTIFY_ITEMS, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_JUSTIFY_ITEMS, AR_ALIGN_END},
+    {"end", AR_P_JUSTIFY_ITEMS, AR_ALIGN_END},
+    {"stretch", AR_P_JUSTIFY_ITEMS, AR_ALIGN_STRETCH},
+
+    {"auto", AR_P_JUSTIFY_SELF, AR_ALIGN_AUTO},
+    {"flex-start", AR_P_JUSTIFY_SELF, AR_ALIGN_START},
+    {"start", AR_P_JUSTIFY_SELF, AR_ALIGN_START},
+    {"center", AR_P_JUSTIFY_SELF, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_JUSTIFY_SELF, AR_ALIGN_END},
+    {"end", AR_P_JUSTIFY_SELF, AR_ALIGN_END},
+    {"stretch", AR_P_JUSTIFY_SELF, AR_ALIGN_STRETCH},
+
+    {"nowrap", AR_P_FLEX_WRAP, AR_WRAP_NOWRAP},
+    {"wrap", AR_P_FLEX_WRAP, AR_WRAP_WRAP},
+    {"wrap-reverse", AR_P_FLEX_WRAP, AR_WRAP_WRAP_REVERSE},
+
+    {"auto", AR_P_ALIGN_SELF, AR_ALIGN_AUTO},
+    {"flex-start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_SELF, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_SELF, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_SELF, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_SELF, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN_SELF, AR_ALIGN_BASELINE},
+
+    {"flex-start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"start", AR_P_ALIGN_CONTENT, AR_ALIGN_START},
+    {"center", AR_P_ALIGN_CONTENT, AR_ALIGN_CENTER},
+    {"flex-end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"end", AR_P_ALIGN_CONTENT, AR_ALIGN_END},
+    {"stretch", AR_P_ALIGN_CONTENT, AR_ALIGN_STRETCH},
+    {"space-between", AR_P_ALIGN_CONTENT, AR_ALIGN_BETWEEN},
+    {"space-around", AR_P_ALIGN_CONTENT, AR_ALIGN_AROUND},
+    {"space-evenly", AR_P_ALIGN_CONTENT, AR_ALIGN_EVENLY},
 
     {"flex-start", AR_P_ALIGN, AR_ALIGN_START},
     {"start", AR_P_ALIGN, AR_ALIGN_START},
@@ -731,6 +851,7 @@ static const ar__kw AR_KEYWORDS[] = {
     {"flex-end", AR_P_ALIGN, AR_ALIGN_END},
     {"end", AR_P_ALIGN, AR_ALIGN_END},
     {"stretch", AR_P_ALIGN, AR_ALIGN_STRETCH},
+    {"baseline", AR_P_ALIGN, AR_ALIGN_BASELINE},
 
     {"visible", AR_P_OVERFLOW, AR_OVERFLOW_VISIBLE},
     {"hidden", AR_P_OVERFLOW, AR_OVERFLOW_HIDDEN},
@@ -834,6 +955,22 @@ static const char *const AR_ENV_NAMES[AR_ENV_COUNT] = {
  * ar_begin can skip the whole question -- which is what keeps tables from
  * costing anything to an interface that has none.
  */
+const ar_track *ar_sheet_tracks(const ar_sheet *sheet, ar_i32 index, ar_i32 *out_count)
+{
+    if (!sheet || !sheet->tracks || index <= 0 || index >= (ar_i32)sheet->track_count)
+    {
+        *out_count = 0;
+        return 0;
+    }
+    *out_count = sheet->tracks[index].min_v;
+    if (*out_count <= 0 || index + *out_count >= (ar_i32)sheet->track_count)
+    {
+        *out_count = 0;
+        return 0;
+    }
+    return &sheet->tracks[index + 1];
+}
+
 void ar_sheet_note_tables(ar_sheet *sheet)
 {
     ar_i32 i;
@@ -850,7 +987,12 @@ void ar_sheet_note_tables(ar_sheet *sheet)
         {
             sheet->has_collapse = 1;
         }
-        if (sheet->has_table && sheet->has_collapse)
+        if (ar_pset_has(sheet->rules[i].set, AR_P_DISPLAY) &&
+            sheet->rules[i].style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID)
+        {
+            sheet->has_grid = 1;
+        }
+        if (sheet->has_table && sheet->has_collapse && sheet->has_grid)
         {
             return;
         }
@@ -910,6 +1052,368 @@ typedef struct ar__value
     int    ok;
 } ar__value;
 
+/* ------------------------------------------------------------------------
+ * Track lists
+ *
+ * `grid-template-columns: repeat(3, minmax(100px, 1fr)) auto` is nine numbers
+ * and four kinds, and a style slot is sixteen bits. So the list is parsed once
+ * into a pool on the stylesheet and the slot holds the index of its header.
+ *
+ * Every track comes out as a *range*, whatever it was written as: `100px` is
+ * minmax(100px, 100px), `auto` is minmax(min-content, max-content), `1fr` is
+ * minmax(auto, 1fr). The sizing algorithm then has one shape to handle rather
+ * than seven, and this is the only place that remembers there was a shorthand.
+ * ------------------------------------------------------------------------ */
+
+static int ar__track_room(const ar_sheet *sheet, ar_i32 want)
+{
+    return sheet->tracks && (ar_i32)sheet->track_count + want <= (ar_i32)sheet->track_cap;
+}
+
+/* One track, or one half of a minmax. Returns 0 if this is not a track size. */
+static int ar__parse_track_size(ar__scan *z, ar_i16 *out_v, ar_u8 *out_u, int allow_fr)
+{
+    const char *save;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+
+    if (ar__is_digit(*z->p) || *z->p == '.')
+    {
+        ar_i32 n = 0;
+        ar_i32 milli = 0;
+        ar_i32 digits = 0;
+
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            n = n * 10 + (*z->p - '0');
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == '.')
+        {
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                if (digits < 3)
+                {
+                    milli = milli * 10 + (*z->p - '0');
+                    ++digits;
+                }
+                z->p++;
+            }
+            while (digits < 3)
+            {
+                milli *= 10;
+                ++digits;
+            }
+        }
+        if (z->p + 1 < z->end && z->p[0] == 'f' && z->p[1] == 'r')
+        {
+            if (!allow_fr)
+            {
+                return 0;
+            }
+            z->p += 2;
+            *out_v = (ar_i16)(n * 1000 + milli);
+            *out_u = AR_UNIT_FR;
+            return 1;
+        }
+        if (z->p < z->end && *z->p == '%')
+        {
+            z->p++;
+            *out_v = (ar_i16)n;
+            *out_u = AR_UNIT_PCT;
+            return 1;
+        }
+        if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
+        {
+            z->p += 2;
+        }
+        *out_v = (ar_i16)n;
+        *out_u = AR_UNIT_PX;
+        return 1;
+    }
+
+    save = z->p;
+    {
+        const char *name;
+        ar_u32      len = ar__ident(z, &name);
+
+        if (len == 0)
+        {
+            z->p = save;
+            return 0;
+        }
+        *out_v = 0;
+        if (ar__same(name, len, "auto"))
+        {
+            *out_u = AR_UNIT_AUTO;
+            return 1;
+        }
+        if (ar__same(name, len, "min-content"))
+        {
+            *out_u = AR_UNIT_MIN_CONTENT;
+            return 1;
+        }
+        if (ar__same(name, len, "max-content"))
+        {
+            *out_u = AR_UNIT_MAX_CONTENT;
+            return 1;
+        }
+        z->p = save;
+        return 0;
+    }
+}
+
+/*
+ * One entry of a track list, which may be a function.
+ *
+ * `minmax(a, b)` is the range spelled out. `fit-content(x)` is minmax(auto, x)
+ * -- the specification says minmax(auto, max-content) capped at x, and with no
+ * separate cap in this model the max *is* x, which differs only when the
+ * contents are narrower than x and both answers are then the contents.
+ */
+static int ar__parse_one_track(ar__scan *z, ar_track *out)
+{
+    const char *save;
+    const char *name;
+    ar_u32      len;
+
+    ar__skip_ws(z);
+    save = z->p;
+    len = ar__ident(z, &name);
+
+    if (len && z->p < z->end && *z->p == '(')
+    {
+        if (ar__same(name, len, "minmax"))
+        {
+            z->p++;
+            if (!ar__parse_track_size(z, &out->min_v, &out->min_u, 0))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ',')
+            {
+                z->p++;
+            }
+            if (!ar__parse_track_size(z, &out->max_v, &out->max_u, 1))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            return 1;
+        }
+        if (ar__same(name, len, "fit-content"))
+        {
+            z->p++;
+            out->min_v = 0;
+            out->min_u = AR_UNIT_AUTO;
+            if (!ar__parse_track_size(z, &out->max_v, &out->max_u, 0))
+            {
+                return 0;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ')')
+            {
+                z->p++;
+            }
+            return 1;
+        }
+        z->p = save;
+        return 0;
+    }
+    z->p = save;
+
+    {
+        ar_i16 v;
+        ar_u8  u;
+
+        if (!ar__parse_track_size(z, &v, &u, 1))
+        {
+            return 0;
+        }
+        /*
+         * The shorthand forms, spelled out as ranges.
+         *
+         * A length is a range with itself at both ends. `auto` is min-content
+         * to max-content. `1fr` has a minimum of auto, which is the rule that
+         * stops an fr track collapsing below its contents and is the one
+         * everybody forgets: `1fr` is not "a share", it is "at least the
+         * contents, then a share".
+         */
+        if (u == AR_UNIT_FR)
+        {
+            out->min_v = 0;
+            out->min_u = AR_UNIT_AUTO;
+            out->max_v = v;
+            out->max_u = AR_UNIT_FR;
+        }
+        else if (u == AR_UNIT_AUTO)
+        {
+            out->min_v = 0;
+            out->min_u = AR_UNIT_MIN_CONTENT;
+            out->max_v = 0;
+            out->max_u = AR_UNIT_MAX_CONTENT;
+        }
+        else
+        {
+            out->min_v = v;
+            out->min_u = u;
+            out->max_v = v;
+            out->max_u = u;
+        }
+        return 1;
+    }
+}
+
+/*
+ * A whole track list into the pool, returning the header's index.
+ *
+ * `repeat(n, ...)` is expanded here rather than carried: the sizing algorithm
+ * wants a flat list, and an author writing `repeat(200, 1fr)` has asked for two
+ * hundred tracks whether they are stored once or two hundred times. The pool is
+ * bounded, so a list that does not fit is refused and counted as a parse error
+ * -- which is the same answer a rule with a malformed value gets.
+ */
+static ar_i32 ar__parse_track_list(ar__scan *z, ar_sheet *sheet)
+{
+    ar_i32 header;
+    ar_i32 n = 0;
+
+    if (!ar__track_room(sheet, 1))
+    {
+        return 0;
+    }
+    header = (ar_i32)sheet->track_count;
+    sheet->track_count++;
+
+    for (;;)
+    {
+        const char *save;
+        const char *name;
+        ar_u32      len;
+        ar_i32      times = 1;
+        ar_i32      first_of_repeat = -1;
+
+        ar__skip_ws(z);
+        if (z->p >= z->end || *z->p == ';' || *z->p == '}' || *z->p == '!')
+        {
+            break;
+        }
+
+        save = z->p;
+        len = ar__ident(z, &name);
+        if (len && ar__same(name, len, "repeat") && z->p < z->end && *z->p == '(')
+        {
+            ar_i32 count = 0;
+
+            z->p++;
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                count = count * 10 + (*z->p - '0');
+                z->p++;
+            }
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == ',')
+            {
+                z->p++;
+            }
+            if (count <= 0)
+            {
+                /* `repeat(auto-fill, ...)` and `repeat(auto-fit, ...)` land
+                   here: the count is not a number and cannot be known until
+                   the container has a width. Not supported, and refused rather
+                   than guessed -- a wrong count is a wrong grid. */
+                z->p = save;
+                break;
+            }
+            times = count;
+            first_of_repeat = (ar_i32)sheet->track_count;
+
+            for (;;)
+            {
+                ar_track t;
+
+                ar__skip_ws(z);
+                if (z->p >= z->end || *z->p == ')')
+                {
+                    if (z->p < z->end)
+                    {
+                        z->p++;
+                    }
+                    break;
+                }
+                if (!ar__parse_one_track(z, &t))
+                {
+                    break;
+                }
+                if (!ar__track_room(sheet, 1))
+                {
+                    return 0;
+                }
+                sheet->tracks[sheet->track_count++] = t;
+                ++n;
+            }
+
+            {
+                ar_i32 group = (ar_i32)sheet->track_count - first_of_repeat;
+                ar_i32 r, k;
+
+                for (r = 1; r < times; ++r)
+                {
+                    for (k = 0; k < group; ++k)
+                    {
+                        if (!ar__track_room(sheet, 1))
+                        {
+                            return 0;
+                        }
+                        sheet->tracks[sheet->track_count] = sheet->tracks[first_of_repeat + k];
+                        sheet->track_count++;
+                        ++n;
+                    }
+                }
+            }
+            continue;
+        }
+        z->p = save;
+
+        {
+            ar_track t;
+
+            if (!ar__parse_one_track(z, &t))
+            {
+                break;
+            }
+            if (!ar__track_room(sheet, 1))
+            {
+                return 0;
+            }
+            sheet->tracks[sheet->track_count++] = t;
+            ++n;
+        }
+    }
+
+    if (n <= 0)
+    {
+        sheet->track_count = (ar_u16)header;
+        return 0;
+    }
+    sheet->tracks[header].min_v = (ar_i16)n;
+    sheet->tracks[header].max_v = 0;
+    sheet->tracks[header].min_u = AR_UNIT_PX;
+    sheet->tracks[header].max_u = AR_UNIT_PX;
+    return header;
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -952,14 +1456,45 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             n = n * 10 + (*z->p - '0');
             z->p++;
         }
-        /* A fractional part is accepted and floored. Sub-pixel sizes are not
-           a thing here: the layout is integer end to end. */
-        if (z->p < z->end && *z->p == '.')
+        /*
+         * A fractional part is accepted and floored -- except for the two flex
+         * factors, which keep it.
+         *
+         * Sub-pixel *sizes* are not a thing here: the layout is integer end to
+         * end. A flex factor is not a size, it is a ratio, and `flex-grow: 0.5`
+         * beside `flex-grow: 1` is a declaration people write and mean. Three
+         * digits are kept, so 0.5 is carried as 500 and the resolution loop
+         * divides by the sum of the factors without losing the ratio.
+         */
         {
-            z->p++;
-            while (z->p < z->end && ar__is_digit(*z->p))
+            ar_i32 milli = 0;
+            ar_i32 digits = 0;
+
+            if (z->p < z->end && *z->p == '.')
             {
                 z->p++;
+                while (z->p < z->end && ar__is_digit(*z->p))
+                {
+                    if (digits < 3)
+                    {
+                        milli = milli * 10 + (*z->p - '0');
+                        ++digits;
+                    }
+                    z->p++;
+                }
+                while (digits < 3)
+                {
+                    milli *= 10;
+                    ++digits;
+                }
+            }
+
+            if (prop == AR_P_FLEX_GROW || prop == AR_P_FLEX_SHRINK)
+            {
+                out.v = sign * (n * 1000 + milli);
+                out.ok = 1;
+                out.unit = AR_UNIT_NUMBER;
+                return out;
             }
         }
 
@@ -986,6 +1521,34 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 
         if (len == 0)
         {
+            return out;
+        }
+
+        /*
+         * `span 3` on a grid line, carried as -3.
+         *
+         * A line number and a span are two different things in the same slot,
+         * and CSS numbers lines from one -- so zero is free for `auto` and the
+         * negatives are free for spans. A negative line number in CSS counts
+         * back from the end of the grid, which areole does not do yet; when it
+         * does, this encoding is what has to change, and it is named here
+         * rather than left to be discovered.
+         */
+        if ((prop == AR_P_GRID_COL_START || prop == AR_P_GRID_COL_END ||
+             prop == AR_P_GRID_ROW_START || prop == AR_P_GRID_ROW_END) &&
+            ar__same(name, len, "span"))
+        {
+            ar_i32 n = 0;
+
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                n = n * 10 + (*z->p - '0');
+                z->p++;
+            }
+            out.v = -(n > 0 ? n : 1);
+            out.unit = AR_UNIT_PX;
+            out.ok = 1;
             return out;
         }
 
@@ -1283,7 +1846,7 @@ static int ar__take_important(ar__scan *z)
 /* ------------------------------------------------------------------------
  * Declarations
  * ------------------------------------------------------------------------ */
-static void ar__parse_decl(ar__scan *z, ar_rule *rule)
+static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
 {
     const char *name;
     ar_u32      len;
@@ -1335,6 +1898,42 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         return;
     }
 
+    /*
+     * A track list is not a value, so it never reaches the value loop.
+     *
+     * It is a list of unknown length full of functions, and the loop below
+     * reads at most four values of one kind. Handled here, where the property
+     * is known and the sheet -- which owns the pool -- is in hand.
+     */
+    if (prop == AR_P_GRID_COLS || prop == AR_P_GRID_ROWS || prop == AR_P_GRID_AUTO_COLS ||
+        prop == AR_P_GRID_AUTO_ROWS)
+    {
+        ar_i32 header = sheet ? ar__parse_track_list(z, sheet) : 0;
+
+        before_set = rule->set;
+        if (header > 0)
+        {
+            ar__set(rule, (ar_u8)prop, header, AR_UNIT_PX);
+        }
+        else
+        {
+            ar__fail(z);
+        }
+        if (ar__take_important(z))
+        {
+            rule->important = ar_pset_plus(rule->important, ar_pset_minus(rule->set, before_set));
+        }
+        while (z->p < z->end && *z->p != ';' && *z->p != '}')
+        {
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == ';')
+        {
+            z->p++;
+        }
+        return;
+    }
+
     /* Up to four values, which covers every shorthand in the subset. */
     n = 0;
     while (n < 4)
@@ -1358,6 +1957,35 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
         if (prop == AR_SH_SCROLLBAR_COLOR)
         {
             as = AR_P_SCROLLBAR_THUMB;
+        }
+        if (prop == AR_SH_FLEX)
+        {
+            /*
+             * Every value of `flex` is read as a factor first.
+             *
+             * `flex: 1` and `flex: 1 1 auto` and `flex: 0 0 200px` all start
+             * with numbers, and the basis -- when there is one -- is a length
+             * or `auto`, which the factor read rejects and the caller retries.
+             * Reading them as lengths instead would turn `flex: 1` into a
+             * one-pixel basis, which is the wrong half of the declaration.
+             */
+            as = AR_P_FLEX_GROW;
+        }
+        if (prop == AR_SH_PLACE_ITEMS)
+        {
+            as = AR_P_ALIGN;
+        }
+        if (prop == AR_SH_PLACE_CONTENT)
+        {
+            as = AR_P_ALIGN_CONTENT;
+        }
+        if (prop == AR_SH_PLACE_SELF)
+        {
+            as = AR_P_ALIGN_SELF;
+        }
+        if (prop == AR_SH_GRID_COLUMN || prop == AR_SH_GRID_ROW)
+        {
+            as = AR_P_GRID_COL_START;
         }
 
         ar__skip_ws(z);
@@ -1486,6 +2114,94 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule)
             bits |= vals[i].v;
         }
         ar__set(rule, (ar_u8)prop, bits, AR_UNIT_KEYWORD);
+    }
+    else if (prop == AR_SH_GAP)
+    {
+        /* `gap: <row> <column>`, row first, and one value means both. The
+           single-axis property is kept as well because flex only ever used
+           one and every stylesheet written against areole says `gap`. */
+        ar__set(rule, AR_P_ROW_GAP, vals[0].v, vals[0].unit);
+        ar__set(rule, AR_P_COL_GAP, n > 1 ? vals[1].v : vals[0].v,
+                n > 1 ? vals[1].unit : vals[0].unit);
+        ar__set(rule, AR_P_GAP, vals[0].v, vals[0].unit);
+    }
+    else if (prop == AR_SH_GRID_COLUMN || prop == AR_SH_GRID_ROW)
+    {
+        /*
+         * `grid-column: 2 / span 3`.
+         *
+         * The slash is skipped by the value loop the way any punctuation is,
+         * so the two numbers arrive as two values -- start then end. A single
+         * value is a start with an automatic end, which for a line number
+         * means one track.
+         */
+        ar_u8 a = (ar_u8)(prop == AR_SH_GRID_COLUMN ? AR_P_GRID_COL_START : AR_P_GRID_ROW_START);
+        ar_u8 b = (ar_u8)(prop == AR_SH_GRID_COLUMN ? AR_P_GRID_COL_END : AR_P_GRID_ROW_END);
+
+        ar__set(rule, a, vals[0].v, vals[0].unit);
+        if (n > 1)
+        {
+            ar__set(rule, b, vals[1].v, vals[1].unit);
+        }
+    }
+    else if (prop == AR_SH_FLEX)
+    {
+        /*
+         * `flex: <grow> <shrink> <basis>`, and the two short forms.
+         *
+         * A single number means `<grow> 1 0` -- and the zero basis is the part
+         * that matters: `flex: 1` on three boxes makes them equal whatever is
+         * in them, while `flex-grow: 1` alone leaves each one its content's
+         * width and shares only the surplus. Writing one and meaning the other
+         * is the most common flexbox mistake there is, and the shorthand is
+         * where CSS chose to make the difference.
+         *
+         * A single length means `1 1 <basis>`.
+         */
+        ar_i32 i, factors = 0;
+
+        for (i = 0; i < n; ++i)
+        {
+            if (vals[i].unit == AR_UNIT_NUMBER)
+            {
+                ar__set(rule, (ar_u8)(factors == 0 ? AR_P_FLEX_GROW : AR_P_FLEX_SHRINK), vals[i].v,
+                        AR_UNIT_NUMBER);
+                ++factors;
+            }
+            else
+            {
+                ar__set(rule, AR_P_FLEX_BASIS, vals[i].v, vals[i].unit);
+            }
+        }
+        if (factors == 1)
+        {
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+        if (factors > 0 && !ar_pset_has(rule->set, AR_P_FLEX_BASIS))
+        {
+            ar__set(rule, AR_P_FLEX_BASIS, 0, AR_UNIT_PX);
+        }
+        if (factors == 0 && n > 0)
+        {
+            ar__set(rule, AR_P_FLEX_GROW, 1000, AR_UNIT_NUMBER);
+            ar__set(rule, AR_P_FLEX_SHRINK, 1000, AR_UNIT_NUMBER);
+        }
+    }
+    else if (prop == AR_SH_PLACE_ITEMS || prop == AR_SH_PLACE_CONTENT || prop == AR_SH_PLACE_SELF)
+    {
+        /* `place-*` is `<align> <justify>`, align first, and one value means
+           both. areole has no separate justify-self yet, so the second value
+           lands on the container's justify where there is one to land on. */
+        ar_u8 a = (ar_u8)(prop == AR_SH_PLACE_ITEMS     ? AR_P_ALIGN
+                          : prop == AR_SH_PLACE_CONTENT ? AR_P_ALIGN_CONTENT
+                                                        : AR_P_ALIGN_SELF);
+
+        ar__set(rule, a, vals[0].v, vals[0].unit);
+        if (prop != AR_SH_PLACE_SELF)
+        {
+            ar__set(rule, AR_P_JUSTIFY, n > 1 ? vals[1].v : vals[0].v,
+                    n > 1 ? vals[1].unit : vals[0].unit);
+        }
     }
     else
     {
@@ -2096,6 +2812,16 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->cache_misses = 0;
 }
 
+void ar_sheet_set_tracks(ar_sheet *sheet, ar_track *storage, ar_u16 capacity)
+{
+    sheet->tracks = storage;
+    sheet->track_cap = capacity;
+    /* Index zero is spent so that zero can mean "no track list" -- the same
+       trick line numbering uses, and for the same reason: a sentinel that
+       cannot be confused with a real answer. */
+    sheet->track_count = 1;
+}
+
 void ar_sheet_set_cache(ar_sheet *sheet, ar_cache_entry *storage, ar_u16 capacity)
 {
     sheet->cache = storage;
@@ -2300,7 +3026,7 @@ void ar_sheet_parse(ar_sheet *sheet, const char *css)
             {
                 break;
             }
-            ar__parse_decl(&z, &rule[0]);
+            ar__parse_decl(&z, &rule[0], sheet);
         }
         if (z.p < z.end)
         {
