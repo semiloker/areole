@@ -106,6 +106,12 @@ target_include_directories(ar_units PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_units PRIVATE areole)
 areole_set_warnings(ar_units)
 
+add_executable(ar_calc tests/ar_calc.c)
+target_include_directories(ar_calc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                                            "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+target_link_libraries(ar_calc PRIVATE areole)
+areole_set_warnings(ar_calc)
+
 add_executable(ar_gallery tests/ar_gallery.c)
 target_include_directories(ar_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ar_gallery PRIVATE areole)
