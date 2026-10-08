@@ -385,7 +385,7 @@ toolkit breaks that circle.
 - **0.6.2** *It knows where the screen is* — scroll snap, sticky containing blocks, `env()` and the safe area ✅
 - **0.6.3** *It puts a dialog on top* — the top layer, `::backdrop`, `inert`, anchor positioning ✅
 - **0.7.0** *It has tables* — anonymous boxes, both layout algorithms, spans, border collapse
-- **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`
+- **0.7.1** *Its tables behave* — sticky headers, a frozen column, `visibility: collapse`, `caption-side`, `empty-cells`, `col` widths
 - **0.9.0** *It reads HTML* — a real parser, and the demo gallery against Chrome
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.

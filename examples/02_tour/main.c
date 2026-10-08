@@ -377,6 +377,36 @@ static const char *SHEET_TABLE_B =
     ".tall { rowspan:2; background:#c8d6c2; }"
     ".coll .cell { border:2px #6a6258; }";
 
+/*
+ * The 0.7.1 page.
+ *
+ * One table, scrolled, with its header pinned and its first column frozen --
+ * and a second table beside it with a row and a column closed, so the two
+ * meanings of "gone" can be seen next to each other.
+ *
+ * `.rgone` and `.cgone` are the same declaration on different boxes, which is
+ * the point: `visibility: collapse` removes the track and leaves every other
+ * column exactly where it was.
+ */
+static const char *SHEET_T71_A = ".vport { display:block; width:250px; height:88px; overflow:auto;"
+                                 "         background:#faf7f0; margin-bottom:10px; }"
+                                 /* Not `.wide`: the scroll page already has one, 900 px and a
+                                    block, and this rule is written later so it would win on both.
+                                    The 0.7.0 page learned the same lesson one release ago. */
+                                 ".wtable { display:table; width:420px; }"
+                                 ".thead { display:table-header-group; position:sticky; top:0px; }"
+                                 ".froze { position:sticky; left:0px; }";
+
+static const char *SHEET_T71_B =
+    ".hcell { display:table-cell; width:105px; height:20px; font-size:11px;"
+    "         color:#3a352e; padding:2px 6px; background:#b9c8dc; }"
+    ".bcell { display:table-cell; width:105px; height:20px; font-size:11px;"
+    "         color:#3a352e; padding:2px 6px; background:#cfd8e3; }"
+    ".colgrp { display:table-column-group; }"
+    ".colbox { display:table-column; }"
+    ".rgone { visibility:collapse; }"
+    ".cgone { visibility:collapse; }";
+
 /* ------------------------------------------------------------------------
  * Pages
  * ------------------------------------------------------------------------ */
@@ -394,11 +424,13 @@ enum
     PAGE_SAFE,
     PAGE_LAYER,
     PAGE_TABLE,
+    PAGE_TABLE2,
     PAGE_COUNT
 };
 
-static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0", "0.4.0",
-                                           "0.5.0", "0.6.0", "0.6.1", "0.6.2", "0.6.3", "0.7.0"};
+static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "0.3.0",
+                                           "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.6.2",
+                                           "0.6.3", "0.7.0", "0.7.1"};
 
 static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "The counters",
@@ -411,7 +443,8 @@ static const char *PAGE_NAME[PAGE_COUNT] = {"One block, one blit",
                                             "Scrolling",
                                             "Sticky and safe areas",
                                             "The top layer",
-                                            "Tables"};
+                                            "Tables",
+                                            "Tables that behave"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -425,7 +458,8 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Both axes, snapping, a styled bar, and the arrow keys.",
     "Pinned from either edge, and the display the backend described.",
     "Above every stacking context, out of every clip, attached to an anchor.",
-    "A constraint solve, not a tree walk: columns, spans and collapsed lines."};
+    "A constraint solve, not a tree walk: columns, spans and collapsed lines.",
+    "A header that stays, a column that stays, and a row that is not there."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -1064,6 +1098,81 @@ static void page_table(ar_ctx *ui)
     ar_end(ui);
 }
 
+/*
+ * 0.7.1: what a table has to do before anyone can read one.
+ *
+ * A header that scrolls away is a table you have to keep scrolling back to,
+ * and a filter that moves every column is a table you have to read twice.
+ * Both are on this page, and the second is the one worth looking at twice: the
+ * closed row's columns do not move, which is the whole reason `collapse` is
+ * not `display: none`.
+ */
+static void page_table2(ar_ctx *ui)
+{
+    ar_i32 r;
+
+    ar_text(ui, "div.h2", "A header that stays, and a column that stays");
+    ar_text(ui, "div.dim",
+            "Scroll the panel below with the wheel or drag it sideways. The "
+            "header row stays at the top and the first column stays at the "
+            "left, both by saying `position: sticky` -- the same mechanism a "
+            "sticky sidebar uses, applied to a table box. Nothing here asks "
+            "for a z-index: a sticky box is positioned, so it already paints "
+            "above the rows going under it.");
+
+    ar_begin(ui, "div.vport");
+    ar_begin(ui, "div.wtable");
+    ar_begin(ui, "div.thead");
+    ar_begin(ui, "div.trow");
+    ar_text(ui, "div.hcell.froze", "name");
+    ar_text(ui, "div.hcell", "opened");
+    ar_text(ui, "div.hcell", "closed");
+    ar_text(ui, "div.hcell", "owner");
+    ar_end(ui);
+    ar_end(ui);
+    for (r = 0; r < 6; ++r)
+    {
+        ar_begin(ui, "div.trow");
+        ar_text(ui, "div.bcell.froze", "row");
+        ar_text(ui, "div.bcell", "may");
+        ar_text(ui, "div.bcell", "june");
+        ar_text(ui, "div.bcell", "us");
+        ar_end(ui);
+    }
+    ar_end(ui);
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "A row and a column that are not there");
+    ar_text(ui, "div.dim",
+            "The middle row and the third column say `visibility: collapse`. "
+            "The row is gone and the rows below it have closed up; the column "
+            "is gone and the table is narrower by exactly that column. What "
+            "has not happened is the interesting part -- none of the other "
+            "columns moved. That is the whole difference from `display: none`, "
+            "and the reason a filter over a table is bearable to read.");
+
+    ar_begin(ui, "div.tbl.auto");
+    /* The column is closed on the `col` box, which is the only place CSS lets
+       it be said -- `visibility: collapse` on a cell is not a column. */
+    ar_begin(ui, "div.colgrp");
+    ar_begin(ui, "div.colbox");
+    ar_end(ui);
+    ar_begin(ui, "div.colbox");
+    ar_end(ui);
+    ar_begin(ui, "div.colbox.cgone");
+    ar_end(ui);
+    ar_end(ui);
+    for (r = 0; r < 3; ++r)
+    {
+        ar_begin(ui, r == 1 ? "div.trow.rgone" : "div.trow");
+        ar_text(ui, "div.cell", "one");
+        ar_text(ui, "div.cell", "two");
+        ar_text(ui, "div.cell", "three");
+        ar_end(ui);
+    }
+    ar_end(ui);
+}
+
 static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct settings *set,
                       int have_font, const char *family)
 {
@@ -1098,6 +1207,9 @@ static void page_body(ar_ctx *ui, const ar_surface *s, ar_i32 page, struct setti
         break;
     case PAGE_TABLE:
         page_table(ui);
+        break;
+    case PAGE_TABLE2:
+        page_table2(ui);
         break;
     case PAGE_SCROLL:
         page_scroll(ui, g_slide);
@@ -1661,6 +1773,8 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_ANCH2);
     ar_stylesheet(ui, SHEET_TABLE_A);
     ar_stylesheet(ui, SHEET_TABLE_B);
+    ar_stylesheet(ui, SHEET_T71_A);
+    ar_stylesheet(ui, SHEET_T71_B);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */

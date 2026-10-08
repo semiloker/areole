@@ -419,9 +419,32 @@ void ar_position_out_of_flow(ar_node *nodes, ar_i32 i, ar_rect viewport)
  * Children come after their parents in the array, so a forward walk from the
  * box reaches all of them; the ancestor test is what keeps it to the subtree.
  */
+/* The children, through the child links. */
+static void ar__shift_kids_pos(ar_node *nodes, ar_i32 i, ar_i32 dx, ar_i32 dy)
+{
+    ar_i32 c;
+
+    for (c = nodes[i].first_child; c >= 0; c = nodes[c].next_sibling)
+    {
+        nodes[c].rect.x += dx;
+        nodes[c].rect.y += dy;
+        ar__shift_kids_pos(nodes, c, dx, dy);
+    }
+}
+
+/*
+ * Move a box and everything under it.
+ *
+ * Through the child links rather than by scanning the node array from this box
+ * onward and asking each one whether it is a descendant. That scan is the
+ * whole array per shifted box, which nobody noticed while the only sticky
+ * boxes on a page were a header or two -- and 0.7.1 freezes a *column*, which
+ * is one sticky box per row. Ten thousand rows against fifty thousand nodes is
+ * the quadratic nobody asked for.
+ */
 static void ar__shift_subtree(ar_node *nodes, ar_i32 count, ar_i32 i, ar_i32 dx, ar_i32 dy)
 {
-    ar_i32 j;
+    (void)count;
 
     if (!dx && !dy)
     {
@@ -429,20 +452,7 @@ static void ar__shift_subtree(ar_node *nodes, ar_i32 count, ar_i32 i, ar_i32 dx,
     }
     nodes[i].rect.x += dx;
     nodes[i].rect.y += dy;
-    for (j = i + 1; j < count; ++j)
-    {
-        ar_i32 at = nodes[j].parent;
-
-        while (at >= 0 && at != i)
-        {
-            at = nodes[at].parent;
-        }
-        if (at == i)
-        {
-            nodes[j].rect.x += dx;
-            nodes[j].rect.y += dy;
-        }
-    }
+    ar__shift_kids_pos(nodes, i, dx, dy);
 }
 
 /* The box a sticky element is pinned inside: its nearest scrolling ancestor,

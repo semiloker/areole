@@ -172,6 +172,17 @@ typedef enum ar_prop
     AR_P_COLSPAN,
     AR_P_ROWSPAN,
 
+    /* ------------------------------------------------------------------
+     * 0.7.1
+     *
+     * `visibility` is real CSS and inherits, which is the whole of what makes
+     * `collapse` on a row useful: the row goes and its cells go with it
+     * without any of them being named.
+     * ------------------------------------------------------------------ */
+    AR_P_VISIBILITY,
+    AR_P_CAPTION_SIDE,
+    AR_P_EMPTY_CELLS,
+
     /*
      * Everything above is stored in sixteen bits and everything below in
      * thirty-two, so this marker is load bearing rather than decorative: it is
@@ -443,6 +454,34 @@ enum
 
     AR_BORDER_SEPARATE = 0,
     AR_BORDER_COLLAPSE = 1
+};
+
+enum
+{
+    AR_VIS_VISIBLE = 0,
+    AR_VIS_HIDDEN,
+    /*
+     * `collapse` is not a third shade of hidden.
+     *
+     * On a row or a column it removes the track and closes the gap, and it
+     * does so **without recomputing the column widths** -- which is the entire
+     * difference from `display: none` and the reason the value exists. A
+     * filter that hides half a table's rows should not make every remaining
+     * column jump to a new width. Anywhere else it means `hidden`.
+     */
+    AR_VIS_COLLAPSE
+};
+
+enum
+{
+    AR_CAPTION_TOP = 0,
+    AR_CAPTION_BOTTOM
+};
+
+enum
+{
+    AR_EMPTY_SHOW = 0,
+    AR_EMPTY_HIDE
 };
 
 enum
