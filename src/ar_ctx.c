@@ -7169,6 +7169,59 @@ static ar_i32 ar__canvas_box(const ar_ctx *c)
     return -1;
 }
 
+/*
+ * The rectangle an inline box paints its background, border and outline
+ * into: its font's content area -- ascent and descent around the baseline --
+ * and its vertical padding and border outside that, whatever `line-height`
+ * made the line (CSS 2.1 10.6.1). The box's own rectangle is a line tall, and
+ * painted from that an inline `<code>` at line-height 1.6 drew a background
+ * 24 pixels tall where every browser draws 20 (#22).
+ *
+ * A box on one line only. One split across lines is painted as one block from
+ * its own rectangle, as before -- a limitation of its own.
+ */
+static ar_rect ar__inline_paint_rect(const ar_ctx *c, const ar_node *n)
+{
+    const ar_font_chain *ch;
+    const ar_face       *f;
+    ar_rect              r = n->rect;
+    ar_i32               ppem, asc, desc, base, pt, pb, bw;
+
+    /* An outline face only. The built-in bitmap face draws from the top of
+       its line rather than from a baseline and has no content area to
+       speak of; it keeps the line box it always painted. */
+    if (!c->have_face || !ar_flows_children(n) || n->line_h <= 0 || r.h >= 2 * n->line_h)
+    {
+        return r;
+    }
+    ch = ar_chain_for(c, n);
+    f = ch->count > 0 ? ch->face[0] : &c->face[0];
+    ppem = n->style.v[AR_P_FONT_SIZE];
+    if (!f || !f->ok || ppem <= 0)
+    {
+        return r;
+    }
+    /* The Windows metrics where the face has them, which is what a browser
+       on Windows sizes the box by; hhea otherwise. */
+    if (f->win_ascent > 0)
+    {
+        asc = ar__round_px(ar_face_scale(f, f->win_ascent, ppem));
+        desc = ar__round_px(ar_face_scale(f, f->win_descent, ppem));
+    }
+    else
+    {
+        asc = ar__round_px(ar_face_scale(f, f->ascender, ppem));
+        desc = ar__round_px(-ar_face_scale(f, f->descender, ppem));
+    }
+    base = r.y + n->ascent;
+    pt = n->style.v[AR_P_PAD_TOP];
+    pb = n->style.v[AR_P_PAD_BOTTOM];
+    bw = n->style.v[AR_P_BORDER_WIDTH];
+    r.y = base - asc - pt - bw;
+    r.h = asc + desc + pt + pb + 2 * bw;
+    return r;
+}
+
 static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 {
     ar_i32 ord;
@@ -7232,7 +7285,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
     {
         ar_i32   i = c->order ? c->order[ord] : ord;
         ar_node *n = &c->nodes[i];
-        ar_rect  clip;
+        ar_rect  clip, box;
         ar_color bg, border;
         ar_i32   bw;
         ar_i32   radius;
@@ -7310,16 +7363,17 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             continue;
         }
 
+        box = ar__inline_paint_rect(c, n);
         bg = (ar_color)AR_WIDE(&n->style, AR_P_BACKGROUND);
         if (AR_ALPHA_OF(bg) != 0 && i != canvas)
         {
             if (radius > 0)
             {
-                ar__fill_round(c, s, n->rect, radius, clip, bg);
+                ar__fill_round(c, s, box, radius, clip, bg);
             }
             else
             {
-                ar__fill(c, s, n->rect, clip, bg);
+                ar__fill(c, s, box, clip, bg);
             }
         }
 
@@ -7343,7 +7397,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
 
             if (ow > 0 && AR_ALPHA_OF(oc) != 0)
             {
-                ar_rect r = n->rect;
+                ar_rect r = box;
 
                 ar__fill(c, s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, ow), clip, oc);
                 ar__fill(c, s, ar_rect_make(r.x - ow, r.y + r.h, r.w + 2 * ow, ow), clip, oc);
@@ -7366,7 +7420,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
              */
             if (AR_ALPHA_OF(border) != 0)
             {
-                ar_rect r = n->rect;
+                ar_rect r = box;
                 ar_i32  t = n->edge[0], ri = n->edge[1], b = n->edge[2], l = n->edge[3];
 
                 if (t > 0)
@@ -7393,7 +7447,7 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
         }
         else if (bw > 0 && AR_ALPHA_OF(border) != 0)
         {
-            ar_rect r = n->rect;
+            ar_rect r = box;
 
             if (radius > 0)
             {

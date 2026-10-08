@@ -23045,6 +23045,66 @@ static void test_a_trailing_space_hangs(void)
           "hang: and the first holds both words, its space hanging past the edge");
 }
 
+/*
+ * An inline box's background covers its font's content area and its padding,
+ * not the line's height (#22).
+ */
+static void test_an_inline_background_is_its_fonts_height(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    code;
+    ar_i32     y, top = -1, bottom = -1, x;
+    ar_input   in;
+
+    /* An outline face, which has a baseline and a content area: the test
+       font's one glyph is 'A'. */
+    ar__ui_reset("");
+    CHECK(ar_font_load(g_ui, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 64),
+          "inline background: the outline face loads");
+    ar_ua_stylesheet(g_ui);
+    ar_stylesheet(g_ui, "body { margin:0; background:#ffffff; font-size:20px } "
+                        "p { margin:0; line-height:3 } code { background:#ff0000; padding:1px 4px; "
+                        "font-family:inherit; font-size:20px }");
+    ar__parse("<html><body><p id=\"p\">A <code id=\"c\">AA</code> A</p></body></html>");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+    code = ar__box(ar__first_tag_id("c"));
+    x = code.x + code.w / 2;
+    for (y = 0; y < 100; ++y)
+    {
+        if (ar__pixel_at(x, y) == 0xFF0000u)
+        {
+            top = top < 0 ? y : top;
+            bottom = y;
+        }
+    }
+    CHECK(top >= 0 && bottom - top + 1 < code.h,
+          "inline background: shorter than a line three times the font");
+    {
+        ar_i32 inside = 0, outside = 0, xx;
+
+        /* Ink rows on the background, and off it: the glyph's antialiased
+           top may sit a row above the content area, as a browser's does. */
+        for (y = code.y; y < code.y + code.h; ++y)
+        {
+            for (xx = code.x; xx < code.x + code.w; ++xx)
+            {
+                if ((ar__pixel_at(xx, y) & 0xFFu) < 0x40u &&
+                    ((ar__pixel_at(xx, y) >> 16) & 0xFFu) < 0x40u)
+                {
+                    inside += y >= top && y <= bottom;
+                    outside += y < top - 1 || y > bottom + 1;
+                }
+            }
+        }
+        CHECK(inside > 0 && outside == 0, "inline background: and its text is on it");
+    }
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24358,6 +24418,7 @@ int main(void)
     test_enter_moves_the_caret_down();
     test_a_field_clicked_into_is_ringed();
     test_a_trailing_space_hangs();
+    test_an_inline_background_is_its_fonts_height();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();
