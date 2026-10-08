@@ -177,6 +177,8 @@ void ar_style_defaults(ar_style *s)
 
     s->v[AR_P_OVERFLOW_ANCHOR] = AR_ANCHOR_AUTO;
     s->unit[AR_P_OVERFLOW_ANCHOR] = AR_UNIT_KEYWORD;
+    s->v[AR_P_CURSOR] = AR_CURSOR_AUTO;
+    s->unit[AR_P_CURSOR] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
     s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
@@ -421,6 +423,9 @@ int ar_prop_inherits(ar_i32 prop)
     switch (prop)
     {
     case AR_P_COLOR:
+    /* `cursor` inherits, which is what puts a hand over every word inside a
+       link: the words are child boxes, and the link's rule never met them. */
+    case AR_P_CURSOR:
     /* `color-scheme` inherits, which is what makes declaring it once on
        `:root` settle a whole document -- the same reason `color` does. */
     case AR_P_COLOR_SCHEME:
@@ -475,10 +480,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,       AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,      AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE,    AR_P_COLOR_SCHEME,
-                                      AR_P_WHITE_SPACE, AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY};
+static const ar_u8 AR__INHERITED[] = {
+    AR_P_COLOR,           AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,  AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,
+    AR_P_VISIBILITY,      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE, AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE,
+    AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY, AR_P_CURSOR};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -799,6 +804,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow-x", AR_P_OVERFLOW_X},
                                           {"overflow-y", AR_P_OVERFLOW},
                                           {"overflow-anchor", AR_P_OVERFLOW_ANCHOR},
+                                          {"cursor", AR_P_CURSOR},
                                           {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
                                           {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
                                           {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
@@ -1110,6 +1116,41 @@ static const ar__kw AR_KEYWORDS[] = {
 
     {"auto", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_AUTO},
     {"none", AR_P_OVERFLOW_ANCHOR, AR_ANCHOR_NONE},
+
+    /* The pointers a platform has. The resize arrows fold onto their four
+       axes, `all-scroll` onto `move`, and a keyword with no Windows pointer of
+       its own onto the nearest that has one. */
+    {"auto", AR_P_CURSOR, AR_CURSOR_AUTO},
+    {"default", AR_P_CURSOR, AR_CURSOR_DEFAULT},
+    {"pointer", AR_P_CURSOR, AR_CURSOR_POINTER},
+    {"text", AR_P_CURSOR, AR_CURSOR_TEXT},
+    {"vertical-text", AR_P_CURSOR, AR_CURSOR_TEXT},
+    {"move", AR_P_CURSOR, AR_CURSOR_MOVE},
+    {"all-scroll", AR_P_CURSOR, AR_CURSOR_MOVE},
+    {"not-allowed", AR_P_CURSOR, AR_CURSOR_NOT_ALLOWED},
+    {"no-drop", AR_P_CURSOR, AR_CURSOR_NOT_ALLOWED},
+    {"grab", AR_P_CURSOR, AR_CURSOR_GRAB},
+    {"grabbing", AR_P_CURSOR, AR_CURSOR_GRABBING},
+    {"crosshair", AR_P_CURSOR, AR_CURSOR_CROSSHAIR},
+    {"cell", AR_P_CURSOR, AR_CURSOR_CROSSHAIR},
+    {"wait", AR_P_CURSOR, AR_CURSOR_WAIT},
+    {"progress", AR_P_CURSOR, AR_CURSOR_PROGRESS},
+    {"help", AR_P_CURSOR, AR_CURSOR_HELP},
+    {"ew-resize", AR_P_CURSOR, AR_CURSOR_EW_RESIZE},
+    {"e-resize", AR_P_CURSOR, AR_CURSOR_EW_RESIZE},
+    {"w-resize", AR_P_CURSOR, AR_CURSOR_EW_RESIZE},
+    {"col-resize", AR_P_CURSOR, AR_CURSOR_EW_RESIZE},
+    {"ns-resize", AR_P_CURSOR, AR_CURSOR_NS_RESIZE},
+    {"n-resize", AR_P_CURSOR, AR_CURSOR_NS_RESIZE},
+    {"s-resize", AR_P_CURSOR, AR_CURSOR_NS_RESIZE},
+    {"row-resize", AR_P_CURSOR, AR_CURSOR_NS_RESIZE},
+    {"nesw-resize", AR_P_CURSOR, AR_CURSOR_NESW_RESIZE},
+    {"ne-resize", AR_P_CURSOR, AR_CURSOR_NESW_RESIZE},
+    {"sw-resize", AR_P_CURSOR, AR_CURSOR_NESW_RESIZE},
+    {"nwse-resize", AR_P_CURSOR, AR_CURSOR_NWSE_RESIZE},
+    {"nw-resize", AR_P_CURSOR, AR_CURSOR_NWSE_RESIZE},
+    {"se-resize", AR_P_CURSOR, AR_CURSOR_NWSE_RESIZE},
+    {"none", AR_P_CURSOR, AR_CURSOR_NONE},
 
     {"none", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_NONE},
     {"x", AR_P_SCROLL_SNAP_TYPE, AR_SNAP_AXIS_X},

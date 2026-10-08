@@ -669,7 +669,7 @@ static const char *const AR__UA[] = {
      * the gap between them. A border would take space in the line and box
      * each piece instead.
      */
-    ".ar-link { color:LinkText; text-decoration:underline; }"
+    ".ar-link { color:LinkText; text-decoration:underline; cursor:pointer; }"
     "u, ins { text-decoration:underline; }"
     "s, del, strike { text-decoration:line-through; }",
 

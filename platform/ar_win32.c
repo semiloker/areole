@@ -39,6 +39,9 @@ struct ar_win
     ar_surface render;
     SIZE_T     render_cap;
 
+    /* The pointer the page asked for at the last frame, AR_CURSOR_*. */
+    ar_i32 cursor;
+
     /* One frame's typed characters, as UTF-8, and the high half of a surrogate
        pair waiting for its partner. Windows sends an astral character as two
        messages and dropping the second is how an emoji becomes a question
@@ -219,6 +222,59 @@ int ar_win_set_render_scale(ar_win *win, ar_ctx *c, ar_i32 thousandths)
     win->resized = 1; /* the surface ar_win_surface hands out is a new one */
     win->awake = 1;
     return 1;
+}
+
+static void ar__apply_cursor(const ar_win *win)
+{
+    LPCTSTR shape = IDC_ARROW;
+
+    switch (win->cursor)
+    {
+    case AR_CURSOR_POINTER:
+    case AR_CURSOR_GRAB:
+    case AR_CURSOR_GRABBING:
+        shape = IDC_HAND;
+        break;
+    case AR_CURSOR_TEXT:
+        shape = IDC_IBEAM;
+        break;
+    case AR_CURSOR_MOVE:
+        shape = IDC_SIZEALL;
+        break;
+    case AR_CURSOR_NOT_ALLOWED:
+        shape = IDC_NO;
+        break;
+    case AR_CURSOR_CROSSHAIR:
+        shape = IDC_CROSS;
+        break;
+    case AR_CURSOR_WAIT:
+        shape = IDC_WAIT;
+        break;
+    case AR_CURSOR_PROGRESS:
+        shape = IDC_APPSTARTING;
+        break;
+    case AR_CURSOR_HELP:
+        shape = IDC_HELP;
+        break;
+    case AR_CURSOR_EW_RESIZE:
+        shape = IDC_SIZEWE;
+        break;
+    case AR_CURSOR_NS_RESIZE:
+        shape = IDC_SIZENS;
+        break;
+    case AR_CURSOR_NESW_RESIZE:
+        shape = IDC_SIZENESW;
+        break;
+    case AR_CURSOR_NWSE_RESIZE:
+        shape = IDC_SIZENWSE;
+        break;
+    case AR_CURSOR_NONE:
+        SetCursor(NULL);
+        return;
+    default:
+        break;
+    }
+    SetCursor(LoadCursor(NULL, shape));
 }
 
 static int ar__surface_create(ar_win *win, ar_i32 w, ar_i32 h)
@@ -720,6 +776,16 @@ static LRESULT CALLBACK ar__wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         ar_win_wake(win);
         return 0;
 
+    /* The pointer over the client area is the page's to choose; anywhere
+       else -- a border, the caption -- Windows keeps its own. */
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT)
+        {
+            ar__apply_cursor(win);
+            return TRUE;
+        }
+        break;
+
     case WM_MOUSEMOVE:
         win->input.mouse_x = (ar_i32)(short)LOWORD(lp);
         win->input.mouse_y = (ar_i32)(short)HIWORD(lp);
@@ -1136,6 +1202,21 @@ void ar_win_after_frame(ar_win *win, ar_ctx *c)
     if (clip && n > 0)
     {
         ar_win_set_clipboard(win, clip, n);
+    }
+
+    /* A new pointer is shown now, not at the next mouse move: a box that
+       starts asking for the hand under a still pointer gets it. */
+    if (ar_cursor(c) != win->cursor)
+    {
+        POINT p;
+        RECT  r;
+
+        win->cursor = ar_cursor(c);
+        if (GetCursorPos(&p) && ScreenToClient(win->hwnd, &p) && GetClientRect(win->hwnd, &r) &&
+            PtInRect(&r, p))
+        {
+            ar__apply_cursor(win);
+        }
     }
     ar_win_set_caret(win, ar_caret_rect(c));
     ar_win_wake_after(win, ar_caret_wait_us(c));

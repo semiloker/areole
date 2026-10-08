@@ -5122,6 +5122,38 @@ const char *ar_field_text(ar_ctx *c, ar_u32 *len)
     return c->edit.text;
 }
 
+/*
+ * `auto`, decided the way a browser decides it: up from the box under the
+ * pointer, a text field asks for the I-beam and any other control for the
+ * arrow -- a button's label is not text anybody selects -- and outside every
+ * control a box with words in it asks for the I-beam (#24).
+ */
+ar_i32 ar_cursor(const ar_ctx *c)
+{
+    ar_i32 at, k;
+
+    if (!c || c->hot_index < 0 || c->hot_index >= c->node_count)
+    {
+        return AR_CURSOR_DEFAULT;
+    }
+    if (c->nodes[c->hot_index].style.v[AR_P_CURSOR] != AR_CURSOR_AUTO)
+    {
+        return c->nodes[c->hot_index].style.v[AR_P_CURSOR];
+    }
+    for (at = c->hot_index; at >= 0; at = c->nodes[at].parent)
+    {
+        for (k = 0; k < c->control_n; ++k)
+        {
+            if (c->control_box[k] == at && c->control_kind[k] != AR_CTL_LABEL)
+            {
+                return c->control_kind[k] == AR_CTL_TEXT ? AR_CURSOR_TEXT : AR_CURSOR_DEFAULT;
+            }
+        }
+    }
+    return c->nodes[c->hot_index].text && c->nodes[c->hot_index].text[0] ? AR_CURSOR_TEXT
+                                                                         : AR_CURSOR_DEFAULT;
+}
+
 ar_rect ar_caret_rect(const ar_ctx *c)
 {
     if (!c)

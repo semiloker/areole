@@ -699,11 +699,14 @@ typedef ar_i32 ar_scroll_pos;
  * (AR_MAX_CLASSES, in ar_css.h, says why four was wrong). Sixteen bytes of
  * hashes, measured, and `opacity` beside them cost nothing -- three bytes the
  * style's alignment had already rounded away.
+ *
+ * 600 -> 608 for `cursor` (#24): three bytes again, and this time alignment
+ * rounds them to eight. Measured: a node of 552 and its slot of 56.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 600u
+#define AR_BYTES_PER_BOX 608u
 #else
-#define AR_BYTES_PER_BOX 600u
+#define AR_BYTES_PER_BOX 608u
 #endif
 
 /*
@@ -893,12 +896,15 @@ typedef ar_i32 ar_scroll_pos;
  * same five kilobytes of headroom as before. The rule table is the whole of
  * it; nothing else in the fixed block holds a class.
  *
- * Unchanged since, and 3,112 bytes closer to it: four more faces in the pool
- * and the bold, italic and bold-italic chains of the sans-serif and monospace
- * families (#21), and the previous frame's text fields for the focus ring
- * (#25). 345,824 measured of 348,160, with the slack.
+ * Then 3,112 bytes closer to it: four more faces in the pool and the bold,
+ * italic and bold-italic chains of the sans-serif and monospace families
+ * (#21), and the previous frame's text fields for the focus ring (#25) --
+ * 345,824 of 348,160 -- and then over it, by `cursor` (#24): eight bytes on
+ * each of the 320 rules is 2,560 more, 348,896 measured.
+ *
+ * 340 KB -> 344 KB: 348,896 of 352,256, three kilobytes of headroom.
  */
-#define AR_MEM_FIXED  348160u
+#define AR_MEM_FIXED  352256u
 #define AR_MEM(boxes) (AR_MEM_FIXED + (ar_u32)(boxes) * AR_BYTES_PER_BOX)
 
 /*
@@ -916,9 +922,9 @@ typedef ar_i32 ar_scroll_pos;
  * The assertion below now ties the two together, because a comment could not.
  *
  * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
- * it was four.
+ * it was four. 700 -> 708 for `cursor`, the eight bytes a style grew by.
  */
-#define AR_BYTES_PER_RULE 700u
+#define AR_BYTES_PER_RULE 708u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting
@@ -1333,6 +1339,35 @@ ar_i32 ar_tab_stops(const ar_ctx *c);
  * frame painted rather than the one it was going to.
  */
 ar_rect ar_caret_rect(const ar_ctx *c);
+
+/*
+ * The pointer the box under the mouse asks for: the `cursor` property, and
+ * for `auto` what a browser picks -- an I-beam over a text field and over
+ * text, the arrow over a button, a checkbox or anything else. As of the last
+ * ar_frame_end; a backend sets the platform's pointer from it (the Win32 one
+ * does, in ar_win_after_frame).
+ */
+enum
+{
+    AR_CURSOR_AUTO = 0,
+    AR_CURSOR_DEFAULT,
+    AR_CURSOR_POINTER,
+    AR_CURSOR_TEXT,
+    AR_CURSOR_MOVE,
+    AR_CURSOR_NOT_ALLOWED,
+    AR_CURSOR_GRAB,
+    AR_CURSOR_GRABBING,
+    AR_CURSOR_CROSSHAIR,
+    AR_CURSOR_WAIT,
+    AR_CURSOR_PROGRESS,
+    AR_CURSOR_HELP,
+    AR_CURSOR_EW_RESIZE,
+    AR_CURSOR_NS_RESIZE,
+    AR_CURSOR_NESW_RESIZE,
+    AR_CURSOR_NWSE_RESIZE,
+    AR_CURSOR_NONE
+};
+ar_i32 ar_cursor(const ar_ctx *c);
 
 /*
  * How long until the caret next blinks, in microseconds, or 0 when there is

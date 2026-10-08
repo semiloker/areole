@@ -23206,6 +23206,45 @@ static void test_controls_answer_the_pointer(void)
     ar__point_at(&s, 390, 290, 0);
 }
 
+/*
+ * The pointer a box asks for: `cursor` as stated and inherited, and for `auto`
+ * an I-beam over a field and over text, the arrow over a control (#24).
+ */
+static void test_the_pointer_shape(void)
+{
+    ar_surface s = ar__ui_surface(400, 300);
+    ar_rect    r;
+
+    ar__render_html(&s,
+                    "<html><body><input id=\"f\"><button id=\"b\">Go</button>"
+                    "<p id=\"t\">words</p><a id=\"a\" href=\"#\">link</a>"
+                    "<div id=\"m\" style=\"cursor:move; height:20px\"><span>in</span></div>"
+                    "<div id=\"e\" style=\"height:20px\"></div></body></html>",
+                    "body { margin:0 } p { margin:0 } a, div { display:block }");
+    ar__reframe(&s);
+    CHECK(g_ui->nodes[ar__first_tag_id("m")].style.v[AR_P_CURSOR] == AR_CURSOR_MOVE &&
+              g_ui->nodes[ar__first_tag_id("m") + 1].style.v[AR_P_CURSOR] == AR_CURSOR_MOVE,
+          "cursor: parsed, and inherited by a child");
+    r = ar__box(ar__first_tag_id("f"));
+    ar__point_at(&s, r.x + r.w / 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_TEXT, "cursor: an I-beam over a text field");
+    r = ar__box(ar__first_tag_id("b"));
+    ar__point_at(&s, r.x + r.w / 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_DEFAULT, "cursor: the arrow over a button and its label");
+    r = ar__box(ar__first_tag_id("t"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_TEXT, "cursor: an I-beam over words");
+    r = ar__box(ar__first_tag_id("a"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_POINTER, "cursor: a hand over a link");
+    r = ar__box(ar__first_tag_id("m"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_MOVE, "cursor: what the page asked for");
+    r = ar__box(ar__first_tag_id("e"));
+    ar__point_at(&s, r.x + 2, r.y + r.h / 2, 0);
+    CHECK(ar_cursor(g_ui) == AR_CURSOR_DEFAULT, "cursor: and the arrow over nothing");
+}
+
 /* Enter at the end of a textarea puts the caret on the new line at once. */
 static void test_enter_moves_the_caret_down(void)
 {
@@ -24522,6 +24561,7 @@ int main(void)
     test_an_inline_background_is_its_fonts_height();
     test_sans_serif_has_a_bold();
     test_controls_answer_the_pointer();
+    test_the_pointer_shape();
     test_a_render_scale_paints_the_same_layout();
     test_resampling_a_scaled_picture();
     test_current_color();

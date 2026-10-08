@@ -576,6 +576,7 @@ tooltip shoved sideways to fit stops pointing at anything.
 | `border-radius` | length — one value, all four corners |
 | `font-size` | length |
 | `opacity` | number or percentage — see below |
+| `cursor` | every keyword, no `url()`; inherited. `auto` is an I-beam over a text field and over text and the arrow over a control; `ar_cursor` reports it for a backend to show |
 
 **The canvas takes the root's background**, CSS 2.1 14.2, and in an HTML
 document whose root names none, the body's: `body { background: ... }`
