@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 
+# One source of truth for the version, which is include/areole.h. The copy that
+# used to live here said 0.1.0 while the header said 0.6.0, because two places
+# to edit means one of them is always wrong.
+file(STRINGS include/areole.h AR_VERSION_LINE
+     REGEX "^#define AR_VERSION_STRING")
+string(REGEX MATCH "[0-9]+\.[0-9]+\.[0-9]+" AR_VERSION "${AR_VERSION_LINE}")
+if(NOT AR_VERSION)
+    message(FATAL_ERROR "could not read AR_VERSION_STRING from include/areole.h")
+endif()
+
 project(areole
-        VERSION 0.1.0
+        VERSION ${AR_VERSION}
         DESCRIPTION "A GUI library in strict C89 with no graphics API"
         LANGUAGES C)
 
@@ -177,7 +187,26 @@ endif()
 #
 # Two out of two of the libraries areole is measured against would fail its own
 # build rules. Their translation units get relaxed flags; the library keeps C89.
+#
+# The flags have to be spelled per compiler, and were not: cl rejects
+# -Wno-pedantic outright with "D8021: invalid numeric argument", so the msvc job
+# could not build this target at all. A gcc spelling does not reach MSVC just
+# because both compile C.
+if(MSVC)
+    # /W0 rather than a list of suppressions: MSVC names these warnings
+    # differently, and enumerating them buys nothing on two vendored files
+    # nobody here will edit. /std:c11 is what Clay's compound literals and
+    # designated initializers need in C mode.
+    set(AREOLE_VENDOR_CLAY "/std:c11 /W0")
+    set(AREOLE_VENDOR_MICROUI "/std:c11 /W0")
+else()
+    set(AREOLE_VENDOR_CLAY
+        "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
+    set(AREOLE_VENDOR_MICROUI
+        "-std=gnu99 -Wno-pedantic -Wno-cast-qual -Wno-shadow -Wno-long-long -Wno-error")
+endif()
+
 set_source_files_properties(bench/compare/cmp_clay.c PROPERTIES
-    COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-missing-prototypes -Wno-error -Wno-unused-parameter")
+    COMPILE_FLAGS "${AREOLE_VENDOR_CLAY}")
 set_source_files_properties(third_party/bench/microui.c PROPERTIES
-    COMPILE_FLAGS "-std=gnu99 -Wno-pedantic -Wno-cast-qual -Wno-shadow -Wno-long-long -Wno-error")
+    COMPILE_FLAGS "${AREOLE_VENDOR_MICROUI}")

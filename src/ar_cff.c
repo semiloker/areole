@@ -169,7 +169,8 @@ static int ar__cff_dict_get(const ar_face *f, ar_u32 at, ar_u32 end, ar_u32 op, 
         }
         else if (b0 == 29)
         {
-            ar_u32 v = ((ar_u32)ar__cff_u8(f, at + 1) << 24) | ((ar_u32)ar__cff_u8(f, at + 2) << 16) |
+            ar_u32 v = ((ar_u32)ar__cff_u8(f, at + 1) << 24) |
+                       ((ar_u32)ar__cff_u8(f, at + 2) << 16) |
                        ((ar_u32)ar__cff_u8(f, at + 3) << 8) | ar__cff_u8(f, at + 4);
             stack[sp++] = (ar_i32)v;
             at += 5;

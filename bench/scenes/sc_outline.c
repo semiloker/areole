@@ -60,7 +60,7 @@ int bench_font_load(const char *path)
 /* Sixteen sizes of a Latin alphabet is well over a thousand distinct glyphs.
    Sized past that on purpose: an undersized cache is worth measuring, but not
    by accident in a scene that claims to be measuring something else. */
-#define OUT_SLOTS  4096
+#define OUT_SLOTS 4096
 
 static ar_face          g_face;
 static ar_glyph_cache   g_cache;
@@ -161,14 +161,15 @@ static const bench_scene SC_AA = {"outline_aa",
                                   init_aa,
                                   frame_paragraph};
 
-static const bench_scene SC_ALIASED = {"outline_aliased",
-                                       "outline",
-                                       "the same text with antialiasing off: an opaque store, not a blend",
-                                       800,
-                                       600,
-                                       0,
-                                       init_aliased,
-                                       frame_paragraph};
+static const bench_scene SC_ALIASED = {
+    "outline_aliased",
+    "outline",
+    "the same text with antialiasing off: an opaque store, not a blend",
+    800,
+    600,
+    0,
+    init_aliased,
+    frame_paragraph};
 
 static const bench_scene SC_SIZES = {"outline_sizes",
                                      "outline",
@@ -179,14 +180,15 @@ static const bench_scene SC_SIZES = {"outline_sizes",
                                      init_aa,
                                      frame_sizes};
 
-static const bench_scene SC_COLD = {"outline_cold",
-                                    "outline",
-                                    "one line with the cache dropped every frame: what caching is worth",
-                                    800,
-                                    600,
-                                    0,
-                                    init_aa,
-                                    frame_cold};
+static const bench_scene SC_COLD = {
+    "outline_cold",
+    "outline",
+    "one line with the cache dropped every frame: what caching is worth",
+    800,
+    600,
+    0,
+    init_aa,
+    frame_cold};
 
 void bench_register_outline(void)
 {
