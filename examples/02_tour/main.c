@@ -13,7 +13,8 @@
  *   0.4.0  the cascade: inheritance, combinators, !important, structure
  *   0.5.0  block and inline: margin collapsing, floats, fragmented inlines
  *   0.6.0  position and scroll: absolute, sticky, z-index, a scrollable list
- *   0.6.1  both axes, nested containers, and a scrollbar you can drag
+ *   0.6.1  both axes, nested containers, a scrollbar you can drag, snapping,
+ *          keyboard scrolling and a styled thin bar
  *
  * Every page is declared with ar_begin and ar_text and laid out from the
  * stylesheet below. There is one coordinate in this file, for the overlay,
@@ -221,6 +222,28 @@ static const char *SHEET_SCROLL2 =
     "         padding:6px; }"
     ".inner { display:block; height:90px; overflow:scroll; background:#fdfaf3; }";
 
+/*
+ * A second sheet rather than more of the first, because C89 guarantees only
+ * 509 characters in a string literal after concatenation and the combined one
+ * came to 786. gcc says so with -Woverlength-strings under -pedantic-errors,
+ * which is the gate doing its job: a compiler with extensions on would have
+ * taken it and left the limit to be discovered on an old toolchain.
+ *
+ * A snapping list. Rows are 34 tall and a notch is 30, so a wheel that did not
+ * snap would leave one straddling the top edge on every notch -- which is what
+ * makes the snapping visible rather than asserted. `contain` stops the notch
+ * chaining to the page once the list bottoms out, and the bar is thin and
+ * coloured because it was asked to be.
+ */
+static const char *SHEET_SNAP =
+    ".snap  { display:block; height:102px; overflow:scroll; background:#fdfaf3;"
+    "         scroll-snap-type: y mandatory; overscroll-behavior: contain;"
+    "         scrollbar-width: thin; scrollbar-color: #9c8f74 #efe8d8;"
+    "         scrollbar-gutter: stable; }"
+    ".slide { display:block; height:34px; padding:0px 8px; font-size:12px;"
+    "         color:#4a453e; scroll-snap-align: start; }"
+    ".slide:nth-child(even) { background:#efe8d8; }";
+
 /* ------------------------------------------------------------------------
  * Text for the 0.3.0 page
  *
@@ -275,7 +298,7 @@ static const char *PAGE_VER[PAGE_COUNT] = {"0.1.0", "0.1.1", "0.1.2", "0.2.0", "
 
 static const char *PAGE_NAME[PAGE_COUNT] = {
     "One block, one blit", "The counters",     "Damage tracking",     "Outlines", "Scripts",
-    "The cascade",         "Block and inline", "Position and scroll", "Both axes"};
+    "The cascade",         "Block and inline", "Position and scroll", "Scrolling"};
 
 static const char *PAGE_SUB[PAGE_COUNT] = {
     "No allocator, no graphics API, no coordinates in the C file.",
@@ -286,7 +309,7 @@ static const char *PAGE_SUB[PAGE_COUNT] = {
     "Inheritance, combinators, !important, and the structural selectors.",
     "Margin collapsing, floats, line boxes and fragmented inlines.",
     "Absolute, fixed, sticky, z-index, and a list you can scroll.",
-    "overflow-x and overflow-y, nested containers, and a bar you can drag."};
+    "Both axes, snapping, a styled bar, and the arrow keys."};
 
 /*
  * Strings that have to survive until ar_frame_end.
@@ -742,6 +765,20 @@ static void page_scroll(ar_ctx *ui, ar_i32 slide)
     for (i = 0; i < 10; ++i)
     {
         ar_text(ui, "div.srow", fmt("outer row %ld", (long)(i + 1)));
+    }
+    ar_end(ui);
+
+    ar_text(ui, "div.h2", "Snapping, and a bar that was asked to be thin");
+    ar_text(ui, "div.dim",
+            "Rows are 34 tall and a notch is 30, so an unsnapped wheel would "
+            "leave one straddling the top edge every time. Page Up and Down, "
+            "Home and End work here too. The list says overscroll-behavior: "
+            "contain, so the notch stops at its own end rather than moving "
+            "the page.");
+    ar_begin(ui, "div.snap");
+    for (i = 0; i < 12; ++i)
+    {
+        ar_text(ui, "div.slide", fmt("slide %ld", (long)(i + 1)));
     }
     ar_end(ui);
 }
@@ -1326,6 +1363,7 @@ int main(int argc, char **argv)
     ar_stylesheet(ui, SHEET_POS);
     ar_stylesheet(ui, SHEET_POS2);
     ar_stylesheet(ui, SHEET_SCROLL2);
+    ar_stylesheet(ui, SHEET_SNAP);
     /* Written last so it can override, which is what the 0.1.0 page's
        swatches are: six boxes differing only in the colour a rule gives
        them. */

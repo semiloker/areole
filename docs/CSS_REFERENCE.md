@@ -32,15 +32,42 @@ rest of the file. Ask `ar_stylesheet_errors()` whether anything went wrong.
 Parts combine: `div.card#first` is a legal selector and so is the matching
 `ar_begin(ui, "div.card#first")`.
 
-**One class per selector.** `.nav.selected` is not supported — matching it
-means more than a hash compare. Use a second class name (`.nav-selected`).
+**Up to four classes per selector.** `.nav.selected` matches a box declared
+with both. Four is the limit on a rule and on a box alike.
 
-**No descendant selectors.** `.panel .btn` would mean walking the ancestor
-chain for every box on every frame. Nothing real has needed one yet; if
-something does, it is a change to `ar_sheet_resolve` and a cache.
+**Combinators.** All four, as of 0.4.0:
+
+| Form | Matches |
+| --- | --- |
+| `.panel .btn` | a descendant, anywhere below |
+| `.panel > .btn` | an immediate child |
+| `.a + .b` | the sibling immediately before |
+| `.a ~ .b` | any sibling before |
+
+A rule carrying a combinator cannot be answered from the style cache, whose key
+is the box's own tag, classes, id and state. Those rules are held apart and
+resolved per box; a stylesheet with no combinators pays nothing for it.
 
 Ties in specificity are broken by source order: the later rule wins. Rules are
 sorted once at parse time, so resolution is a single forward pass.
+
+## The cascade
+
+**`!important`** wins over any declaration that is not, whatever the
+specificity.
+
+**Inheritance.** `color` and `font-size` inherit from the parent box. Any
+property can be asked to with `inherit`, and `initial`, `unset` and `revert`
+are accepted too. `unset` is inherit or initial depending on the property;
+`revert` means "back to the UA sheet", and since there is no separate UA layer
+it means the same as `initial`.
+
+There is one author origin, so no origin ordering exists to get wrong.
+
+**One known ordering divergence:** rules carrying a combinator are resolved in
+a pass after the cached one, so a combinator rule beats a simple rule of higher
+specificity. `#id .btn` and `.btn#id` are not the trap; `.panel .btn` beating
+`#the-button` is.
 
 ## Properties
 
@@ -77,6 +104,76 @@ state no size of their own.
   algebra. Leftover pixels that do not divide evenly go one at a time to the
   boxes at the front, so a row of growers meets the far edge exactly.
 
+### Flow and position
+
+| Property | Values |
+| --- | --- |
+| `display` | `flex`, `block`, `inline-block`, `inline`, `none` |
+| `position` | `static`, `relative`, `absolute`, `fixed`, `sticky` |
+| `top` `right` `bottom` `left` | length |
+| `z-index` | integer |
+| `float` | `left`, `right` — the initial value is `none` |
+| `clear` | `left`, `right`, `both` |
+| `text-align` | `left`, `right`, `center` |
+| `vertical-align` | `baseline`, `top`, `middle`, `bottom` |
+| `box-sizing` | `content-box`, `border-box` |
+
+`box-sizing` defaults to `content-box`, as CSS says. areole used to treat a
+stated size as the border box, which put it 18 px from a browser on a padded
+box.
+
+### Overflow and scrolling
+
+| Property | Values |
+| --- | --- |
+| `overflow` | one or two of `visible`, `hidden`, `scroll`, `auto` — x then y |
+| `overflow-x` `overflow-y` | as above, one value |
+| `overscroll-behavior` `-x` `-y` | `auto`, `contain`, `none` |
+| `overflow-anchor` | `auto`, `none` |
+| `scroll-snap-type` | `none`, `x`, `y`, `both`, each optionally with `mandatory` or `proximity` |
+| `scroll-snap-align` | `none`, `start`, `center`, `end` |
+| `scroll-snap-stop` | `normal`, `always` |
+| `scroll-padding` `-top` `-right` `-bottom` `-left` | length |
+| `scroll-margin` `-top` `-right` `-bottom` `-left` | length |
+| `scrollbar-width` | `auto`, `thin`, `none` |
+| `scrollbar-gutter` | `auto`, `stable`, `both-edges` |
+| `scrollbar-color` | `<thumb> <track>` — a lone colour is the thumb |
+
+A box whose overflow is `scroll` or `auto` is a scroll container: it clips, it
+keeps a scroll position between frames, and it draws a scrollbar. `scroll`
+always shows one; `auto` shows it only when there is somewhere to go.
+
+**`visible` on one axis with anything else on the other becomes `auto`**, which
+CSS requires and a naive implementation drops. So `overflow-x: visible;
+overflow-y: hidden` is a horizontal scroller, which is exactly what someone
+writing it means.
+
+**The scrollbar is an overlay.** It is drawn inside the container's right edge
+rather than taken out of its width, so one appearing never reflows the text
+beside it. `scrollbar-gutter: stable` exists to prevent a layout shift that
+therefore cannot happen here; what it buys is that a row stops before the bar
+instead of running underneath it.
+
+Scrolling is driven by the wheel, by dragging the thumb, by the keys that
+scroll — arrows, Page Up and Down, Home, End, space — and by
+`ar_node_scroll_to` and `ar_node_scroll_into_view`.
+
+Where it settles is the same wherever it came from: a container with
+`scroll-snap-type` snaps after a wheel notch, after a key, and after
+`ar_node_scroll_to`, which is what CSS requires of any scrolling operation.
+Home and End deliberately do not snap, so the two ends of a list stay
+reachable.
+
+Four limits worth knowing, rather than discovering:
+
+- Snapping resolves on the block axis. The inline axis parses and is stored.
+- `ar_node_scroll_into_view` does not snap. Its contract is the minimum
+  distance that brings a box into view; the wheel, the keys and
+  `ar_node_scroll_to` all snap.
+- `scroll-padding` and `scroll-margin` have their four physical longhands, not
+  their logical forms. There are no logical properties anywhere yet.
+- `overflow-anchor` holds one container at a time.
+
 ### Paint
 
 | Property | Values |
@@ -88,7 +185,6 @@ state no size of their own.
 | `border-color` | colour |
 | `border-radius` | length — **parsed, not yet drawn** |
 | `font-size` | length |
-| `overflow` | `visible`, `hidden`, `scroll` — `scroll` currently clips |
 
 ## Values
 
@@ -121,12 +217,17 @@ Smooth text at arbitrary sizes is the optional TrueType module, later.
 Named so that their absence is a decision rather than an oversight:
 
 - `flex-wrap` — the next real gap in the solver. Use explicit rows meanwhile.
-- `position: absolute` and `fixed`
 - `align-self`, `flex-basis`, `flex-shrink`, `order`
 - `box-shadow`, gradients, `opacity` on a whole subtree
-- inheritance — `color` does not cascade to children; set it where you use it
-- `!important`, media queries, `@` rules of any kind
+- media queries, container queries, `@` rules of any kind
+- custom properties, `var()`, `calc()`
+- attribute selectors, pseudo-elements, `:nth-child(an+b)`
+- writing modes and logical properties, so no `-inline` or `-block` longhands
+- `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
+- grid, tables
 - shorthand `font`, `background` with anything but a colour
+- `font-family` is parsed and ignored: one face at a time, chosen by
+  `ar_font_load`
 
 ## Fonts
 

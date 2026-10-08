@@ -61,6 +61,48 @@ typedef enum ar_prop
        watching as the property count climbs. */
     AR_P_OVERSCROLL,
     AR_P_OVERSCROLL_X,
+
+    /* The bar areole draws for itself. It is drawn rather than asked for, so
+       these are honoured on every platform and look the same on all of them,
+       which is the one thing a native scrollbar can never promise. */
+    AR_P_SCROLLBAR_WIDTH,
+    AR_P_SCROLLBAR_GUTTER,
+
+    /*
+     * The two insets snapping and scroll-into-view are measured against.
+     *
+     * scroll-padding shrinks the scrollport: it belongs to the container and
+     * says "do not consider this strip to be visible", which is how a sticky
+     * header stops covering the thing just scrolled to.
+     *
+     * scroll-margin grows the target: it belongs to the child and says "bring
+     * this much of my surroundings along with me".
+     *
+     * Four sides each, adjacent and in top/right/bottom/left order, because
+     * the shorthand expansion keys off the first slot of a contiguous group.
+     */
+    AR_P_SCROLL_PAD_TOP,
+    AR_P_SCROLL_PAD_RIGHT,
+    AR_P_SCROLL_PAD_BOTTOM,
+    AR_P_SCROLL_PAD_LEFT,
+
+    AR_P_SCROLL_MARGIN_TOP,
+    AR_P_SCROLL_MARGIN_RIGHT,
+    AR_P_SCROLL_MARGIN_BOTTOM,
+    AR_P_SCROLL_MARGIN_LEFT,
+
+    /* Snapping. The type is on the container, the align and the stop are on
+       each child -- which is the split that makes a carousel expressible: the
+       track declares that it snaps and the slides declare where. */
+    AR_P_SCROLL_SNAP_TYPE,
+    AR_P_SCROLL_SNAP_ALIGN,
+    AR_P_SCROLL_SNAP_STOP,
+
+    /* Whether this container keeps its reading position when something above
+       the fold changes size. On by default, as CSS says, because the whole
+       point is that nobody should have to ask for it. */
+    AR_P_OVERFLOW_ANCHOR,
+
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -105,6 +147,11 @@ typedef enum ar_prop
     AR_P_BACKGROUND,
     AR_P_COLOR,
     AR_P_BORDER_COLOR,
+
+    /* `scrollbar-color` is two colours in one declaration, thumb then track,
+       and they cascade as one. Two slots because a colour is a colour. */
+    AR_P_SCROLLBAR_THUMB,
+    AR_P_SCROLLBAR_TRACK,
 
     AR_P_COUNT
 } ar_prop;
@@ -338,6 +385,91 @@ enum
     AR_OVERSCROLL_CONTAIN,
     AR_OVERSCROLL_NONE
 };
+
+enum
+{
+    /* The widths are the drawn widths, not a request to the platform: areole
+       has no platform scrollbar to ask. `none` still scrolls -- it hides the
+       bar, it does not stop the wheel, which is what every implementation of
+       this property has to get right or a list becomes unreachable. */
+    AR_SCROLLBAR_AUTO = 0,
+    AR_SCROLLBAR_THIN,
+    AR_SCROLLBAR_HIDDEN
+};
+
+enum
+{
+    /*
+     * areole's bar is an overlay, drawn inside the right edge rather than
+     * taken out of the width, so a bar appearing never reflows anything and
+     * the layout shift `stable` exists to prevent cannot happen here.
+     *
+     * What `stable` still buys is the overlap: an overlay bar is drawn on top
+     * of the content beside it. `stable` reserves its width at the inline end
+     * so the text stops before the bar instead of running under it.
+     */
+    AR_GUTTER_AUTO = 0,
+    AR_GUTTER_STABLE,
+    AR_GUTTER_BOTH_EDGES
+};
+
+/*
+ * scroll-snap-type is an axis and a strictness, and they are independent, so
+ * it is two fields packed into one property rather than one enum of every
+ * combination -- `both mandatory` and `y proximity` are both sayable.
+ *
+ * The axis occupies the low bits and the strictness the next one up.
+ */
+enum
+{
+    AR_SNAP_AXIS_NONE = 0,
+    AR_SNAP_AXIS_X,
+    AR_SNAP_AXIS_Y,
+    AR_SNAP_AXIS_BOTH,
+    AR_SNAP_AXIS_MASK = 3,
+
+    /* Land on a snap point only if one is close enough to be plausibly
+       intended, which is what lets a long list still be scrolled anywhere.
+
+       This is the zero state because CSS says an omitted strictness means
+       `proximity`: `scroll-snap-type: y` is `y proximity`, not `y mandatory`.
+       Getting that round the wrong way turns every ordinary scroll container
+       with one snap declaration into one that cannot be scrolled off a slide. */
+    AR_SNAP_PROXIMITY = 0,
+
+    /* Always land on a snap point. */
+    AR_SNAP_MANDATORY = 4
+};
+
+enum
+{
+    AR_SNAP_ALIGN_NONE = 0,
+    AR_SNAP_ALIGN_START,
+    AR_SNAP_ALIGN_CENTER,
+    AR_SNAP_ALIGN_END
+};
+
+enum
+{
+    AR_ANCHOR_AUTO = 0,
+    AR_ANCHOR_NONE
+};
+
+enum
+{
+    AR_SNAP_STOP_NORMAL = 0,
+
+    /* A gesture may not pass this box without stopping on it. It is what
+       separates a good carousel from an infuriating one: without it a hard
+       flick skips three slides. */
+    AR_SNAP_STOP_ALWAYS
+};
+
+/* How near a snap point has to be, under `proximity`, as a fraction of the
+   viewport. Chrome and Firefox both use about half; the exact figure is not
+   specified, and anything in that region feels the same. */
+#define AR_SNAP_PROXIMITY_NUM 1
+#define AR_SNAP_PROXIMITY_DEN 2
 
 typedef struct ar_style
 {

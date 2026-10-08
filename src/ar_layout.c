@@ -492,7 +492,8 @@ static void ar__wrap_height(ar_node *n, ar_i32 axis, int stretch, ar_layout_env 
         return;
     }
 
-    inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    inner_w =
+        n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT] - ar_scroll_gutter(n);
     if (inner_w <= 0)
     {
         return;
@@ -694,7 +695,13 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
     ar_i32   cursor;
     ar_i32   c;
 
-    inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
+    /* scrollbar-gutter takes its width off the inline end before the children
+       see it. areole's bar is an overlay so nothing reflows when one appears;
+       what the gutter buys is that the text stops before the bar rather than
+       running underneath it. Reserved whether or not a bar is showing, which
+       is the whole meaning of `stable`. */
+    inner_w =
+        n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT] - ar_scroll_gutter(n);
     inner_h = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
     if (inner_w < 0)
     {

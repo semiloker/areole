@@ -333,8 +333,11 @@ static const bench_scene SC_FLOAT_GALLERY = {
  * position moves underneath. Both are worth having -- they are different
  * things an application can do, and only one of them existed to measure.
  *
- * This is also the number 0.6.1's region move has to beat. Today the exposed
- * strip is repainted rather than blitted, so this is the honest before.
+ * This is also the scene 0.6.1's region move had to beat, and now the one that
+ * shows it working: the retained pixels are blitted and only the newly exposed
+ * strip is rasterized. Read it as fill_px rather than dirty_ratio -- a scroll
+ * moves every pixel of the container, so all of them must still be presented
+ * and the ratio stays at 1.000 however well the move works.
  * ------------------------------------------------------------------------ */
 static const char *const SHEET_SCROLLER =
     "#root { display:block; overflow:scroll; height:600px; background:#ffffff; }"
