@@ -246,6 +246,17 @@ int main(int argc, char **argv)
     in.mouse_x = -1;
     in.mouse_y = -1;
 
+    {
+        /* One frame, so there is no previous viewport to take this from and
+           every `@media (min-width: ...)` would be false without it. */
+        ar_media m;
+
+        m.width = VIEW_W;
+        m.height = VIEW_H;
+        m.resolution = 1000;
+        ar_set_media(c, &m);
+    }
+
     ar_frame_begin(c, &in);
     ar_dom_build(c, d);
     ar_frame_end(c, &s);

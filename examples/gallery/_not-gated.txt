@@ -17,7 +17,7 @@
 # into TrueType, and every demo inlines it. Thirteen of the twenty-four went
 # green the moment both engines were drawing the same outlines.
 #
-# What is left is seven demos under five causes, each named below, and none of
+# What is left is ten demos under six causes, each named below, and none of
 # them is the font any more. `css/text/line-height` came off a second time when
 # the line-box compounding was fixed, and three more came off when line boxes
 # got the strut they were missing.
@@ -54,6 +54,30 @@
 
 css/text/wrap            engine: integer line boxes, so six lines of 22.4px are 132 and not 134
 html/elements/headings   engine: integer `em` margins, accumulating to two pixels by h6
+
+# ---- a media feature this engine answers for itself ---------------------
+#
+# Not a disagreement about media queries. A disagreement about the machine,
+# and in two of the three cases a permanent one that is the whole point of the
+# feature:
+#
+#   scripting      Chrome runs scripts. areole never will, and
+#                  `@media (scripting: none)` is how a page says what to do
+#                  about that. If this demo ever agreed, something broke.
+#   display-mode   Chrome is a browser tab. areole is an application.
+#
+# The third is pending rather than permanent: `prefers-color-scheme` is wired
+# to the OS at 0.16.1 and reports its documented default of `light` until
+# then. The headless browser this corpus runs against reports `dark`, so the
+# two pick opposite branches -- correctly, each about itself.
+#
+# These are gated on their syntax by tools/compare_media.py instead, which
+# agrees with Chrome on 624 of 624 queries because it asks only about the
+# features both engines answer the same question about.
+
+css/media/scripting-none        engine: scripting is none here and enabled there, permanently
+css/media/display-mode          engine: an application is not a browser tab, permanently
+css/media/prefers-color-scheme  engine: the documented default is light until 0.16.1 wires the OS
 
 # ---- there is one face, and it is neither bold nor italic ---------------
 #

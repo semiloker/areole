@@ -370,8 +370,19 @@ struct ar_ctx
 
     ar_damage damage;
     ar_rect   last_viewport; /* a resize repaints everything */
-    ar_rect   last_damage;   /* what ar_frame_end returned, for the backend */
-    ar_i32    seen_last;     /* boxes in the tree last frame, to spot removals */
+
+    /* Device pixels per CSS pixel, thousandths, for `@media (resolution)`.
+       The window reports its size but never its scale, so this is the one
+       piece of the media state a caller has to supply. */
+    ar_i32 media_resolution;
+
+    /* Set by ar_set_media, and it stops ar_frame_begin deriving the size from
+       the last frame's viewport. A caller who has said what the window is
+       must not be second-guessed by a stale one. */
+    ar_media media;
+    int      media_from_caller;
+    ar_rect  last_damage; /* what ar_frame_end returned, for the backend */
+    ar_i32   seen_last;   /* boxes in the tree last frame, to spot removals */
 
     ar_u32 hot;
 

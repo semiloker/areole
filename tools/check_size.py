@@ -59,6 +59,25 @@ TOTAL_BUDGET = 144 * 1024
 ENTITY_BUDGET = 30 * 1024
 ENTITY_OBJECT = "ar_html_entity.c"
 
+# The CSS subsystem, added at 0.4.2 -- and added because that release found the
+# gap. Its document sets a 14 KB budget for the release, `@media` alone cost
+# 8.7 KB of it, and the figure above measures *the HTML files only*: ar_css.c
+# was never in it, so a CSS release could have spent any amount and passed the
+# only size gate there was. A budget nothing measures is the thing this file
+# exists to prevent, and it had one.
+#
+# 60 KB against 56,504 measured at 0.4.2's close -- ar_css.c 52,400 and
+# ar_ua_css.c 4,104. Just under four kilobytes of headroom, which is meant to
+# be uncomfortable: 0.4.3 is custom properties and maths and its own document
+# already asks for 20 KB, so it will raise this figure and has to say why. A
+# budget with the next two releases already inside it is not a budget, which is
+# the mistake the HTML one above was raised twice to correct.
+CSS_OBJECTS = [
+    "ar_css.c",
+    "ar_ua_css.c",
+]
+CSS_BUDGET = 60 * 1024
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -101,6 +120,9 @@ def main():
     total = sum(n for _, n in rows)
     entity = dict(rows).get(ENTITY_OBJECT, 0)
 
+    css_rows = [(n, measure(object_path(args.build, n))) for n in CSS_OBJECTS]
+    css_total = sum(n for _, n in css_rows)
+
     width = max(len(n) for n, _ in rows)
     for name, n in sorted(rows, key=lambda r: -r[1]):
         print("  %-*s %8d" % (width, name, n))
@@ -113,6 +135,10 @@ def main():
         "  entity %8d of %d  (%+d)"
         % (entity, ENTITY_BUDGET, ENTITY_BUDGET - entity)
     )
+    print(
+        "  css    %8d of %d  (%+d)"
+        % (css_total, CSS_BUDGET, CSS_BUDGET - css_total)
+    )
 
     if not args.check:
         return 0
@@ -124,8 +150,11 @@ def main():
     if entity > ENTITY_BUDGET:
         print("\nFAIL: the entity table is %d bytes over its budget" % (entity - ENTITY_BUDGET))
         bad = 1
+    if css_total > CSS_BUDGET:
+        print("\nFAIL: the CSS subsystem is %d bytes over its budget" % (css_total - CSS_BUDGET))
+        bad = 1
     if not bad:
-        print("\nboth budgets met")
+        print("\nall three budgets met")
     return bad
 
 
