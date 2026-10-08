@@ -165,6 +165,7 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_JUSTIFY_SELF] = AR_UNIT_KEYWORD;
     s->v[AR_P_ROW_GAP] = 0;
     s->v[AR_P_COL_GAP] = 0;
+    s->v[AR_P_ASPECT_RATIO] = 0;
 
     s->v[AR_P_OVERSCROLL] = AR_OVERSCROLL_AUTO;
     s->v[AR_P_OVERSCROLL_X] = AR_OVERSCROLL_AUTO;
@@ -636,6 +637,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"justify-self", AR_P_JUSTIFY_SELF},
                                           {"row-gap", AR_P_ROW_GAP},
                                           {"column-gap", AR_P_COL_GAP},
+                                          {"aspect-ratio", AR_P_ASPECT_RATIO},
                                           {"padding", AR_SH_PADDING},
                                           {"padding-top", AR_P_PAD_TOP},
                                           {"padding-right", AR_P_PAD_RIGHT},
@@ -801,6 +803,7 @@ static const ar__kw AR_KEYWORDS[] = {
     {"space-evenly", AR_P_JUSTIFY, AR_JUSTIFY_EVENLY},
 
     {"grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
+    {"contents", AR_P_DISPLAY, AR_DISPLAY_CONTENTS},
     {"inline-grid", AR_P_DISPLAY, AR_DISPLAY_GRID},
 
     {"row", AR_P_GRID_FLOW, AR_GRID_FLOW_ROW},
@@ -1441,6 +1444,65 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         return out;
     }
 
+    /*
+     * `aspect-ratio: 16 / 9`, and the decimal `1.777` that means the same.
+     *
+     * Read here rather than in the number path because the slash is the value,
+     * not punctuation between two values -- the loop that reads up to four
+     * numbers would take 16 and 9 as two declarations of the same property and
+     * keep the first.
+     */
+    if (prop == AR_P_ASPECT_RATIO && (ar__is_digit(*z->p) || *z->p == '.'))
+    {
+        ar_i32 w = 0, h = 0, milli = 0, digits = 0;
+
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            w = w * 10 + (*z->p - '0');
+            z->p++;
+        }
+        if (z->p < z->end && *z->p == '.')
+        {
+            z->p++;
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                if (digits < 3)
+                {
+                    milli = milli * 10 + (*z->p - '0');
+                    ++digits;
+                }
+                z->p++;
+            }
+            while (digits < 3)
+            {
+                milli *= 10;
+                ++digits;
+            }
+        }
+        ar__skip_ws(z);
+        if (z->p < z->end && *z->p == '/')
+        {
+            z->p++;
+            ar__skip_ws(z);
+            while (z->p < z->end && ar__is_digit(*z->p))
+            {
+                h = h * 10 + (*z->p - '0');
+                z->p++;
+            }
+        }
+        if (h > 0)
+        {
+            out.v = (w * 1000 + milli) / h;
+        }
+        else
+        {
+            out.v = w * 1000 + milli;
+        }
+        out.unit = AR_UNIT_PX;
+        out.ok = out.v > 0;
+        return out;
+    }
+
     if (ar__is_digit(*z->p) || (*z->p == '-' && z->p + 1 < z->end && ar__is_digit(z->p[1])))
     {
         ar_i32 sign = 1;
@@ -1592,7 +1654,65 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
         if (ar__same(name, len, "fit-content"))
         {
+            /*
+             * `fit-content(200px)` is the bare keyword with a cap.
+             *
+             * The bare form fits the contents into whatever the container has
+             * left; the function fits them into the smaller of that and the
+             * length. Carried as the length, with zero meaning "no cap" --
+             * which is the bare form, and is why they share a unit.
+             */
+            ar_i32 cap = 0;
+
+            ar__skip_ws(z);
+            if (z->p < z->end && *z->p == '(')
+            {
+                z->p++;
+                ar__skip_ws(z);
+                while (z->p < z->end && ar__is_digit(*z->p))
+                {
+                    cap = cap * 10 + (*z->p - '0');
+                    z->p++;
+                }
+                if (z->p + 1 < z->end && z->p[0] == 'p' && z->p[1] == 'x')
+                {
+                    z->p += 2;
+                }
+                ar__skip_ws(z);
+                if (z->p < z->end && *z->p == ')')
+                {
+                    z->p++;
+                }
+            }
+            out.v = cap;
             out.unit = AR_UNIT_FIT_CONTENT;
+            out.ok = 1;
+            return out;
+        }
+        /*
+         * `safe` and `unsafe` before an alignment, as a bit on the value.
+         *
+         * Two words meaning one thing, so they cannot be alternatives in the
+         * same slot -- and a caller that does not know about the bit still
+         * reads the right alignment, because the bit is above every value.
+         */
+        if ((ar__same(name, len, "safe") || ar__same(name, len, "unsafe")) &&
+            (prop == AR_P_ALIGN || prop == AR_P_ALIGN_SELF || prop == AR_P_ALIGN_CONTENT ||
+             prop == AR_P_JUSTIFY || prop == AR_P_JUSTIFY_ITEMS || prop == AR_P_JUSTIFY_SELF))
+        {
+            int         is_safe = ar__same(name, len, "safe");
+            const char *word;
+            ar_u32      wlen;
+            ar_i32      mode;
+
+            ar__skip_ws(z);
+            wlen = ar__ident(z, &word);
+            if (wlen == 0 || !ar__lookup_keyword(prop, word, wlen, &mode))
+            {
+                return out;
+            }
+            out.v = is_safe ? (mode | AR_ALIGN_SAFE) : mode;
+            out.unit = AR_UNIT_KEYWORD;
             out.ok = 1;
             return out;
         }

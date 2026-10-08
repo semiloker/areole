@@ -237,26 +237,96 @@ static void ar__min_content(ar_node *nodes, ar_i32 i)
  * `available` is what the containing block has left. fit-content is the only
  * one that uses it, and is the only one of the three anybody writes on purpose.
  */
-static int ar__intrinsic_width(const ar_node *n, ar_i32 available, ar_i32 *out)
+/*
+ * `aspect-ratio`: the axis nobody stated, from the one somebody did.
+ *
+ * The ratio is width over height in thousandths, so `16 / 9` is 1777. A box
+ * with a width and a ratio gets a height; a box with a height and a ratio gets
+ * a width; a box with both keeps both, because a stated size always wins over
+ * a derived one and that is the rule that makes the property safe to put in a
+ * base stylesheet.
+ *
+ * This is how a responsive image placeholder holds its space without the
+ * padding-percentage trick, which is what everybody did for fifteen years and
+ * which nobody could read.
+ */
+void ar_apply_ratio(ar_node *n)
 {
-    switch (n->style.unit[AR_P_WIDTH])
+    ar_i32 ratio = n->style.v[AR_P_ASPECT_RATIO];
+    int    has_w = n->style.unit[AR_P_WIDTH] != AR_UNIT_AUTO;
+    int    has_h = n->style.unit[AR_P_HEIGHT] != AR_UNIT_AUTO;
+
+    if (ratio <= 0 || has_w == has_h)
+    {
+        return;
+    }
+    /*
+     * Rounded, not truncated.
+     *
+     * `4 / 3` is 1333 in thousandths, which is 1333.33 short -- so a 60-pixel
+     * height truncates to 79 where every browser says 80. Rounding costs one
+     * addition and is the difference between a ratio that looks right and one
+     * that is a pixel out at every size somebody tries.
+     */
+    if (has_w)
+    {
+        n->rect.h = ar_clamp((n->rect.w * 1000 + ratio / 2) / ratio, n->style.v[AR_P_MIN_HEIGHT],
+                             AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+    }
+    else
+    {
+        n->rect.w = ar_clamp((n->rect.h * ratio + 500) / 1000, n->style.v[AR_P_MIN_WIDTH],
+                             AR_WIDE(&n->style, AR_P_MAX_WIDTH));
+    }
+}
+
+int ar_intrinsic_size(const ar_node *n, ar_i32 prop, ar_i32 axis, ar_i32 available, ar_i32 *out)
+{
+    /*
+     * The min-content of a height is the content height.
+     *
+     * There is no separate min-content *height* on a node: fit[1] is what the
+     * contents come to at the width they were measured at, and the narrower
+     * answer a true min-content height would give needs a second measurement
+     * pass this engine does not make. Named as the approximation it is; it is
+     * exact for everything that is not a wrapping paragraph.
+     */
+    ar_i32 smallest = axis == 0 ? n->min_w : n->fit[1];
+    ar_i32 largest = n->fit[axis];
+
+    switch (n->style.unit[prop])
     {
     case AR_UNIT_MIN_CONTENT:
-        *out = n->min_w;
+        *out = smallest;
         return 1;
     case AR_UNIT_MAX_CONTENT:
-        *out = n->fit[0];
+        *out = largest;
         return 1;
     case AR_UNIT_FIT_CONTENT:
-        *out = n->fit[0] < available ? n->fit[0] : available;
-        if (*out < n->min_w)
+    {
+        /* `fit-content(200px)` caps what is available; the bare keyword does
+           not, which is what a zero in the slot means. */
+        ar_i32 room = available;
+
+        if (n->style.v[prop] > 0 && n->style.v[prop] < room)
         {
-            *out = n->min_w;
+            room = n->style.v[prop];
+        }
+        *out = largest < room ? largest : room;
+        if (*out < smallest)
+        {
+            *out = smallest;
         }
         return 1;
+    }
     default:
         return 0;
     }
+}
+
+static int ar__intrinsic_width(const ar_node *n, ar_i32 available, ar_i32 *out)
+{
+    return ar_intrinsic_size(n, AR_P_WIDTH, 0, available, out);
 }
 
 /* ------------------------------------------------------------------------
@@ -378,7 +448,9 @@ ar_i32 ar_resolve_size(const ar_node *ch, ar_i32 axis, ar_i32 inner, int stretch
     ar_prop p = ar_axis_size_prop(axis);
     ar_i32  v;
 
-    if (axis == 0 && ar__intrinsic_width(ch, inner, &v))
+    /* The intrinsic keywords, on either axis. They used to answer for width
+       only, which made `height: max-content` a silent `auto`. */
+    if (ar_intrinsic_size(ch, p, axis, inner, &v))
     {
         return ar_clamp(v, ch->style.v[ar_axis_min_prop(axis)],
                         AR_WIDE(&ch->style, ar_axis_max_prop(axis)));
@@ -456,6 +528,22 @@ void ar_wrap_height(ar_node *nodes, ar_node *n, ar_i32 axis, int stretch, ar_lay
             th = n->style.v[AR_P_HEIGHT];
         }
         n->rect.h = ar_clamp(th, n->style.v[AR_P_MIN_HEIGHT], AR_WIDE(&n->style, AR_P_MAX_HEIGHT));
+        return;
+    }
+
+    /*
+     * A ratio settles the height here too, and this is the place that covers
+     * every path.
+     *
+     * ar__place_block's tail only runs for a box with children; a leaf that
+     * says `width: 200px; aspect-ratio: 16/9` never reaches it. This function
+     * is the one hook that already means "the width is settled, now fix the
+     * height", with five callers between them covering block flow, flex flow
+     * and shrink-to-fit -- which is exactly why the table uses it as well.
+     */
+    if (n->style.v[AR_P_ASPECT_RATIO] > 0)
+    {
+        ar_apply_ratio(n);
         return;
     }
 
@@ -820,6 +908,11 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
         }
     }
 
+    /* A ratio settles the axis nobody stated, before the automatic height
+       below overwrites it -- a box with a width and a ratio has a height, and
+       it is not the height of its contents. */
+    ar_apply_ratio(n);
+
     /* An automatic height is whatever that came to. It was already measured
        intrinsically, but the children's real widths may have wrapped their
        text differently, so this is the number that counts. */
@@ -845,7 +938,8 @@ static void ar__place_block(ar_node *nodes, ar_i32 i, ar_layout_env *env)
      * pass is never reached, and with a stated height this branch is not taken.
      * A caption is settled by the table for the same reason.
      */
-    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0 && !ar_is_table_block(n))
+    if (n->style.unit[AR_P_HEIGHT] == AR_UNIT_AUTO && n->parent >= 0 && !ar_is_table_block(n) &&
+        n->style.v[AR_P_ASPECT_RATIO] <= 0)
     {
         ar_i32 used = cursor;
 

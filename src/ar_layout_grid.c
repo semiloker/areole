@@ -802,6 +802,20 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
         }
         w += col_gap * (span - 1 > 0 ? span - 1 : 0);
         it->rect.w = ar_resolve_size(it, 0, w, ar__self_mode(it, n, 0) == AR_ALIGN_STRETCH);
+        /*
+         * The automatic minimum applies to a grid item too.
+         *
+         * A track narrower than an item's unbreakable content does not crush
+         * it -- the item overflows the track, exactly as a flex item overflows
+         * its line. Same rule, same reason, and the same escape hatches: state
+         * a minimum, or make the item clip.
+         */
+        if (!ar_pset_has(it->style.set, AR_P_MIN_WIDTH) &&
+            it->style.unit[AR_P_WIDTH] != AR_UNIT_PX && ar_overflow_x(it) == AR_OVERFLOW_VISIBLE &&
+            ar_overflow_y(it) == AR_OVERFLOW_VISIBLE && it->rect.w < it->min_w)
+        {
+            it->rect.w = it->min_w;
+        }
         ar_wrap_height(nodes, it, 1, 0, env);
     }
 

@@ -154,6 +154,52 @@ Two bounds, and they are real: a grid has at most **64 tracks** on an axis and
 table's columns and the float list make; beyond the bounds the extra tracks and
 items are dropped rather than placed wrongly.
 
+### Sizing
+
+| Property | Values |
+| --- | --- |
+| `width` `height` `min-*` `max-*` | length, per cent, `auto`, `min-content`, `max-content`, `fit-content`, `fit-content(<length>)` |
+| `aspect-ratio` | `<w> / <h>`, or a bare number |
+
+**The intrinsic keywords work on both axes.** They used to answer for `width`
+only, which made `height: max-content` a silent `auto` — the same number in
+block flow, where an automatic height is already the content height, and a
+different one anywhere that stretches.
+
+`fit-content(<length>)` is the bare keyword with a ceiling: the contents fitted
+into the smaller of what the container has left and the length. It never goes
+below min-content, so a cap under that does nothing.
+
+**`aspect-ratio` gives the axis nobody stated.** A width and a ratio make a
+height; a height and a ratio make a width; a box that stated both keeps both,
+because a stated size always wins over a derived one — which is what makes the
+property safe to put in a base stylesheet. It is how a responsive placeholder
+holds its space without the padding-percentage trick.
+
+The ratio is carried in thousandths, so `16 / 9` is 1777, and the arithmetic
+rounds rather than truncating: `4 / 3` is 1333.33 short, and truncating puts a
+60-pixel box one pixel out where every browser says 80.
+
+**`display: contents`** makes a box generate none: its children become its
+parent's for layout, which is the only way to put a semantic wrapper around
+grid items without breaking the grid. It is done by splicing the box out of its
+parent's child list before layout, which keeps both the pre-order invariant and
+the node keys — its children already sit at higher indices than it does.
+
+One gap, and it is not small: **CSS excepts replaced elements, form controls
+and table parts from `display: contents`, and areole cannot.** Every one of
+those exceptions is about an *element*, and a box that says `display: contents`
+has no other display left to look at — nothing records that it would otherwise
+have been a row. The exception needs tag names, and there are none until the
+parser lands at 0.9.0. So `display: contents` on a table row removes the row
+here where a browser ignores it.
+
+**`safe` and `unsafe` before an alignment.** Centring a box larger than the
+space it is given puts half the overflow before the start edge, where it cannot
+be scrolled to and cannot be read; `safe center` falls back to start alignment
+exactly then, and only then. Written as two words — `align-items: safe center`
+— and carried as a bit above the alignment value.
+
 ### Size
 
 | Property | Values |
@@ -174,7 +220,7 @@ items are dropped rather than placed wrongly.
 
 | Property | Values |
 | --- | --- |
-| `display` | `flex`, `grid`, `block`, `inline-block`, `inline`, `none`, and the nine table values below |
+| `display` | `flex`, `grid`, `block`, `inline-block`, `inline`, `contents`, `none`, and the nine table values below |
 | `position` | `static`, `relative`, `absolute`, `fixed`, `sticky` |
 | `top` `right` `bottom` `left` | length |
 | `z-index` | integer |
@@ -462,6 +508,8 @@ Named so that their absence is a decision rather than an oversight:
 - custom properties, `var()`, `calc()`
 - attribute selectors, pseudo-elements, `:nth-child(an+b)`
 - writing modes and logical properties, so no `-inline` or `-block` longhands
+- the `display: contents` exceptions for replaced elements, form controls and
+  table parts — every one of them needs a tag name, and there are none yet
 - `scroll-behavior: smooth` — it wants the frame scheduler, which is 0.14.0
 - `border-style`, and per-side border widths — so a collapsed border resolves by
   width and origin and not by style
