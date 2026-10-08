@@ -8046,10 +8046,7 @@ static void ar__update_hot(ar_ctx *c)
 
     c->hot = 0;
     c->hot_index = -1;
-    if (!c->mouse_inside)
-    {
-        return;
-    }
+
     /*
      * Front to back, in reverse paint order: the first box found under the
      * cursor is the one on top, which is the one the cursor is actually over.
@@ -8058,8 +8055,13 @@ static void ar__update_hot(ar_ctx *c)
      * is the same answer only while paint order and declaration order agree.
      * The moment anything is positioned they stop agreeing, and clicking a
      * dropdown would have hit whatever was behind it.
+     *
+     * Only the hit test waits for a pointer inside the window. This returned
+     * early instead, before the chain below was cleared, so a control kept
+     * `:hover` after the pointer left the window -- invisible until controls
+     * had a hover look (#23) -- and `:focus-within` was not rebuilt either.
      */
-    for (i = (c->order ? c->order_count : c->node_count) - 1; i >= 0; --i)
+    for (i = c->mouse_inside ? (c->order ? c->order_count : c->node_count) - 1 : -1; i >= 0; --i)
     {
         ar_i32   at = c->order ? c->order[i] : i;
         ar_node *n = &c->nodes[at];
