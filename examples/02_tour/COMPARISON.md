@@ -1,6 +1,6 @@
 # areole against a browser, box by box
 
-`tour.html` declares the same six pages as `main.c`, with the same stylesheet, so both engines can
+`tour.html` declares the same pages as `main.c`, with the same stylesheet, so both engines can
 be asked to lay out the same thing and the answers compared. Run it:
 
 ```sh
@@ -12,15 +12,26 @@ on their path through the tree, which is the one identifier the two genuinely sh
 
 ## The result
 
-Measured 2026-08-14, Edge 151 headless, Segoe UI, 640×480 viewport, 215 boxes across eight pages —
-every release from 0.1.0 to 0.6.0.
+**The twin lags four releases and this is the first thing to know about it.** `main.c` has
+fourteen pages, through 0.8.0; `tour.html` stops at 0.6.0 and has eight. So the comparison covers
+8 of 14 pages, and the 0.6.1, 0.6.2, 0.6.3, 0.7.0, 0.7.1 and 0.8.0 pages are checked by
+`example_tour --selftest` in CI and by no browser anywhere.
+
+Re-measured 2026-08-21 at 0.8.2, Edge headless, Segoe UI, 640x480 viewport:
 
 | | |
 | --- | --- |
-| Boxes matched by path | **215 / 215** |
-| Geometry disagreements, boxes not sized by their own text | **2**, both one line of text, see below |
-| Text-sized boxes, width difference | **max 1 px, mean 0.8 px** |
-| Text-sized boxes, x offset | **max 1 px, mean 0.4 px** |
+| Boxes matched by path | **215** |
+| Boxes that disagree | **11** |
+| Pages covered | 8 of 14 |
+
+The 11 are the seven geometry divergences on the 0.4.0 and 0.5.0 pages that were already known,
+plus boxes whose text has drifted from the C source. **They are the known state**: anything other
+than 11 from this corpus is a change somebody just made.
+
+The five purpose-built corpora are the ones that gate -- block 168/168, snap 960/960, sticky
+355/355, env 28/28, anchor 168/168, all agreeing exactly. This one is a breadth check across
+releases, not a conformance test, and its twin needs six pages written before it is either.
 
 Every box that flex places lands on the same rectangle in both engines, exactly. Boxes whose width
 comes from measuring their own text land within one pixel — which is as close as two independent

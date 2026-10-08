@@ -1188,6 +1188,17 @@ typedef struct ar_track
    tracks follow it. Index 0 is never a header, so zero means "no list". */
 #define AR_TRACK_POOL 512
 
+/*
+ * `grid-template-rows: subgrid`, as a sentinel in the slot that holds a pool
+ * index.
+ *
+ * Subgrid is not a track list -- it is the absence of one, and a statement
+ * that the parent's tracks are this box's tracks. Zero already means "nothing
+ * was said" and a pool index is never negative, so -1 is free and says
+ * something no track list could.
+ */
+#define AR_TRACKS_SUBGRID (-1)
+
 typedef struct ar_sheet
 {
     ar_rule *rules;

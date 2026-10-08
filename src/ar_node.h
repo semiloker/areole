@@ -571,20 +571,101 @@ int ar_box_paints(const ar_node *n);
 /* ------------------------------------------------------------------------
  * Shared box alignment, in ar_align.c
  *
- * Axis 0 is x, axis 1 is y. These were static in ar_layout.c until flexbox
- * got a file of its own and needed every one of them.
+ * Axis 0 is x, axis 1 is y.
+ *
+ * These eleven are here, in the header, and not in ar_align.c beside the rest
+ * of alignment. That is a measurement rather than a preference.
+ *
+ * They were static in ar_layout.c, where the compiler inlined every one of
+ * them into the loops that use them. When flexbox got a file of its own in
+ * 0.8.0 and needed them too, they moved to ar_align.c and stopped being
+ * static -- and a one-line ternary called from another translation unit
+ * cannot be inlined without link-time optimisation, which this project does
+ * not require of anybody building it. Every `n->style.v[AR_P_MARGIN_LEFT]`
+ * that had become `ar_axis_margin_lead(&n->style, axis)` turned back into a
+ * call, several per box per pass, in the hottest loops in the engine.
+ *
+ * It cost 2.2x of the layout phase and nobody saw it, because the release that
+ * did it measured the scenes it added rather than the scenes it slowed down.
+ * flat_1k's layout went 161 -> 361 us across 0.8.0 and came back to 171 when
+ * these moved here.
+ *
+ * So: keep them in the header, keep them one line each, and do not move them
+ * back to a .c file for tidiness. The tidy version is the slow one.
  * ------------------------------------------------------------------------ */
-ar_i32  ar_axis_main(const ar_node *n);
-ar_i32  ar_axis_pad_lead(const ar_style *s, ar_i32 axis);
-ar_i32  ar_axis_pad_trail(const ar_style *s, ar_i32 axis);
-ar_i32  ar_axis_margin_lead(const ar_style *s, ar_i32 axis);
-ar_i32  ar_axis_margin_trail(const ar_style *s, ar_i32 axis);
-ar_i32  ar_axis_size_prop(ar_i32 axis);
-ar_i32  ar_axis_min_prop(ar_i32 axis);
-ar_i32  ar_axis_max_prop(ar_i32 axis);
-ar_i32 *ar_axis_pos(ar_rect *r, ar_i32 axis);
-ar_i32 *ar_axis_size(ar_rect *r, ar_i32 axis);
-ar_i32  ar_clamp(ar_i32 v, ar_i32 lo, ar_i32 hi);
+static AR_INLINE ar_i32 ar_axis_main(const ar_node *n)
+{
+    return n->style.v[AR_P_DIRECTION] == AR_DIR_COLUMN ? 1 : 0;
+}
+
+static AR_INLINE ar_i32 ar_axis_pad_lead(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_PAD_TOP] : s->v[AR_P_PAD_LEFT];
+}
+
+static AR_INLINE ar_i32 ar_axis_pad_trail(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_PAD_BOTTOM] : s->v[AR_P_PAD_RIGHT];
+}
+
+static AR_INLINE ar_i32 ar_axis_margin_lead(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_MARGIN_TOP] : s->v[AR_P_MARGIN_LEFT];
+}
+
+static AR_INLINE ar_i32 ar_axis_margin_trail(const ar_style *s, ar_i32 axis)
+{
+    return axis ? s->v[AR_P_MARGIN_BOTTOM] : s->v[AR_P_MARGIN_RIGHT];
+}
+
+static AR_INLINE ar_i32 ar_axis_size_prop(ar_i32 axis)
+{
+    return axis ? AR_P_HEIGHT : AR_P_WIDTH;
+}
+
+static AR_INLINE ar_i32 ar_axis_min_prop(ar_i32 axis)
+{
+    return axis ? AR_P_MIN_HEIGHT : AR_P_MIN_WIDTH;
+}
+
+/*
+ * Unlike the size and min pair above, these two are *wide* properties: they
+ * default to a sentinel meaning "no maximum", which does not fit in v[]. So a
+ * caller holding this result must read it with ar_style_get, never with v[].
+ *
+ * That is not a style preference. v[] would be indexed here by a value rather
+ * than a constant, so -Warray-bounds cannot catch the mistake, and the result
+ * would be whichever bytes follow the array.
+ */
+static AR_INLINE ar_i32 ar_axis_max_prop(ar_i32 axis)
+{
+    return axis ? AR_P_MAX_HEIGHT : AR_P_MAX_WIDTH;
+}
+
+static AR_INLINE ar_i32 *ar_axis_pos(ar_rect *r, ar_i32 axis)
+{
+    return axis ? &r->y : &r->x;
+}
+
+static AR_INLINE ar_i32 *ar_axis_size(ar_rect *r, ar_i32 axis)
+{
+    return axis ? &r->h : &r->w;
+}
+
+/* Clamped to the pair, and then to zero: a negative size is not a size, and
+   every caller here would otherwise have to say so itself. */
+static AR_INLINE ar_i32 ar_clamp(ar_i32 v, ar_i32 lo, ar_i32 hi)
+{
+    if (v < lo)
+    {
+        v = lo;
+    }
+    if (v > hi)
+    {
+        v = hi;
+    }
+    return v < 0 ? 0 : v;
+}
 
 void   ar_align_distribute(ar_i32 mode, ar_i32 free, ar_i32 count, ar_i32 *out_lead,
                            ar_i32 *out_between);

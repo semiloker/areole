@@ -64,6 +64,10 @@ jobs:
           python-version: "3.x"
       - run: python tools/gen_perf_doc.py --check
 
+      # And the comparison document, for the same reason: it quotes other
+      # people's engines, so being wrong about it is worse than being silent.
+      - run: python tools/gen_compare_doc.py --check
+
   # The scene library must run to completion, every scene must report zero
   # allocations after init, and no scene may overflow its budget.
   #

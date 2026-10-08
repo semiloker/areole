@@ -68,11 +68,41 @@ typedef struct ar__gplace
 {
     ar_i32 col, col_span;
     ar_i32 row, row_span;
+
+    /*
+     * The subgrid this item belongs to, or -1 for an item of the grid itself.
+     *
+     * A subgrid's children are items of the *parent* on the subgridded axis --
+     * that is the whole of what subgrid means, and it is why they are in this
+     * array at all rather than being solved separately. On an axis the subgrid
+     * did not subgrid, the owner's own box is what bounds them, and that is
+     * what this field is read for.
+     */
+    ar_i32 owner;
 } ar__gplace;
 
 int ar_is_grid(const ar_node *n)
 {
     return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+}
+
+/*
+ * Whether this box takes the parent's tracks on this axis.
+ *
+ * Subgrid inverts the direction of track sizing: an ordinary grid sizes its
+ * tracks from its own contents, and a subgrid's contents size its *parent's*.
+ * areole gets that without a second pass by putting the subgrid's children
+ * into the parent's item list -- so the contribution flows up because the
+ * items are simply there, rather than because a pass went looking for them.
+ *
+ * It is the feature that makes a row of cards line their sections up, and
+ * every other way of doing that -- fixed heights, measuring in script, flexbox
+ * with hardcoded numbers -- is a workaround for not having it.
+ */
+static int ar__is_subgrid(const ar_node *n, ar_i32 axis)
+{
+    return ar_is_grid(n) &&
+           n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS] == AR_TRACKS_SUBGRID;
 }
 
 static int ar__grid_item(const ar_node *n)
@@ -158,7 +188,15 @@ static ar_i32 ar__axis_tracks(const ar_sheet *sheet, const ar_node *n, ar_i32 ax
 {
     ar_i32 count = 0;
 
-    *out = ar_sheet_tracks(sheet, n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS], &count);
+    ar_i32 slot = n->style.v[axis == 0 ? AR_P_GRID_COLS : AR_P_GRID_ROWS];
+
+    if (slot == AR_TRACKS_SUBGRID)
+    {
+        /* Not a list, and not an error: the tracks are the parent's. */
+        *out = 0;
+        return 0;
+    }
+    *out = ar_sheet_tracks(sheet, slot, &count);
     return count;
 }
 
@@ -228,6 +266,7 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
         place[items].row = -1;
         place[items].col_span = 1;
         place[items].row_span = 1;
+        place[items].owner = -1;
 
         ar__item_lines(&nodes[c], 0, &cs, &ce);
         ar__item_lines(&nodes[c], 1, &rs, &re);
@@ -426,6 +465,126 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
         }
     }
 
+    /*
+     * Pass three: a subgrid's children become items of this grid.
+     *
+     * Their line numbers are the subgrid's own, offset by where the subgrid
+     * starts -- so a card at rows 1..4 holding a title at row 1 puts that
+     * title in the parent's row 1, and every card's title lands in the same
+     * row whatever is in the others. That is the whole feature.
+     *
+     * On an axis the subgrid did not subgrid, the child keeps a span of one
+     * inside the subgrid's own extent, and the placement below reads `owner`
+     * to bound it by the subgrid's box rather than by a parent track.
+     *
+     * Not recursive. A subgrid inside a subgrid would need this to run again
+     * on the boxes it has just added, and the cost of that is unbounded in
+     * nesting depth -- which the budget for this release says outright it will
+     * not pay. One level, and the second degrades to an ordinary grid.
+     */
+    {
+        ar_i32 sg, base = items;
+
+        for (sg = 0; sg < base; ++sg)
+        {
+            ar_i32 owner = item_index[sg];
+            int    sub_col = ar__is_subgrid(&nodes[owner], 0);
+            int    sub_row = ar__is_subgrid(&nodes[owner], 1);
+            ar_i32 ch;
+            ar_i32 next_col = 0, next_row = 0;
+
+            if (!sub_col && !sub_row)
+            {
+                continue;
+            }
+            for (ch = nodes[owner].first_child; ch >= 0 && items < AR_GRID_ITEMS;
+                 ch = nodes[ch].next_sibling)
+            {
+                ar_i32 cs, ce, rs, re;
+
+                if (!ar__grid_item(&nodes[ch]))
+                {
+                    continue;
+                }
+                ar__item_lines(&nodes[ch], 0, &cs, &ce);
+                ar__item_lines(&nodes[ch], 1, &rs, &re);
+
+                item_index[items] = ch;
+                place[items].owner = sg;
+                place[items].col_span = 1;
+                place[items].row_span = 1;
+
+                if (sub_col)
+                {
+                    place[items].col = place[sg].col + (cs > 0 ? cs - 1 : next_col);
+                    if (cs < 0)
+                    {
+                        place[items].col_span = -cs;
+                    }
+                    else if (ce > cs && cs > 0)
+                    {
+                        place[items].col_span = ce - cs;
+                    }
+                    else if (ce < 0)
+                    {
+                        place[items].col_span = -ce;
+                    }
+                    next_col += place[items].col_span;
+                    if (next_col >= place[sg].col_span)
+                    {
+                        next_col = 0;
+                    }
+                }
+                else
+                {
+                    place[items].col = place[sg].col;
+                    place[items].col_span = place[sg].col_span;
+                }
+
+                if (sub_row)
+                {
+                    place[items].row = place[sg].row + (rs > 0 ? rs - 1 : next_row);
+                    if (rs < 0)
+                    {
+                        place[items].row_span = -rs;
+                    }
+                    else if (re > rs && rs > 0)
+                    {
+                        place[items].row_span = re - rs;
+                    }
+                    else if (re < 0)
+                    {
+                        place[items].row_span = -re;
+                    }
+                    next_row += place[items].row_span;
+                    if (next_row >= place[sg].row_span)
+                    {
+                        next_row = 0;
+                    }
+                }
+                else
+                {
+                    place[items].row = place[sg].row;
+                    place[items].row_span = place[sg].row_span;
+                }
+
+                if (place[items].col + place[items].col_span > cols)
+                {
+                    cols = place[items].col + place[items].col_span;
+                    if (cols > AR_GRID_MAX)
+                    {
+                        cols = AR_GRID_MAX;
+                    }
+                }
+                if (place[items].row + place[items].row_span > rows)
+                {
+                    rows = place[items].row + place[items].row_span;
+                }
+                ++items;
+            }
+        }
+    }
+
     *out_items = items;
     *out_cols = cols;
     *out_rows = rows > 0 ? rows : 1;
@@ -441,8 +600,28 @@ static void ar__place_items(ar_node *nodes, ar_i32 parent, ar__gplace *place, ar
  */
 static ar_i32 ar__item_contribution(const ar_node *n, ar_i32 axis, int minimum)
 {
-    ar_i32 v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
-    ar_i32 prop = ar_axis_size_prop(axis);
+    /*
+     * A subgrid *does* contribute on the axis it subgridded, and it took a
+     * stub to work out that it should.
+     *
+     * The first version suppressed it, reasoning that its children are already
+     * in the item list and would otherwise count the same content twice. They
+     * do not: a subgrid spanning three tracks contributes what its three
+     * children contributed to those same three tracks, so the demand is
+     * already met and nothing grows. Suppressing it changed exactly one thing
+     * -- the subgrid's own padding and border stopped reaching the parent's
+     * tracks -- and CSS says those *are* added to the outermost tracks it
+     * spans.
+     *
+     * Unnecessary in every case where it did nothing, and wrong in the one
+     * where it did something. This comment is here because the reasoning that
+     * put it in was plausible, and no check could tell the difference.
+     */
+    ar_i32 v;
+    ar_i32 prop;
+
+    v = axis == 0 ? (minimum ? n->min_w : n->fit[0]) : n->fit[1];
+    prop = ar_axis_size_prop(axis);
 
     if (n->style.unit[prop] == AR_UNIT_PX)
     {
@@ -614,9 +793,6 @@ static void ar__grow_fr(ar__gtrack *tr, ar_i32 count, ar_i32 space)
             {
                 continue;
             }
-            share = total > 0 ? (ar_i32)((double)0) : 0;
-            (void)share;
-
             /* free_space * fr / total without leaving ar_i32 on the way. */
             if (free_space <= 2147483647 / (tr[t].fr > 1 ? tr[t].fr : 1))
             {
@@ -654,6 +830,103 @@ static void ar__grow_fr(ar__gtrack *tr, ar_i32 count, ar_i32 space)
                     tr[t].size = share;
                 }
             }
+
+            /*
+             * The pixel the division dropped.
+             *
+             * 160 split one-to-two is 53.33 and 106.67, and integer division
+             * gives 53 and 106 -- one pixel short of the 160 the tracks were
+             * handed, so the grid ends a pixel inside its own right edge. The
+             * browser says 53 and 107.
+             *
+             * Handed to the first flexible track that has room rather than
+             * dropped, which is the same remedy the flex solver applies to the
+             * same arithmetic, and the reason is the same: nobody can explain
+             * the gap and everybody notices it.
+             */
+            {
+                unsigned char bumped[AR_GRID_MAX];
+                ar_i32        handed = 0;
+                ar_i32        rest;
+
+                for (t = 0; t < count; ++t)
+                {
+                    handed += tr[t].size >= 0 ? tr[t].size : tr[t].base;
+                    if (t < AR_GRID_MAX)
+                    {
+                        bumped[t] = 0;
+                    }
+                }
+                rest = space - handed;
+
+                /*
+                 * Largest remainder, not first come.
+                 *
+                 * `120px 1fr 2fr` in 280 leaves 160 to share: 53.33 and 106.67,
+                 * which floor to 53 and 106 and leave the grid a pixel inside
+                 * its own edge. The browser says 53 and 107 -- the pixel goes
+                 * to the track that lost the most of one, which is the 2fr.
+                 *
+                 * Handing it to the first flexible track instead gave 54 and
+                 * 106, which closes the gap and puts the wrong track a pixel
+                 * wide. Same total, still not the browser's answer.
+                 */
+                while (rest > 0)
+                {
+                    ar_i32 best = -1;
+                    ar_i32 best_rem = -1;
+
+                    for (t = 0; t < count && t < AR_GRID_MAX; ++t)
+                    {
+                        ar_i32 rem;
+
+                        /*
+                         * No growth-limit test here, and that is deliberate.
+                         *
+                         * An intrinsic track's limit is its max-content size,
+                         * which for a track of empty items is zero -- and the
+                         * distribution above has already put 53 and 106 into
+                         * tracks whose limit says nothing, because a flexible
+                         * track is sized by its factor rather than by its
+                         * contents. Refusing the pixel to a track already past
+                         * its limit refused it to every fr track there is, and
+                         * the leftover went back to being dropped.
+                         */
+                        if (tr[t].fr <= 0 || tr[t].size < 0 || bumped[t])
+                        {
+                            continue;
+                        }
+                        /*
+                         * The part of its share the division threw away, kept
+                         * as a numerator so there is no fraction anywhere.
+                         *
+                         * `free_space % total` first, because it is smaller
+                         * than `total` and the product then fits where
+                         * `free_space * fr` might not -- the same guard the
+                         * share arithmetic above uses, for the same reason. A
+                         * factor large enough to overflow even that ranks by
+                         * the factor itself, which is the right order whenever
+                         * the shares are proportional.
+                         */
+                        rem = free_space % total;
+                        rem = (rem <= 2147483647 / (tr[t].fr > 1 ? tr[t].fr : 1))
+                                  ? rem * tr[t].fr % total
+                                  : tr[t].fr;
+                        if (rem > best_rem)
+                        {
+                            best_rem = rem;
+                            best = t;
+                        }
+                    }
+                    if (best < 0)
+                    {
+                        break;
+                    }
+                    tr[best].size += 1;
+                    bumped[best] = 1;
+                    --rest;
+                }
+            }
             break;
         }
     }
@@ -686,6 +959,7 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
     ar_track        fallback;
     ar_i32          t;
     ar_i32          used = 0;
+    ar_i32          lead = 0, between = 0;
 
     /* An implicit track with nothing said about it is `auto`. */
     fallback.min_v = 0;
@@ -714,12 +988,179 @@ static void ar__solve_axis(ar_node *nodes, const ar_sheet *sheet, ar_i32 parent,
         }
     }
 
+    /*
+     * §11.6, maximise tracks: free space raises a track towards its growth
+     * limit before the flexible tracks are given anything.
+     *
+     * `minmax(60px, 100px) 1fr` in 280px came out 60 and 220 here, and 100 and
+     * 180 in a browser -- the minmax track was sized to its minimum and its
+     * maximum was never reached for, so the `1fr` beside it swallowed the
+     * forty pixels that belonged to it.
+     *
+     * Only tracks with a *stated* maximum are grown. A track whose maximum is
+     * content-derived has already been given its base by ar__size_tracks, and
+     * what happens to it afterwards is align-content's business below -- doing
+     * it here as well would hand the same space out twice.
+     */
+    if (definite && count > 0)
+    {
+        ar_i32 room = avail - gap * (count - 1);
+        ar_i32 guard;
+
+        for (t = 0; t < count; ++t)
+        {
+            room -= tr[t].fr > 0 ? tr[t].base : tr[t].size;
+        }
+
+        for (guard = 0; guard < count && room > 0; ++guard)
+        {
+            ar_i32 hungry = 0;
+            ar_i32 each;
+
+            for (t = 0; t < count; ++t)
+            {
+                if (tr[t].fr <= 0 && !tr[t].intrinsic_max && tr[t].size < tr[t].limit)
+                {
+                    ++hungry;
+                }
+            }
+            if (hungry == 0)
+            {
+                break;
+            }
+            each = room / hungry;
+            if (each < 1)
+            {
+                each = 1;
+            }
+            for (t = 0; t < count && room > 0; ++t)
+            {
+                if (tr[t].fr <= 0 && !tr[t].intrinsic_max && tr[t].size < tr[t].limit)
+                {
+                    ar_i32 want = tr[t].limit - tr[t].size;
+                    ar_i32 give = want < each ? want : each;
+
+                    if (give > room)
+                    {
+                        give = room;
+                    }
+                    tr[t].size += give;
+                    room -= give;
+                }
+            }
+        }
+    }
+
     ar__grow_fr(tr, count, definite ? avail - gap * (count > 0 ? count - 1 : 0) : 0);
 
+    /*
+     * §12.8, and it was missing entirely: what happens to the space the tracks
+     * did not take.
+     *
+     * The tracks were sized and then laid end to end from zero, so a grid with
+     * a stated size and no flexible track simply left the remainder at the far
+     * end. That is one bug wearing two faces, and the grid corpus found both:
+     *
+     *   - `align-content` and `justify-content` did nothing at all on a grid,
+     *     though they work on a flex container. `justify-content: center` over
+     *     120px of tracks in 280px left them at x=0 rather than x=80.
+     *
+     *   - and the *default* did nothing, which is the larger half. For a grid,
+     *     `align-content: normal` behaves as `stretch`: an `auto` row in a
+     *     container with a stated height takes that height. Without it, every
+     *     item in a `height: 60px` grid with no row template came out **zero
+     *     pixels tall**, because its row was sized to content and the content
+     *     was nothing. Twenty-nine of the corpus's fifty disagreements were
+     *     this one line.
+     */
+    if (definite && count > 0)
+    {
+        ar_i32 inner = avail - gap * (count - 1);
+        ar_i32 total = 0;
+
+        for (t = 0; t < count; ++t)
+        {
+            total += tr[t].size;
+        }
+
+        if (total < inner)
+        {
+            /*
+             * `align-content` defaults to stretch and the block axis gets that
+             * for free. The inline axis does not: `justify-content` defaults
+             * to `start` because that is right for a flex container, and for a
+             * grid CSS says `normal`, which behaves as stretch.
+             *
+             * The set mask is what tells the two apart -- it records whether
+             * anybody wrote the declaration, which is exactly the question,
+             * and it is the same mechanism the automatic minimum size uses to
+             * tell `min-width: 0` from a `min-width` nobody stated.
+             *
+             * Without this a subgrid whose parent is not a grid gave its items
+             * **zero width**: it falls back to an ordinary grid, its one
+             * implicit column is `auto`, the items in it have no stated width,
+             * and nothing ever handed that column the container's 200 pixels.
+             */
+            ar_i32 mode = axis == 0
+                              ? (ar_pset_has(n->style.set, AR_P_JUSTIFY) ? n->style.v[AR_P_JUSTIFY]
+                                                                         : AR_ALIGN_STRETCH)
+                              : n->style.v[AR_P_ALIGN_CONTENT];
+            ar_i32 leftover = inner - total;
+
+            if ((mode & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH)
+            {
+                /*
+                 * Stretch hands the remainder to the tracks whose maximum is
+                 * content-derived and which are not already flexible -- an
+                 * `fr` track has taken its share above, and a track with a
+                 * stated maximum asked not to grow past it.
+                 *
+                 * The remainder after the division goes to the first such
+                 * track rather than being dropped, for the reason the flex
+                 * solver states at length: three tracks sharing a hundred come
+                 * to 33 each and leave the grid one pixel short of its own
+                 * edge, which nobody can explain and everybody notices.
+                 */
+                ar_i32 stretchy = 0;
+
+                for (t = 0; t < count; ++t)
+                {
+                    if (tr[t].intrinsic_max && tr[t].fr <= 0)
+                    {
+                        ++stretchy;
+                    }
+                }
+                if (stretchy > 0)
+                {
+                    ar_i32 each = leftover / stretchy;
+                    ar_i32 rest = leftover - each * stretchy;
+
+                    for (t = 0; t < count; ++t)
+                    {
+                        if (tr[t].intrinsic_max && tr[t].fr <= 0)
+                        {
+                            tr[t].size += each;
+                            if (rest > 0)
+                            {
+                                tr[t].size += 1;
+                                --rest;
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ar_align_distribute(mode, leftover, count, &lead, &between);
+            }
+        }
+    }
+
+    used = lead;
     for (t = 0; t < count; ++t)
     {
         tr[t].pos = used;
-        used += tr[t].size + (t + 1 < count ? gap : 0);
+        used += tr[t].size + (t + 1 < count ? gap + between : 0);
     }
 }
 
@@ -748,6 +1189,25 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
     ar_i32 declared_cols, declared_rows;
     const ar_track *list;
     ar_i32          k;
+
+    /*
+     * A subgrid inside a grid has already been laid out by its parent.
+     *
+     * The place sweep reaches every grid box in turn, and this one's children
+     * are items of the grid above it -- solving them again here, against a
+     * template it does not have, would undo the alignment that is the whole
+     * point. It steps aside; its own box was placed by the parent like any
+     * other item.
+     *
+     * A subgrid whose parent is *not* a grid has nobody to take its tracks
+     * from, and CSS says it falls back to an ordinary grid. It does here too,
+     * because with no template on either axis every track is implicit.
+     */
+    if ((ar__is_subgrid(n, 0) || ar__is_subgrid(n, 1)) && n->parent >= 0 &&
+        ar_is_grid(&nodes[n->parent]))
+    {
+        return;
+    }
 
     inner_w = n->rect.w - n->style.v[AR_P_PAD_LEFT] - n->style.v[AR_P_PAD_RIGHT];
     inner_h = n->rect.h - n->style.v[AR_P_PAD_TOP] - n->style.v[AR_P_PAD_BOTTOM];
@@ -801,6 +1261,22 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
             w += col[at + j].size;
         }
         w += col_gap * (span - 1 > 0 ? span - 1 : 0);
+
+        /*
+         * A flattened child on an axis its subgrid did not subgrid is bounded
+         * by the subgrid's content box, not by the parent's track.
+         *
+         * Applied here as well as at placement because this is where the width
+         * is *decided* -- the placement loop only reads it to work out an
+         * alignment offset, so adjusting it there moved the box and left it
+         * the wrong size.
+         */
+        if (place[k].owner >= 0 && !ar__is_subgrid(&nodes[index[place[k].owner]], 0))
+        {
+            const ar_node *own = &nodes[index[place[k].owner]];
+
+            w = own->rect.w - own->style.v[AR_P_PAD_LEFT] - own->style.v[AR_P_PAD_RIGHT];
+        }
         it->rect.w = ar_resolve_size(it, 0, w, ar__self_mode(it, n, 0) == AR_ALIGN_STRETCH);
         /*
          * The automatic minimum applies to a grid item too.
@@ -847,6 +1323,31 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
              (place[k].row < rows ? row[place[k].row].pos : 0);
 
         /*
+         * A flattened child on an axis its subgrid did not subgrid takes the
+         * subgrid's own box, padding included.
+         *
+         * `grid-template-rows: subgrid` with no column template is the card
+         * case: the rows are the parent's and the columns are the card's, and
+         * the card usually has one. Bounding by the owner's content box is
+         * what a one-column solve would have produced, without running one.
+         */
+        if (place[k].owner >= 0)
+        {
+            const ar_node *own = &nodes[index[place[k].owner]];
+
+            if (!ar__is_subgrid(own, 0))
+            {
+                cx = own->rect.x + own->style.v[AR_P_PAD_LEFT];
+                cw = own->rect.w - own->style.v[AR_P_PAD_LEFT] - own->style.v[AR_P_PAD_RIGHT];
+            }
+            if (!ar__is_subgrid(own, 1))
+            {
+                cy = own->rect.y + own->style.v[AR_P_PAD_TOP];
+                rh = own->rect.h - own->style.v[AR_P_PAD_TOP] - own->style.v[AR_P_PAD_BOTTOM];
+            }
+        }
+
+        /*
          * The height, the same way the width was settled above.
          *
          * Only the stretch case was here at first, so an item that stated a
@@ -856,6 +1357,25 @@ void ar_grid_place(ar_node *nodes, ar_i32 i, const ar_sheet *sheet, ar_layout_en
          * in the same call rather than beside it.
          */
         it->rect.h = ar_resolve_size(it, 1, rh, am == AR_ALIGN_STRETCH);
+
+        /*
+         * And the ratio, after that assignment rather than before it.
+         *
+         * ar_wrap_height already applied the ratio in the column pass -- it is
+         * the hook that means "the width is settled, now fix the height" -- and
+         * the line above then overwrote the answer with `fit[1]`, which for a
+         * box with a ratio and no children is zero. `width: 80px;
+         * aspect-ratio: 2` in a grid came out **eighty by nothing**.
+         *
+         * Not when the item is being stretched: an item told to fill its row
+         * has been given a definite height, and CSS gives that precedence over
+         * the ratio. ar_apply_ratio is a no-op unless exactly one axis was
+         * stated, so this cannot disturb an item that named both.
+         */
+        if (am != AR_ALIGN_STRETCH)
+        {
+            ar_apply_ratio(it);
+        }
 
         it->rect.x = cx + ar_align_self_offset(jm, cw - it->rect.w);
         it->rect.y = cy + ar_align_self_offset(am, rh - it->rect.h);

@@ -351,22 +351,6 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
 
     growing = hypo_total < inner_main;
 
-    /* Items that cannot move are frozen before the loop starts: no factor in
-       the direction being resolved, or a base already past the hypothetical
-       in the direction that would make it worse. */
-    for (c = first; c >= 0 && c != stop; c = ar__flex_next(nodes, parent, c, ordered))
-    {
-        ar_node *it = &nodes[c];
-        ar_i32   factor = growing ? ar__grow_of(it, axis) : it->style.v[AR_P_FLEX_SHRINK];
-        ar_i32   base = ar__flex_base(it, axis, inner_main);
-
-        if (factor <= 0 || (growing && base > *ar_axis_size(&it->rect, axis)) ||
-            (!growing && base < *ar_axis_size(&it->rect, axis)))
-        {
-            it->state = (ar_u16)(it->state | AR_STATE_FLEX_FROZEN);
-        }
-    }
-
     /*
      * The loop. Bounded by the item count because every pass either finishes
      * or freezes at least one item, and the guard says so out loud rather than
@@ -379,6 +363,7 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
         ar_i32 factor_sum = 0;
         ar_i32 unfrozen = 0;
         ar_i32 violation = 0;
+        ar_i32 spent = 0;
 
         if (count > 1)
         {
@@ -388,6 +373,33 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
         {
             ar_node *it = &nodes[c];
             ar_i32   base = ar__flex_base(it, axis, inner_main);
+
+            /*
+             * The first pass is also where items that cannot move get frozen:
+             * no factor in the direction being resolved, or a base already
+             * past the hypothetical in the direction that would make it worse.
+             *
+             * This used to be a walk of its own between the hypothetical sizes
+             * and this loop. It cannot fold into the *hypothetical* pass --
+             * `growing` is not known until that pass has summed the whole line
+             * -- but it folds into this one, which already visits every item
+             * and already has its base in hand. Only on the first pass: after
+             * that the rect no longer holds the hypothetical size and the
+             * comparison below would be against a number that has moved.
+             *
+             * One walk of the line per resolution, out of the eight or nine a
+             * flex container was costing every box every frame.
+             */
+            if (guard == 0)
+            {
+                ar_i32 f0 = growing ? ar__grow_of(it, axis) : it->style.v[AR_P_FLEX_SHRINK];
+
+                if (f0 <= 0 || (growing && base > *ar_axis_size(&it->rect, axis)) ||
+                    (!growing && base < *ar_axis_size(&it->rect, axis)))
+                {
+                    it->state = (ar_u16)(it->state | AR_STATE_FLEX_FROZEN);
+                }
+            }
 
             free_space -=
                 ar_axis_margin_lead(&it->style, axis) + ar_axis_margin_trail(&it->style, axis);
@@ -429,6 +441,11 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
                 ar_clamp(want, ar__auto_min(it, axis), AR_WIDE(&it->style, ar_axis_max_prop(axis)));
 
             *ar_axis_size(&it->rect, axis) = got;
+            /* What this pass actually handed out, which is what the leftover
+               pixel below is the remainder of. Accumulated here rather than
+               recovered by a second walk subtracting each base back off: this
+               loop is already holding both numbers. */
+            spent += got - base;
             /* Which way the clamp moved it, summed over the line: positive
                means the minimums pushed back, negative means the maximums
                did. Zero means nothing was clamped and the line is settled. */
@@ -452,18 +469,11 @@ static void ar__resolve_line(ar_node *nodes, ar_i32 parent, ar_i32 first, ar_i32
              */
             if (growing)
             {
-                ar_i32 slack = free_space;
+                /* What the distribution above could not place, which is the
+                   line's width minus everything it handed out. `spent` is that
+                   sum, kept by the loop that did the handing out. */
+                ar_i32 slack = free_space - spent;
 
-                for (c = first; c >= 0 && c != stop; c = ar__flex_next(nodes, parent, c, ordered))
-                {
-                    ar_node *it = &nodes[c];
-
-                    if (it->state & AR_STATE_FLEX_FROZEN)
-                    {
-                        continue;
-                    }
-                    slack -= *ar_axis_size(&it->rect, axis) - ar__flex_base(it, axis, inner_main);
-                }
                 for (c = first; c >= 0 && c != stop && slack > 0;
                      c = ar__flex_next(nodes, parent, c, ordered))
                 {
@@ -535,6 +545,7 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
     ar_i32   align_items = n->style.v[AR_P_ALIGN];
     ar_i32   pass;
     ar_i32   line_lead = 0, line_between = 0;
+    ar_i32   line_grow = 0, line_grow_rest = 0;
 
     inner_main = *ar_axis_size(&n->rect, axis) - ar_axis_pad_lead(&n->style, axis) -
                  ar_axis_pad_trail(&n->style, axis);
@@ -581,10 +592,37 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             {
                 break;
             }
+            line_grow = 0;
             if (wrap == AR_WRAP_NOWRAP || line_count <= 0)
             {
                 line_lead = 0;
                 line_between = 0;
+            }
+            else if ((n->style.v[AR_P_ALIGN_CONTENT] & AR_ALIGN_MODE_MASK) == AR_ALIGN_STRETCH)
+            {
+                /*
+                 * §9.6: stretch shares the leftover between the *lines*, so
+                 * each one grows rather than the whole block being pushed
+                 * around. It is the initial value of `align-content`, and
+                 * ar_align_distribute has no case for it -- it answers with a
+                 * lead and a gap, and stretch changes neither -- so a wrapped
+                 * container simply packed its lines at their content height
+                 * and left the remainder at the bottom.
+                 *
+                 * Two lines of 30px items in a 120px container put the second
+                 * line at 30 where a browser puts it at 60.
+                 *
+                 * The remainder after the division goes to the earlier lines,
+                 * one pixel each, for the same reason the main axis hands out
+                 * its leftover pixel.
+                 */
+                line_lead = 0;
+                line_between = 0;
+                if (free_cross > 0)
+                {
+                    line_grow = free_cross / line_count;
+                    line_grow_rest = free_cross - line_grow * line_count;
+                }
             }
             else
             {
@@ -685,6 +723,20 @@ static ar_i32 ar__flex_solve(ar_node *nodes, ar_i32 i, ar_layout_env *env, int a
             if (wrap == AR_WRAP_NOWRAP && inner_cross > line_cross)
             {
                 line_cross = inner_cross;
+            }
+
+            /* And a wrapped line takes its share of the leftover, worked out
+               above once the line count was known. Applied before the items
+               are placed, because a stretched item's cross size is measured
+               against the line it is in. */
+            if (pass == 1 && line_grow > 0)
+            {
+                line_cross += line_grow;
+                if (line_grow_rest > 0)
+                {
+                    line_cross += 1;
+                    --line_grow_rest;
+                }
             }
 
             if (pass == 1)

@@ -15,6 +15,7 @@
 #include "ar_indic.h"
 #include "ar_css.h"
 #include "ar_node.h"
+#include "ar_html.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -33,6 +34,35 @@ static void ar__check(int ok, const char *what, const char *file, int line)
 }
 
 #define CHECK(expr, what) ar__check((expr) ? 1 : 0, what, __FILE__, __LINE__)
+
+/* ------------------------------------------------------------------------
+ * Version
+ * ------------------------------------------------------------------------ */
+
+/* AR_VERSION_STRING and the three macros beside it are two records of one
+   fact, and they have disagreed before. The string sat at "0.6.1-dev" through
+   0.6.2, 0.6.3, 0.7.0, 0.7.1, 0.8.0, 0.8.1 and 0.8.2, and because ar_bench
+   stamps it into every result, docs/PERFORMANCE.md published its numbers under
+   an engine four minor releases old.
+
+   This catches half of that drift. Both records can be stale together and
+   agree with each other perfectly -- which is precisely what happened -- so
+   the other half is tools/gen_perf_doc.py --check, comparing this string
+   against the version the committed baseline was actually measured with. */
+#define AR__STR2(x) #x
+#define AR__STR(x)  AR__STR2(x)
+
+static void test_version_string_matches_the_macros(void)
+{
+    const char *v = ar_version();
+    const char *number =
+        AR__STR(AR_VERSION_MAJOR) "." AR__STR(AR_VERSION_MINOR) "." AR__STR(AR_VERSION_PATCH);
+    size_t n = strlen(number);
+
+    CHECK(strncmp(v, number, n) == 0, "version: the reported string begins with the three macros");
+    CHECK(v[n] == 0 || strcmp(v + n, "-dev") == 0,
+          "version: what follows the number is nothing or -dev");
+}
 
 /* ------------------------------------------------------------------------
  * Arena
@@ -4562,6 +4592,50 @@ static void test_indic_survives_nonsense(void)
 /* ------------------------------------------------------------------------
  * Inheritance
  * ------------------------------------------------------------------------ */
+/*
+ * ar_style_inherit carries its own list of the properties that inherit, so it
+ * can ask for the five by name instead of asking ar_prop_inherits about all
+ * ninety -- which is where a fifth of the style phase used to go.
+ *
+ * Two records of one fact again, so this sweeps every property and compares
+ * them. Add an inheriting property to the switch, forget the list, and
+ * inheritance silently stops working for it; this is what says so.
+ *
+ * The list is static to ar_css.c, so the check is by behaviour rather than by
+ * reading it: give a parent a value, give the child nothing, and see whether
+ * the child ends up with it.
+ */
+static void test_the_inherited_list_matches_the_switch(void)
+{
+    ar_i32 prop;
+    ar_i32 mismatches = 0;
+
+    for (prop = 0; prop < AR_P_COUNT; ++prop)
+    {
+        ar_style parent, child;
+        int      flowed;
+
+        ar_style_defaults(&parent);
+        ar_style_defaults(&child);
+
+        /* A value the default is not, so "did it flow" has an answer. */
+        ar_style_put(&parent, prop, 7);
+        parent.unit[prop] = AR_UNIT_PX;
+        ar_pset_add(&parent.set, prop);
+
+        ar_style_inherit(&child, &parent);
+        flowed = (ar_style_get(&child, prop) == 7);
+
+        if (flowed != (ar_prop_inherits(prop) ? 1 : 0))
+        {
+            printf("      property %ld: ar_prop_inherits says %d, inheritance did %d\n", (long)prop,
+                   ar_prop_inherits(prop) ? 1 : 0, flowed);
+            ++mismatches;
+        }
+    }
+    CHECK(mismatches == 0, "style: every property inherits exactly when ar_prop_inherits says so");
+}
+
 static void test_inheritance_flows_down(void)
 {
     ar_surface s = ar__ui_surface(200, 120);
@@ -8173,12 +8247,28 @@ static void test_fr_shares_what_is_left_after_the_fixed_tracks(void)
      * `100px 1fr 2fr` in 300: the fixed track takes its hundred and the other
      * two share the remaining two hundred in the ratio their factors name --
      * not a third each, and not a hundred each.
+     *
+     * 66 and 133, and the third one starts at 166: that was this check, and
+     * the two tracks came to 199 of the 200 they were handed, so the grid
+     * ended a pixel inside its own right edge. The share is 66.67 and 133.33,
+     * and the pixel belongs to whichever track lost more of one -- the 1fr, at
+     * .67 against .33.
+     *
+     * Edge was asked this exact grid before the numbers here were touched, and
+     * reports its own subpixel widths alongside:
+     *
+     *     i0 x=0    w=100   exact 100.00
+     *     i1 x=100  w=67    exact  66.66
+     *     i2 x=167  w=133   exact 133.34
+     *
+     * So 67, 133, and the third track opening at 167. areole returns those.
      */
     ar__grid_scene(&s, ".g { grid-template-columns: 100px 1fr 2fr; }", 3);
 
     CHECK(ar__box(2).w == 100, "grid: a fixed track takes what it asked for");
-    CHECK(ar__box(3).w == 66, "grid: and one fr takes a third of the rest");
-    CHECK(ar__box(4).w == 133, "grid: and two fr take two thirds");
+    CHECK(ar__box(3).w == 67, "grid: and one fr takes a third of the rest, rounded up");
+    CHECK(ar__box(4).w == 133 && ar__box(4).x == 167,
+          "grid: and two fr take two thirds, meeting the far edge exactly");
 }
 
 static void test_repeat_expands_to_real_tracks(void)
@@ -8282,8 +8372,31 @@ static void test_the_two_gaps_are_separate(void)
                    ".c { height:40px; }",
                    4);
 
+    /*
+     * The second row starts at 105, not at 50, and the difference is not the
+     * gap.
+     *
+     * This check said 50 -- 40 for the first row and 10 for the gap -- from
+     * the day it was written, and it was pinning a bug. `.g` is `height:200px`
+     * with two `auto` rows, and `align-content` defaults to `stretch` for a
+     * grid: the rows take the container's height between them. 200 less the
+     * 10px gap is 190, which is 95 a row, so the second row opens at 105.
+     *
+     * areole left the rows at their content height and the remaining 110px at
+     * the bottom, so this check agreed with the engine and both were wrong.
+     * The grid corpus found it against a browser, and Edge was asked this
+     * exact scene before the number here was touched:
+     *
+     *     i0 x=0   y=0    w=100 h=40
+     *     i1 x=120 y=0    w=100 h=40
+     *     i2 x=0   y=105  w=100 h=40
+     *     i3 x=120 y=105  w=100 h=40
+     *
+     * areole now returns those four rectangles exactly. The items stay 40 tall
+     * because they said so; it is the rows underneath them that grew.
+     */
     CHECK(ar__box(3).x == 120, "grid: the column gap goes between the columns");
-    CHECK(ar__box(4).y == 50, "grid: and the row gap between the rows");
+    CHECK(ar__box(4).y == 105, "grid: and the row gap between the stretched rows");
 
     /* And the shorthand says the same thing, row first. */
     ar__grid_scene(&s,
@@ -8291,7 +8404,7 @@ static void test_the_two_gaps_are_separate(void)
                    ".c { height:40px; }",
                    4);
 
-    CHECK(ar__box(3).x == 120 && ar__box(4).y == 50,
+    CHECK(ar__box(3).x == 120 && ar__box(4).y == 105,
           "grid: and the gap shorthand is row then column");
 }
 
@@ -8606,6 +8719,192 @@ static void test_a_grid_item_keeps_its_min_content(void)
     CHECK(ar__box(2).w >= g_ui->nodes[2].min_w,
           "grid: an item is not crushed below its min-content width");
     CHECK(ar__box(3).w < ar__box(2).w, "grid: and min-width: 0 is how you say it may be");
+}
+
+/* ------------------------------------------------------------------------
+ * 0.8.2: subgrid
+ *
+ * Subgrid inverts the direction of track sizing. An ordinary grid sizes its
+ * tracks from its own contents; a subgrid's contents size its *parent's*, and
+ * the parent's resolved tracks then bound the child.
+ * ------------------------------------------------------------------------ */
+static void ar__cards(ar_surface *s, const char *extra, const char *mid1, const char *mid2,
+                      const char *mid3)
+{
+    char     css[900];
+    ar_input in;
+
+    strcpy(css, "#root { display:block; }"
+                ".deck { display:grid; width:300px;"
+                "        grid-template-columns: 100px 100px 100px; }"
+                ".card { display:grid; grid-template-rows: subgrid; grid-row: span 3; }"
+                ".sec { display:block; }");
+    strcat(css, extra);
+    ar__ui_reset(css);
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.deck");
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid1);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid2);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_begin(g_ui, "div.card");
+    ar_text(g_ui, "div.sec.t", "title");
+    ar_text(g_ui, "div.sec.b", mid3);
+    ar_text(g_ui, "div.sec.f", "footer");
+    ar_end(g_ui);
+
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, s);
+}
+
+static void test_subgrid_lines_the_cards_up(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * Three cards whose middles are different lengths, and whose footers still
+     * share a line.
+     *
+     * This is the whole reason subgrid exists. Every other way of doing it --
+     * fixed heights, measuring in script, flexbox with hardcoded numbers -- is
+     * a workaround for not having it, and every one of them breaks when the
+     * content changes.
+     *
+     * Nodes: 1=deck, 2=card, 3/4/5=its sections, 6=card, 7/8/9, 10=card,
+     * 11/12/13.
+     */
+    ar__cards(&s, "", "one line", "one line that is long enough to wrap twice over", "short");
+
+    CHECK(ar__box(3).y == ar__box(7).y && ar__box(7).y == ar__box(11).y,
+          "subgrid: the three titles share a row");
+    CHECK(ar__box(4).y == ar__box(8).y && ar__box(8).y == ar__box(12).y,
+          "subgrid: and the three bodies start on one");
+    CHECK(ar__box(5).y == ar__box(9).y && ar__box(9).y == ar__box(13).y,
+          "subgrid: and the three footers share one, whatever is above them");
+    CHECK(ar__box(5).y > ar__box(4).y,
+          "subgrid: with the footers below the bodies rather than on top of them");
+
+    /*
+     * And the rows are as tall as the *sections*, not as the cards.
+     *
+     * Every check above compares the three cards to each other, so a card that
+     * contributed its own whole height to the first row -- on top of its
+     * children, who are already in the item list -- would make all three
+     * equally wrong and every one of them would still pass. This is the
+     * absolute one: the deck is exactly its three rows, and its three rows are
+     * exactly the three sections of the tallest card.
+     */
+    CHECK(ar__box(2).h == ar__box(3).h + ar__box(4).h + ar__box(5).h,
+          "subgrid: a card is its three rows and nothing more");
+
+    /*
+     * And against a number that does not move with the bug.
+     *
+     * Every box above grows together if the card contributes its own height on
+     * top of its children's: the row gets taller, so the section in it gets
+     * taller, so the card gets taller, and each check compares two things that
+     * both moved. The title's *intrinsic* height is settled before any track
+     * is sized and is the one number a double contribution cannot touch.
+     */
+    CHECK(ar__box(3).h == g_ui->nodes[3].fit[1],
+          "subgrid: the first row is as tall as a title, not as tall as a card");
+}
+
+static void test_a_subgrid_takes_the_parents_tracks(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * The rows are the deck's, so a section is as tall as its row -- and the
+     * row is as tall as the tallest section across all three cards, not as the
+     * tallest in its own card. That is the contribution flowing upward.
+     */
+    ar__cards(&s,
+              ".deck { grid-template-rows: 20px 40px 30px; }"
+              ".card { grid-column: auto; }",
+              "a", "b", "c");
+
+    CHECK(ar__box(3).h == 20, "subgrid: a section is as tall as the parent's track");
+    CHECK(ar__box(4).h == 40, "subgrid: each of them");
+    CHECK(ar__box(5).h == 30, "subgrid: all three");
+    CHECK(ar__box(4).y == ar__box(3).y + 20, "subgrid: and they follow the parent's rows");
+}
+
+static void test_a_subgrid_keeps_its_own_columns(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `grid-template-rows: subgrid` and nothing about columns: the rows come
+     * from the deck and the columns are the card's own. A section is as wide
+     * as its card, not as wide as the deck.
+     */
+    /*
+     * The card is given padding on purpose.
+     *
+     * Without it a card's content box is exactly its column, so a solver that
+     * ignored the owner entirely and used the parent's track would land on the
+     * same numbers -- and the check would pass with the whole rule removed.
+     * Ten pixels either side is what tells the two apart.
+     */
+    ar__cards(&s, ".deck { grid-template-rows: 20px 20px 20px; } .card { padding: 0px 10px; }", "a",
+              "b", "c");
+
+    CHECK(ar__box(2).w == 100, "subgrid: the card is one column of the deck");
+    CHECK(ar__box(3).w == 80, "subgrid: and its sections fit inside the card's padding");
+    CHECK(ar__box(3).x == 10, "subgrid: starting where the card's content does");
+    CHECK(ar__box(6).x == 100, "subgrid: the second card is in the second column");
+    CHECK(ar__box(8).x == 110, "subgrid: and its sections are in the card, not the deck");
+}
+
+static void test_a_subgrid_with_no_grid_above_it_is_an_ordinary_grid(void)
+{
+    ar_surface s = ar__ui_surface(400, 400);
+
+    /*
+     * `subgrid` with nobody to take tracks from falls back to an ordinary
+     * grid, which CSS says outright -- and here that happens for free: with no
+     * template on either axis, every track is implicit.
+     */
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; width:200px; grid-template-rows: subgrid; }"
+                 ".c { height:20px; }");
+    {
+        ar_input in;
+
+        memset(&in, 0, sizeof in);
+        in.mouse_x = -1;
+        in.mouse_y = -1;
+        ar_frame_begin(g_ui, &in);
+        ar_begin(g_ui, "#root");
+        ar_begin(g_ui, "div.g");
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_begin(g_ui, "div.c");
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_end(g_ui);
+        ar_frame_end(g_ui, &s);
+    }
+
+    CHECK(ar__box(2).h == 20 && ar__box(3).h == 20,
+          "subgrid: with no grid above it, the items are laid out normally");
+    CHECK(ar__box(3).y == ar__box(2).y + 20, "subgrid: one row each, stacked");
 }
 
 static void test_a_clipped_box_does_not_take_the_hover(void)
@@ -12260,9 +12559,327 @@ static void test_selector_depth_is_refused_not_truncated(void)
     CHECK(sheet.errors > 0, "combinator: and counted as an error rather than ignored");
 }
 
+/* ------------------------------------------------------------------------
+ * HTML tokenizer
+ *
+ * Written from the specification's own state descriptions rather than from
+ * what the tokenizer happens to do. The acceptance criterion for 0.9.0 is the
+ * html5lib tokenizer suite at 100%, which is not vendored yet -- these are the
+ * cases that suite exists to cover, in the shape this repository uses.
+ * ------------------------------------------------------------------------ */
+
+static char     g_html_scratch[4096];
+static ar_token g_tok;
+
+/* Tokenize `src` and return the token at `index`, or EOF past the end. */
+static ar_token *ar__tok_at(const char *src, ar_i32 index, ar_u32 *errors)
+{
+    ar_html_tok t;
+    ar_i32      k = 0;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    memset(&g_tok, 0, sizeof g_tok);
+    while (ar_html_next(&t, &g_tok))
+    {
+        if (k == index)
+        {
+            if (errors)
+            {
+                *errors = t.errors;
+            }
+            return &g_tok;
+        }
+        ++k;
+    }
+    if (errors)
+    {
+        *errors = t.errors;
+    }
+    return &g_tok;
+}
+
+static ar_i32 ar__tok_count(const char *src)
+{
+    ar_html_tok t;
+    ar_token    tok;
+    ar_i32      k = 0;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    while (ar_html_next(&t, &tok))
+    {
+        ++k;
+    }
+    return k;
+}
+
+static int ar__text_is(ar_span s, const char *lit)
+{
+    ar_u32 n = (ar_u32)strlen(lit);
+
+    return s.n == n && memcmp(s.p, lit, n) == 0;
+}
+
+static void test_the_entity_table_is_sorted(void)
+{
+    ar_i32 i;
+    ar_i32 bad = 0;
+    ar_i32 n = ar_html_entity_count();
+
+    /* A binary search over an unsorted table does not fail loudly. It fails on
+       one entity, in one document, and the generated table that replaces this
+       one will have two thousand more chances to do it. */
+    for (i = 1; i < n; ++i)
+    {
+        if (strcmp(ar_html_entity_name(i - 1), ar_html_entity_name(i)) >= 0)
+        {
+            printf("      out of order at %ld: %s before %s\n", (long)i, ar_html_entity_name(i - 1),
+                   ar_html_entity_name(i));
+            ++bad;
+        }
+    }
+    CHECK(bad == 0, "html: the named character reference table is sorted");
+    CHECK(n > 100, "html: and has the HTML 4 set in it");
+}
+
+static void test_the_tokenizer_reads_a_tag(void)
+{
+    ar_token *t = ar__tok_at("<div>", 0, 0);
+
+    CHECK(t->kind == AR_TOK_START, "html: a start tag is a start tag");
+    CHECK(ar_span_is(t->name, "div"), "html: and carries its name");
+
+    t = ar__tok_at("<DIV>", 0, 0);
+    CHECK(ar_span_is(t->name, "div"), "html: a tag name matches case-insensitively");
+
+    t = ar__tok_at("</p>", 0, 0);
+    CHECK(t->kind == AR_TOK_END && ar_span_is(t->name, "p"), "html: and an end tag is one");
+
+    t = ar__tok_at("<br/>", 0, 0);
+    CHECK(t->kind == AR_TOK_START && t->self_closing, "html: a solidus before > is self-closing");
+}
+
+static void test_the_tokenizer_reads_attributes(void)
+{
+    ar_token *t = ar__tok_at("<a href=\"x.html\" class='c' hidden>", 0, 0);
+
+    CHECK(t->attr_count == 3, "html: three attributes, however they are quoted");
+    CHECK(ar_span_is(t->attrs[0].name, "href") && ar__text_is(t->attrs[0].value, "x.html"),
+          "html: a double-quoted value");
+    CHECK(ar_span_is(t->attrs[1].name, "class") && ar__text_is(t->attrs[1].value, "c"),
+          "html: a single-quoted value");
+    CHECK(ar_span_is(t->attrs[2].name, "hidden") && t->attrs[2].value.n == 0,
+          "html: and one with no value at all");
+
+    t = ar__tok_at("<a href=x.html>", 0, 0);
+    CHECK(ar__text_is(t->attrs[0].value, "x.html"), "html: an unquoted value ends at whitespace");
+
+    /* An end tag may not carry attributes, and the tree builder relies on it:
+       `</p class=x>` must not arrive with one. */
+    t = ar__tok_at("</p class=x>", 0, 0);
+    CHECK(t->kind == AR_TOK_END && t->attr_count == 0, "html: an end tag's attributes are dropped");
+}
+
+static void test_the_tokenizer_coalesces_text(void)
+{
+    ar_token *t = ar__tok_at("hello world", 0, 0);
+
+    CHECK(t->kind == AR_TOK_TEXT && ar__text_is(t->text, "hello world"),
+          "html: a run of characters is one token, not eleven");
+
+    /* A bare ampersand does not end a run and is not an error. `AT&T` is one
+       token, and a tokenizer that splits it is doing arithmetic nobody asked
+       for on every page that mentions a company. */
+    t = ar__tok_at("AT&T", 0, 0);
+    CHECK(ar__text_is(t->text, "AT&T"), "html: a bare ampersand stays in the run");
+
+    CHECK(ar__tok_count("<p>a</p>") == 3, "html: tag, text, tag");
+}
+
+static void test_character_references(void)
+{
+    ar_u32    errors = 0;
+    ar_token *t = ar__tok_at("&amp;", 0, 0);
+
+    CHECK(ar__text_is(t->text, "&"), "html: a named reference decodes");
+
+    t = ar__tok_at("a&lt;b", 0, 0);
+    CHECK(ar__text_is(t->text, "a<b"), "html: and does so in the middle of a run");
+
+    t = ar__tok_at("&#65;", 0, 0);
+    CHECK(ar__text_is(t->text, "A"), "html: a decimal numeric reference decodes");
+
+    t = ar__tok_at("&#x41;", 0, 0);
+    CHECK(ar__text_is(t->text, "A"), "html: and a hexadecimal one");
+
+    /* The replacement table everybody forgets. `&#128;` is not U+0080: the
+       specification decodes the C1 range as Windows-1252, because a decade of
+       documents pasted curly quotes in by number. */
+    t = ar__tok_at("&#128;", 0, 0);
+    CHECK(ar__text_is(t->text, "\342\202\254"), "html: &#128; is a euro sign, not U+0080");
+    t = ar__tok_at("&#147;", 0, 0);
+    CHECK(ar__text_is(t->text, "\342\200\234"),
+          "html: and &#147; is a left double quote, which is why the table exists");
+
+    /* A reference to nothing, a surrogate, and one out of range all become the
+       replacement character rather than anything exciting. */
+    t = ar__tok_at("&#0;", 0, 0);
+    CHECK(ar__text_is(t->text, "\357\277\275"), "html: a null reference is U+FFFD");
+    t = ar__tok_at("&#xD800;", 0, 0);
+    CHECK(ar__text_is(t->text, "\357\277\275"), "html: and so is a surrogate");
+
+    /* An unknown name is left as the text that spells it, which is what a
+       browser does -- and what areole does for the 1,978 references the table
+       does not carry yet. */
+    t = ar__tok_at("&nosuchentity;", 0, &errors);
+    CHECK(ar__text_is(t->text, "&nosuchentity;"), "html: an unknown reference stays as text");
+    CHECK(errors > 0, "html: and is counted as a parse error");
+}
+
+static void test_a_reference_in_an_attribute_stops_at_a_query_string(void)
+{
+    ar_token *t = ar__tok_at("<a href=\"?cite=1&copy=2\">", 0, 0);
+
+    CHECK(ar__text_is(t->attrs[0].value, "?cite=1&copy=2"),
+          "html: &copy without a semicolon before = is not a reference in an attribute");
+
+    t = ar__tok_at("<a href=\"a&amp;b\">", 0, 0);
+    CHECK(ar__text_is(t->attrs[0].value, "a&b"), "html: but a terminated one still decodes");
+}
+
+static void test_comments_and_bogus_comments(void)
+{
+    ar_token *t = ar__tok_at("<!-- hi -->", 0, 0);
+
+    CHECK(t->kind == AR_TOK_COMMENT && ar__text_is(t->text, " hi "), "html: a comment");
+
+    /* Everything the specification funnels into the bogus comment state, which
+       is why a stray processing instruction does not eat a document. */
+    t = ar__tok_at("<?php echo 1; ?>", 0, 0);
+    CHECK(t->kind == AR_TOK_COMMENT, "html: <?php becomes a comment, not a tag");
+
+    t = ar__tok_at("<!nonsense>", 0, 0);
+    CHECK(t->kind == AR_TOK_COMMENT, "html: and so does a bogus markup declaration");
+
+    /* `</>` is dropped entirely rather than becoming an empty comment. */
+    CHECK(ar__tok_count("a</>b") == 2, "html: </> is dropped, leaving the text either side");
+}
+
+static void test_doctype(void)
+{
+    ar_token *t = ar__tok_at("<!DOCTYPE html>", 0, 0);
+
+    CHECK(t->kind == AR_TOK_DOCTYPE, "html: a doctype is a doctype");
+    CHECK(ar_span_is(t->name, "html"), "html: and carries its name");
+    CHECK(!t->force_quirks, "html: <!DOCTYPE html> does not force quirks");
+
+    t = ar__tok_at("<!doctype HTML>", 0, 0);
+    CHECK(t->kind == AR_TOK_DOCTYPE && ar_span_is(t->name, "html"),
+          "html: in either case, both halves");
+
+    t = ar__tok_at("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://x/y.dtd\">", 0, 0);
+    CHECK(ar__text_is(t->pub, "-//W3C//DTD HTML 4.01//EN"), "html: a public identifier");
+    CHECK(ar__text_is(t->sys, "http://x/y.dtd"), "html: and the system identifier after it");
+
+    t = ar__tok_at("<!DOCTYPE>", 0, 0);
+    CHECK(t->force_quirks, "html: a doctype with no name forces quirks");
+
+    /* A truncated doctype must not look like a good one. */
+    t = ar__tok_at("<!DOCTYPE html", 0, 0);
+    CHECK(t->force_quirks, "html: and so does one that ends before its >");
+}
+
+static void test_rcdata_and_rawtext_end_only_on_their_own_tag(void)
+{
+    ar_html_tok t;
+    ar_token    tok;
+
+    /* Inside <title>, `</b>` is text and only `</title>` closes it. This is
+       the rule the tokenizer keeps `last_start` for, and it is why the tree
+       builder has to be the one switching states. */
+    ar_html_tok_init(&t, "<title>a<b>c</title>", 20, g_html_scratch, (ar_u32)sizeof g_html_scratch);
+
+    ar_html_next(&t, &tok); /* <title> */
+    CHECK(tok.kind == AR_TOK_START && ar_span_is(tok.name, "title"), "html: the title tag");
+    t.state = AR_HTML_RCDATA;
+
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_TEXT && ar__text_is(tok.text, "a<b>c"),
+          "html: everything inside title is text, tags included");
+
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_END && ar_span_is(tok.name, "title"),
+          "html: and only its own end tag closes it");
+}
+
+static void test_plaintext_never_ends(void)
+{
+    ar_html_tok t;
+    ar_token    tok;
+
+    ar_html_tok_init(&t, "<b>not a tag", 12, g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    t.state = AR_HTML_PLAINTEXT;
+    ar_html_next(&t, &tok);
+    CHECK(tok.kind == AR_TOK_TEXT && ar__text_is(tok.text, "<b>not a tag"),
+          "html: plaintext takes the rest of the file, tags and all");
+}
+
+static void test_the_tokenizer_never_stalls_or_stops(void)
+{
+    /* Every parse error in the specification has a defined recovery, so the
+       only way to be wrong here is to loop forever or to give up early. Both
+       are checked by feeding it the shapes that would cause either. */
+    static const char *const NASTY[] = {"<",      "<<<<",  "</",     "</>",    "<!",
+                                        "<!-",    "<!--",  "<!--x",  "<a",     "<a ",
+                                        "<a b",   "<a b=", "<a b='", "&",      "&#",
+                                        "&#x",    "&;",    "<!DOCT", "<?",     "a<b",
+                                        "<a b=c", "</ >",  "<>",     "&#xZZ;", "<a b=\"unclosed"};
+    ar_i32                   i;
+    ar_i32                   stalled = 0;
+
+    for (i = 0; i < (ar_i32)(sizeof NASTY / sizeof NASTY[0]); ++i)
+    {
+        ar_html_tok t;
+        ar_token    tok;
+        ar_i32      guard = 0;
+
+        ar_html_tok_init(&t, NASTY[i], (ar_u32)strlen(NASTY[i]), g_html_scratch,
+                         (ar_u32)sizeof g_html_scratch);
+        while (ar_html_next(&t, &tok))
+        {
+            if (++guard > 64)
+            {
+                printf("      %s did not terminate\n", NASTY[i]);
+                ++stalled;
+                break;
+            }
+        }
+    }
+    CHECK(stalled == 0, "html: no malformed input makes the tokenizer stall or run away");
+}
+
+static void test_the_tokenizer_copies_nothing_it_does_not_have_to(void)
+{
+    /* A token's spans point into the caller's bytes. That is what lets the
+       parser run inside the arena, and it is worth a check because the day
+       somebody makes a copy "for safety" the whole design goes quietly. */
+    const char *src = "<div>hello</div>";
+    ar_html_tok t;
+    ar_token    tok;
+
+    ar_html_tok_init(&t, src, (ar_u32)strlen(src), g_html_scratch, (ar_u32)sizeof g_html_scratch);
+    ar_html_next(&t, &tok);
+    CHECK(tok.name.p >= src && tok.name.p < src + strlen(src),
+          "html: a tag name points into the input rather than at a copy");
+    ar_html_next(&t, &tok);
+    CHECK(tok.text.p >= src && tok.text.p < src + strlen(src),
+          "html: and so does text with no reference in it");
+}
+
 int main(void)
 {
     printf("areole %s\n", ar_version());
+
+    test_version_string_matches_the_macros();
 
     test_arena_alignment();
     test_arena_regions_do_not_overlap();
@@ -12479,6 +13096,10 @@ int main(void)
     test_aspect_ratio_gives_the_axis_nobody_stated();
     test_safe_centring_never_starts_before_the_edge();
     test_a_grid_item_keeps_its_min_content();
+    test_subgrid_lines_the_cards_up();
+    test_a_subgrid_takes_the_parents_tracks();
+    test_a_subgrid_keeps_its_own_columns();
+    test_a_subgrid_with_no_grid_above_it_is_an_ordinary_grid();
     test_the_top_layer_beats_a_z_index_it_cannot_reach();
     test_the_top_layer_escapes_a_clipping_ancestor();
     test_the_top_layer_takes_the_pointer_first();
@@ -12622,6 +13243,7 @@ int main(void)
     test_compound_selector_matching();
     test_class_set_is_order_independent();
     test_class_list_has_a_ceiling();
+    test_the_inherited_list_matches_the_switch();
     test_inheritance_flows_down();
     test_layout_properties_do_not_inherit();
     test_inheritance_is_not_in_the_style_cache();
@@ -12658,6 +13280,19 @@ int main(void)
     test_a_region_move_is_identical_to_a_full_repaint();
     test_the_bar_repaints_when_only_its_colour_changed();
     test_a_bar_that_appears_because_content_grew();
+
+    test_the_entity_table_is_sorted();
+    test_the_tokenizer_reads_a_tag();
+    test_the_tokenizer_reads_attributes();
+    test_the_tokenizer_coalesces_text();
+    test_character_references();
+    test_a_reference_in_an_attribute_stops_at_a_query_string();
+    test_comments_and_bogus_comments();
+    test_doctype();
+    test_rcdata_and_rawtext_end_only_on_their_own_tag();
+    test_plaintext_never_ends();
+    test_the_tokenizer_never_stalls_or_stops();
+    test_the_tokenizer_copies_nothing_it_does_not_have_to();
 
     printf("\n%d checks, %d failed\n", ar__checks, ar__failures);
     return ar__failures == 0 ? 0 : 1;
