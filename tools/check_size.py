@@ -105,11 +105,36 @@ ENTITY_OBJECT = "ar_html_entity.c"
 # the whole point of the gate firing here rather than after the fact. It fired
 # on the commit that spent the money, which is the first time either CSS or
 # HTML budget has done that.
+#
+# **Raised to 96 KB at 0.4.4, which is 80 plus that release's stated 16.**
+# Said in advance by the line above -- "0.4.4's colour work must move it again
+# and say so" -- and this is the saying.
+#
+# The arithmetic is worth writing down because two different numbers are true
+# at once. Colour *spent* 24,064 bytes: ar_color.c is 20,281 of which 4,608 is
+# the three generated tables, and the notations cost ar_css.c another 20,567
+# between them. That is half again what 0.4.4's document allows. But the budget
+# only has to move by 16 KB, because 0.4.3 closed at 66,576 against an 80 KB
+# line and left 13,744 unspent -- so the release overran its own allowance and
+# still lands inside the number its roadmap named, at 90,640 of 98,304.
+#
+# Both halves go here rather than only the comfortable one. A release that
+# overspends and passes because its predecessor underspent has still
+# overspent, and the next one to look at this file should see that rather than
+# the 7,664 bytes of headroom it appears to inherit.
+#
+# The named place to get it back: the notations dispatch on their own name
+# through a chain of a dozen ar__same_fold calls, where every other table in
+# ar_css.c -- properties, keywords, units -- is a sorted array and a loop. That
+# is the shape this file already has twice and the conversion was not done
+# here only because the release ran out of room to do it in. It has not been
+# measured, so it is a lead and not a promise.
 CSS_OBJECTS = [
     "ar_css.c",
     "ar_ua_css.c",
+    "ar_color.c",
 ]
-CSS_BUDGET = 80 * 1024
+CSS_BUDGET = 96 * 1024
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

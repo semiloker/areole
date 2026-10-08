@@ -613,9 +613,49 @@ for each of them. And **`font-size` in a viewport unit is one frame behind** on
 a resize, because a font size has to be a number before the next box inherits
 it; every other viewport length is current.
 
-**Colours.** `#rgb`, `#rrggbb`, `#rrggbbaa`, and `transparent`. Named colours
-are absent: a table of a hundred and forty names earns its place in a browser,
-not here.
+**Colours.** Every notation CSS Color 4 defines, and all of them become eight
+bits per channel while the stylesheet is being read.
+
+| Form | Examples |
+| --- | --- |
+| hex | `#f00`, `#ff0000`, `#ff0000ff`, `#ff000080` |
+| named | the 148 CSS names, `rebeccapurple` included, plus `transparent` |
+| `rgb()` / `rgba()` | `rgb(255 0 0)`, `rgb(50% 0 0 / 25%)`, `rgba(255, 0, 0, .5)` |
+| `hsl()` / `hsla()` / `hwb()` | `hsl(120 100% 50%)`, `hsl(0.5turn 100% 50%)`, `hwb(0 20% 20%)` |
+| `lab()` / `lch()` | `lab(50 40 30)`, `lch(70 50 140)` |
+| `oklab()` / `oklch()` | `oklab(0.6 0.12 0.05)`, `oklch(0.7 0.15 30)` |
+| `color-mix()` | `color-mix(in oklch longer hue, red 25%, blue)` |
+| keywords | `currentColor`, and nineteen system colours |
+
+Interpolation spaces for `color-mix()`: `srgb`, `srgb-linear`, `hsl`, `lab`,
+`lch`, `oklab`, `oklch`, with `shorter`, `longer`, `increasing` and
+`decreasing` hue.
+
+**A percentage and a bare number are measured against different things**, which
+is CSS's rule and not this engine's: `rgb(50% 0 0)` is half of 255 and
+`rgb(50 0 0)` is fifty. The same split runs through `lab()`, where `100%` on the
+`a` axis is 125 and on Oklab's it is 0.4.
+
+**The arithmetic is integer, at 1/4096, and the error is published.** Against a
+floating-point reference over 500 colours the worst channel is **1 of 255** and
+the mean is 0.06. sRGB and its linear twin round trip exactly -- the transfer
+function is a 256-entry table and its inverse bisects that same table, so all
+256 bytes return what they started as. The wide-gamut four do not round trip
+exactly, because going out needs a cube root and coming back needs a cube.
+
+**Two of them are not literals.** `currentColor` is the value of `color` on the
+same box and resolves at frame end; on `color` itself it means `inherit`. A
+system colour carries an index and is looked up at frame end too, because the
+theme it names can change while the program is running.
+
+**`color-scheme`** takes `normal`, `light` and `dark`, inherits, and chooses
+which set of system colours applies. `light dark` parses and keeps the first,
+which is the right answer today: `prefers-color-scheme` is pinned to `light`
+until the OS hook arrives at 0.16.1, and the pair needs storing then.
+
+Not implemented: `light-dark()`, `accent-color`, `opacity`, `color()` with an
+explicit space, and the `none` keyword as a genuinely missing component --
+`none` parses and resolves to zero.
 
 **Comments.** `/* ... */`, anywhere whitespace is allowed.
 

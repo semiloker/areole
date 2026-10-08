@@ -153,3 +153,4 @@ css/units/ch             engine: the built-in face states no advance for "0", so
 # The demo stays, red, because it is the thing that will go green.
 
 css/units/percentage-references  engine: a percentage padding is read as pixels -- see 0.4.1's stated debt
+css/color/system-colors  browser: the system colours come from the OS theme there and from a fixed table here, so the two disagree by design until the theme hook lands at 0.16.1 -- geometry still agrees

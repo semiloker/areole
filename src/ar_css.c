@@ -11,6 +11,7 @@
  * has needed one yet.
  */
 #include "ar_css.h"
+#include "ar_color.h"
 
 #include <string.h>
 
@@ -405,6 +406,9 @@ int ar_prop_inherits(ar_i32 prop)
     switch (prop)
     {
     case AR_P_COLOR:
+    /* `color-scheme` inherits, which is what makes declaring it once on
+       `:root` settle a whole document -- the same reason `color` does. */
+    case AR_P_COLOR_SCHEME:
     case AR_P_FONT_SIZE:
     case AR_P_LINE_HEIGHT:
     case AR_P_FONT_WEIGHT:
@@ -434,9 +438,10 @@ int ar_prop_inherits(ar_i32 prop)
  * because they are asked in different shapes, and ar_test sweeps every
  * property comparing the two, so they cannot drift apart.
  */
-static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,       AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
-                                      AR_P_FONT_WEIGHT, AR_P_FONT_STYLE,  AR_P_VISIBILITY,
-                                      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE};
+static const ar_u8 AR__INHERITED[] = {AR_P_COLOR,        AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,
+                                      AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,  AR_P_VISIBILITY,
+                                      AR_P_EMPTY_CELLS,  AR_P_CAPTION_SIDE,
+                                      AR_P_COLOR_SCHEME};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -736,6 +741,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"border", AR_SH_BORDER},
                                           {"border-width", AR_P_BORDER_WIDTH},
                                           {"border-color", AR_P_BORDER_COLOR},
+                                          {"color-scheme", AR_P_COLOR_SCHEME},
                                           {"border-radius", AR_P_BORDER_RADIUS},
                                           {"font-size", AR_P_FONT_SIZE},
                                           {"line-height", AR_P_LINE_HEIGHT},
@@ -867,6 +873,18 @@ typedef struct ar__kw
 } ar__kw;
 
 static const ar__kw AR_KEYWORDS[] = {
+    /*
+     * `color-scheme`. `light dark` is two idents and the value loop keeps the
+     * first, which gives `light` -- and that is the right answer today rather
+     * than an approximation of one, because `prefers-color-scheme` is pinned
+     * to light until the OS hook lands at 0.16.1. When it is wired, this is
+     * the declaration that starts following the desktop, and the pair needs
+     * storing then rather than now.
+     */
+    {"normal", AR_P_COLOR_SCHEME, AR_SCHEME_NORMAL},
+    {"light", AR_P_COLOR_SCHEME, AR_SCHEME_LIGHT},
+    {"dark", AR_P_COLOR_SCHEME, AR_SCHEME_DARK},
+
     {"none", AR_P_DISPLAY, AR_DISPLAY_NONE},
     {"block", AR_P_DISPLAY, AR_DISPLAY_BLOCK},
     {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
@@ -2785,6 +2803,555 @@ static ar_i32 ar__parse_calc(ar__scan *z)
     return header;
 }
 
+/* ------------------------------------------------------------------------
+ * Colour notations
+ *
+ * Every one of them resolves to eight bits per channel here, at parse time,
+ * and nothing downstream knows which notation it came from. That is the whole
+ * design: `oklch(0.7 0.15 30)` costs a stylesheet parse and not a frame, which
+ * beats the roadmap's "conversion happens once at computed-value time" by a
+ * stage, because none of these can change after they are read.
+ *
+ * The two that cannot resolve here are `currentColor`, which needs the value
+ * of `color` on the same box, and the system colours, which need the OS theme.
+ * Those become units rather than values -- the same trick `inherit` uses, and
+ * for the same reason: they say where the colour comes from, not what it is.
+ * ------------------------------------------------------------------------ */
+
+static int ar__parse_color_any(ar__scan *z, ar_u32 *out);
+
+/*
+ * One component of a colour function.
+ *
+ * `ref` is the divisor a bare number is measured against: 255 in `rgb()`, 100
+ * for a Lab lightness, 1 for an Oklab one. `pct` is the AR_CFIX value that
+ * 100% maps to, which is not the same question -- in `lab()` a bare 125 and
+ * `100%` are both the top of the a axis, but a bare 50 is half the lightness
+ * while `50%` is too. Two parameters because CSS really does define the two
+ * forms against different references, and folding them into one was the first
+ * thing tried and produced `rgb(50% 0 0)` as a very dark red.
+ *
+ * The result is in AR_CFIX scale, rounded rather than truncated. That matters
+ * more than it looks: the stored value is where the precision of the whole
+ * pipeline is decided. Truncating here put four 8-bit steps into a near-black
+ * channel that the conversion arithmetic was entirely innocent of.
+ */
+static int ar__color_comp(ar__scan *z, ar_i32 ref, ar_i32 pct, ar_i32 *out)
+{
+    ar_i32 sign = 1, n = 0, frac = 0, digits = 0;
+    ar_i32 num, v;
+    int    is_pct = 0;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+
+    /* `none` is a real component value in Color 4 and resolves to zero here.
+       Carrying it as genuinely missing would mean a fourth state in every slot
+       to buy correct behaviour in one corner of color-mix(), and zero is what
+       it resolves to everywhere else anyway. */
+    if (z->p + 4 <= z->end && ar__same_fold(z->p, 4, "none"))
+    {
+        z->p += 4;
+        *out = 0;
+        return 1;
+    }
+
+    if (*z->p == '-')
+    {
+        sign = -1;
+        z->p++;
+    }
+    else if (*z->p == '+')
+    {
+        z->p++;
+    }
+    if (z->p >= z->end || (!ar__is_digit(*z->p) && *z->p != '.'))
+    {
+        return 0;
+    }
+
+    /* Clamped while it is read, like every other number in this file: a
+       stylesheet is a text file and `rgb(99999999999 0 0)` would otherwise
+       overflow a signed int, which is undefined behaviour rather than a large
+       red. Ten thousand is past every component any notation here defines. */
+    while (z->p < z->end && ar__is_digit(*z->p))
+    {
+        if (n < 10000)
+        {
+            n = n * 10 + (*z->p - '0');
+        }
+        z->p++;
+    }
+    if (z->p < z->end && *z->p == '.')
+    {
+        z->p++;
+        while (z->p < z->end && ar__is_digit(*z->p))
+        {
+            if (digits < 4)
+            {
+                frac = frac * 10 + (*z->p - '0');
+                ++digits;
+            }
+            z->p++;
+        }
+    }
+    while (digits < 4)
+    {
+        frac *= 10;
+        ++digits;
+    }
+
+    if (z->p < z->end && *z->p == '%')
+    {
+        z->p++;
+        is_pct = 1;
+    }
+
+    /* The number itself in AR_CFIX, built from the whole part and the four
+       decimal places kept, with one rounding at the end rather than two. */
+    num = n * AR_CFIX + (frac * AR_CFIX + 5000) / 10000;
+
+    if (is_pct)
+    {
+        /* num/AR_CFIX per cent of pct. Divided before multiplied would lose
+           the fraction; multiplied first, num is at most 10000*AR_CFIX and pct
+           at most a few AR_CFIX, so the product is taken in two steps to stay
+           inside a signed int. */
+        v = ((num / 100) * pct + AR_CFIX / 2) / AR_CFIX;
+    }
+    else if (ref == 1)
+    {
+        v = num;
+    }
+    else
+    {
+        v = (num + ref / 2) / ref;
+    }
+
+    *out = sign * v;
+    return 1;
+}
+
+/* An angle: a bare number, or deg, grad, rad or turn. Returned in degrees at
+   AR_CFIX scale. */
+static int ar__color_angle(ar__scan *z, ar_i32 *out)
+{
+    ar_i32      v;
+    const char *name;
+    ar_u32      len;
+
+    if (!ar__color_comp(z, 1, AR_CFIX * 360, &v))
+    {
+        return 0;
+    }
+    if (z->p < z->end && ((*z->p >= 'a' && *z->p <= 'z') || (*z->p >= 'A' && *z->p <= 'Z')))
+    {
+        len = ar__ident(z, &name);
+        if (ar__same_fold(name, len, "grad"))
+        {
+            v = (v * 9 + 5) / 10; /* 400 grad to 360 degrees */
+        }
+        else if (ar__same_fold(name, len, "rad"))
+        {
+            /* 180/pi to four places. A full turn is 6.28 rad, so v is at most
+               about 26,000 here and the product stays inside a signed int --
+               which is why the number is clamped on the way in. */
+            if (v > 100 * AR_CFIX)
+            {
+                v = 100 * AR_CFIX;
+            }
+            else if (v < -100 * AR_CFIX)
+            {
+                v = -100 * AR_CFIX;
+            }
+            v = (v * 57296 + 500) / 1000;
+        }
+        else if (ar__same_fold(name, len, "turn"))
+        {
+            v = v * 360;
+        }
+        /* `deg`, and anything unrecognised, is already degrees. */
+    }
+    *out = v;
+    return 1;
+}
+
+/* A comma, or the whitespace standing in for one. Modern and legacy syntax
+   differ in nothing else, so one reader serves both rather than two paths that
+   would have to agree about everything around them. */
+static void ar__color_sep(ar__scan *z)
+{
+    ar__skip_ws(z);
+    if (z->p < z->end && *z->p == ',')
+    {
+        z->p++;
+        ar__skip_ws(z);
+    }
+}
+
+/* The optional trailing alpha, after either `/` or a comma. Defaults opaque. */
+static ar_i32 ar__color_alpha(ar__scan *z)
+{
+    ar_i32 a = AR_CFIX;
+
+    ar__skip_ws(z);
+    if (z->p < z->end && (*z->p == '/' || *z->p == ','))
+    {
+        z->p++;
+    }
+    else
+    {
+        return AR_CFIX;
+    }
+    if (!ar__color_comp(z, 1, AR_CFIX, &a))
+    {
+        return AR_CFIX;
+    }
+    if (a < 0)
+    {
+        a = 0;
+    }
+    if (a > AR_CFIX)
+    {
+        a = AR_CFIX;
+    }
+    return a;
+}
+
+static int ar__color_space_by_name(const char *n, ar_u32 len, ar_u8 *out)
+{
+    if (ar__same_fold(n, len, "srgb"))
+    {
+        *out = AR_CS_SRGB;
+    }
+    else if (ar__same_fold(n, len, "srgb-linear"))
+    {
+        *out = AR_CS_SRGB_LINEAR;
+    }
+    else if (ar__same_fold(n, len, "hsl"))
+    {
+        *out = AR_CS_HSL;
+    }
+    else if (ar__same_fold(n, len, "oklab"))
+    {
+        *out = AR_CS_OKLAB;
+    }
+    else if (ar__same_fold(n, len, "oklch"))
+    {
+        *out = AR_CS_OKLCH;
+    }
+    else if (ar__same_fold(n, len, "lab"))
+    {
+        *out = AR_CS_LAB;
+    }
+    else if (ar__same_fold(n, len, "lch"))
+    {
+        *out = AR_CS_LCH;
+    }
+    else
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * color-mix(in <space> [<method> hue], a [p%], b [p%]).
+ *
+ * The two percentages are the fiddly part and the rules are not decoration:
+ * one given means the other is the remainder, both given are normalised to sum
+ * to one, and both zero is invalid rather than black.
+ */
+static int ar__parse_color_mix(ar__scan *z, ar_u32 *out)
+{
+    const char *name;
+    ar_u32      len;
+    ar_u8       space = AR_CS_OKLAB;
+    ar_u8       hue = AR_HUE_SHORTER;
+    ar_u32      ca = 0, cb = 0;
+    ar_i32      pa = -1, pb = -1;
+    ar_i32      w;
+
+    ar__skip_ws(z);
+    len = ar__ident(z, &name);
+    if (!ar__same_fold(name, len, "in"))
+    {
+        return 0;
+    }
+    ar__skip_ws(z);
+    len = ar__ident(z, &name);
+    if (!ar__color_space_by_name(name, len, &space))
+    {
+        return 0;
+    }
+
+    /* An optional hue interpolation method. It means nothing outside a polar
+       space and the grammar still allows it there, so it is read and kept
+       rather than refused. */
+    ar__skip_ws(z);
+    if (z->p < z->end && *z->p != ',')
+    {
+        const char *h;
+        ar_u32      hl = ar__ident(z, &h);
+
+        if (ar__same_fold(h, hl, "shorter"))
+        {
+            hue = AR_HUE_SHORTER;
+        }
+        else if (ar__same_fold(h, hl, "longer"))
+        {
+            hue = AR_HUE_LONGER;
+        }
+        else if (ar__same_fold(h, hl, "increasing"))
+        {
+            hue = AR_HUE_INCREASING;
+        }
+        else if (ar__same_fold(h, hl, "decreasing"))
+        {
+            hue = AR_HUE_DECREASING;
+        }
+        else
+        {
+            return 0;
+        }
+        ar__skip_ws(z);
+        len = ar__ident(z, &name);
+        if (!ar__same_fold(name, len, "hue"))
+        {
+            return 0;
+        }
+    }
+
+    ar__color_sep(z);
+    if (!ar__parse_color_any(z, &ca))
+    {
+        return 0;
+    }
+    ar__skip_ws(z);
+    if (z->p < z->end && (ar__is_digit(*z->p) || *z->p == '.'))
+    {
+        if (!ar__color_comp(z, 100, AR_CFIX, &pa))
+        {
+            return 0;
+        }
+    }
+    ar__color_sep(z);
+    if (!ar__parse_color_any(z, &cb))
+    {
+        return 0;
+    }
+    ar__skip_ws(z);
+    if (z->p < z->end && (ar__is_digit(*z->p) || *z->p == '.'))
+    {
+        if (!ar__color_comp(z, 100, AR_CFIX, &pb))
+        {
+            return 0;
+        }
+    }
+    ar__skip_ws(z);
+    if (z->p >= z->end || *z->p != ')')
+    {
+        return 0;
+    }
+    z->p++;
+
+    if (pa < 0 && pb < 0)
+    {
+        w = AR_CFIX / 2;
+    }
+    else if (pb < 0)
+    {
+        w = pa;
+    }
+    else if (pa < 0)
+    {
+        w = AR_CFIX - pb;
+    }
+    else if (pa + pb <= 0)
+    {
+        return 0; /* both zero is invalid, and is not the same as black */
+    }
+    else
+    {
+        w = (pa * AR_CFIX) / (pa + pb);
+    }
+
+    *out = ar_color_mix(ca, cb, w, space, hue);
+    return 1;
+}
+
+/* Is this identifier the name of a colour function? Asked before the paren is
+   consumed, so that `rgb` standing alone stays an ordinary word and only
+   `rgb(` commits to a colour. */
+static int ar__is_color_fn(const char *n, ar_u32 len)
+{
+    return ar__same_fold(n, len, "rgb") || ar__same_fold(n, len, "rgba") ||
+           ar__same_fold(n, len, "hsl") || ar__same_fold(n, len, "hsla") ||
+           ar__same_fold(n, len, "hwb") || ar__same_fold(n, len, "lab") ||
+           ar__same_fold(n, len, "lch") || ar__same_fold(n, len, "oklab") ||
+           ar__same_fold(n, len, "oklch") || ar__same_fold(n, len, "color-mix");
+}
+
+/* The functional notations, with the opening paren already consumed. */
+static int ar__parse_color_fn(ar__scan *z, const char *name, ar_u32 len, ar_u32 *out)
+{
+    ar_color_val v;
+
+    if (ar__same_fold(name, len, "color-mix"))
+    {
+        return ar__parse_color_mix(z, out);
+    }
+
+    v.alpha = AR_CFIX;
+
+    if (ar__same_fold(name, len, "rgb") || ar__same_fold(name, len, "rgba"))
+    {
+        int i;
+
+        for (i = 0; i < 3; ++i)
+        {
+            if (!ar__color_comp(z, 255, AR_CFIX, &v.c[i]))
+            {
+                return 0;
+            }
+            if (i < 2)
+            {
+                ar__color_sep(z);
+            }
+        }
+        v.space = AR_CS_SRGB;
+    }
+    else if (ar__same_fold(name, len, "hsl") || ar__same_fold(name, len, "hsla") ||
+             ar__same_fold(name, len, "hwb"))
+    {
+        ar_i32 h, a, b, rgb[3];
+        int    hwb = ar__same_fold(name, len, "hwb");
+
+        if (!ar__color_angle(z, &h))
+        {
+            return 0;
+        }
+        ar__color_sep(z);
+        if (!ar__color_comp(z, 1, AR_CFIX, &a))
+        {
+            return 0;
+        }
+        ar__color_sep(z);
+        if (!ar__color_comp(z, 1, AR_CFIX, &b))
+        {
+            return 0;
+        }
+        if (hwb)
+        {
+            ar_hwb_to_rgb(h, a, b, rgb);
+        }
+        else
+        {
+            ar_hsl_to_rgb(h, a, b, rgb);
+        }
+        v.space = AR_CS_SRGB;
+        v.c[0] = rgb[0];
+        v.c[1] = rgb[1];
+        v.c[2] = rgb[2];
+    }
+    else if (ar__same_fold(name, len, "lab") || ar__same_fold(name, len, "lch") ||
+             ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch"))
+    {
+        int ok = ar__same_fold(name, len, "oklab") || ar__same_fold(name, len, "oklch");
+        int polar = ar__same_fold(name, len, "lch") || ar__same_fold(name, len, "oklch");
+        ar_i32 lref = ok ? 1 : 100;
+        ar_i32 aref = ok ? 1 : 100;
+        ar_i32 apct = ok ? (ar_i32)(AR_CFIX * 2 / 5) : (AR_CFIX * 5 / 4);
+
+        /*
+         * Lab states its lightness 0..100 and Oklab states it 0..1, and the
+         * axes differ the same way -- 100% on Lab's a axis is 125, on Oklab's
+         * it is 0.4. Both are stored divided by their own top so the two
+         * families land in one scale, which is what lets ar_color_pack take a
+         * space tag rather than a family.
+         */
+        if (!ar__color_comp(z, lref, AR_CFIX, &v.c[0]))
+        {
+            return 0;
+        }
+        ar__color_sep(z);
+        if (!ar__color_comp(z, aref, apct, &v.c[1]))
+        {
+            return 0;
+        }
+        ar__color_sep(z);
+        if (polar)
+        {
+            if (!ar__color_angle(z, &v.c[2]))
+            {
+                return 0;
+            }
+        }
+        else if (!ar__color_comp(z, aref, apct, &v.c[2]))
+        {
+            return 0;
+        }
+
+        v.space = (ar_u8)(ok ? (polar ? AR_CS_OKLCH : AR_CS_OKLAB)
+                             : (polar ? AR_CS_LCH : AR_CS_LAB));
+    }
+    else
+    {
+        return 0;
+    }
+
+    v.alpha = ar__color_alpha(z);
+    ar__skip_ws(z);
+    if (z->p >= z->end || *z->p != ')')
+    {
+        return 0;
+    }
+    z->p++;
+
+    *out = ar_color_pack(&v);
+    return 1;
+}
+
+/*
+ * Any colour: a hash, a name, or a function. Recursive, because color-mix()
+ * takes colours and either of them may be another color-mix().
+ */
+static int ar__parse_color_any(ar__scan *z, ar_u32 *out)
+{
+    const char *name;
+    ar_u32      len;
+
+    ar__skip_ws(z);
+    if (z->p >= z->end)
+    {
+        return 0;
+    }
+    if (*z->p == '#')
+    {
+        return ar__parse_hex_color(z, out);
+    }
+
+    len = ar__ident(z, &name);
+    if (len == 0)
+    {
+        return 0;
+    }
+    if (z->p < z->end && *z->p == '(')
+    {
+        z->p++;
+        return ar__parse_color_fn(z, name, len, out);
+    }
+    if (ar__same_fold(name, len, "transparent"))
+    {
+        *out = 0;
+        return 1;
+    }
+    return ar_color_named(name, len, out);
+}
+
 static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
 {
     ar__value out;
@@ -3068,6 +3635,39 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
 
         /*
+         * A colour function, before anything below reads its name as a
+         * keyword or a custom ident.
+         *
+         * Gated on the paren rather than on the property: `border: 1px solid
+         * red` parses its values as `border-width`, so asking whether the
+         * property takes a colour gets the shorthand wrong -- and that is the
+         * commonest way anyone writes a colour at all.
+         *
+         * A refused function takes its own text with it, for the reason 0.4.3
+         * wrote down the hard way: leave the scanner standing inside the
+         * parentheses and the declaration parser recovers by reading a number
+         * out of the middle, so `rgb(300 0 0)` comes back as three hundred
+         * pixels of something rather than as nothing.
+         */
+        if (z->p < z->end && *z->p == '(' && ar__is_color_fn(name, len))
+        {
+            const char *start = z->p;
+            ar_u32      c = 0;
+
+            z->p++;
+            if (ar__parse_color_fn(z, name, len, &c))
+            {
+                out.v = (ar_i32)c;
+                out.unit = AR_UNIT_COLOR;
+                out.ok = 1;
+                return out;
+            }
+            z->p = start;
+            ar__skip_maths(z);
+            return out;
+        }
+
+        /*
          * `span 3` on a grid line, carried as -3.
          *
          * A line number and a span are two different things in the same slot,
@@ -3244,6 +3844,28 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
 
         /*
+         * `currentColor`. On `color` itself it means `inherit` -- the
+         * specification says so outright -- and writing that here rather than
+         * carrying a self-reference through to frame end costs nothing and
+         * removes the one case where the deferred unit could refer to itself.
+         *
+         * Case-folding, unlike `transparent` beside it, because the name is
+         * spelled with a capital in every stylesheet anyone has ever written
+         * and CSS keywords are case-insensitive regardless.
+         */
+        if (ar__same_fold(name, len, "currentcolor"))
+        {
+            out.unit = (ar_u8)(prop == AR_P_COLOR ? AR_UNIT_INHERIT : AR_UNIT_CURRENTCOLOR);
+            out.v = 0;
+            out.ok = 1;
+            if (out.unit == AR_UNIT_CURRENTCOLOR)
+            {
+                z->sheet->has_late_color = 1;
+            }
+            return out;
+        }
+
+        /*
          * env(name) and env(name, fallback).
          *
          * The fallback is parsed rather than kept as text: it is always a
@@ -3405,6 +4027,51 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
             out.unit = AR_UNIT_KEYWORD;
             out.ok = 1;
             return out;
+        }
+
+        /*
+         * A named colour, and it goes last on purpose.
+         *
+         * The table holds 148 ordinary English words and some of them are
+         * spelled like property keywords. Looking colours up first would make
+         * the name win wherever both exist, which is backwards: a keyword is
+         * what the property actually defines, and the colour is only a colour
+         * where nothing else fits. Putting this after the keyword lookup costs
+         * one failed bisection on values that were never colours, and removes
+         * the whole class of collision rather than the instances of it anyone
+         * happened to think of.
+         */
+        /*
+         * A system colour, before the named table and after the keywords.
+         *
+         * Before the names because the two sets do not overlap and asking the
+         * shorter question first is free; after the keywords for the same
+         * reason the names are. `Canvas` and `Mark` are ordinary words and a
+         * property that defines either as a keyword must keep it.
+         */
+        {
+            int sys = ar_sys_color_by_name(name, len);
+
+            if (sys >= 0)
+            {
+                out.v = sys;
+                out.unit = AR_UNIT_SYSCOLOR;
+                out.ok = 1;
+                z->sheet->has_late_color = 1;
+                return out;
+            }
+        }
+
+        {
+            ar_u32 c = 0;
+
+            if (ar_color_named(name, len, &c))
+            {
+                out.v = (ar_i32)c;
+                out.unit = AR_UNIT_COLOR;
+                out.ok = 1;
+                return out;
+            }
         }
     }
     return out;
@@ -3765,9 +4432,22 @@ static void ar__parse_decl(ar__scan *z, ar_rule *rule, ar_sheet *sheet)
         ar__set(rule, AR_P_BORDER_WIDTH, vals[0].v, AR_UNIT_PX);
         for (i = 0; i < n; ++i)
         {
-            if (vals[i].unit == AR_UNIT_COLOR)
+            /*
+             * Three units are a colour here, not one.
+             *
+             * `border: 6px solid currentColor` and `border: 1px solid
+             * ButtonBorder` are how both of those are actually written, and
+             * they arrive carrying a unit that says where the colour comes
+             * from rather than what it is. Matching only AR_UNIT_COLOR left
+             * the declaration with no colour *and* left the value in the run
+             * for the width to be read from -- so the border changed size
+             * rather than changing colour, which is why two gallery demos
+             * disagreed with the browser on geometry and none on pixels.
+             */
+            if (vals[i].unit == AR_UNIT_COLOR || vals[i].unit == AR_UNIT_CURRENTCOLOR ||
+                vals[i].unit == AR_UNIT_SYSCOLOR)
             {
-                ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, AR_UNIT_COLOR);
+                ar__set(rule, AR_P_BORDER_COLOR, vals[i].v, vals[i].unit);
             }
         }
     }
@@ -4510,6 +5190,14 @@ void ar_sheet_init(ar_sheet *sheet, ar_rule *storage, ar_u16 capacity)
     sheet->first_error_offset = 0;
     sheet->has_contextual = 0;
     sheet->has_late_state = 0;
+
+    /* These three were never reset here, which was harmless only by luck: a
+       stale `1` costs an unnecessary pass and a stale `0` costs a feature.
+       ar_sheet_init sets every other field by name, so the omission read as
+       deliberate rather than as missing. */
+    sheet->has_calc = 0;
+    sheet->has_view_units = 0;
+    sheet->has_late_color = 0;
     sheet->cache = 0;
     sheet->cache_cap = 0;
     sheet->cache_hits = 0;
@@ -6440,7 +7128,7 @@ static void ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, 
         ar__skip_ws(z);
         if (z->p >= z->end || *z->p == ';' || *z->p == '}')
         {
-            d->v = (ar_i16)val.v;
+            d->v = val.v;
             d->unit = val.unit;
             d->ok = 1;
         }
@@ -6512,7 +7200,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
         {
             return 0;
         }
-        r->fallback_v = (ar_i16)fb.v;
+        r->fallback_v = fb.v;
         r->fallback_unit = fb.unit;
         r->has_fallback = 1;
         ar__skip_ws(z);
