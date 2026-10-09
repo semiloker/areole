@@ -219,6 +219,22 @@ typedef struct ar_node
      */
     ar_i16 var_scope;
 
+    /*
+     * How far this box's own text sits below the top of its content box.
+     *
+     * Zero, except where `align-content` moves the contents of a box with a
+     * stated height: a button thirty pixels tall with its label as its own
+     * text, which is what ar_button makes. Layout moved the children and not
+     * the text, so the one kind of button an immediate-mode caller builds
+     * drew its label at the top while a parsed `<button>`, whose label is a
+     * child, drew it in the middle. Everything that finds where the text is --
+     * painting it, its caret, its selection -- adds this.
+     *
+     * Sixteen bits, in the two bytes var_scope leaves before `rect`, so the
+     * box does not grow.
+     */
+    ar_i16 text_dy;
+
     ar_rect rect; /* final, absolute */
     ar_rect clip; /* narrowed by every clipping ancestor */
 } ar_node;

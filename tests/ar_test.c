@@ -13549,6 +13549,142 @@ static void test_absolute_is_out_of_the_flow(void)
     CHECK(ar__box(3).y == 10, "absolute: the block after it ignores it entirely");
 }
 
+/*
+ * Out of the flow is out of the parent's size as well (CSS 2.1 10.3.5,
+ * Flexbox 4.1). The width measures counted an absolutely positioned child, so
+ * a sliding highlight behind two buttons -- absolutely positioned, as wide as
+ * one of them -- made a shrink-to-fit row of two buttons three buttons wide.
+ * PetalSoft's theme switch, Light and Dark, found it.
+ */
+static void test_an_absolute_child_does_not_widen_a_flex_row(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+
+    ar__ui_reset("#root { display:flex; }"
+                 ".seg { display:flex; position:relative; padding:3px; }"
+                 ".pill { position:absolute; left:3px; top:3px; width:90px; height:20px; }"
+                 ".opt { display:block; width:90px; height:20px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.seg");
+    ar_begin(g_ui, "div.pill");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.opt");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.opt");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 186,
+          "absolute child: two 90px items and 3px of padding make a 186px row, highlight or not");
+}
+
+/* The same for a shrink-to-fit block: its widest line, not its widest box. */
+static void test_an_absolute_child_does_not_widen_a_shrink_to_fit_box(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".fit { display:inline-block; position:relative; }"
+                 ".abs { position:absolute; left:0; top:0; width:300px; height:10px; }"
+                 ".in { display:block; width:50px; height:10px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.fit");
+    ar_begin(g_ui, "div.abs");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.in");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 50, "absolute child: an inline-block is as wide as what is in flow");
+}
+
+/*
+ * A button made by ar_button carries its label as its own text, not as a
+ * child. align-content moved a stated-height box's children to the middle and
+ * left its own text where it was, so the one kind of button an immediate-mode
+ * caller builds drew its label against the top edge -- while a parsed
+ * `<button>`, whose label is a child, drew it in the middle. PetalSoft's theme
+ * switch found this one too.
+ */
+static void test_a_buttons_own_label_sits_in_the_middle(void)
+{
+    ar_surface s = ar__ui_surface(120, 60);
+    ar_rect    b;
+    ar_i32     x, y, top = -1, bottom = -1, above, below;
+
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 "button.b { display:block; width:100px; height:40px; padding:0; border:0;"
+                 " background:#ffffff; color:#000000; align-content:center; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_button(g_ui, "button.b", "Go");
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    b = ar__box(1);
+    for (y = b.y; y < b.y + b.h; ++y)
+    {
+        for (x = b.x; x < b.x + b.w; ++x)
+        {
+            if ((s.pixels[y * s.stride + x] & 0x00FFFFFFu) != 0x00FFFFFFu)
+            {
+                if (top < 0)
+                {
+                    top = y;
+                }
+                bottom = y;
+            }
+        }
+    }
+    above = top - b.y;
+    below = b.y + b.h - 1 - bottom;
+
+    CHECK(top >= 0, "own label: the label is drawn");
+    CHECK(above >= 10 && above - below <= 2 && below - above <= 2,
+          "own label: as much room above it as below it in a 40px button");
+}
+
+/*
+ * A padded scroll container that its contents fit cannot scroll and draws no
+ * bar. The range was taken against the height inside the padding while
+ * content_h already counted the padding, so any padding at all was scrollable
+ * twice over -- four options in a select list with 4px of padding showed a
+ * bar with a thumb as long as its track.
+ */
+static void test_a_padded_scroll_box_that_fits_does_not_scroll(void)
+{
+    ar_surface s = ar__ui_surface(200, 300);
+    ar_i32     k;
+
+    ar__ui_reset("#root { display:block; }"
+                 ".list { display:block; overflow-y:auto; padding:4px; }"
+                 ".row { display:block; height:30px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.list");
+    for (k = 0; k < 4; ++k)
+    {
+        ar_begin(g_ui, "div.row");
+        ar_end(g_ui);
+    }
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar_scroll_range(&g_ui->nodes[1]) == 0, "padded scroll box: nothing to scroll when it all fits");
+    CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "padded scroll box: and no bar drawn over nothing");
+}
+
 /* With no offsets it stays at the static position: where the flow had reached.
    That is what makes `position: absolute` alone look like nothing happened. */
 static void test_absolute_with_no_offsets_keeps_the_static_position(void)
@@ -24304,6 +24440,10 @@ int main(void)
     test_relative_moves_its_children();
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
+    test_an_absolute_child_does_not_widen_a_flex_row();
+    test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
+    test_a_buttons_own_label_sits_in_the_middle();
+    test_a_padded_scroll_box_that_fits_does_not_scroll();
     test_absolute_with_no_offsets_keeps_the_static_position();
     test_absolute_takes_its_children_with_it();
     test_a_shifted_box_takes_its_fragments_with_it();
