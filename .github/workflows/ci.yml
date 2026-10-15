@@ -108,10 +108,18 @@ jobs:
         with:
           msystem: UCRT64
           update: false
+          # The runner's own Python, for the corpus checks below: MSYS2's has
+          # no prebuilt clang-format to install.
+          path-type: inherit
           install: >-
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
+            diffutils
+      # The generators format what they write, because what they are checked
+      # against is formatted. Same version as the format job.
+      - name: clang-format, for the generators
+        run: python -m pip install clang-format==22.1.8
       - name: Configure and build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -146,10 +154,12 @@ jobs:
 
       # And its twin is generated, so it cannot drift from the C side unless
       # somebody forgets to regenerate. This says so.
+      # A Windows build writes its --html with CRLF to stdout, and the files
+      # it is compared with are LF. The twin is the same document either way.
       - name: The grid twin is up to date
         run: |
           ./build/example_grid.exe --html > /tmp/grid.html
-          diff -u examples/11_grid/grid.html /tmp/grid.html
+          diff -u --strip-trailing-cr examples/11_grid/grid.html /tmp/grid.html
 
       # 0.9.0's demonstration: a document read from HTML, styled, laid out and
       # painted, with nothing declared by hand. It asserts what it claims --
@@ -166,7 +176,7 @@ jobs:
       - name: The document twin is up to date
         run: |
           ./build/example_document.exe --html > /tmp/document.html
-          diff -u examples/13_document/document.html /tmp/document.html
+          diff -u --strip-trailing-cr examples/13_document/document.html /tmp/document.html
 
       # And it parses back from disk, which is the path a real caller takes.
       - name: The document parses from a file
@@ -183,7 +193,7 @@ jobs:
       - name: The interface twin is up to date
         run: |
           ./build/example_interface.exe --html > /tmp/page.html
-          diff -u examples/14_interface/page.html /tmp/page.html
+          diff -u --strip-trailing-cr examples/14_interface/page.html /tmp/page.html
 
       - name: The interface parses from a file
         run: ./build/example_interface.exe examples/14_interface/page.html --selftest
@@ -206,7 +216,7 @@ jobs:
       - name: The HTML twin is up to date
         run: |
           ./build/example_html.exe --html > /tmp/cases.html
-          diff -u examples/12_html/cases.html /tmp/cases.html
+          diff -u --strip-trailing-cr examples/12_html/cases.html /tmp/cases.html
 
       # 0.9.1 acceptance criterion 2: what HTML's legacy attributes compute to.
       # The browser half of it needs a browser and runs locally, the way every
@@ -220,7 +230,7 @@ jobs:
       - name: The hint twin is up to date
         run: |
           ./build/ar_hints.exe --html > /tmp/hints.html
-          diff -u tests/hints.html /tmp/hints.html
+          diff -u --strip-trailing-cr tests/hints.html /tmp/hints.html
 
       # 0.9.1 acceptance criterion 1: every element's defaults. Same split as
       # the hints corpus -- the browser half runs locally, the dump and the
@@ -238,7 +248,7 @@ jobs:
       - name: The element twin is up to date
         run: |
           ./build/ar_elements.exe --html > /tmp/elements.html
-          diff -u tests/elements.html /tmp/elements.html
+          diff -u --strip-trailing-cr tests/elements.html /tmp/elements.html
 
       # 0.9.1 acceptance criterion 3: what a document with no doctype does
       # differently. Its twin has no doctype either -- that is what puts it in
@@ -251,7 +261,7 @@ jobs:
       - name: The quirks twin is up to date
         run: |
           ./build/ar_quirks.exe --html > /tmp/quirks.html
-          diff -u tests/quirks.html /tmp/quirks.html
+          diff -u --strip-trailing-cr tests/quirks.html /tmp/quirks.html
 
       # 0.4.1 acceptance criterion 2: what every CSS length unit computes to.
       # The comparison against a browser needs one and runs locally; what runs
@@ -264,7 +274,7 @@ jobs:
       - name: The units twin is up to date
         run: |
           ./build/ar_units.exe --html > /tmp/units.html
-          diff -u tests/units.html /tmp/units.html
+          diff -u --strip-trailing-cr tests/units.html /tmp/units.html
 
       # 0.4.3 acceptance criterion 2: what calc() and var() compute to. The
       # cases are generated, so the generator is checked here too -- a corpus
@@ -278,7 +288,7 @@ jobs:
       - name: The calc twin is up to date
         run: |
           ./build/ar_calc.exe --html > /tmp/calc.html
-          diff -u tests/calc.html /tmp/calc.html
+          diff -u --strip-trailing-cr tests/calc.html /tmp/calc.html
 
       # 0.9.1 acceptance criterion 4: the gallery harness, end to end. The
       # browser half needs a browser and runs locally like every other
