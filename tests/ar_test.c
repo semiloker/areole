@@ -13559,6 +13559,124 @@ static void test_absolute_is_out_of_the_flow(void)
 }
 
 /*
+ * A box's min-height and max-height in what its container measures.
+ *
+ * A flex column sized to its content added up each item's content height, and
+ * an item's own limits were applied only when it was placed -- so a column of
+ * rows with `min-height: 44px` and nothing taller in them came out as tall as
+ * the gaps, and the rows hung out of the bottom of it. A block did the same.
+ */
+static void test_container_measures_its_items_limits(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".col { display:flex; flex-direction:column; gap:4px; }"
+                 ".r { display:block; min-height:44px; }"
+                 ".m { display:block; height:60px; max-height:30px; }"
+                 ".blk { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.col");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.m");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.blk");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).h == 44 + 44 + 30 + 8,
+          "limits: a flex column is as tall as its items' minimums");
+    CHECK(ar__box(3).y == 48 && ar__box(4).y == 96 && ar__box(4).h == 30,
+          "limits: and its items sit where their minimums and maximums put them");
+    CHECK(ar__box(5).y == 126 && ar__box(5).h == 88, "limits: so does a block");
+}
+
+/*
+ * Auto rows share what a grid's height leaves over.
+ *
+ * Grid's align-content is `normal`, which for a grid is `stretch`: the auto
+ * tracks grow to fill a container whose height or min-height is more than
+ * they need. They stayed at their content, so a grid made to fill a window
+ * left its last row short and an empty band below it.
+ */
+static void test_grid_auto_rows_fill_the_height(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".g { display:grid; min-height:210px; gap:10px; }"
+                 ".h { display:grid; height:200px; grid-template-rows:50px auto; }"
+                 ".gi { display:block; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.g");
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.h");
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.gi");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(1).h == 210, "grid stretch: the container keeps its min-height");
+    CHECK(ar__box(2).h == 100 && ar__box(3).y == ar__box(1).y + 110 && ar__box(3).h == 100,
+          "grid stretch: two auto rows share a min-height between them");
+    CHECK(ar__box(5).h == 50 && ar__box(6).y == ar__box(4).y + 50 && ar__box(6).h == 150,
+          "grid stretch: an auto row takes what a fixed one leaves of a height");
+}
+
+/*
+ * `display: inline-flex`: a flex container that sits on a line.
+ *
+ * It was an unknown keyword, so the box stayed whatever it was -- a block, for
+ * a div -- and two of them stacked. Now each is as wide as its items and they
+ * sit side by side, and inside each the items are a row.
+ */
+static void test_inline_flex(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset("#root { display:block; width:300px; }"
+                 ".f { display:inline-flex; gap:2px; }"
+                 ".i { display:block; width:10px; height:12px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "span.f");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "span.f");
+    ar_begin(g_ui, "div.i");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "inline-flex: is a keyword");
+    CHECK(ar__box(1).w == 22 && ar__box(1).h == 12,
+          "inline-flex: as wide as its items and the gap");
+    CHECK(ar__box(3).x == ar__box(2).x + 12 && ar__box(3).y == ar__box(2).y,
+          "inline-flex: and its items are a row");
+    CHECK(ar__box(4).x == ar__box(1).x + 22 && ar__box(4).y == ar__box(1).y && ar__box(4).w == 10,
+          "inline-flex: two of them share a line");
+}
+
+/*
  * Custom properties past sixteen. A rule could declare sixteen and a box hold
  * sixteen, and both dropped the rest without a word: PetalSoft's accent was
  * three properties in their own rule on a root that already had seventeen,
@@ -24540,6 +24658,9 @@ int main(void)
     test_absolute_is_out_of_the_flow();
     test_a_number_in_calc_above_thirty_two_is_itself();
     test_custom_properties_past_sixteen();
+    test_container_measures_its_items_limits();
+    test_grid_auto_rows_fill_the_height();
+    test_inline_flex();
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_a_buttons_own_label_sits_in_the_middle();

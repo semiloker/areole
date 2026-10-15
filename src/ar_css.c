@@ -954,6 +954,7 @@ static const ar__kw AR_KEYWORDS[] = {
     {"list-item", AR_P_DISPLAY, AR_DISPLAY_LIST_ITEM},
     {"flex", AR_P_DISPLAY, AR_DISPLAY_FLEX},
     {"inline-block", AR_P_DISPLAY, AR_DISPLAY_INLINE_BLOCK},
+    {"inline-flex", AR_P_DISPLAY, AR_DISPLAY_INLINE_FLEX},
     {"inline", AR_P_DISPLAY, AR_DISPLAY_INLINE},
 
     {"left", AR_P_TEXT_ALIGN, AR_TEXT_ALIGN_LEFT},

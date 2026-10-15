@@ -882,6 +882,17 @@ enum
      */
     AR_DISPLAY_LIST_ITEM,
 
+    /*
+     * `display: inline-flex`: a flex container on the outside of which is an
+     * atomic inline box, the way inline-block is a block container inside one.
+     *
+     * A button with an icon and a label is one: centred by the flex algorithm,
+     * and sitting on a line beside its neighbours. Without the value it was an
+     * unknown keyword, and the box stayed a block and took the line to itself.
+     * Last, for the same reason as the two above.
+     */
+    AR_DISPLAY_INLINE_FLEX,
+
     AR_DISPLAY_TABLE_INTERNAL_FIRST = AR_DISPLAY_TABLE_ROW_GROUP,
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };

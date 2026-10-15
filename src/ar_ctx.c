@@ -2565,8 +2565,7 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
 /* Whether a container's children are flex or grid items rather than a flow. */
 static int ar__lays_out_items(const ar_node *n)
 {
-    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
-           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+    return ar_is_flex(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
 }
 
 /* Whether a text is nothing but white space. */
@@ -2602,6 +2601,15 @@ static void ar__blockify_inlines(ar_ctx *c)
             ar__lays_out_items(&c->nodes[n->parent]) && ar__all_white(n->text))
         {
             n->style.v[AR_P_DISPLAY] = AR_DISPLAY_NONE;
+            continue;
+        }
+        /* Blockified the same way: an inline flex container that is itself a
+           flex or grid item is a flex container there, as a browser reports
+           it. */
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX && n->parent >= 0 &&
+            ar__lays_out_items(&c->nodes[n->parent]))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_FLEX;
             continue;
         }
         if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || n->first_child < 0)
