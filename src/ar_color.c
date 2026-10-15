@@ -80,23 +80,20 @@ ar_i32 ar_srgb_to_linear(ar_i32 c8)
  */
 static ar_i32 ar__div_round(ar_i32 num, ar_i32 den)
 {
-    if (den == 0)
+    ar_i32 n = num < 0 ? -num : num;
+    ar_i32 d = den < 0 ? -den : den;
+
+    /* On d rather than den: the same test, put on the value the division
+       uses, where it can be seen to guard it. */
+    if (d == 0)
     {
         return 0;
     }
     if ((num < 0) != (den < 0))
     {
-        ar_i32 n = num < 0 ? -num : num;
-        ar_i32 d = den < 0 ? -den : den;
-
         return -((n + d / 2) / d);
     }
-    {
-        ar_i32 n = num < 0 ? -num : num;
-        ar_i32 d = den < 0 ? -den : den;
-
-        return (n + d / 2) / d;
-    }
+    return (n + d / 2) / d;
 }
 
 /*

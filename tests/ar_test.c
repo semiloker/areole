@@ -13550,6 +13550,46 @@ static void test_absolute_is_out_of_the_flow(void)
 }
 
 /*
+ * A number in calc() is the number it says, however large.
+ *
+ * A step of a calc() program held its operand in sixteen bits and a bare
+ * number in thousandths, so 32.767 was the largest number calc() could carry:
+ * `calc(2px * 50)` multiplied by -15.536 and laid out as nothing, and dividing
+ * by 100 did the same. MSVC's C4244 on the var() path, where the same
+ * narrowing happened again, was the only warning anything gave. Widening it
+ * uncovered the next limit: the multiply and divide formed a product of two
+ * thirty-two-bit values first, so 6000px over 60 and 100px times 50 overflowed.
+ */
+static void test_a_number_in_calc_above_thirty_two_is_itself(void)
+{
+    ar_surface s = ar__ui_surface(300, 100);
+
+    ar__ui_reset("#root { display:block; }"
+                 ".a { display:block; width:calc(2px * 50); height:5px; }"
+                 ".b { display:block; width:calc(50 * 2px); height:5px; }"
+                 ".c { display:block; width:calc(6000px / 60); height:5px; }"
+                 ".d { display:block; width:calc(100px * 50 / 50); height:5px; }");
+
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.a");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.b");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.c");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.d");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+
+    CHECK(ar__box(1).w == 100, "calc number: 2px times 50 is 100px");
+    CHECK(ar__box(2).w == 100, "calc number: 50 times 2px is 100px");
+    CHECK(ar__box(3).w == 100, "calc number: 6000px over 60 is 100px");
+    CHECK(ar__box(4).w == 100, "calc number: 100px times 50 over 50 is 100px, through 5000px");
+}
+
+/*
  * Out of the flow is out of the parent's size as well (CSS 2.1 10.3.5,
  * Flexbox 4.1). The width measures counted an absolutely positioned child, so
  * a sliding highlight behind two buttons -- absolutely positioned, as wide as
@@ -24442,6 +24482,7 @@ int main(void)
     test_relative_moves_its_children();
     test_absolute_uses_the_padding_box();
     test_absolute_is_out_of_the_flow();
+    test_a_number_in_calc_above_thirty_two_is_itself();
     test_an_absolute_child_does_not_widen_a_flex_row();
     test_an_absolute_child_does_not_widen_a_shrink_to_fit_box();
     test_a_buttons_own_label_sits_in_the_middle();

@@ -416,7 +416,7 @@ void ar_edit_init(ar_edit *e, const char *text)
 
     if (text)
     {
-        while (text[n] && n < AR_EDIT_CAP)
+        while (n < AR_EDIT_CAP && text[n])
         {
             ++n;
         }
