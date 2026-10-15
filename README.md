@@ -452,6 +452,7 @@ toolkit breaks that circle.
 - **0.9.5** *It does arithmetic* — `calc()` and the maths functions, custom properties and `var()` ✅
 - **0.9.6** *It knows what colour means* — every notation CSS Color 4 defines, `color-mix()`, `currentColor`, the system colours and `color-scheme` ✅
 - **0.10.0** *It can be used* — focus and tab order, text editing, every form control, forms that submit, and an accessibility tree a screen reader can walk ✅
+- **0.10.1** *Control appearance* — `cursor`, hover and pressed looks, and the fixes a real application found; `accent-color`, `appearance` and controls under `color-scheme` still to come ◐
 
 Minor releases add architecture, patch releases add CSS and HTML coverage.
 
@@ -1231,10 +1232,10 @@ stamp, not before it:
 `gen_perf_doc.py --check` fails on a registered scene the baseline does not hold, which is that gate
 doing exactly its job.
 
-**`AR_VERSION_STRING` still says 0.9.6.** The stamp and `bench/baseline.json` move together, and
-the machine read 30 to 55% spread between epochs on the layout group at 10% load -- the numbers
-0.9.2 discarded rather than published. The baseline, with the three new scenes in it, waits for a
-quiet machine, as 0.9.4's and 0.9.6's did, and with the four new scenes in it.
+**`AR_VERSION_STRING` said 0.9.6 through this release.** The stamp and `bench/baseline.json`
+moved together, and the machine read 30 to 55% spread between epochs on the layout group at 10%
+load -- the numbers 0.9.2 discarded rather than published. They no longer have to move together:
+see 0.10.1. The baseline, with the four new scenes in it, still waits for a quiet machine.
 
 ### What this release does not do
 
@@ -1245,6 +1246,73 @@ quiet machine, as 0.9.4's and 0.9.6's did, and with the four new scenes in it.
 - **Undo does not survive leaving a field.** The text does; the history is one buffer's.
 - **The caret moves logically through bidirectional text**, not visually.
 - **`accent-color` and `color-scheme` on controls are 0.10.1's.**
+
+### 0.10.1, partial
+
+**The number moves without the measurements, and the release is half of what the roadmap names.**
+0.10.1 is *Control appearance*: controls that take `accent-color`, `appearance` and the page's
+`color-scheme` the way a browser's do. What is here is the pointer, the hover and pressed looks, and
+six fixes found against Edge -- and then an application. PetalSoft, a desktop app of lists, forms,
+dialogs and a dashboard, was rewritten on areole, and it found nine bugs in the engine that no
+corpus had. Both halves are in this release; the rest of *Control appearance* is listed below as
+not done.
+
+| | |
+| --- | --- |
+| Checks | **2,095** in `ar_test`, from 2,044; every CI job green again |
+| Issues | #20 to #25, closed |
+| Benchmarks | not measured: `docs/PERFORMANCE.md` is 0.9.6's numbers, and says so at the top |
+
+**`gen_perf_doc.py --check` accepts an older baseline now**, as long as the document says whose
+numbers they are. A release used to wait for a quiet machine because the version and the baseline
+had to agree, and this one waited a week for a machine that never got quiet -- so the version stayed
+at 0.9.6 through 0.10.0 and the status line lied the other way. A baseline *newer* than the header
+still fails. The four scenes written for 0.10.0 land with the next baseline, as before.
+
+### Six issues, found against Edge
+
+- **#20** A word that fits stays on its line when the space after it does not.
+- **#21** Bold and italic for the sans-serif and monospace families, which had one face each.
+- **#22** An inline box's background is its font's height, not the line's.
+- **#23** Every control has a hover and a pressed look, measured from Edge.
+- **#24** `cursor`, and the pointer it asks for: an I-beam over a field, a hand over a link.
+- **#25** A text field clicked into shows its focus ring.
+
+### Nine bugs an application found
+
+- **An absolutely positioned child widened its parent.** A popup menu under a button made the
+  button as wide as the menu.
+- **A button's own label sat at its top left**, because a box with no children was never placed.
+- **A scroll container's padding was counted twice**, so a list scrolled past its last row.
+- **Animation ran as fast as a frame could be drawn**, 312 a second. `ar_win_wake_vsync` waits for
+  the display instead, 60 a second here, through DwmFlush.
+- **Every face was shaped with one face's tables.** With a second font loaded, text came out as
+  the wrong glyphs once shaping was on, so PetalSoft turned shaping off. Each face is shaped with
+  its own tables now, and a face without any costs no shaper.
+- **The seventeenth custom property was dropped without a word**, in one rule or on one box.
+  PetalSoft's accent colour was three properties on a root that already had seventeen, and simply
+  was not there. Thirty-two now, and past that it is a stylesheet error or `ar_overflowed`.
+- **An empty box with a `min-height` collapsed through itself**, and a container measured its
+  children without their `min-` and `max-` sizes: a flex column of 44-pixel rows was as tall as
+  its gaps.
+- **A grid's auto rows ignored its `min-height`.** They share it now, as Grid 11.8 says.
+- **`display: inline-flex` was an unknown keyword**, so an icon-and-label button took a whole line.
+
+### And the CI, red since 0.10.0
+
+Three jobs had failed on every commit since 0.10.0, and most of what they reported was a bug.
+`calc()` could not hold a number over 32.767, so `calc(2px * 50)` laid out as nothing. A state bit
+past the sixteenth was never seen to change. A radian passed 2^31 in an intermediate. An edit buffer
+read past its end before checking. The accessibility bridge read a value before writing it. The
+Windows job ran no `diff` and no `clang-format`, and a generator wrote the main checkout's files from
+any other one.
+
+### What this release does not do
+
+- **No `accent-color`**: a checkbox, radio, range or progress bar keeps its built-in colour.
+- **No `appearance: none`**: a control cannot be restyled from nothing.
+- **Controls do not follow `color-scheme`**, though the page around them does.
+- **No new baseline.** Every number in `docs/PERFORMANCE.md` is 0.9.6's.
 
 ## Building
 
