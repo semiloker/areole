@@ -285,7 +285,8 @@ enum
     AR_FIELD_PASSWORD = 1u << 1, /* drawn as bullets, never copied            */
     AR_FIELD_NUMBER = 1u << 2,   /* digits and a sign; Up and Down step it    */
     AR_FIELD_READONLY = 1u << 3, /* a caret and a selection, and no edits     */
-    AR_FIELD_DISABLED = 1u << 4
+    AR_FIELD_DISABLED = 1u << 4,
+    AR_FIELD_PLACEHOLDER = 1u << 5 /* has a placeholder, for :placeholder-shown */
 };
 
 /*

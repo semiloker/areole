@@ -13782,6 +13782,69 @@ static void test_an_outline_follows_the_border_radius(void)
 }
 
 /*
+ * `accent-color`, against what Edge draws.
+ *
+ * Every number below was read off Edge's pixels: a checked checkbox, radio,
+ * slider and progress bar at four times their size, then the pointer moved
+ * over each and pressed through the DevTools protocol. The specification
+ * leaves the shades to the browser, so the browser is the reference.
+ */
+static void test_accent_color_shades_match_edge(void)
+{
+    static const struct
+    {
+        ar_u32 accent, hover, active, on;
+        int    dark_track;
+    } E[] = {
+        {0xFFFF0000u, 0xFFC70000u, 0xFFFF3838u, 0xFFFFFFFFu, 0},
+        {0xFF006400u, 0xFF002C00u, 0xFF009C00u, 0xFFFFFFFFu, 0},
+        {0xFF7F7FFFu, 0xFF4747FFu, 0xFFB7B7FFu, 0xFFFFFFFFu, 1},
+        {0xFFFFEB3Bu, 0xFFFFF173u, 0xFFFFE503u, 0xFF3B3B3Bu, 1},
+        {0xFF808080u, 0xFF646464u, 0xFF9C9C9Cu, 0xFFFFFFFFu, 0},
+        {0xFF000000u, 0xFF000000u, 0xFF1C1C1Cu, 0xFFFFFFFFu, 0},
+        {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFE3E3E3u, 0xFF3B3B3Bu, 1},
+    };
+    /* Either side of both 3:1 lines, a few thousandths of a ratio apart. */
+    static const struct
+    {
+        ar_u32 accent, on;
+        int    dark_track;
+    } T[] = {
+        {0xFF00AD00u, 0xFFFFFFFFu, 1}, {0xFF00AE00u, 0xFF3B3B3Bu, 1}, {0xFF00A000u, 0xFFFFFFFFu, 0},
+        {0xFF00A100u, 0xFFFFFFFFu, 1}, {0xFF9A9A00u, 0xFFFFFFFFu, 1}, {0xFF9B9B00u, 0xFF3B3B3Bu, 1},
+        {0xFF8E8E00u, 0xFFFFFFFFu, 0}, {0xFF8F8F00u, 0xFFFFFFFFu, 1}, {0xFF909090u, 0xFFFFFFFFu, 1},
+        {0xFF989898u, 0xFF3B3B3Bu, 1}, {0xFF888888u, 0xFFFFFFFFu, 0}, {0xFFE97400u, 0xFFFFFFFFu, 1},
+        {0xFFEA7500u, 0xFF3B3B3Bu, 1}, {0xFFD86C00u, 0xFFFFFFFFu, 0}, {0xFFD96C00u, 0xFFFFFFFFu, 1},
+    };
+    ar_i32 i;
+    int    shades = 1, edges = 1;
+
+    for (i = 0; i < (ar_i32)(sizeof E / sizeof E[0]); ++i)
+    {
+        shades = shades && ar_accent_shade(E[i].accent, 0, AR_ACCENT_BASE) == E[i].accent &&
+                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_HOVER) == E[i].hover &&
+                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_ACTIVE) == E[i].active &&
+                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_ON) == E[i].on &&
+                 ar_accent_shade(E[i].accent, 0, AR_ACCENT_TRACK) ==
+                     (E[i].dark_track ? 0xFF3B3B3Bu : 0xFFEFEFEFu);
+    }
+    CHECK(shades,
+          "accent: the accent, its hover and pressed shades, the tick and the track, as Edge");
+    for (i = 0; i < (ar_i32)(sizeof T / sizeof T[0]); ++i)
+    {
+        edges = edges && ar_accent_shade(T[i].accent, 0, AR_ACCENT_ON) == T[i].on &&
+                ar_accent_shade(T[i].accent, 0, AR_ACCENT_RAIL) ==
+                    (T[i].dark_track ? 0xFF858585u : 0xFFB2B2B2u);
+    }
+    CHECK(edges, "accent: and the tick and the track change at 3:1, as Edge's do");
+    CHECK(ar_accent_shade(0, 1, AR_ACCENT_BASE) == 0xFF0075FFu &&
+              ar_accent_shade(0, 1, AR_ACCENT_HOVER) == 0xFF005CC8u &&
+              ar_accent_shade(0, 1, AR_ACCENT_ACTIVE) == 0xFF3793FFu &&
+              ar_accent_shade(0, 1, AR_ACCENT_RAIL_HOVER) == 0xFF9A9A9Au,
+          "accent: auto keeps the colours the controls already had");
+}
+
+/*
  * Custom properties past sixteen. A rule could declare sixteen and a box hold
  * sixteen, and both dropped the rest without a word: PetalSoft's accent was
  * three properties in their own rule on a root that already had seventeen,
@@ -20482,6 +20545,190 @@ static void test_encoding_decoding(void)
     }
 }
 
+static void test_accent_color_reaches_the_controls(void)
+{
+    ar_surface s = ar__ui_surface(600, 200);
+    ar_input   in;
+    ar_i32     ticks[4], a, b, c, r;
+    ar_i32     track, fill;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px\">"
+              "<input id=a type=checkbox checked style=\"accent-color:#ff0000\">"
+              "<input id=b type=checkbox checked style=\"accent-color:#ffeb3b\">"
+              "<input id=c type=checkbox checked>"
+              "<input id=r type=radio checked style=\"accent-color:#ffeb3b\">"
+              "<progress value=50 max=100 style=\"accent-color:#ffeb3b\"></progress></body>");
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, &s);
+
+    a = ar__first_tag_id("a");
+    b = ar__first_tag_id("b");
+    c = ar__first_tag_id("c");
+    r = ar__first_tag_id("r");
+    track = ar__first_tag("ar-track");
+    fill = ar__first_tag("ar-fill");
+    CHECK(ar__tags("ar-tick", ticks, 4) == 3 && a >= 0 && b >= 0 && c >= 0 && r >= 0 &&
+              track >= 0 && fill >= 0,
+          "accent: the page has its three ticks, its radio and its bar");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(a), AR_P_BACKGROUND) == 0xFFFF0000u &&
+              (ar_u32)AR_WIDE(ar__box_style(ticks[0]), AR_P_COLOR) == 0xFFFFFFFFu,
+          "accent: a red checkbox is red, with a white tick");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(b), AR_P_BACKGROUND) == 0xFFFFEB3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(ticks[1]), AR_P_COLOR) == 0xFF3B3B3Bu,
+          "accent: a light one gets a dark tick");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(c), AR_P_BACKGROUND) == 0xFF0075FFu,
+          "accent: and one with none is the browser's blue");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(r), AR_P_BORDER_COLOR) == 0xFFFFEB3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(r), AR_P_BACKGROUND) == 0xFF3B3B3Bu,
+          "accent: a light radio's ring is the accent and its gap is dark");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(fill), AR_P_BACKGROUND) == 0xFFFFEB3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(track), AR_P_BACKGROUND) == 0xFF3B3B3Bu &&
+              (ar_u32)AR_WIDE(ar__box_style(track), AR_P_BORDER_COLOR) == 0xFF858585u,
+          "accent: and a light bar fills in it over a dark track");
+}
+
+/* A frame of the parsed document in g_doc, with these keys pressed and this typed. */
+static void ar__doc_frame(ar_surface *s, ar_u32 keys, const char *text)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = keys;
+    in.text = text;
+    in.text_len = text ? (ar_u32)strlen(text) : 0u;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static ar_u32 ar__ui_px(ar_i32 x, ar_i32 y)
+{
+    return g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu;
+}
+
+/*
+ * `caret-color`, and the caret's colour without it, which is the text's.
+ */
+static void test_caret_color(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+    ar_rect    r;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px\"><input id=k value=ab style=\"caret-color:#ff0000\">"
+              "<input id=m value=ab style=\"color:#0000ff\"></body>");
+    ar__doc_frame(&s, 0, 0);
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("k"));
+    ar__doc_frame(&s, 0, 0);
+    r = g_ui->caret_rect;
+    CHECK(r.w > 0 && ar__ui_px(r.x, r.y + r.h / 2) == 0xFF0000u, "caret: drawn in its caret-color");
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("m"));
+    ar__doc_frame(&s, 0, 0);
+    r = g_ui->caret_rect;
+    CHECK(r.w > 0 && ar__ui_px(r.x, r.y + r.h / 2) == 0x0000FFu,
+          "caret: and without one, in the text's colour");
+}
+
+/*
+ * `::placeholder` and `:placeholder-shown`.
+ *
+ * The hint is a box of its own (ar-value.ar-placeholder) and `X::placeholder`
+ * is rewritten to select it, so every property a box takes works on it. The
+ * pseudo-class is on the field, and has to follow what is typed: it comes off
+ * with the first character and back on when the last one goes.
+ */
+static void test_placeholder_styling(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+    ar_i32     pbox, qbox;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>#p::placeholder { color:#ff0000; }"
+              "input:placeholder-shown { background:#00ff00; }</style></head>"
+              "<body style=\"margin:0px\"><input id=p placeholder=hint>"
+              "<input id=q placeholder=hint value=x></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "placeholder: both selectors parse");
+    ar__doc_frame(&s, 0, 0);
+    pbox = ar__first_tag_id("p");
+    qbox = ar__first_tag_id("q");
+    CHECK(pbox >= 0 && g_ui->nodes[pbox].first_child >= 0 &&
+              (ar_u32)AR_WIDE(ar__box_style(g_ui->nodes[pbox].first_child), AR_P_COLOR) ==
+                  0xFFFF0000u,
+          "placeholder: ::placeholder colours the hint");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(pbox), AR_P_BACKGROUND) == 0xFF00FF00u &&
+              (ar_u32)AR_WIDE(ar__box_style(qbox), AR_P_BACKGROUND) != 0xFF00FF00u,
+          "placeholder: :placeholder-shown is the empty field and not the one with a value");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("p"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, 0, "z");
+    pbox = ar__first_tag_id("p");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(pbox), AR_P_BACKGROUND) != 0xFF00FF00u,
+          "placeholder: and comes off on the frame the first character arrives");
+
+    ar__ui_reset("div::placeholder p { color:#ff0000; }");
+    CHECK(ar_stylesheet_errors(g_ui) > 0, "placeholder: nothing may follow a pseudo-element");
+}
+
+/*
+ * `::selection`, as Edge draws a selection in a text field.
+ *
+ * With none anywhere, #3367D1 under white text -- not the Highlight system
+ * colour, which Edge draws as #0078D7 elsewhere. With one, what it says. And
+ * one on an ancestor reaches a field inside it.
+ */
+static void test_selection_styling(void)
+{
+    ar_surface s = ar__ui_surface(600, 100);
+    ar_i32     v;
+    ar_rect    r;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>#s::selection { background:#ffff00; color:#ff0000; }"
+              ".g::selection { background:#00ff00; }</style></head>"
+              "<body style=\"margin:0px\"><input id=t value=aaaa><input id=s value=aaaa>"
+              "<div class=g><input id=u value=aaaa></div></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("t"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("t")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0x3367D1u, "selection: with no ::selection, Edge's #3367D1");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("s"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("s")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0xFFFF00u, "selection: ::selection's background");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("u"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("u")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0x00FF00u,
+          "selection: and an ancestor's reaches the field inside it");
+}
+
 static void test_a_document_carries_its_own_stylesheet(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -24815,6 +25062,11 @@ int main(void)
     test_absolute_is_out_of_the_flow();
     test_a_number_in_calc_above_thirty_two_is_itself();
     test_custom_properties_past_sixteen();
+    test_accent_color_shades_match_edge();
+    test_accent_color_reaches_the_controls();
+    test_caret_color();
+    test_placeholder_styling();
+    test_selection_styling();
     test_an_outline_follows_the_border_radius();
     test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();

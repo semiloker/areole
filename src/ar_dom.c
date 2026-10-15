@@ -1441,6 +1441,10 @@ static ar_u32 ar__field_flags(const ar_doc *d, ar_i32 node, int disabled)
     {
         f |= AR_FIELD_DISABLED;
     }
+    if (ar__attr_of(d, node, "placeholder").n > 0)
+    {
+        f |= AR_FIELD_PLACEHOLDER;
+    }
     return f;
 }
 
