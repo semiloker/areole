@@ -1725,10 +1725,20 @@ typedef struct ar_var_ref
 #define AR_VAR_POOL    256
 #define AR_VARREF_POOL 256
 
-/* How many custom properties one rule may declare. The generated ones a build
-   tool emits come one or two to a rule; a hand-written `:root` block is the
-   case that goes wide, and this is past every one measured. */
-#define AR_RULE_VARS 16
+/*
+ * How many custom properties one rule may declare, and how many one box may
+ * hold from every rule that matches it.
+ *
+ * Sixteen of each, and both silently: a `:root` with seventeen lost the
+ * seventeenth, and a box whose rules declared more than sixteen between them
+ * lost whatever came last -- PetalSoft's accent, three properties in their own
+ * rule on a root that already had seventeen, simply did not exist. Thirty-two
+ * now, which costs a byte-sized count per rule and a stack array per box, and
+ * neither is silent any more: a rule past it is a stylesheet error, and a box
+ * past it sets ar_overflowed.
+ */
+#define AR_RULE_VARS 32
+#define AR_BOX_VARS  32
 
 /* How many boxes may declare custom properties, and how many declarations
    they may make between them. Sized for the busiest page measured and not for
@@ -2058,7 +2068,7 @@ void ar_sheet_set_vars(ar_sheet *sheet, ar_var_decl *decls, ar_u16 decl_cap, ar_
  * Returns how many were written, up to `cap`.
  */
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u32 state, ar_var_decl *out, ar_i32 cap);
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap, int *full);
 
 /* The reference at `index`, or 0 if there is none. */
 const ar_var_ref *ar_sheet_varref(const ar_sheet *sheet, ar_i32 index);

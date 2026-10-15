@@ -7413,8 +7413,13 @@ static void ar__parse_custom_decl(ar__scan *z, ar_rule *rule, const char *name, 
     ar_var_decl *d;
     const char  *save;
 
-    if (!sheet->vars || sheet->var_count >= sheet->var_cap || rule->var_count >= AR_RULE_VARS)
+    if (!sheet->vars)
     {
+        goto skip;
+    }
+    if (sheet->var_count >= sheet->var_cap || rule->var_count >= AR_RULE_VARS)
+    {
+        ar__fail(z); /* counted, not silent: see AR_RULE_VARS */
         goto skip;
     }
 
@@ -7522,7 +7527,7 @@ static ar_i32 ar__parse_var(ar__scan *z)
 }
 
 ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
-                             ar_u32 state, ar_var_decl *out, ar_i32 cap)
+                             ar_u32 state, ar_var_decl *out, ar_i32 cap, int *full)
 {
     ar_i32 i, n = 0;
 
@@ -7596,6 +7601,10 @@ ar_i32 ar_sheet_resolve_vars(const ar_sheet *sheet, ar_u32 tag, const ar_classes
             if (j == n && n < cap)
             {
                 out[n++] = *d;
+            }
+            else if (j == n && full)
+            {
+                *full = 1; /* a name with nowhere to go: see AR_BOX_VARS */
             }
         }
     }
