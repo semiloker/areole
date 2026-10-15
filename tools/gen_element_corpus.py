@@ -1,8 +1,11 @@
-import io, re, subprocess
+import io, os, re, subprocess
 
-ROOT = r"C:\Users\smlkr\Desktop\areole"
+# The repository this script is in, wherever that is: it named one machine's
+# checkout by its full path, so on CI -- and in any other checkout, including
+# a worktree beside the original -- it read and rewrote that one instead.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-ua = io.open(ROOT + r"\src\ar_ua_css.c", encoding="utf-8", newline="").read()
+ua = io.open(os.path.join(ROOT, "src", "ar_ua_css.c"), encoding="utf-8", newline="").read()
 names = set()
 for m in re.finditer(r'"([a-z0-9]+(?:\s*,\s*[a-z0-9]+)*)\s*\{', ua):
     for n in m.group(1).split(","):
@@ -119,7 +122,7 @@ int main(int argc, char **argv)
 }
 ''' % (PROPS, BODY)
 
-OUT = ROOT + r"\tests\ar_elements.c"
+OUT = os.path.join(ROOT, "tests", "ar_elements.c")
 io.open(OUT, "w", encoding="utf-8", newline="\n").write(SRC)
 
 # Formatted here rather than left to whoever runs clang-format next, because

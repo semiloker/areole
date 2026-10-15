@@ -214,8 +214,8 @@ ar_i32 ar_text_draw_chain(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const
    null shaper is the same as the call above, which is what a caller with no
    shaper or a face without the tables gets. */
 ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
-                           const ar_font_chain *ch, const ar_shaper *sh, ar_i32 ppem, ar_color c,
-                           ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width);
+                           const ar_font_chain *ch, const ar_shaper *const *shapers, ar_i32 ppem,
+                           ar_color c, ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width);
 
 /*
  * Breaks text into lines no wider than max_w pixels, writing the byte offset

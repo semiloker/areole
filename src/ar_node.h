@@ -609,8 +609,25 @@ struct ar_ctx
     ar_i32        sans_styled[4];
     ar_font_chain sans_styled_chain[4];
 
-    ar_font_chain    chain;
-    ar_shaper        shaper;
+    ar_font_chain chain;
+
+    /*
+     * One shaper per face, indexed like face[]: each face's own GSUB, GPOS
+     * and GDEF, read for the glyphs that face draws.
+     *
+     * There was one, built from face[0], and text in every other face was
+     * shaped through it. Glyph 580 is a Montserrat `a` and something else in
+     * Segoe UI, whose tables called it a mark and lifted it onto the letter
+     * before: "Petal" drew as "Petl" with an ordinal over the l. It needed a
+     * second family whose glyph order differs from the first, which is why the
+     * Windows pairs every example loads -- Times, Arial, Consolas, all in the
+     * standard order for Latin -- never showed it.
+     *
+     * Pointers into the arena, taken as a face loads and only for a face with
+     * tables to apply: 2,632 bytes each, where the one inline shaper was 2,632
+     * in the fixed block whether or not anything used it.
+     */
+    ar_shaper       *shapers[AR_MAX_FACES];
     int              shaping;
     ar_glyph_cache   glyphs;
     ar_glyph_scratch glyph_scratch;
@@ -647,7 +664,13 @@ struct ar_ctx
     ar_i32 hot_index; /* key of the box under the cursor         */
     ar_u32 active;    /* key of the box the press started on     */
     ar_u32 clicked;   /* key of the box released on this frame   */
-    int    hot_changed;
+
+    /* The focused box, when Enter or Space came for it, and whether an
+       ar_button took it this frame -- see ar_frame_begin. */
+    ar_u32 key_clicked;
+    int    key_click_used;
+
+    int hot_changed;
 
     /*
      * The hot box's ancestors, by key, innermost first -- and the whole reason
@@ -1236,6 +1259,13 @@ int ar_box_paints(const ar_node *n);
  * So: keep them in the header, keep them one line each, and do not move them
  * back to a .c file for tidiness. The tidy version is the slow one.
  * ------------------------------------------------------------------------ */
+/* A flex container, whether a block or an inline box on the outside. */
+static AR_INLINE int ar_is_flex(const ar_node *n)
+{
+    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX;
+}
+
 static AR_INLINE ar_i32 ar_axis_main(const ar_node *n)
 {
     return n->style.v[AR_P_DIRECTION] == AR_DIR_COLUMN ? 1 : 0;

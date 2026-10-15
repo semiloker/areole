@@ -41,7 +41,8 @@
 int ar_is_inline_level(const ar_node *n)
 {
     return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK ||
-           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE;
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE ||
+           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX;
 }
 
 int ar_is_fragmentable(const ar_node *n)
@@ -329,8 +330,14 @@ ar_i32 ar_inline_baseline_of(const ar_node *nodes, ar_i32 i)
         return ar_inline_baseline(n);
     }
 
-    if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK && !(n->text && n->text[0]) &&
-        n->first_child >= 0 && (!ar_clips(n) || control) && ar__last_line(nodes, i, &y))
+    /* An inline flex container's baseline is its first item's, and this takes
+       its last line's: the same for a row of one line, which is what a button
+       with an icon and a label is. A column of several lines would sit lower
+       than it does in a browser. */
+    if ((n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_BLOCK ||
+         n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX) &&
+        !(n->text && n->text[0]) && n->first_child >= 0 && (!ar_clips(n) || control) &&
+        ar__last_line(nodes, i, &y))
     {
         return y - n->rect.y;
     }

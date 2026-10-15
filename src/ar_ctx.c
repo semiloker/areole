@@ -372,7 +372,10 @@ ar_ctx *ar_init_ex(void *mem, ar_u32 size, ar_u32 max_rules, ar_u32 doc_bytes)
     {
         return 0;
     }
-    ar_sheet_init(&c->sheet, rules, (ar_i32)max_rules);
+    /* A sheet counts its rules in sixteen bits. More than that would take
+       45 MB of rule table before the first box, so it is a ceiling nobody
+       reaches -- but it is stated here rather than left to the conversion. */
+    ar_sheet_init(&c->sheet, rules, (ar_u16)(max_rules < 0xFFFFu ? max_rules : 0xFFFFu));
     c->media_resolution = 1000;
     c->render_scale = 1000;
     c->painted_scale = 1000;
@@ -563,6 +566,29 @@ ar_u32 ar_stylesheet_rules_refused(const ar_ctx *c)
 
 static void ar__rebuild_chains(ar_ctx *c);
 
+/*
+ * The shaper for face n, from the arena, if the face has anything to shape
+ * with: GSUB, GPOS or a legacy kern table. A face with none -- the built-in
+ * test face, most symbol fonts -- costs nothing and is drawn as its cmap says.
+ * Shaping is per face and per run: see shapers[] in ar_node.h.
+ */
+static void ar__shape_face(ar_ctx *c, ar_i32 n)
+{
+    const ar_face *f = &c->face[n];
+    ar_shaper     *sh;
+
+    c->shapers[n] = 0;
+    if (!f->gsub && !f->gpos && !f->kern)
+    {
+        return;
+    }
+    sh = (ar_shaper *)ar_arena_persist(&c->arena, (ar_u32)sizeof(ar_shaper));
+    if (sh && ar_shape_init(sh, f))
+    {
+        c->shapers[n] = sh;
+    }
+}
+
 int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, ar_i32 max_px)
 {
     ar_glyph_slot *slots;
@@ -662,8 +688,18 @@ int ar_font_load(ar_ctx *c, const void *data, ar_u32 size, ar_u32 atlas_bytes, a
     ar__rebuild_chains(c);
 
     /* Ligatures and kerning are on when the face has the tables, because a
-       font that ships them means them. */
-    c->shaping = ar_shape_init(&c->shaper, &c->face[0]);
+       font that ships them means them. A primary face loaded again starts the
+       pool again, so every other face's shaper goes with it. */
+    {
+        ar_i32 k;
+
+        for (k = 1; k < AR_MAX_FACES; ++k)
+        {
+            c->shapers[k] = 0;
+        }
+    }
+    ar__shape_face(c, 0);
+    c->shaping = c->shapers[0] != 0;
     c->have_face = 1;
     return 1;
 }
@@ -846,6 +882,7 @@ int ar_font_load_styled(ar_ctx *c, const void *data, ar_u32 size, ar_i32 weight,
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->style_face[slot] = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -885,6 +922,7 @@ int ar_font_load_mono(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->mono_face = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -911,6 +949,7 @@ int ar_font_load_sans(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->sans_face = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -935,6 +974,7 @@ static int ar__load_family_styled(ar_ctx *c, ar_i32 *slots, ar_i32 regular, cons
     {
         return 0;
     }
+    ar__shape_face(c, n);
     slots[slot] = n;
     c->face_used = n + 1;
     ar__rebuild_chains(c);
@@ -966,6 +1006,7 @@ int ar_font_add(ar_ctx *c, const void *data, ar_u32 size)
     {
         return 0;
     }
+    ar__shape_face(c, n);
     c->chain.face[c->chain.count] = &c->face[n];
     c->chain.id[c->chain.count] = (ar_u8)n;
     c->chain.count++;
@@ -1048,7 +1089,13 @@ void ar_font_subpixel(ar_ctx *c, int on)
 
 void ar_font_shaping(ar_ctx *c, int on)
 {
-    int want = on ? (c->face[0].gsub || c->face[0].gpos || c->face[0].kern) : 0;
+    int    want = 0;
+    ar_i32 k;
+
+    for (k = 0; on && k < c->face_used; ++k)
+    {
+        want = want || c->shapers[k] != 0;
+    }
 
     if (c->shaping == want)
     {
@@ -1954,7 +2001,7 @@ static const ar_var_decl *ar__var_lookup(const ar_ctx *c, ar_i32 scope, ar_u32 n
  * context would make the CSS parser depend on the box tree, which is the one
  * direction this codebase does not let dependencies run.
  */
-static int ar__calc_var(const void *ctx, const void *node, ar_u32 name, ar_i16 *out_v,
+static int ar__calc_var(const void *ctx, const void *node, ar_u32 name, ar_i32 *out_v,
                         ar_u8 *out_unit)
 {
     const ar_ctx      *c = (const ar_ctx *)ctx;
@@ -2436,12 +2483,22 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
     n->var_scope = n->parent >= 0 ? c->nodes[n->parent].var_scope : -1;
     if (c->sheet.has_vars)
     {
-        ar_var_decl mine[AR_RULE_VARS];
+        ar_var_decl mine[AR_BOX_VARS];
+        int         full = 0;
         ar_i32      got = ar_sheet_resolve_vars(&c->sheet, n->sel_tag, &n->sel_class, n->sel_id,
-                                                n->state, mine, AR_RULE_VARS);
+                                                n->state, mine, AR_BOX_VARS, &full);
 
-        if (got > 0 && c->var_scopes && c->var_scope_count < c->var_scope_cap &&
-            (ar_i32)c->var_entry_count + got <= (ar_i32)c->var_entry_cap)
+        if (full)
+        {
+            c->overflowed = 1;
+        }
+        if (got > 0 && c->var_scopes &&
+            (c->var_scope_count >= c->var_scope_cap ||
+             (ar_i32)c->var_entry_count + got > (ar_i32)c->var_entry_cap))
+        {
+            c->overflowed = 1; /* the frame's scope pool is full */
+        }
+        else if (got > 0 && c->var_scopes)
         {
             ar_var_scope *sc = &c->var_scopes[c->var_scope_count];
             ar_i32        k;
@@ -2508,8 +2565,7 @@ static void ar__resolve(ar_ctx *c, ar_i32 i)
 /* Whether a container's children are flex or grid items rather than a flow. */
 static int ar__lays_out_items(const ar_node *n)
 {
-    return n->style.v[AR_P_DISPLAY] == AR_DISPLAY_FLEX ||
-           n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
+    return ar_is_flex(n) || n->style.v[AR_P_DISPLAY] == AR_DISPLAY_GRID;
 }
 
 /* Whether a text is nothing but white space. */
@@ -2545,6 +2601,15 @@ static void ar__blockify_inlines(ar_ctx *c)
             ar__lays_out_items(&c->nodes[n->parent]) && ar__all_white(n->text))
         {
             n->style.v[AR_P_DISPLAY] = AR_DISPLAY_NONE;
+            continue;
+        }
+        /* Blockified the same way: an inline flex container that is itself a
+           flex or grid item is a flex container there, as a browser reports
+           it. */
+        if (n->style.v[AR_P_DISPLAY] == AR_DISPLAY_INLINE_FLEX && n->parent >= 0 &&
+            ar__lays_out_items(&c->nodes[n->parent]))
+        {
+            n->style.v[AR_P_DISPLAY] = AR_DISPLAY_FLEX;
             continue;
         }
         if (n->style.v[AR_P_DISPLAY] != AR_DISPLAY_INLINE || n->first_child < 0)
@@ -2592,7 +2657,7 @@ static void ar__resolve_late(ar_ctx *c)
     for (i = 0; i < c->node_count; ++i)
     {
         ar_node *n = &c->nodes[i];
-        ar_u16   was = n->state;
+        ar_u32   was = n->state;
 
         if (n->child_count == 0 && !n->text)
         {
@@ -3447,6 +3512,20 @@ void ar_frame_begin(ar_ctx *c, const ar_input *in)
     {
         ar_focus_next(c, (in->keys_pressed & AR_KEY_TAB_BACK) ? 1 : 0);
     }
+
+    /*
+     * Enter or Space for whatever has the focus, which ar_button reads as a
+     * click on itself.
+     *
+     * A document's `<button>` has always taken them. A button drawn by
+     * ar_button and made a tab stop with ar_focusable could be reached by Tab,
+     * drew its ring, and did nothing at all when pressed: the click it
+     * answers to came only from a mouse released over it. The keys are the
+     * focus's own, after the Tab above has moved it, and a field's key never
+     * matches an ar_button's, so typing a space is still typing a space.
+     */
+    c->key_clicked = (c->keys & (AR_KEY_ENTER | AR_KEY_SPACE)) ? c->focus_key : 0;
+    c->key_click_used = 0;
 
     /*
      * Typing is recorded here and applied when the field is reached.
@@ -4877,9 +4956,9 @@ static void ar__put_mask(const ar_ctx *c, char *out)
 {
     if (c->have_face)
     {
-        out[0] = (char)0xE2;
-        out[1] = (char)0x80;
-        out[2] = (char)0xA2;
+        out[0] = '\xE2';
+        out[1] = '\x80';
+        out[2] = '\xA2';
     }
     else
     {
@@ -5731,6 +5810,11 @@ int ar_button(ar_ctx *c, const char *selector, const char *label)
     {
         return 0;
     }
+    if (c->key_clicked != 0 && c->nodes[idx].key == c->key_clicked)
+    {
+        c->key_click_used = 1; /* the Space is the button's, not the page's */
+        return 1;
+    }
     return c->nodes[idx].key == c->clicked && c->clicked != 0;
 }
 
@@ -5883,7 +5967,8 @@ static void ar__draw_line(ar_ctx *c, ar_surface *s, ar_rect clip, ar_i32 x, ar_i
         ar_i32 ppem = ar__kw(c, n->style.v[AR_P_FONT_SIZE]);
 
         adv = ar_text_draw_shaped(s, ar__kr(c, clip), ar__k(c, x), ar__k(c, y + n->ascent), buf,
-                                  ar_chain_for(c, n), c->shaping ? &c->shaper : 0, ppem, col,
+                                  ar_chain_for(c, n),
+                                  c->shaping ? (const ar_shaper *const *)c->shapers : 0, ppem, col,
                                   &c->glyphs, &c->glyph_scratch, 0);
         if (c->render_scale != 1000 && adv > 0)
         {
@@ -9010,6 +9095,10 @@ ar_rect ar_frame_end(ar_ctx *c, ar_surface *s)
     /* What the focused control takes from the keyboard is not the page's to
        scroll with. */
     c->keys &= ~ar__controls_after(c);
+    if (c->key_click_used)
+    {
+        c->keys &= ~(ar_u32)(AR_KEY_SPACE | AR_KEY_ENTER);
+    }
 
     /*
      * Enter in a single-line field submits its form, through its first

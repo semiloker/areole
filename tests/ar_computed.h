@@ -244,6 +244,8 @@ static const char *ar__display_name(ar_i32 v)
         return "contents";
     case AR_DISPLAY_LIST_ITEM:
         return "list-item";
+    case AR_DISPLAY_INLINE_FLEX:
+        return "inline-flex";
     default:
         return "?";
     }
