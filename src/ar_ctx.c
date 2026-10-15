@@ -7595,7 +7595,18 @@ static void ar__paint_boxes(ar_ctx *c, ar_surface *s, ar_rect region)
             ar_i32   ow = n->style.v[AR_P_OUTLINE_WIDTH];
             ar_color oc = (ar_color)AR_WIDE(&n->style, AR_P_OUTLINE_COLOR);
 
-            if (ow > 0 && AR_ALPHA_OF(oc) != 0)
+            if (ow > 0 && AR_ALPHA_OF(oc) != 0 && radius > 0)
+            {
+                /* Around a rounded box, a rounded ring: the box's curve grown
+                   by the outline's width, which is how browsers have drawn
+                   it since 2021. Four rectangles drew a square focus ring
+                   around every pill-shaped button. */
+                ar_rect r = box;
+
+                ar__stroke_round(c, s, ar_rect_make(r.x - ow, r.y - ow, r.w + 2 * ow, r.h + 2 * ow),
+                                 radius + ow, ow, clip, oc);
+            }
+            else if (ow > 0 && AR_ALPHA_OF(oc) != 0)
             {
                 ar_rect r = box;
 
