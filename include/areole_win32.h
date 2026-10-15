@@ -76,6 +76,23 @@ int ar_win_set_render_scale(ar_win *win, ar_ctx *c, ar_i32 thousandths);
    -- for a caret that blinks. Zero cancels. */
 void ar_win_wake_after(ar_win *win, ar_u32 us);
 
+/*
+ * Wait for the display's next refresh, then have the next pump return -- for
+ * something that moves.
+ *
+ * A delay is the wrong question to ask for animation. Asking for 16 ms after
+ * each frame waits 16 ms *plus* the frame, rounded to the timer, and measured
+ * 40 frames a second with gaps of 45 ms. This waits for the compositor's next
+ * frame (DwmFlush) instead, so a loop that calls it after presenting runs at
+ * the display's own rate -- 60 a second on a 60 Hz screen, measured 60.0, each
+ * frame landing on a refresh. Without a compositor it waits out the rest of a
+ * 60 Hz period by the clock.
+ *
+ * It blocks for up to one refresh. Call it only while something is moving: a
+ * still window should block in ar_win_pump, which costs nothing.
+ */
+void ar_win_wake_vsync(ar_win *win);
+
 /* True when the last pump woke for that and nothing else: the timer fired, and
    no input, resize or requested wake came with it. Then ar_frame_blink is all
    the frame there needs to be. */
