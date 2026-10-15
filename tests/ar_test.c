@@ -4910,6 +4910,15 @@ static void test_font_load_and_fallback(void)
     CHECK(ar_font_load(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT, 32 * 1024, 32),
           "font: a valid face loads");
     CHECK(ar_font_loaded(c), "font: and the context reports it");
+
+    /* Each face is shaped with its own tables, so a shaper is per face -- and
+       only for a face that has tables. The test face has none, so it costs no
+       shaper, and with no face to shape with, shaping cannot be switched on. */
+    CHECK(c->shapers[0] == 0, "font: a face with no GSUB, GPOS or kern gets no shaper");
+    CHECK(ar_font_add(c, AR_TEST_FONT, (ar_u32)sizeof AR_TEST_FONT) && c->shapers[1] == 0,
+          "font: nor does a fallback face without them");
+    ar_font_shaping(c, 1);
+    CHECK(!c->shaping, "font: shaping stays off with no face to shape with");
 }
 
 static void test_font_changes_what_is_measured(void)

@@ -609,8 +609,25 @@ struct ar_ctx
     ar_i32        sans_styled[4];
     ar_font_chain sans_styled_chain[4];
 
-    ar_font_chain    chain;
-    ar_shaper        shaper;
+    ar_font_chain chain;
+
+    /*
+     * One shaper per face, indexed like face[]: each face's own GSUB, GPOS
+     * and GDEF, read for the glyphs that face draws.
+     *
+     * There was one, built from face[0], and text in every other face was
+     * shaped through it. Glyph 580 is a Montserrat `a` and something else in
+     * Segoe UI, whose tables called it a mark and lifted it onto the letter
+     * before: "Petal" drew as "Petl" with an ordinal over the l. It needed a
+     * second family whose glyph order differs from the first, which is why the
+     * Windows pairs every example loads -- Times, Arial, Consolas, all in the
+     * standard order for Latin -- never showed it.
+     *
+     * Pointers into the arena, taken as a face loads and only for a face with
+     * tables to apply: 2,632 bytes each, where the one inline shaper was 2,632
+     * in the fixed block whether or not anything used it.
+     */
+    ar_shaper       *shapers[AR_MAX_FACES];
     int              shaping;
     ar_glyph_cache   glyphs;
     ar_glyph_scratch glyph_scratch;

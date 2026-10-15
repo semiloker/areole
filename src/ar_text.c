@@ -882,8 +882,8 @@ ar_i32 ar_text_measure_chain(const char *utf8, const ar_font_chain *ch, ar_i32 p
  * as drawing without walking the string twice with different code.
  */
 ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, const char *utf8,
-                           const ar_font_chain *ch, const ar_shaper *sh, ar_i32 ppem, ar_color c,
-                           ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width)
+                           const ar_font_chain *ch, const ar_shaper *const *shapers, ar_i32 ppem,
+                           ar_color c, ar_glyph_cache *gc, ar_glyph_scratch *sc, ar_i32 *out_width)
 {
     ar_i32  pen = x * AR_ONE_PIXEL;
     ar_u32  alpha;
@@ -898,7 +898,7 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
         }
         return 0;
     }
-    if (!sh || !sh->ok || !sc->shape_glyph || sc->shape_cap <= 0)
+    if (!shapers || !sc->shape_glyph || sc->shape_cap <= 0)
     {
         ar_i32 w = draw ? ar_text_draw_chain(s, clip, x, y, utf8, ch, ppem, c, gc, sc)
                         : ar_text_measure_chain(utf8, ch, ppem, gc, sc);
@@ -919,9 +919,14 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
 
     while (*utf8)
     {
-        ar_i32 n = 0, i, which = 0;
+        ar_i32           n = 0, i, which = 0, lead = -1;
+        const ar_shaper *sh;
 
-        /* One chunk: up to the buffer, ending after a space where possible. */
+        /*
+         * One chunk: up to the buffer, ending after a space where possible --
+         * and ending where the face changes, because a run is shaped with its
+         * own face's tables and a glyph index means nothing in another face's.
+         */
         while (*utf8 && n < sc->shape_cap)
         {
             const char *before = utf8;
@@ -933,15 +938,25 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
                 break;
             }
             glyph = ar_font_chain_glyph(ch, cp, &which);
+            if (lead >= 0 && which != lead)
+            {
+                utf8 = before;
+                break;
+            }
+            lead = which;
             if (sc->shape_cp)
             {
                 sc->shape_cp[n] = cp;
+            }
+            if (sc->shape_dx && sc->shape_dy)
+            {
+                sc->shape_dx[n] = 0;
+                sc->shape_dy[n] = 0;
             }
             sc->shape_glyph[n] = glyph;
             sc->shape_adv[n] = ar_face_advance(ch->face[which], glyph);
             sc->shape_cluster[n] = which; /* the face, reused as the cluster tag */
             ++n;
-            (void)before;
             if (cp == ' ' && n > sc->shape_cap / 2)
             {
                 break;
@@ -949,11 +964,17 @@ ar_i32 ar_text_draw_shaped(ar_surface *s, ar_rect clip, ar_i32 x, ar_i32 y, cons
         }
 
         /* With the characters, joining can be resolved and Arabic gets its
-           positional forms; without them, only the glyph-level features. */
-        n = sc->shape_cp
-                ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv, sc->shape_dx,
-                                   sc->shape_dy, sc->shape_cluster, n, sc->shape_cap)
-                : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
+           positional forms; without them, only the glyph-level features. A
+           face with no shaper -- no tables -- draws its glyphs as they came. */
+        sh = lead >= 0 ? shapers[ch->id[lead]] : 0;
+        if (sh && sh->ok)
+        {
+            n = sc->shape_cp
+                    ? ar_shape_run_pos(sh, sc->shape_cp, sc->shape_glyph, sc->shape_adv,
+                                       sc->shape_dx, sc->shape_dy, sc->shape_cluster, n,
+                                       sc->shape_cap)
+                    : ar_shape_run(sh, sc->shape_glyph, sc->shape_adv, sc->shape_cluster, n);
+        }
 
         for (i = 0; i < n; ++i)
         {
