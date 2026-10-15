@@ -20593,6 +20593,142 @@ static void test_accent_color_reaches_the_controls(void)
           "accent: and a light bar fills in it over a dark track");
 }
 
+/* A frame of the parsed document in g_doc, with these keys pressed and this typed. */
+static void ar__doc_frame(ar_surface *s, ar_u32 keys, const char *text)
+{
+    ar_input in;
+
+    memset(&in, 0, sizeof in);
+    in.mouse_x = -1;
+    in.mouse_y = -1;
+    in.keys_pressed = keys;
+    in.text = text;
+    in.text_len = text ? (ar_u32)strlen(text) : 0u;
+    ar_frame_begin(g_ui, &in);
+    ar_dom_build(g_ui, &g_doc);
+    ar_frame_end(g_ui, s);
+}
+
+static ar_u32 ar__ui_px(ar_i32 x, ar_i32 y)
+{
+    return g_ui_pixels[y * AR_LAY_MAX + x] & 0xFFFFFFu;
+}
+
+/*
+ * `caret-color`, and the caret's colour without it, which is the text's.
+ */
+static void test_caret_color(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+    ar_rect    r;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<body style=\"margin:0px\"><input id=k value=ab style=\"caret-color:#ff0000\">"
+              "<input id=m value=ab style=\"color:#0000ff\"></body>");
+    ar__doc_frame(&s, 0, 0);
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("k"));
+    ar__doc_frame(&s, 0, 0);
+    r = g_ui->caret_rect;
+    CHECK(r.w > 0 && ar__ui_px(r.x, r.y + r.h / 2) == 0xFF0000u, "caret: drawn in its caret-color");
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("m"));
+    ar__doc_frame(&s, 0, 0);
+    r = g_ui->caret_rect;
+    CHECK(r.w > 0 && ar__ui_px(r.x, r.y + r.h / 2) == 0x0000FFu,
+          "caret: and without one, in the text's colour");
+}
+
+/*
+ * `::placeholder` and `:placeholder-shown`.
+ *
+ * The hint is a box of its own (ar-value.ar-placeholder) and `X::placeholder`
+ * is rewritten to select it, so every property a box takes works on it. The
+ * pseudo-class is on the field, and has to follow what is typed: it comes off
+ * with the first character and back on when the last one goes.
+ */
+static void test_placeholder_styling(void)
+{
+    ar_surface s = ar__ui_surface(400, 100);
+    ar_i32     pbox, qbox;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>#p::placeholder { color:#ff0000; }"
+              "input:placeholder-shown { background:#00ff00; }</style></head>"
+              "<body style=\"margin:0px\"><input id=p placeholder=hint>"
+              "<input id=q placeholder=hint value=x></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    CHECK(ar_stylesheet_errors(g_ui) == 0, "placeholder: both selectors parse");
+    ar__doc_frame(&s, 0, 0);
+    pbox = ar__first_tag_id("p");
+    qbox = ar__first_tag_id("q");
+    CHECK(pbox >= 0 && g_ui->nodes[pbox].first_child >= 0 &&
+              (ar_u32)AR_WIDE(ar__box_style(g_ui->nodes[pbox].first_child), AR_P_COLOR) ==
+                  0xFFFF0000u,
+          "placeholder: ::placeholder colours the hint");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(pbox), AR_P_BACKGROUND) == 0xFF00FF00u &&
+              (ar_u32)AR_WIDE(ar__box_style(qbox), AR_P_BACKGROUND) != 0xFF00FF00u,
+          "placeholder: :placeholder-shown is the empty field and not the one with a value");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("p"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, 0, "z");
+    pbox = ar__first_tag_id("p");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(pbox), AR_P_BACKGROUND) != 0xFF00FF00u,
+          "placeholder: and comes off on the frame the first character arrives");
+
+    ar__ui_reset("div::placeholder p { color:#ff0000; }");
+    CHECK(ar_stylesheet_errors(g_ui) > 0, "placeholder: nothing may follow a pseudo-element");
+}
+
+/*
+ * `::selection`, as Edge draws a selection in a text field.
+ *
+ * With none anywhere, #3367D1 under white text -- not the Highlight system
+ * colour, which Edge draws as #0078D7 elsewhere. With one, what it says. And
+ * one on an ancestor reaches a field inside it.
+ */
+static void test_selection_styling(void)
+{
+    ar_surface s = ar__ui_surface(600, 100);
+    ar_i32     v;
+    ar_rect    r;
+
+    ar__ui_reset("");
+    ar_ua_stylesheet(g_ui);
+    ar__parse("<head><style>#s::selection { background:#ffff00; color:#ff0000; }"
+              ".g::selection { background:#00ff00; }</style></head>"
+              "<body style=\"margin:0px\"><input id=t value=aaaa><input id=s value=aaaa>"
+              "<div class=g><input id=u value=aaaa></div></body>");
+    ar_doc_stylesheets(g_ui, &g_doc);
+    ar__doc_frame(&s, 0, 0);
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("t"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("t")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0x3367D1u, "selection: with no ::selection, Edge's #3367D1");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("s"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("s")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0xFFFF00u, "selection: ::selection's background");
+
+    ar_a11y_focus(g_ui, &g_doc, ar__doc_id("u"));
+    ar__doc_frame(&s, 0, 0);
+    ar__doc_frame(&s, AR_KEY_SELECT_ALL, 0);
+    ar__doc_frame(&s, 0, 0);
+    v = g_ui->nodes[ar__first_tag_id("u")].first_child;
+    r = ar__box(v);
+    CHECK(ar__ui_px(r.x + 1, r.y) == 0x00FF00u,
+          "selection: and an ancestor's reaches the field inside it");
+}
+
 static void test_a_document_carries_its_own_stylesheet(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
@@ -24928,6 +25064,9 @@ int main(void)
     test_custom_properties_past_sixteen();
     test_accent_color_shades_match_edge();
     test_accent_color_reaches_the_controls();
+    test_caret_color();
+    test_placeholder_styling();
+    test_selection_styling();
     test_an_outline_follows_the_border_radius();
     test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();
