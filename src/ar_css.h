@@ -419,6 +419,15 @@ typedef enum ar_prop
     AR_P_ANCHOR_NAME,
     AR_P_POSITION_ANCHOR,
 
+    /*
+     * `accent-color`: what a checked checkbox, a radio, a slider and a
+     * progress bar are drawn in. Inherited; `auto` is AR_UNIT_AUTO and means
+     * the browser's own blue. Nothing paints it directly -- the user-agent
+     * sheet reads it through the -ar-accent keywords (AR_UNIT_ACCENT), which
+     * is how one colour becomes the six a control actually needs.
+     */
+    AR_P_ACCENT_COLOR,
+
     AR_P_COUNT
 } ar_prop;
 
@@ -666,6 +675,19 @@ typedef enum ar_unit
      */
     AR_UNIT_SYSCOLOR,
 
+    /*
+     * A colour a control derives from its `accent-color`, by the AR_ACCENT_*
+     * in the value slot: the accent and its hover and pressed shades, what is
+     * drawn on top of it, and the track a slider runs in.
+     *
+     * Late, as currentColor is, because it depends on the box's own
+     * `accent-color` after inheritance -- the thumb of a slider is a box the
+     * page never names, and it has to take the colour the page gave the
+     * slider. And before the relative lengths: several passes test a unit
+     * with `>= AR_UNIT_VIEW_FIRST` and nothing past them is safe.
+     */
+    AR_UNIT_ACCENT,
+
     AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_TOP = AR_UNIT_ENV_FIRST,
     AR_UNIT_ENV_SAFE_RIGHT,
@@ -800,6 +822,26 @@ typedef struct ar_env
 /* The value an env() name resolves to, given what the backend has said.
    `fallback` is what the declaration wrote after the comma. */
 ar_i32 ar_env_value(const ar_env *e, ar_i32 slot, ar_i32 fallback);
+
+/*
+ * What an AR_UNIT_ACCENT stands for. The order is the order of the keywords
+ * in ar_css.c (-ar-accent, -ar-accent-hover, ...), which is the order of the
+ * cases in ar_accent_shade.
+ */
+enum
+{
+    AR_ACCENT_BASE = 0,
+    AR_ACCENT_HOVER,
+    AR_ACCENT_ACTIVE,
+    AR_ACCENT_ON,
+    AR_ACCENT_TRACK,
+    AR_ACCENT_TRACK_HOVER,
+    AR_ACCENT_TRACK_ACTIVE,
+    AR_ACCENT_RAIL,
+    AR_ACCENT_RAIL_HOVER,
+    AR_ACCENT_RAIL_ACTIVE,
+    AR_ACCENT_COUNT
+};
 
 /* Keyword values, all in one space so the parser can hand back one integer. */
 enum

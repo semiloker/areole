@@ -2199,9 +2199,13 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
          * it is what they copy from.
          */
         {
-            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,      AR_P_BORDER_COLOR,
-                                                  AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
-                                                  AR_P_OUTLINE_COLOR,   AR_P_COLOR};
+            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,
+                                                  AR_P_BORDER_COLOR,
+                                                  AR_P_SCROLLBAR_THUMB,
+                                                  AR_P_SCROLLBAR_TRACK,
+                                                  AR_P_OUTLINE_COLOR,
+                                                  AR_P_ACCENT_COLOR,
+                                                  AR_P_COLOR};
             const ar_i32         COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
             ar_i32               k;
             ar_i32               cur;
@@ -2220,6 +2224,34 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                 if (st->unit[cp] == AR_UNIT_SYSCOLOR)
                 {
                     ar_style_put(st, cp, (ar_i32)ar_sys_color_default(ar_style_get(st, cp), dark));
+                    st->unit[cp] = AR_UNIT_COLOR;
+                }
+            }
+
+            /*
+             * The control colours, between the two: after the system colours
+             * because `accent-color: AccentColor` is a way to write it, and
+             * before currentColor because a tick's `color` is one of them and
+             * currentColor copies `color`. `accent-color: currentColor` is
+             * settled first, from `color` as the page wrote it.
+             */
+            if (st->unit[AR_P_ACCENT_COLOR] == AR_UNIT_CURRENTCOLOR)
+            {
+                st->unit[AR_P_ACCENT_COLOR] =
+                    st->unit[AR_P_COLOR] == AR_UNIT_COLOR ? AR_UNIT_COLOR : AR_UNIT_AUTO;
+                ar_style_put(st, AR_P_ACCENT_COLOR, ar_style_get(st, AR_P_COLOR));
+            }
+            for (k = 0; k < COLOR_N; ++k)
+            {
+                ar_prop cp = COLOR_PROPS[k];
+
+                if (st->unit[cp] == AR_UNIT_ACCENT)
+                {
+                    ar_style_put(
+                        st, cp,
+                        (ar_i32)ar_accent_shade((ar_u32)ar_style_get(st, AR_P_ACCENT_COLOR),
+                                                st->unit[AR_P_ACCENT_COLOR] != AR_UNIT_COLOR,
+                                                ar_style_get(st, cp)));
                     st->unit[cp] = AR_UNIT_COLOR;
                 }
             }

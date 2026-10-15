@@ -940,8 +940,9 @@ typedef ar_i32 ar_scroll_pos;
  *
  * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
  * it was four. 700 -> 708 for `cursor`, the eight bytes a style grew by.
+ * 708 -> 712 for `accent-color`, a colour's four.
  */
-#define AR_BYTES_PER_RULE 708u
+#define AR_BYTES_PER_RULE 712u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting

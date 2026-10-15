@@ -199,6 +199,8 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_SCROLLBAR_THUMB] = AR_UNIT_COLOR;
     AR_WIDE(s, AR_P_SCROLLBAR_TRACK) = 0;
     s->unit[AR_P_SCROLLBAR_TRACK] = AR_UNIT_COLOR;
+    AR_WIDE(s, AR_P_ACCENT_COLOR) = 0;
+    s->unit[AR_P_ACCENT_COLOR] = AR_UNIT_AUTO;
 
     /* A box with no stated size takes the size of its content. This is what
        makes a stylesheet that says nothing about width still lay out. */
@@ -429,6 +431,10 @@ int ar_prop_inherits(ar_i32 prop)
     /* `color-scheme` inherits, which is what makes declaring it once on
        `:root` settle a whole document -- the same reason `color` does. */
     case AR_P_COLOR_SCHEME:
+    /* `accent-color` inherits, so a form that sets it once colours every
+       control in it -- and so the parts of a control, the tick and the thumb
+       and the fill, take the colour of the control they are inside. */
+    case AR_P_ACCENT_COLOR:
     /* Text properties inherit, and this is one: a `<pre>` whose children
        did not keep their spaces would be a `<pre>` in name only. */
     case AR_P_WHITE_SPACE:
@@ -483,7 +489,7 @@ int ar_prop_inherits(ar_i32 prop)
 static const ar_u8 AR__INHERITED[] = {
     AR_P_COLOR,           AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,  AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,
     AR_P_VISIBILITY,      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE, AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE,
-    AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY, AR_P_CURSOR};
+    AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY, AR_P_CURSOR,       AR_P_ACCENT_COLOR};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -805,6 +811,7 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow-y", AR_P_OVERFLOW},
                                           {"overflow-anchor", AR_P_OVERFLOW_ANCHOR},
                                           {"cursor", AR_P_CURSOR},
+                                          {"accent-color", AR_P_ACCENT_COLOR},
                                           {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
                                           {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
                                           {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
@@ -4065,6 +4072,32 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
                 z->sheet->has_late_color = 1;
             }
             return out;
+        }
+
+        /*
+         * The colours a control derives from its `accent-color`, for the
+         * user-agent sheet: areole's own names, and documented as such. Any
+         * stylesheet may use them -- a custom checkbox that wants the page's
+         * accent can say so -- but they are not CSS.
+         */
+        {
+            static const char *const ACCENT[AR_ACCENT_COUNT] = {
+                "-ar-accent",     "-ar-accent-hover", "-ar-accent-active", "-ar-on-accent",
+                "-ar-track",      "-ar-track-hover",  "-ar-track-active",  "-ar-rail",
+                "-ar-rail-hover", "-ar-rail-active"};
+            ar_i32 k;
+
+            for (k = 0; k < AR_ACCENT_COUNT; ++k)
+            {
+                if (ar__same_fold(name, len, ACCENT[k]))
+                {
+                    out.unit = AR_UNIT_ACCENT;
+                    out.v = k;
+                    out.ok = 1;
+                    z->sheet->has_late_color = 1;
+                    return out;
+                }
+            }
         }
 
         /*
