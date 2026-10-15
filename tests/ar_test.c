@@ -13681,8 +13681,10 @@ static void test_a_padded_scroll_box_that_fits_does_not_scroll(void)
     ar_end(g_ui);
     ar_frame_end(g_ui, &s);
 
-    CHECK(ar_scroll_range(&g_ui->nodes[1]) == 0, "padded scroll box: nothing to scroll when it all fits");
-    CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]), "padded scroll box: and no bar drawn over nothing");
+    CHECK(ar_scroll_range(&g_ui->nodes[1]) == 0,
+          "padded scroll box: nothing to scroll when it all fits");
+    CHECK(!ar_scroll_bar_visible(&g_ui->nodes[1]),
+          "padded scroll box: and no bar drawn over nothing");
 }
 
 /* With no offsets it stays at the static position: where the flow had reached.

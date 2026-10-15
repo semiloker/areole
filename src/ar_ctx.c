@@ -6502,10 +6502,9 @@ static void ar__field_after_layout(ar_ctx *c)
         sx = 0;
     }
 
-    c->caret_rect =
-        ar_rect_make(n->rect.x + n->style.v[AR_P_PAD_LEFT] + cx - sx,
-                     n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy + li * n->line_h, 1,
-                     n->text_h > 0 ? n->text_h : n->line_h);
+    c->caret_rect = ar_rect_make(n->rect.x + n->style.v[AR_P_PAD_LEFT] + cx - sx,
+                                 n->rect.y + n->style.v[AR_P_PAD_TOP] + n->text_dy + li * n->line_h,
+                                 1, n->text_h > 0 ? n->text_h : n->line_h);
     c->caret_on = ar__caret_showing(c);
 
     /* What the paint pass reads for this box that no property records. Mixed
