@@ -13677,6 +13677,111 @@ static void test_inline_flex(void)
 }
 
 /*
+ * A flex column's grown item keeps the height it grew to, and a flex row's
+ * minimum height is the height its items stretch to.
+ *
+ * Two panels side by side in a grid row are as tall as the taller one, and a
+ * chart in the shorter one -- the panel `flex-direction: column`, the chart
+ * `flex: 1` -- should take the extra height. It grew, and was then laid out
+ * again to the height of its own contents, because placing a box with an
+ * automatic height ends by giving it its contents' height whatever its parent
+ * had decided. An empty item never reached that step, which is why the
+ * simplest case worked.
+ *
+ * And a row with `min-height` was as tall as its minimum while its items stayed
+ * at their contents: a single line is as tall as the container (Flexbox 9.4,
+ * step 15), and stretch is to the line. PetalSoft's dashboard, both at once.
+ */
+static void test_a_grown_flex_item_keeps_its_height(void)
+{
+    ar_surface s = ar__ui_surface(300, 400);
+
+    ar__ui_reset(
+        "#root { display:block; }"
+        ".g { display:grid; grid-template-columns: 1fr 1fr; }"
+        ".col { display:flex; flex-direction:column; }"
+        ".head { display:block; height:20px; }"
+        ".fill { flex:1; display:block; min-height:50px; }"
+        ".row { flex:1; display:flex; min-height:50px; }"
+        ".wk { display:flex; flex-direction:column; justify-content:flex-end; width:20px; }"
+        ".bar { display:block; height:10px; }"
+        ".tall { display:block; height:200px; }"
+        ".min { display:flex; min-height:60px; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.g");
+    ar_begin(g_ui, "div.col");
+    ar_begin(g_ui, "div.head");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.fill");
+    ar_begin(g_ui, "div.bar");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.col");
+    ar_begin(g_ui, "div.head");
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.row");
+    ar_begin(g_ui, "div.wk");
+    ar_begin(g_ui, "div.bar");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.tall");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_begin(g_ui, "div.min");
+    ar_begin(g_ui, "div.wk");
+    ar_begin(g_ui, "div.bar");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    CHECK(ar__box(2).h == 200 && ar__box(4).y == ar__box(2).y + 20 && ar__box(4).h == 180,
+          "grown item: a block with something in it keeps the height its column grew it to");
+    CHECK(ar__box(7).h == 200 && ar__box(9).h == 180 && ar__box(10).h == 180,
+          "grown item: and so does a flex row, whose items stretch to it");
+    CHECK(ar__box(11).y == ar__box(10).y + 170,
+          "grown item: and a column item's content sits at its foot");
+    CHECK(ar__box(13).h == 60 && ar__box(14).h == 60,
+          "min-height: a row's items stretch to its minimum");
+}
+
+/*
+ * An outline around a rounded box is rounded too.
+ *
+ * It was four rectangles whatever the box's corners were, so a focus ring
+ * around a pill-shaped button was a square drawn around a pill. Browsers have
+ * drawn the outline along the border radius since 2021: its curve is the
+ * box's, grown by the outline's width.
+ */
+static void test_an_outline_follows_the_border_radius(void)
+{
+    ar_surface s = ar__ui_surface(120, 80);
+    ar_rect    r;
+    ar_u32     edge, corner;
+
+    ar__ui_reset("#root { display:block; background:#ffffff; }"
+                 "div.r { display:block; margin:20px; width:60px; height:30px; border-radius:10px;"
+                 " outline:2px solid #ff0000; }");
+    ar__ui_begin();
+    ar_begin(g_ui, "#root");
+    ar_begin(g_ui, "div.r");
+    ar_end(g_ui);
+    ar_end(g_ui);
+    ar_frame_end(g_ui, &s);
+    r = ar__box(1);
+    edge = g_ui_pixels[(r.y - 1) * AR_LAY_MAX + r.x + r.w / 2] & 0xFFFFFFu;
+    corner = g_ui_pixels[(r.y - 2) * AR_LAY_MAX + r.x - 2] & 0xFFFFFFu;
+    CHECK(edge == 0xFF0000u, "outline: drawn along a rounded box's straight edge");
+    CHECK(corner == 0xFFFFFFu, "outline: and round at its corner, like the box");
+}
+
+/*
  * Custom properties past sixteen. A rule could declare sixteen and a box hold
  * sixteen, and both dropped the rest without a word: PetalSoft's accent was
  * three properties in their own rule on a root that already had seventeen,
@@ -24710,6 +24815,8 @@ int main(void)
     test_absolute_is_out_of_the_flow();
     test_a_number_in_calc_above_thirty_two_is_itself();
     test_custom_properties_past_sixteen();
+    test_an_outline_follows_the_border_radius();
+    test_a_grown_flex_item_keeps_its_height();
     test_container_measures_its_items_limits();
     test_grid_auto_rows_fill_the_height();
     test_inline_flex();
