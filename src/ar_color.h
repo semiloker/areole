@@ -210,11 +210,12 @@ int ar_sys_color_by_name(const char *name, ar_u32 len);
 ar_u32 ar_sys_color_default(int which, int dark);
 
 /*
- * One of the colours a control derives from its accent, AR_ACCENT_*, as
- * 0xAARRGGBB. `is_auto` for `accent-color: auto`, when `accent` is ignored.
- * Measured from Edge rather than taken from a specification, which says only
- * that a browser may adjust the colour for contrast -- see ar_color.c.
+ * One of the colours a control is drawn in, AR_ACCENT_*, as 0xAARRGGBB: from
+ * its accent, `is_auto` for `accent-color: auto` when `accent` is ignored, and
+ * from `dark`, its `color-scheme`. Measured from Edge rather than taken from a
+ * specification, which says only that a browser may adjust the colour for
+ * contrast -- see ar_color.c.
  */
-ar_u32 ar_accent_shade(ar_u32 accent, int is_auto, int which);
+ar_u32 ar_accent_shade(ar_u32 accent, int is_auto, int dark, int which);
 
 #endif /* AR_COLOR_H */

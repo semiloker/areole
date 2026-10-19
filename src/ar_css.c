@@ -4109,9 +4109,11 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
          */
         {
             static const char *const ACCENT[AR_ACCENT_COUNT] = {
-                "-ar-accent",     "-ar-accent-hover", "-ar-accent-active", "-ar-on-accent",
-                "-ar-track",      "-ar-track-hover",  "-ar-track-active",  "-ar-rail",
-                "-ar-rail-hover", "-ar-rail-active"};
+                "-ar-accent",      "-ar-accent-hover", "-ar-accent-active", "-ar-on-accent",
+                "-ar-track",       "-ar-track-hover",  "-ar-track-active",  "-ar-rail",
+                "-ar-rail-hover",  "-ar-rail-active",  "-ar-edge",          "-ar-edge-hover",
+                "-ar-edge-active", "-ar-face",         "-ar-face-hover",    "-ar-face-active",
+                "-ar-box",         "-ar-meter"};
             ar_i32 k;
 
             for (k = 0; k < AR_ACCENT_COUNT; ++k)
