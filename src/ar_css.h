@@ -174,6 +174,10 @@ typedef enum ar_prop
     /* Which pointer the box asks for: AR_CURSOR_*, inherited (#24). */
     AR_P_CURSOR,
 
+    /* `appearance`: AR_APPEARANCE_*, not inherited. `none` takes a control's
+       own look away and leaves what the page says -- see AR_STATE_PLAIN. */
+    AR_P_APPEARANCE,
+
     AR_P_TEXT_ALIGN,
     AR_P_VERTICAL_ALIGN,
     AR_P_FLOAT,
@@ -942,6 +946,14 @@ enum
     AR_DISPLAY_TABLE_INTERNAL_LAST = AR_DISPLAY_TABLE_CAPTION
 };
 
+/* `appearance`. Every other keyword CSS and the prefixed forms accept --
+   `textfield`, `menulist-button`, `button` and the rest -- means `auto`. */
+enum
+{
+    AR_APPEARANCE_AUTO = 0,
+    AR_APPEARANCE_NONE
+};
+
 /* Table keyword values. */
 enum
 {
@@ -1477,6 +1489,19 @@ enum
      * resolved with the field and costs no second pass.
      */
     AR_STATE_PLACEHOLDER_SHOWN = 1 << 22,
+
+    /*
+     * `appearance: none` on a control, and on the options of a plain select,
+     * which carry it from their select because the property is not inherited
+     * and they need to know.
+     *
+     * A state rather than a property test because the user-agent sheet is
+     * what draws a control and the sheet can only ask about states: a box
+     * whose `appearance` resolves to `none` is resolved a second time with
+     * this set, and the sheet's `:-ar-plain` rules take the control's look
+     * away. Only those boxes pay for the second resolve.
+     */
+    AR_STATE_PLAIN = 1 << 23,
 
     AR_STATE_LATE = (1 << 7) | (1 << 8) | (1 << 9)
 };

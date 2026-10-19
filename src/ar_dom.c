@@ -1551,6 +1551,22 @@ static ar_i32 ar__percent_of(ar_i32 part, ar_i32 whole)
 /* `prop:N%`, for a slider's fill and thumb -- written as an inline style so it
    lands in the cascade like any other width, which is how a gauge's bar
    already works. */
+/* `src` on the end of `dst`, as far as `cap` allows, always terminated. */
+static void ar__append(char *dst, ar_u32 cap, const char *src)
+{
+    ar_u32 n = 0;
+
+    while (n + 1 < cap && dst[n])
+    {
+        ++n;
+    }
+    while (n + 1 < cap && *src)
+    {
+        dst[n++] = *src++;
+    }
+    dst[n] = 0;
+}
+
 static void ar__style_pct(char *buf, const char *prop, ar_i32 pct)
 {
     ar_u32 used = 0;
@@ -2042,7 +2058,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
      * say `.ar-mark:checked`, rather than needing a combinator that reaches
      * from a parent's state to a child.
      */
-    if (kind == AR_CTL_CHECKBOX || kind == AR_CTL_RADIO)
+    if ((kind == AR_CTL_CHECKBOX || kind == AR_CTL_RADIO) && !ar_box_is_plain(c))
     {
         /* A tick for a checkbox and a dot for a radio, which is the difference
            a browser draws -- the tick is a shape the painter knows by tag, as
@@ -2054,7 +2070,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 
     /* A select's arrow, and a textarea's resize grip: both drawn by the
        painter, both placed by the sheet in a corner of the control. */
-    if (kind == AR_CTL_SELECT)
+    if (kind == AR_CTL_SELECT && !ar_box_is_plain(c))
     {
         ar_begin(c, "ar-chev");
         ar_end(c);
@@ -2091,9 +2107,20 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         {
             pct = 100;
         }
-        ar_begin(c, "ar-track");
-        ar__style_pct(buf, "width", pct);
-        ar_begin_styled(c, "ar-fill", buf);
+        /* Plain, a slider keeps its thumb and has no track (AR_STATE_PLAIN):
+           said inline, because the track is a part no page can name, and a
+           user-agent rule here would be one the page could not have. */
+        if (ar_box_is_plain(c))
+        {
+            ar_begin_styled(c, "ar-track", "background:transparent;border-color:transparent");
+            ar_begin_styled(c, "ar-fill", "background:transparent");
+        }
+        else
+        {
+            ar_begin(c, "ar-track");
+            ar__style_pct(buf, "width", pct);
+            ar_begin_styled(c, "ar-fill", buf);
+        }
         ar_end(c);
         ar_end(c);
         ar_begin(c, "ar-rail");
@@ -2205,11 +2232,26 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 
         if (meter || ar_span_is(gname, "progress"))
         {
-            char bar[32];
+            char bar[96];
+            int  plain = !meter && ar_box_is_plain(c);
 
-            /* A track with a fill, the same pill a slider is drawn as. */
+            /* A track with a fill, the same pill a slider is drawn as -- or,
+               a plain progress bar, Edge's old green bar on grey, the whole
+               height and square (AR_STATE_PLAIN), said inline for the reason
+               the slider's is. */
             ar__style_pct(bar, "width", ar__gauge_pct(d, node, meter));
-            ar_begin(c, "ar-track");
+            if (plain)
+            {
+                ar__append(bar, (ar_u32)sizeof bar,
+                           ";height:16px;border-radius:0px;background:#008000");
+                ar_begin_styled(c, "ar-track",
+                                "height:16px;margin-top:0px;border-width:0px;"
+                                "border-radius:0px;background:#808080");
+            }
+            else
+            {
+                ar_begin(c, "ar-track");
+            }
             ar_begin_styled(c, "ar-fill", bar);
             ar_end(c);
             ar_end(c);

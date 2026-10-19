@@ -61,6 +61,15 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
  */
 #define AR_MEM_SLACK 8192
 
+/* Whether a box takes AR_STATE_PLAIN from its parent: an option of a plain
+   select, which the sheet pads differently. Nothing else does -- a plain
+   control's other parts are left out or styled inline by the document walk,
+   because a rule in the user-agent sheet is a rule a page cannot have. */
+static int ar__is_control_part(ar_u32 tag)
+{
+    return tag == ar_hash("option", 6u);
+}
+
 /* Defined with the rest of the field machinery, used by ar_frame_begin and
    ar__push_node, which both come first. */
 static void ar__edit_apply(ar_ctx *c);
@@ -4102,6 +4111,12 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
         state |= (nth & 1) ? AR_STATE_EVEN : AR_STATE_ODD;
     }
 
+    /* A control's parts are plain when their control is: see AR_STATE_PLAIN. */
+    if (parent >= 0 && (c->nodes[parent].state & AR_STATE_PLAIN) && ar__is_control_part(tag))
+    {
+        state |= AR_STATE_PLAIN;
+    }
+
     n->parent = parent;
     n->first_child = -1;
     n->last_child = -1;
@@ -4135,6 +4150,15 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     n->text_dy = 0;
 
     ar__resolve(c, c->node_count - 1);
+
+    /* `appearance: none`, resolved again as a plain control: see
+       AR_STATE_PLAIN. */
+    if (n->style.unit[AR_P_APPEARANCE] == AR_UNIT_KEYWORD &&
+        n->style.v[AR_P_APPEARANCE] == AR_APPEARANCE_NONE && !(n->state & AR_STATE_PLAIN))
+    {
+        n->state |= AR_STATE_PLAIN;
+        ar__resolve(c, c->node_count - 1);
+    }
 
     /* font-size is expressed in pixels because that is what people write, and
        the face is eight pixels tall, so the scale is the ratio. Rounding down
@@ -5714,6 +5738,11 @@ ar_i32 ar_box_white_space(const ar_ctx *c)
         return AR_WS_NORMAL;
     }
     return c->nodes[c->node_count - 1].style.v[AR_P_WHITE_SPACE];
+}
+
+int ar_box_is_plain(const ar_ctx *c)
+{
+    return c && c->node_count > 0 && (c->nodes[c->node_count - 1].state & AR_STATE_PLAIN) != 0;
 }
 
 int ar_box_is_checked(const ar_ctx *c)
