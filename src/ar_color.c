@@ -974,18 +974,20 @@ ar_u32 ar_accent_shade(ar_u32 accent, int is_auto, int dark, int which)
     /*
      * What `color-scheme` decides alone, light then dark, read off Edge: an
      * edge and its hover and press, a button's face and its two, the inside
-     * of an unticked box, a meter's bar. A page's own `accent-color` does not
+     * of an unticked box, a meter's bar, and a disabled control's text,
+     * field, edge, face and label. A page's own `accent-color` does not
      * touch these -- and, measured and the surprise, the scheme does not touch
      * a page's accent: a red checkbox and the track it sits on are the same
      * red and the same light track in both schemes. Only `auto` follows it.
      */
-    static const ar_u32 PLAIN[2][8] = {{0xFF767676u, 0xFF4F4F4Fu, 0xFF8D8D8Du, 0xFFEFEFEFu,
-                                        0xFFE5E5E5u, 0xFFF5F5F5u, 0xFFFFFFFFu, 0xFF107C10u},
-                                       {0xFF858585u, 0xFFACACACu, 0xFF6E6E6Eu, 0xFF6B6B6Bu,
-                                        0xFF7B7B7Bu, 0xFF616161u, 0xFF3B3B3Bu, 0xFF74B374u}};
-    int                 scheme = is_auto && dark ? 1 : 0;
-    int                 light = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFFFFFFFu);
-    int                 dark_track = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFEFEFEFu);
+    static const ar_u32 PLAIN[2][13] = {
+        {0xFF767676u, 0xFF4F4F4Fu, 0xFF8D8D8Du, 0xFFEFEFEFu, 0xFFE5E5E5u, 0xFFF5F5F5u, 0xFFFFFFFFu,
+         0xFF107C10u, 0xFF6D6D6Du, 0xFFFAFAFAu, 0xFFC8C8C8u, 0xFFEFEFEFu, 0xFF6D6D6Du},
+        {0xFF858585u, 0xFFACACACu, 0xFF6E6E6Eu, 0xFF6B6B6Bu, 0xFF7B7B7Bu, 0xFF616161u, 0xFF3B3B3Bu,
+         0xFF74B374u, 0xFFAAAAAAu, 0xFF3B3B3Bu, 0xFF626262u, 0xFF363636u, 0xFF727272u}};
+    int scheme = is_auto && dark ? 1 : 0;
+    int light = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFFFFFFFu);
+    int dark_track = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFEFEFEFu);
 
     if (which >= AR_ACCENT_EDGE)
     {

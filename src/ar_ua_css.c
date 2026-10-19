@@ -324,14 +324,16 @@ static const char *const AR__UA[] = {
     "input { width:169px; padding:3px 4px; border:1px solid #767676;"
     "        border-color:var(--ar-edge, -ar-edge);"
     "        border-radius:2px; background:Field; color:FieldText; overflow:hidden; }"
-    "input:disabled { color:#6D6D6D; background:#FAFAFA; border-color:#C8C8C8; }",
+    "input:disabled { color:-ar-disabled-text; background:-ar-disabled-field;"
+    "                 border-color:-ar-disabled-edge; }",
 
     /* A push button: the label plus six pixels a side, on #EFEFEF. */
     "button, .ar-button { width:auto; padding:3px 8px; border:1px solid #767676;"
     "                     border-color:var(--ar-edge, -ar-edge);"
-    "                     border-radius:2px; background:var(--ar-face, -ar-face); color:#000000;"
+    "                     border-radius:2px; background:var(--ar-face, -ar-face); color:ButtonText;"
     "                     text-align:center; }"
-    "button:disabled, .ar-button:disabled { color:#6D6D6D; }",
+    "button:disabled, .ar-button:disabled { color:-ar-disabled-label;"
+    "                                       background:-ar-disabled-face; }",
 
     /*
      * A select is as wide as its widest option plus twenty-two pixels -- four
@@ -353,7 +355,7 @@ static const char *const AR__UA[] = {
     "select > optgroup > option { padding-left:17px; }"
     "select > optgroup > option.ar-chosen { padding-left:2px; }"
     "select > optgroup { display:block; padding:0px; }"
-    "select:disabled { color:#6D6D6D; border-color:#C8C8C8; }"
+    "select:disabled { color:-ar-disabled-text; border-color:-ar-disabled-edge; }"
     /* Open, it is a stacking context above everything else, so the list it
        hangs over the page is painted over the page -- a positioned box with
        an automatic z-index paints its subtree as one piece, and the controls
@@ -363,7 +365,7 @@ static const char *const AR__UA[] = {
     /* The arrow, which is a chevron the painter draws -- a glyph in a browser,
        and the built-in face has none. */
     "ar-chev { display:block; position:absolute; right:5px; top:7px;"
-    "          width:8px; height:5px; color:#000000; }",
+    "          width:8px; height:5px; color:FieldText; }",
 
     /*
      * A textarea: twenty columns of 13.333px Consolas and fifteen pixels a
@@ -378,8 +380,8 @@ static const char *const AR__UA[] = {
     "textarea > ar-value { white-space:pre-wrap; }",
 
     "ar-grip { display:block; position:absolute; right:1px; bottom:1px;"
-    "          width:7px; height:7px; color:#767676; }"
-    "textarea:disabled { color:#6D6D6D; border-color:#C8C8C8; }"
+    "          width:7px; height:7px; color:-ar-edge; }"
+    "textarea:disabled { color:-ar-disabled-text; border-color:-ar-disabled-edge; }"
     ".ar-hidden { display:none; }",
 
     /*
@@ -430,7 +432,7 @@ static const char *const AR__UA[] = {
     /* On `vertical-align: -0.2em`, as a browser sets them: three pixels below
        the baseline at the size these are drawn at. */
     "progress { width:160px; height:16px; vertical-align:-0.2em; }"
-    "meter { width:80px; height:16px; vertical-align:-0.2em; }",
+    "meter { width:80px; height:16px; vertical-align:-0.2em; accent-color:auto; }",
 
     "ar-track { display:block; height:8px; margin-top:4px;"
     "           background:var(--ar-trackface, -ar-track);"
@@ -463,7 +465,7 @@ static const char *const AR__UA[] = {
     "ar-pick { display:inline-block; padding:3px 8px; margin-right:4px;"
     "          border:1px solid #767676; border-color:var(--ar-edge, -ar-edge);"
     "          border-radius:2px; background:var(--ar-face, -ar-face);"
-    "          color:#000000; }"
+    "          color:ButtonText; }"
     "ar-name { display:inline; }",
 
     /*
@@ -475,11 +477,15 @@ static const char *const AR__UA[] = {
      * #C1C1C1.
      *
      * Two rules, not twenty-six. A rule is a selector and the table is shared
-     * with the page, so every control's colours above read four custom
-     * properties, falling back to the colours at rest, and these change the
-     * properties. They inherit, so a slider's thumb, fill and track and a
+     * with the page, so every control's colours above read five custom
+     * properties -- --ar-edge, --ar-face, --ar-accent, --ar-rail and
+     * --ar-trackface -- falling back to the colours at rest, and these change
+     * the properties. The colours themselves are keywords (-ar-edge-hover and
+     * the rest, ar_accent_shade) that follow the box's accent-color and
+     * color-scheme. They inherit, so a slider's thumb, fill and track and a
      * radio's dot follow their control without rules of their own; and
-     * `:enabled` keeps a disabled control as it is under the pointer.
+     * `:enabled` keeps a disabled control as it is under the pointer. The two
+     * rules themselves come after the `appearance` ones, next.
      */
     /*
      * `appearance: none`, as Edge draws each control with it (AR_STATE_PLAIN):
@@ -493,7 +499,7 @@ static const char *const AR__UA[] = {
     ".ar-checkbox:-ar-plain, .ar-radio:-ar-plain { width:0px; height:0px; border-width:0px;"
     "                                              background:transparent; }",
 
-    "select:-ar-plain { padding:1px 0px; } select > option:-ar-plain { padding:0px 1px; }",
+    "select:-ar-plain { padding:1px 0px; } select option:-ar-plain { padding:0px 1px; }",
 
     ".ar-edge:enabled:hover { --ar-edge:-ar-edge-hover; --ar-face:-ar-face-hover;"
     "                         --ar-accent:-ar-accent-hover;"

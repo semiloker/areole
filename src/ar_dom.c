@@ -1551,22 +1551,6 @@ static ar_i32 ar__percent_of(ar_i32 part, ar_i32 whole)
 /* `prop:N%`, for a slider's fill and thumb -- written as an inline style so it
    lands in the cascade like any other width, which is how a gauge's bar
    already works. */
-/* `src` on the end of `dst`, as far as `cap` allows, always terminated. */
-static void ar__append(char *dst, ar_u32 cap, const char *src)
-{
-    ar_u32 n = 0;
-
-    while (n + 1 < cap && dst[n])
-    {
-        ++n;
-    }
-    while (n + 1 < cap && *src)
-    {
-        dst[n++] = *src++;
-    }
-    dst[n] = 0;
-}
-
 static void ar__style_pct(char *buf, const char *prop, ar_i32 pct)
 {
     ar_u32 used = 0;
@@ -2242,10 +2226,19 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
             ar__style_pct(bar, "width", ar__gauge_pct(d, node, meter));
             if (plain)
             {
-                ar__append(bar, (ar_u32)sizeof bar,
-                           ";height:16px;border-radius:0px;background:#008000");
+                /* The whole of the element, whatever height the page gives
+                   it, as Chrome's bar and value are: 100%, not sixteen. */
+                ar_u32 used = 0;
+
+                while (bar[used])
+                {
+                    ++used;
+                }
+                ar__put_str(bar, &used, (ar_u32)sizeof bar,
+                            ";height:100%;border-radius:0px;background:#008000");
+                bar[used] = 0;
                 ar_begin_styled(c, "ar-track",
-                                "height:16px;margin-top:0px;border-width:0px;"
+                                "height:100%;margin-top:0px;border-width:0px;"
                                 "border-radius:0px;background:#808080");
             }
             else
