@@ -23577,7 +23577,7 @@ static void test_a_number_steps_within_its_limits(void)
 static void test_a_select_opens_and_chooses(void)
 {
     ar_surface s = ar__ui_surface(400, 300);
-    ar_i32     one;
+    ar_i32     one = -1;
 
     ar__render_html(&s,
                     "<html><body><select id=\"s\"><option>a</option><option selected>b</option>"
@@ -23590,7 +23590,7 @@ static void test_a_select_opens_and_chooses(void)
     ar__type(&s, 0, AR_KEY_SPACE);
     ar__type(&s, 0, 0);
     CHECK(ar__tags("ar-listbox", &one, 1) == 1, "select: space opens its list");
-    CHECK((ar_u32)AR_WIDE(ar__box_style(one), AR_P_BORDER_COLOR) == 0xFF767676u,
+    CHECK(one >= 0 && (ar_u32)AR_WIDE(ar__box_style(one), AR_P_BORDER_COLOR) == 0xFF767676u,
           "select: framed in the edge's grey");
     ar__type(&s, 0, AR_KEY_ESCAPE);
     ar__type(&s, 0, 0);
