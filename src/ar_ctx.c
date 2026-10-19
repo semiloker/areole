@@ -61,6 +61,15 @@ typedef char ar__mem_budget_holds[(sizeof(ar_node) + sizeof(ar_slot) <= AR_BYTES
  */
 #define AR_MEM_SLACK 8192
 
+/* Whether a box takes AR_STATE_PLAIN from its parent: an option of a plain
+   select, which the sheet pads differently. Nothing else does -- a plain
+   control's other parts are left out or styled inline by the document walk,
+   because a rule in the user-agent sheet is a rule a page cannot have. */
+static int ar__is_control_part(ar_u32 tag)
+{
+    return tag == ar_hash("option", 6u) || tag == ar_hash("optgroup", 8u);
+}
+
 /* Defined with the rest of the field machinery, used by ar_frame_begin and
    ar__push_node, which both come first. */
 static void ar__edit_apply(ar_ctx *c);
@@ -2199,13 +2208,13 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
          * it is what they copy from.
          */
         {
-            static const ar_prop COLOR_PROPS[] = {AR_P_BACKGROUND,      AR_P_BORDER_COLOR,
-                                                  AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
-                                                  AR_P_OUTLINE_COLOR,   AR_P_COLOR};
-            const ar_i32         COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
-            ar_i32               k;
-            ar_i32               cur;
-            int                  dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
+            static const ar_prop COLOR_PROPS[] = {
+                AR_P_BACKGROUND,    AR_P_BORDER_COLOR, AR_P_SCROLLBAR_THUMB, AR_P_SCROLLBAR_TRACK,
+                AR_P_OUTLINE_COLOR, AR_P_ACCENT_COLOR, AR_P_CARET_COLOR,     AR_P_COLOR};
+            const ar_i32 COLOR_N = (ar_i32)(sizeof COLOR_PROPS / sizeof COLOR_PROPS[0]);
+            ar_i32       k;
+            ar_i32       cur;
+            int          dark = (st->v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK);
 
             /*
              * A system colour resolves before currentColor reads `color`,
@@ -2220,6 +2229,34 @@ static void ar__resolve_view_units(ar_ctx *c, ar_rect view)
                 if (st->unit[cp] == AR_UNIT_SYSCOLOR)
                 {
                     ar_style_put(st, cp, (ar_i32)ar_sys_color_default(ar_style_get(st, cp), dark));
+                    st->unit[cp] = AR_UNIT_COLOR;
+                }
+            }
+
+            /*
+             * The control colours, between the two: after the system colours
+             * because `accent-color: AccentColor` is a way to write it, and
+             * before currentColor because a tick's `color` is one of them and
+             * currentColor copies `color`. `accent-color: currentColor` is
+             * settled first, from `color` as the page wrote it.
+             */
+            if (st->unit[AR_P_ACCENT_COLOR] == AR_UNIT_CURRENTCOLOR)
+            {
+                st->unit[AR_P_ACCENT_COLOR] =
+                    st->unit[AR_P_COLOR] == AR_UNIT_COLOR ? AR_UNIT_COLOR : AR_UNIT_AUTO;
+                ar_style_put(st, AR_P_ACCENT_COLOR, ar_style_get(st, AR_P_COLOR));
+            }
+            for (k = 0; k < COLOR_N; ++k)
+            {
+                ar_prop cp = COLOR_PROPS[k];
+
+                if (st->unit[cp] == AR_UNIT_ACCENT)
+                {
+                    ar_style_put(
+                        st, cp,
+                        (ar_i32)ar_accent_shade((ar_u32)ar_style_get(st, AR_P_ACCENT_COLOR),
+                                                st->unit[AR_P_ACCENT_COLOR] != AR_UNIT_COLOR, dark,
+                                                ar_style_get(st, cp)));
                     st->unit[cp] = AR_UNIT_COLOR;
                 }
             }
@@ -3840,6 +3877,10 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
      * as zero.
      */
     ar_u32 state = AR_STATE_NONE;
+    /* Whether this box is a control, which `appearance` can change as it can
+       a progress bar (AR_STATE_PLAIN); read now, because it is consumed below. */
+    int    control = c->next_kind != AR_CTL_NONE;
+    ar_u16 scopes_were, entries_were;
 
     if (c->node_count >= c->node_cap)
     {
@@ -4002,6 +4043,25 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
             ar__edit_apply(c);
             c->edit_field_box = idx;
         }
+
+        /* `:placeholder-shown`, from the text the field holds once this
+           frame's typing is in: see AR_STATE_PLACEHOLDER_SHOWN. A composition
+           counts as text, as it does for drawing the hint. */
+        if (c->next_field & AR_FIELD_PLACEHOLDER)
+        {
+            const char *held;
+            ar_u32      held_len = c->next_value_len;
+
+            ar_field_value_of(c, key, &held, &held_len);
+            /* A composition counts as text, as it does for the hint -- except
+               in a password field, whose hint ar_field_child draws through
+               one, so the state has to agree with what is on the screen. */
+            if (held_len == 0 &&
+                !(key == c->edit_key && c->compose_len > 0 && !(c->next_field & AR_FIELD_PASSWORD)))
+            {
+                state |= AR_STATE_PLACEHOLDER_SHOWN;
+            }
+        }
     }
     c->next_value = 0;
     c->next_value_len = 0;
@@ -4059,6 +4119,12 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
         state |= (nth & 1) ? AR_STATE_EVEN : AR_STATE_ODD;
     }
 
+    /* A control's parts are plain when their control is: see AR_STATE_PLAIN. */
+    if (parent >= 0 && (c->nodes[parent].state & AR_STATE_PLAIN) && ar__is_control_part(tag))
+    {
+        state |= AR_STATE_PLAIN;
+    }
+
     n->parent = parent;
     n->first_child = -1;
     n->last_child = -1;
@@ -4091,7 +4157,27 @@ static ar_i32 ar__push_node(ar_ctx *c, const char *selector, const char *text, c
     n->edge[3] = 0;
     n->text_dy = 0;
 
+    scopes_were = c->var_scope_count;
+    entries_were = c->var_entry_count;
     ar__resolve(c, c->node_count - 1);
+
+    /*
+     * `appearance: none`, resolved again as a plain control: see
+     * AR_STATE_PLAIN. Only for a control or a gauge, the only boxes the state
+     * changes anything for -- `* { appearance: none }` would otherwise style
+     * every box twice. And the first resolve's custom-property scope is
+     * handed back first, or every plain control under the pointer would leave
+     * one behind in the frame's pool for nothing.
+     */
+    if ((control || tag == ar_hash("progress", 8u)) &&
+        n->style.unit[AR_P_APPEARANCE] == AR_UNIT_KEYWORD &&
+        n->style.v[AR_P_APPEARANCE] == AR_APPEARANCE_NONE && !(n->state & AR_STATE_PLAIN))
+    {
+        n->state |= AR_STATE_PLAIN;
+        c->var_scope_count = scopes_were;
+        c->var_entry_count = entries_were;
+        ar__resolve(c, c->node_count - 1);
+    }
 
     /* font-size is expressed in pixels because that is what people write, and
        the face is eight pixels tall, so the scale is the ratio. Rounding down
@@ -5673,6 +5759,11 @@ ar_i32 ar_box_white_space(const ar_ctx *c)
     return c->nodes[c->node_count - 1].style.v[AR_P_WHITE_SPACE];
 }
 
+int ar_box_is_plain(const ar_ctx *c)
+{
+    return c && c->node_count > 0 && (c->nodes[c->node_count - 1].state & AR_STATE_PLAIN) != 0;
+}
+
 int ar_box_is_checked(const ar_ctx *c)
 {
     if (!c || c->node_count <= 0)
@@ -6602,6 +6693,99 @@ static void ar__field_after_layout(ar_ctx *c)
 }
 
 /*
+ * A `::selection` value, resolved against the box whose rule said it: a
+ * var() through that box's custom properties, currentColor as its colour, a
+ * system colour or a control keyword in its own scheme. Zero when nothing
+ * resolves, which a caller reads as the property's default.
+ */
+static int ar__selection_value(const ar_ctx *c, const ar_node *box, ar_i32 v, ar_u8 u,
+                               ar_color *out)
+{
+    int dark = box->style.v[AR_P_COLOR_SCHEME] == AR_SCHEME_DARK;
+
+    if (u == AR_UNIT_VAR)
+    {
+        const ar_var_ref  *ref = ar_sheet_varref(&c->sheet, v);
+        const ar_var_decl *d = ref ? ar__var_lookup(c, box->var_scope, ref->name) : 0;
+
+        if (d && d->ok)
+        {
+            v = d->v;
+            u = d->unit;
+        }
+        else if (ref && ref->has_fallback)
+        {
+            v = ref->fallback_v;
+            u = ref->fallback_unit;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+    switch (u)
+    {
+    case AR_UNIT_COLOR:
+        *out = (ar_color)v;
+        return 1;
+    case AR_UNIT_SYSCOLOR:
+        *out = (ar_color)ar_sys_color_default((int)v, dark);
+        return 1;
+    case AR_UNIT_CURRENTCOLOR:
+        *out = (ar_color)AR_WIDE(&box->style, AR_P_COLOR);
+        return 1;
+    case AR_UNIT_ACCENT:
+        *out = (ar_color)ar_accent_shade((ar_u32)ar_style_get(&box->style, AR_P_ACCENT_COLOR),
+                                         box->style.unit[AR_P_ACCENT_COLOR] != AR_UNIT_COLOR, dark,
+                                         (int)v);
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/*
+ * The `::selection` colours for a field's text box: the nearest box, from it
+ * up to the root, whose `::selection` rules set each one -- which is how an
+ * ancestor's `body::selection` reaches a field inside it in Edge, a property
+ * at a time. Bits 1 and 2 say which a rule set; bit 4 that the colour also
+ * resolved. A nearer rule whose value does not resolve still decides, as the
+ * property's default, rather than letting an ancestor's speak instead.
+ */
+static int ar__selection_colors(const ar_ctx *c, const ar_node *n, ar_color *bg, ar_color *fg)
+{
+    ar_i32 b;
+    int    have = 0;
+
+    for (b = (ar_i32)(n - c->nodes); b >= 0 && (have & 3) != 3; b = c->nodes[b].parent)
+    {
+        const ar_node *box = &c->nodes[b];
+        ar_i32         bv = 0, fv = 0;
+        ar_u8          bu = 0, fu = 0;
+        int got = ar_sheet_selection(&c->sheet, box->sel_tag, &box->sel_class, box->sel_id,
+                                     box->state, &bv, &bu, &fv, &fu);
+
+        if ((got & 1) && !(have & 1))
+        {
+            if (!ar__selection_value(c, box, bv, bu, bg))
+            {
+                *bg = 0; /* unresolved: none, the property's default */
+            }
+            have |= 1;
+        }
+        if ((got & 2) && !(have & 2))
+        {
+            have |= 2;
+            if (ar__selection_value(c, box, fv, fu, fg))
+            {
+                have |= 4;
+            }
+        }
+    }
+    return have;
+}
+
+/*
  * The edited field's text, with its selection behind it, its composition
  * underlined and its caret in front.
  *
@@ -6621,12 +6805,28 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
     ar_color tc = (ar_color)AR_WIDE(&n->style, AR_P_COLOR);
     ar_i32   li;
     ar_u16   lo, hi;
+    int      selected = ar_edit_selection(&c->edit, &lo, &hi);
+    ar_i32   dlo = selected ? ar__disp_off(c, lo) : 0, dhi = selected ? ar__disp_off(c, hi) : 0;
 
-    if (ar_edit_selection(&c->edit, &lo, &hi))
+    /*
+     * The selection's colours, as Edge draws them in a text field.
+     *
+     * With no `::selection` anywhere above it, #3367D1 under white text --
+     * Edge's own pair, and not the Highlight system colour, which it draws
+     * as #0078D7 everywhere else. With one, what it says: a background it
+     * leaves out is no background at all, and a colour it leaves out is the
+     * text's own. Read off Edge's pixels with each of the three written.
+     */
+    ar_color sbg = 0, sfg = 0;
+    int      styled = selected ? ar__selection_colors(c, n, &sbg, &sfg) : 0;
+    ar_color hl = !styled ? 0xFF3367D1u : (styled & 1) ? sbg : 0u;
+    ar_color ht = !styled ? 0xFFFFFFFFu : (styled & 4) ? sfg : tc;
+    ar_color cc = n->style.unit[AR_P_CARET_COLOR] == AR_UNIT_COLOR
+                      ? (ar_color)AR_WIDE(&n->style, AR_P_CARET_COLOR)
+                      : tc;
+
+    if (selected && AR_ALPHA_OF(hl) != 0)
     {
-        ar_i32   dlo = ar__disp_off(c, lo), dhi = ar__disp_off(c, hi);
-        ar_color hl = (ar_color)ar_sys_color_default(AR_SYS_HIGHLIGHT, 0);
-
         for (li = 0; li < lines; ++li)
         {
             ar_i32 ls = starts[li];
@@ -6651,8 +6851,36 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
 
     for (li = 0; li < lines; ++li)
     {
-        ar__draw_line(c, s, tclip, tx, ty + li * adv, n, starts[li],
-                      (li + 1 < lines) ? starts[li + 1] : -1, tc);
+        ar_i32 ls = starts[li];
+        ar_i32 le = li + 1 < lines ? starts[li + 1] : tl;
+        ar_i32 a = dlo > ls ? dlo : ls;
+        ar_i32 b = dhi < le ? dhi : le;
+        ar_i32 x0, x1;
+
+        if (!selected || a >= b || ht == tc)
+        {
+            ar__draw_line(c, s, tclip, tx, ty + li * adv, n, ls, li + 1 < lines ? le : -1, tc);
+            continue;
+        }
+        /* Three runs, so the selected one is drawn once in its own colour
+           rather than over the text in the other: anti-aliased glyphs drawn
+           twice leave the first colour in their edges. */
+        x0 = (ar__range_fx(c, n, ls, a) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+        x1 = (ar__range_fx(c, n, ls, b) + AR_ONE_PIXEL / 2) / AR_ONE_PIXEL;
+        {
+            ar_i32  y = ty + li * adv;
+            ar_rect left = ar_rect_make(tclip.x, tclip.y, tx + x0 - tclip.x, tclip.h);
+            ar_rect mid = ar_rect_make(tx + x0, tclip.y, x1 - x0, tclip.h);
+            ar_rect right = ar_rect_make(tx + x1, tclip.y, tclip.x + tclip.w - (tx + x1), tclip.h);
+            ar_i32  end = li + 1 < lines ? le : -1;
+
+            /* The whole line each time, clipped to its part, so it is shaped
+               as one run -- a ligature or a joined letter cut by the edge of
+               the selection keeps its form, and nothing after the edge moves. */
+            ar__draw_line(c, s, ar_rect_intersect(tclip, left), tx, y, n, ls, end, tc);
+            ar__draw_line(c, s, ar_rect_intersect(tclip, mid), tx, y, n, ls, end, ht);
+            ar__draw_line(c, s, ar_rect_intersect(tclip, right), tx, y, n, ls, end, tc);
+        }
     }
 
     /* The composition, underlined: the convention every input method draws to
@@ -6682,9 +6910,9 @@ static void ar__paint_field(ar_ctx *c, ar_surface *s, const ar_node *n, ar_rect 
     /* One pixel wide, and always at least one: a caret that scales with the
        font disappears at small sizes and doubles at large ones, and every
        toolkit draws it as a hairline for that reason. */
-    if (c->caret_on && c->caret_rect.w > 0)
+    if (c->caret_on && c->caret_rect.w > 0 && AR_ALPHA_OF(cc) != 0)
     {
-        ar__fill(c, s, c->caret_rect, tclip, tc);
+        ar__fill(c, s, c->caret_rect, tclip, cc);
     }
 }
 

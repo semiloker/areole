@@ -1441,6 +1441,10 @@ static ar_u32 ar__field_flags(const ar_doc *d, ar_i32 node, int disabled)
     {
         f |= AR_FIELD_DISABLED;
     }
+    if (ar__attr_of(d, node, "placeholder").n > 0)
+    {
+        f |= AR_FIELD_PLACEHOLDER;
+    }
     return f;
 }
 
@@ -2038,7 +2042,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
      * say `.ar-mark:checked`, rather than needing a combinator that reaches
      * from a parent's state to a child.
      */
-    if (kind == AR_CTL_CHECKBOX || kind == AR_CTL_RADIO)
+    if ((kind == AR_CTL_CHECKBOX || kind == AR_CTL_RADIO) && !ar_box_is_plain(c))
     {
         /* A tick for a checkbox and a dot for a radio, which is the difference
            a browser draws -- the tick is a shape the painter knows by tag, as
@@ -2050,7 +2054,7 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 
     /* A select's arrow, and a textarea's resize grip: both drawn by the
        painter, both placed by the sheet in a corner of the control. */
-    if (kind == AR_CTL_SELECT)
+    if (kind == AR_CTL_SELECT && !ar_box_is_plain(c))
     {
         ar_begin(c, "ar-chev");
         ar_end(c);
@@ -2087,9 +2091,20 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
         {
             pct = 100;
         }
-        ar_begin(c, "ar-track");
-        ar__style_pct(buf, "width", pct);
-        ar_begin_styled(c, "ar-fill", buf);
+        /* Plain, a slider keeps its thumb and has no track (AR_STATE_PLAIN):
+           said inline, because the track is a part no page can name, and a
+           user-agent rule here would be one the page could not have. */
+        if (ar_box_is_plain(c))
+        {
+            ar_begin_styled(c, "ar-track", "background:transparent;border-color:transparent");
+            ar_begin_styled(c, "ar-fill", "background:transparent");
+        }
+        else
+        {
+            ar_begin(c, "ar-track");
+            ar__style_pct(buf, "width", pct);
+            ar_begin_styled(c, "ar-fill", buf);
+        }
         ar_end(c);
         ar_end(c);
         ar_begin(c, "ar-rail");
@@ -2201,11 +2216,35 @@ static void ar__walk(ar_ctx *c, ar_doc *d, ar_i32 node, int pre)
 
         if (meter || ar_span_is(gname, "progress"))
         {
-            char bar[32];
+            char bar[96];
+            int  plain = !meter && ar_box_is_plain(c);
 
-            /* A track with a fill, the same pill a slider is drawn as. */
+            /* A track with a fill, the same pill a slider is drawn as -- or,
+               a plain progress bar, Edge's old green bar on grey, the whole
+               height and square (AR_STATE_PLAIN), said inline for the reason
+               the slider's is. */
             ar__style_pct(bar, "width", ar__gauge_pct(d, node, meter));
-            ar_begin(c, "ar-track");
+            if (plain)
+            {
+                /* The whole of the element, whatever height the page gives
+                   it, as Chrome's bar and value are: 100%, not sixteen. */
+                ar_u32 used = 0;
+
+                while (bar[used])
+                {
+                    ++used;
+                }
+                ar__put_str(bar, &used, (ar_u32)sizeof bar,
+                            ";height:100%;border-radius:0px;background:#008000");
+                bar[used] = 0;
+                ar_begin_styled(c, "ar-track",
+                                "height:100%;margin-top:0px;border-width:0px;"
+                                "border-radius:0px;background:#808080");
+            }
+            else
+            {
+                ar_begin(c, "ar-track");
+            }
             ar_begin_styled(c, "ar-fill", bar);
             ar_end(c);
             ar_end(c);

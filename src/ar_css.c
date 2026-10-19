@@ -179,6 +179,8 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_OVERFLOW_ANCHOR] = AR_UNIT_KEYWORD;
     s->v[AR_P_CURSOR] = AR_CURSOR_AUTO;
     s->unit[AR_P_CURSOR] = AR_UNIT_KEYWORD;
+    s->v[AR_P_APPEARANCE] = AR_APPEARANCE_AUTO;
+    s->unit[AR_P_APPEARANCE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_TYPE] = AR_SNAP_AXIS_NONE;
     s->unit[AR_P_SCROLL_SNAP_TYPE] = AR_UNIT_KEYWORD;
     s->v[AR_P_SCROLL_SNAP_ALIGN] = AR_SNAP_ALIGN_NONE;
@@ -199,6 +201,10 @@ void ar_style_defaults(ar_style *s)
     s->unit[AR_P_SCROLLBAR_THUMB] = AR_UNIT_COLOR;
     AR_WIDE(s, AR_P_SCROLLBAR_TRACK) = 0;
     s->unit[AR_P_SCROLLBAR_TRACK] = AR_UNIT_COLOR;
+    AR_WIDE(s, AR_P_ACCENT_COLOR) = 0;
+    s->unit[AR_P_ACCENT_COLOR] = AR_UNIT_AUTO;
+    AR_WIDE(s, AR_P_CARET_COLOR) = 0;
+    s->unit[AR_P_CARET_COLOR] = AR_UNIT_AUTO;
 
     /* A box with no stated size takes the size of its content. This is what
        makes a stylesheet that says nothing about width still lay out. */
@@ -429,6 +435,12 @@ int ar_prop_inherits(ar_i32 prop)
     /* `color-scheme` inherits, which is what makes declaring it once on
        `:root` settle a whole document -- the same reason `color` does. */
     case AR_P_COLOR_SCHEME:
+    /* `accent-color` inherits, so a form that sets it once colours every
+       control in it -- and so the parts of a control, the tick and the thumb
+       and the fill, take the colour of the control they are inside. */
+    case AR_P_ACCENT_COLOR:
+    /* The caret is the text's, and inherits for the reason `color` does. */
+    case AR_P_CARET_COLOR:
     /* Text properties inherit, and this is one: a `<pre>` whose children
        did not keep their spaces would be a `<pre>` in name only. */
     case AR_P_WHITE_SPACE:
@@ -483,7 +495,7 @@ int ar_prop_inherits(ar_i32 prop)
 static const ar_u8 AR__INHERITED[] = {
     AR_P_COLOR,           AR_P_FONT_SIZE,   AR_P_LINE_HEIGHT,  AR_P_FONT_WEIGHT,  AR_P_FONT_STYLE,
     AR_P_VISIBILITY,      AR_P_EMPTY_CELLS, AR_P_CAPTION_SIDE, AR_P_COLOR_SCHEME, AR_P_WHITE_SPACE,
-    AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY, AR_P_CURSOR};
+    AR_P_TEXT_DECORATION, AR_P_FONT_FAMILY, AR_P_CURSOR,       AR_P_ACCENT_COLOR, AR_P_CARET_COLOR};
 #define AR__INHERITED_COUNT ((ar_i32)(sizeof AR__INHERITED / sizeof AR__INHERITED[0]))
 
 /*
@@ -805,6 +817,11 @@ static const ar__prop_entry AR_PROPS[] = {{"display", AR_P_DISPLAY},
                                           {"overflow-y", AR_P_OVERFLOW},
                                           {"overflow-anchor", AR_P_OVERFLOW_ANCHOR},
                                           {"cursor", AR_P_CURSOR},
+                                          {"accent-color", AR_P_ACCENT_COLOR},
+                                          {"caret-color", AR_P_CARET_COLOR},
+                                          {"appearance", AR_P_APPEARANCE},
+                                          {"-webkit-appearance", AR_P_APPEARANCE},
+                                          {"-moz-appearance", AR_P_APPEARANCE},
                                           {"scroll-snap-type", AR_P_SCROLL_SNAP_TYPE},
                                           {"scroll-snap-align", AR_P_SCROLL_SNAP_ALIGN},
                                           {"scroll-snap-stop", AR_P_SCROLL_SNAP_STOP},
@@ -1122,6 +1139,23 @@ static const ar__kw AR_KEYWORDS[] = {
        axes, `all-scroll` onto `move`, and a keyword with no Windows pointer of
        its own onto the nearest that has one. */
     {"auto", AR_P_CURSOR, AR_CURSOR_AUTO},
+
+    {"none", AR_P_APPEARANCE, AR_APPEARANCE_NONE},
+    {"auto", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"textfield", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"menulist-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"menulist", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"checkbox", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"radio", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"listbox", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"meter", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"progress-bar", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"push-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"searchfield", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"slider-horizontal", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"square-button", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
+    {"textarea", AR_P_APPEARANCE, AR_APPEARANCE_AUTO},
     {"default", AR_P_CURSOR, AR_CURSOR_DEFAULT},
     {"pointer", AR_P_CURSOR, AR_CURSOR_POINTER},
     {"text", AR_P_CURSOR, AR_CURSOR_TEXT},
@@ -4068,6 +4102,37 @@ static ar__value ar__parse_value(ar__scan *z, ar_u8 prop)
         }
 
         /*
+         * The colours a control derives from its `accent-color`, for the
+         * user-agent sheet: areole's own names, and documented as such. Any
+         * stylesheet may use them -- a custom checkbox that wants the page's
+         * accent can say so -- but they are not CSS.
+         */
+        {
+            static const char *const ACCENT[AR_ACCENT_COUNT] = {
+                "-ar-accent",        "-ar-accent-hover",  "-ar-accent-active", "-ar-on-accent",
+                "-ar-track",         "-ar-track-hover",   "-ar-track-active",  "-ar-rail",
+                "-ar-rail-hover",    "-ar-rail-active",   "-ar-edge",          "-ar-edge-hover",
+                "-ar-edge-active",   "-ar-face",          "-ar-face-hover",    "-ar-face-active",
+                "-ar-box",           "-ar-meter",         "-ar-disabled-text", "-ar-disabled-field",
+                "-ar-disabled-edge", "-ar-disabled-face", "-ar-disabled-label"};
+            ar_i32 k;
+
+            /* Only names that start `-ar-` reach the loop: every keyword
+               any stylesheet writes passes through here first. */
+            for (k = 0; len > 4 && ar__same_fold(name, 4, "-ar-") && k < AR_ACCENT_COUNT; ++k)
+            {
+                if (ar__same_fold(name, len, ACCENT[k]))
+                {
+                    out.unit = AR_UNIT_ACCENT;
+                    out.v = k;
+                    out.ok = 1;
+                    z->sheet->has_late_color = 1;
+                    return out;
+                }
+            }
+        }
+
+        /*
          * env(name) and env(name, fallback).
          *
          * The fallback is parsed rather than kept as text: it is always a
@@ -4957,6 +5022,14 @@ static ar_u32 ar__state_keyword(const char *name, ar_u32 len)
     {
         return AR_STATE_ENABLED;
     }
+    if (ar__same(name, len, "placeholder-shown"))
+    {
+        return AR_STATE_PLACEHOLDER_SHOWN;
+    }
+    if (ar__same(name, len, "-ar-plain"))
+    {
+        return AR_STATE_PLAIN;
+    }
     if (ar__same(name, len, "open"))
     {
         return AR_STATE_OPEN;
@@ -5130,6 +5203,27 @@ static int ar__parse_alt_list(ar__scan *z, ar_sel_simple *out, ar_i32 *count, ar
     return 1;
 }
 
+/*
+ * The pseudo-elements, as ar__parse_compound reports them.
+ *
+ * `::backdrop` is a flag on the rule and a pass of its own (ar_rule.backdrop).
+ * `::placeholder` is a rewrite: `X::placeholder` is `X > ar-value.ar-placeholder`,
+ * the box a field draws its hint in, so it matches by the contextual pass that
+ * already exists and styles anything a box can have. `::selection` is a flag
+ * on its rule, as `::backdrop` is; no box pass applies it and the painter asks
+ * ar_sheet_selection about the one field being edited.
+ *
+ * Nothing may follow a pseudo-element in its compound: `input::selection.x`
+ * and `input::placeholder:hover` are refused, as Chrome refuses them, rather
+ * than read as being about the element.
+ */
+enum
+{
+    AR__PSEUDO_BACKDROP = 1,
+    AR__PSEUDO_PLACEHOLDER,
+    AR__PSEUDO_SELECTION
+};
+
 /* One compound: a tag, any number of classes, an id, and pseudo-classes.
    Returns zero if there was nothing to read, which is how the caller knows a
    combinator was dangling. */
@@ -5154,29 +5248,47 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
         {
             break;
         }
+        if (backdrop && *backdrop &&
+            (*z->p == '.' || *z->p == '#' || *z->p == ':' || *z->p == '[' || ar__is_ident(*z->p)))
+        {
+            return 0; /* nothing follows a pseudo-element: see AR__PSEUDO_* */
+        }
 
         if (*z->p == '.' || *z->p == '#' || *z->p == ':')
         {
             char mark = *z->p++;
 
             /*
-             * A second colon is a pseudo-element, and `::backdrop` is the only
-             * one areole has. It is not part of the compound -- it selects
-             * something that is not a box -- so it sets a flag on the rule and
-             * the compound carries on being about the element.
+             * A second colon is a pseudo-element, and areole has three. None
+             * of them is part of the compound -- each selects something that
+             * is not the element -- so each is reported to the selector parser
+             * and the compound carries on being about the element: see
+             * AR__PSEUDO_* below.
              */
             if (mark == ':' && z->p < z->end && *z->p == ':')
             {
+                ar_u8 which = 0;
+
                 z->p++;
                 len = ar__ident(z, &name);
-                if (len == 0 || !ar__same(name, len, "backdrop"))
+                if (ar__same(name, len, "backdrop"))
                 {
-                    return 0; /* a pseudo-element nothing here can paint */
+                    which = AR__PSEUDO_BACKDROP;
                 }
-                if (backdrop)
+                else if (ar__same(name, len, "placeholder"))
                 {
-                    *backdrop = 1;
+                    which = AR__PSEUDO_PLACEHOLDER;
                 }
+                else if (ar__same(name, len, "selection"))
+                {
+                    which = AR__PSEUDO_SELECTION;
+                }
+                if (which == 0 || !backdrop || *backdrop)
+                {
+                    return 0; /* one the painter cannot draw, or a second one */
+                }
+                *backdrop = which;
+                *spec = (ar_u16)(*spec + 1);
                 any = 1;
                 continue;
             }
@@ -5243,6 +5355,14 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
                 else if (ar__same(name, len, "enabled"))
                 {
                     *state |= AR_STATE_ENABLED;
+                }
+                else if (ar__same(name, len, "placeholder-shown"))
+                {
+                    *state |= AR_STATE_PLACEHOLDER_SHOWN;
+                }
+                else if (ar__same(name, len, "-ar-plain"))
+                {
+                    *state |= AR_STATE_PLAIN;
                 }
                 else if (ar__same(name, len, "open"))
                 {
@@ -5360,9 +5480,10 @@ static int ar__parse_compound(ar__scan *z, ar_u32 *tag, ar_classes *klass, ar_u3
  */
 static int ar__parse_selector(ar__scan *z, ar_rule *rule)
 {
-    ar_sel_part parts[AR_MAX_SEL_PARTS + 1];
+    ar_sel_part parts[AR_MAX_SEL_PARTS + 2];
     ar_i32      n = 0;
     ar_u8       comb = AR_COMB_NONE;
+    ar_u8       pseudo = 0;
     ar_i32      i;
 
     rule->tag = 0;
@@ -5387,8 +5508,12 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
         {
             return 0; /* deeper than this holds; refused rather than truncated */
         }
+        if (pseudo)
+        {
+            return 0; /* a pseudo-element ends a selector; nothing follows it */
+        }
         got = ar__parse_compound(z, &tag, &klass, &id, &rule->state, &rule->specificity, neg, &nneg,
-                                 alt, &nalt, &rule->backdrop);
+                                 alt, &nalt, &pseudo);
         if (!got)
         {
             return 0; /* a dangling combinator is malformed */
@@ -5467,6 +5592,25 @@ static int ar__parse_selector(ar__scan *z, ar_rule *rule)
     if (n == 0)
     {
         return 0;
+    }
+
+    rule->backdrop = (ar_u8)(pseudo == AR__PSEUDO_BACKDROP);
+    rule->selection = (ar_u8)(pseudo == AR__PSEUDO_SELECTION);
+    if (pseudo == AR__PSEUDO_PLACEHOLDER)
+    {
+        /* The hint's own box, a child of the field: see AR__PSEUDO_*. One
+           part more than was written, so one fewer may be written: rule->ctx
+           holds AR_MAX_SEL_PARTS and the subject is the part past them. */
+        if (n > AR_MAX_SEL_PARTS)
+        {
+            return 0;
+        }
+        parts[n].tag = ar_hash("ar-value", 8u);
+        ar_classes_clear(&parts[n].klass);
+        ar_classes_add(&parts[n].klass, ar_hash("ar-placeholder", 14u));
+        parts[n].id = 0;
+        parts[n].comb = AR_COMB_CHILD;
+        ++n;
     }
 
     /* The last part is the subject; the rest become context, nearest first.
@@ -6966,9 +7110,17 @@ void ar_sheet_set_media(ar_sheet *sheet, const ar_media *media)
 }
 
 /* Is this rule's guard satisfied right now? */
-static int ar__rule_on(const ar_sheet *sheet, const ar_rule *r)
+static int ar__media_on(const ar_sheet *sheet, const ar_rule *r)
 {
     return r->query == 0 || (r->query <= sheet->query_count && sheet->queries[r->query - 1].active);
+}
+
+/* Whether a rule takes part in styling boxes: its `@media` holds, and it is
+   not a `::selection` rule, which no box pass may apply -- see
+   ar_rule.selection. */
+static int ar__rule_on(const ar_sheet *sheet, const ar_rule *r)
+{
+    return !r->selection && ar__media_on(sheet, r);
 }
 
 static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 query)
@@ -6986,6 +7138,7 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
         ar_rule rule[AR_MAX_SEL_LIST];
         ar_i32  sel_count = 0;
         ar_i32  k;
+        ar_pset block_set, block_important;
 
         ar__skip_ws(z);
         if (z->p >= z->end)
@@ -7168,8 +7321,41 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             continue;
         }
 
+        /* The block as written, before anything below narrows a copy of it:
+           rule[0] is also the first selector's slot, and a `::selection`
+           there narrowed what every later selector in the list copied. */
+        block_set = rule[0].set;
+        block_important = rule[0].important;
         for (k = 0; k < sel_count; ++k)
         {
+            ar_pset  set = block_set, important = block_important;
+            ar_style style = rule[0].style;
+
+            /*
+             * `::selection` keeps `background` and `color` and nothing else:
+             * the two a selection is drawn with, and the rest is what a
+             * browser ignores in `::selection` too. A rule left with neither
+             * says nothing and is not stored.
+             */
+            if (rule[k].selection)
+            {
+                ar_pset keep = ar_pset_none();
+
+                if (ar_pset_has(block_set, AR_P_BACKGROUND))
+                {
+                    ar_pset_add(&keep, AR_P_BACKGROUND);
+                }
+                if (ar_pset_has(block_set, AR_P_COLOR))
+                {
+                    ar_pset_add(&keep, AR_P_COLOR);
+                }
+                if (!ar_pset_any(keep))
+                {
+                    continue;
+                }
+                set = keep;
+                important = ar_pset_none();
+            }
             if (sheet->count >= sheet->capacity)
             {
                 /*
@@ -7193,9 +7379,9 @@ static void ar__parse_rules(ar__scan *z, ar_sheet *sheet, ar_i32 depth, ar_u16 q
             }
             /* Everything except the selector is the same, and rule[0] is the
                one the block was parsed into. */
-            rule[k].style = rule[0].style;
-            rule[k].set = rule[0].set;
-            rule[k].important = rule[0].important;
+            rule[k].style = style;
+            rule[k].set = set;
+            rule[k].important = important;
             /* And the custom properties, for the same reason and with the
                same consequence: `:root, .page { --gap: 1rem }` declares it
                twice, and only the first selector carried it. */
@@ -7626,6 +7812,23 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
     {
         const ar_rule *r = &sheet->rules[i];
 
+        /*
+         * The presentational-hint band, between the user agent's rules and the
+         * author's. `<font color=red>` beats what html.css says about `font`
+         * and loses to anything the page's own stylesheet says -- which is the
+         * order HTML gives these attributes, and the reason they are a band
+         * rather than a declaration list like `style="..."`.
+         *
+         * First in the loop, before any rule is passed over: the band is at
+         * an index, not on a rule, and when the first author rule was one
+         * this pass skips -- a `::selection` rule, or one under a `@media`
+         * that does not hold -- every hint in the document was lost.
+         */
+        if (hints && i == (ar_i32)sheet->ua_count)
+        {
+            ar_style_merge(out, &hints->style, hints->set);
+        }
+
         /* A rule inside a `@media` that does not hold is stored but
            does not apply. It exists so a resize can turn it on. */
         if (!ar__rule_on(sheet, r))
@@ -7641,18 +7844,6 @@ static void ar__resolve_uncached(const ar_sheet *sheet, ar_u32 tag, const ar_cla
          * combinators also had a second rule that overwrote the wrong answer,
          * which is exactly the shape of bug that survives a test suite.
          */
-        /*
-         * The presentational-hint band, between the user agent's rules and the
-         * author's. `<font color=red>` beats what html.css says about `font`
-         * and loses to anything the page's own stylesheet says -- which is the
-         * order HTML gives these attributes, and the reason they are a band
-         * rather than a declaration list like `style="..."`.
-         */
-        if (hints && i == (ar_i32)sheet->ua_count)
-        {
-            ar_style_merge(out, &hints->style, hints->set);
-        }
-
         if (r->nctx > 0)
         {
             continue;
@@ -7932,6 +8123,45 @@ void ar_sheet_resolve_contextual(const ar_sheet *sheet, ar_i32 index, ar_u32 tag
         ar_style_merge(out, &r->style, ar_pset_minus(r->set, r->important));
         ar_style_merge(out, &r->style, r->important);
     }
+}
+
+int ar_sheet_selection(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass, ar_u32 id,
+                       ar_u32 state, ar_i32 *bg_v, ar_u8 *bg_u, ar_i32 *fg_v, ar_u8 *fg_u)
+{
+    int    got = 0;
+    ar_i32 i, f;
+
+    for (i = 0; i < (ar_i32)sheet->count; ++i)
+    {
+        const ar_rule *r = &sheet->rules[i];
+
+        if (!r->selection || r->nctx > 0 || !ar__media_on(sheet, r))
+        {
+            continue;
+        }
+        if ((r->tag && r->tag != tag) || (r->id && r->id != id) ||
+            (r->klass.n && !ar_classes_contains(klass, &r->klass)) ||
+            (r->state && (state & r->state) != r->state) ||
+            !ar__functional_matches(r, tag, klass, id, state))
+        {
+            continue;
+        }
+        /* In sheet order, which is cascade order, so a later rule wins. As
+           written: the caller resolves it against the box, which it has. */
+        for (f = 0; f < 2; ++f)
+        {
+            ar_i32 prop = f ? AR_P_COLOR : AR_P_BACKGROUND;
+
+            if (!ar_pset_has(r->set, prop))
+            {
+                continue;
+            }
+            *(f ? fg_v : bg_v) = ar_style_get(&r->style, prop);
+            *(f ? fg_u : bg_u) = r->style.unit[prop];
+            got |= f ? 2 : 1;
+        }
+    }
+    return got;
 }
 
 void ar_sheet_resolve_backdrop(const ar_sheet *sheet, ar_u32 tag, const ar_classes *klass,

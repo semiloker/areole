@@ -719,11 +719,17 @@ typedef ar_i32 ar_scroll_pos;
  *
  * 600 -> 608 for `cursor` (#24): three bytes again, and this time alignment
  * rounds them to eight. Measured: a node of 552 and its slot of 56.
+ *
+ * 608 -> 616 at 0.10.2, for `accent-color` and `caret-color`: two colours,
+ * the first absorbed by the padding `cursor` left and the second rounded to
+ * eight. Measured: a node of 560. `::selection` costs a box nothing -- its
+ * rules are asked about the one field being edited (ar_sheet_selection) --
+ * and was written as two more colours here first, sixteen bytes a box.
  */
 #if AR_SCROLL_COMPACT
-#define AR_BYTES_PER_BOX 608u
+#define AR_BYTES_PER_BOX 616u
 #else
-#define AR_BYTES_PER_BOX 608u
+#define AR_BYTES_PER_BOX 616u
 #endif
 
 /*
@@ -940,8 +946,10 @@ typedef ar_i32 ar_scroll_pos;
  *
  * 636 -> 700 at 0.10.0: four class sets a rule, each eight hashes now where
  * it was four. 700 -> 708 for `cursor`, the eight bytes a style grew by.
+ * 708 -> 712 for `accent-color`, a colour's four, and 712 -> 716 for
+ * `caret-color`.
  */
-#define AR_BYTES_PER_RULE 708u
+#define AR_BYTES_PER_RULE 716u
 
 /* A block with room for a larger rule table. Hand the same count to
    ar_init_rules; a smaller one there wastes the space rather than corrupting

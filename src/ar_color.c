@@ -9,6 +9,7 @@
  */
 
 #include "ar_color.h"
+#include "ar_css.h"
 
 /* --- string comparison ---------------------------------------------------
  *
@@ -866,6 +867,152 @@ static const struct
                     {"selecteditem", AR_SYS_SELECTEDITEM},
                     {"selecteditemtext", AR_SYS_SELECTEDITEMTEXT},
                     {"visitedtext", AR_SYS_VISITEDTEXT}};
+
+/* Relative luminance, WCAG's, in 1/(4096 * 10000): the sRGB table's scale
+   times the weights' four decimal places. */
+static ar_i32 ar__luminance(ar_u32 c)
+{
+    return 2126 * ar_srgb_to_linear((ar_i32)((c >> 16) & 0xFFu)) +
+           7152 * ar_srgb_to_linear((ar_i32)((c >> 8) & 0xFFu)) +
+           722 * ar_srgb_to_linear((ar_i32)(c & 0xFFu));
+}
+
+/* Whether two colours are under WCAG's 3:1 -- the minimum for things that are
+   not text, which is the line Edge draws in both places below. 0.05 is the
+   specification's flare term at this scale. */
+static int ar__under_three_to_one(ar_u32 a, ar_u32 b)
+{
+    const ar_i32 flare = 2048000;
+    ar_i32       la = ar__luminance(a), lb = ar__luminance(b);
+
+    if (la > lb)
+    {
+        ar_i32 t = la;
+
+        la = lb;
+        lb = t;
+    }
+    return lb + flare < 3 * (la + flare);
+}
+
+/*
+ * The colour with its HSL lightness moved by 0.11, up or down, clamped.
+ *
+ * In 1/51000 of the range, which is the one scale where a channel's lightness
+ * -- (max + min) / 510 -- is a whole number and 0.11 is too (5,610). Hue and
+ * saturation are kept by keeping each channel's place between the extremes,
+ * so nothing here needs a division by six or an angle.
+ */
+static ar_u32 ar__shift_lightness(ar_u32 c, int up)
+{
+    const ar_i32 D = 51000;
+    ar_i32       ch[3];
+    ar_i32       mx, mn, l, cr, k, l2, k2, c2, i;
+    ar_u32       out = c & 0xFF000000u;
+
+    ch[0] = (ar_i32)((c >> 16) & 0xFFu);
+    ch[1] = (ar_i32)((c >> 8) & 0xFFu);
+    ch[2] = (ar_i32)(c & 0xFFu);
+    mx = ch[0] > ch[1] ? ch[0] : ch[1];
+    mx = ch[2] > mx ? ch[2] : mx;
+    mn = ch[0] < ch[1] ? ch[0] : ch[1];
+    mn = ch[2] < mn ? ch[2] : mn;
+
+    l = (mx + mn) * 100;
+    cr = (mx - mn) * 200;
+    k = D - (2 * l > D ? 2 * l - D : D - 2 * l);
+    l2 = l + (up ? 5610 : -5610);
+    l2 = l2 < 0 ? 0 : (l2 > D ? D : l2);
+    k2 = D - (2 * l2 > D ? 2 * l2 - D : D - 2 * l2);
+    c2 = k > 0 ? (ar_i32)((ar_u32)cr * (ar_u32)k2 / (ar_u32)k) : 0;
+
+    for (i = 0; i < 3; ++i)
+    {
+        /* Twice the channel, so the half of the chroma either side of the
+           lightness stays whole. */
+        ar_i32 twice = 2 * l2 - c2;
+
+        if (mx > mn)
+        {
+            twice += 2 * c2 * (ch[i] - mn) / (mx - mn);
+        }
+        out |= (ar_u32)((twice * 255 + D) / (2 * D)) << (16 - 8 * i);
+    }
+    return out;
+}
+
+/*
+ * The colours of a control, from its accent.
+ *
+ * Read off Edge pixel by pixel, because the specification leaves it to the
+ * browser and Edge's rule is not written down anywhere:
+ *
+ *   - checked, the box, the ring, the dot, the thumb and the fill are the
+ *     accent exactly;
+ *   - hovered, its HSL lightness moves 0.11 away from what is drawn on it,
+ *     and pressed 0.11 the other way -- darker then lighter for a dark
+ *     accent, lighter then darker for a light one;
+ *   - what is drawn on it, the tick and the radio's gap, is white -- or
+ *     #3B3B3B when the accent and white are under 3:1;
+ *   - a slider's and a progress bar's track goes dark when the accent and the
+ *     light track are under 3:1, so the filled part still shows against it.
+ *
+ * Twenty-one accents either side of both thresholds and through the greys put
+ * each line within a few thousandths of 3:1, and every shade below matches to
+ * the channel. `auto` keeps the colours the user-agent sheet had, which Edge
+ * draws for its own blue and which the arithmetic would land a channel off.
+ */
+ar_u32 ar_accent_shade(ar_u32 accent, int is_auto, int dark, int which)
+{
+    static const ar_u32 TRACK[2][3] = {{0xFFEFEFEFu, 0xFFE5E5E5u, 0xFFF5F5F5u},
+                                       {0xFF3B3B3Bu, 0xFF3B3B3Bu, 0xFF3B3B3Bu}};
+    static const ar_u32 RAIL[2][3] = {{0xFFB2B2B2u, 0xFF9A9A9Au, 0xFFC1C1C1u},
+                                      {0xFF858585u, 0xFFACACACu, 0xFF6E6E6Eu}};
+    /* The browser's own accent, light and dark, at rest, hovered and pressed. */
+    static const ar_u32 OWN[2][3] = {{0xFF0075FFu, 0xFF005CC8u, 0xFF3793FFu},
+                                     {0xFF99C8FFu, 0xFFD1E6FFu, 0xFF61A9FFu}};
+    /*
+     * What `color-scheme` decides alone, light then dark, read off Edge: an
+     * edge and its hover and press, a button's face and its two, the inside
+     * of an unticked box, a meter's bar, and a disabled control's text,
+     * field, edge, face and label. A page's own `accent-color` does not
+     * touch these -- and, measured and the surprise, the scheme does not touch
+     * a page's accent: a red checkbox and the track it sits on are the same
+     * red and the same light track in both schemes. Only `auto` follows it.
+     */
+    static const ar_u32 PLAIN[2][13] = {
+        {0xFF767676u, 0xFF4F4F4Fu, 0xFF8D8D8Du, 0xFFEFEFEFu, 0xFFE5E5E5u, 0xFFF5F5F5u, 0xFFFFFFFFu,
+         0xFF107C10u, 0xFF6D6D6Du, 0xFFFAFAFAu, 0xFFC8C8C8u, 0xFFEFEFEFu, 0xFF6D6D6Du},
+        {0xFF858585u, 0xFFACACACu, 0xFF6E6E6Eu, 0xFF6B6B6Bu, 0xFF7B7B7Bu, 0xFF616161u, 0xFF3B3B3Bu,
+         0xFF74B374u, 0xFFAAAAAAu, 0xFF3B3B3Bu, 0xFF626262u, 0xFF363636u, 0xFF727272u}};
+    int scheme = is_auto && dark ? 1 : 0;
+    int light = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFFFFFFFu);
+    int dark_track = is_auto ? scheme : ar__under_three_to_one(accent, 0xFFEFEFEFu);
+
+    if (which >= AR_ACCENT_EDGE)
+    {
+        return PLAIN[dark ? 1 : 0][which - AR_ACCENT_EDGE];
+    }
+    switch (which)
+    {
+    case AR_ACCENT_HOVER:
+        return is_auto ? OWN[scheme][1] : ar__shift_lightness(accent, light);
+    case AR_ACCENT_ACTIVE:
+        return is_auto ? OWN[scheme][2] : ar__shift_lightness(accent, !light);
+    case AR_ACCENT_ON:
+        return light ? 0xFF3B3B3Bu : 0xFFFFFFFFu;
+    case AR_ACCENT_TRACK:
+    case AR_ACCENT_TRACK_HOVER:
+    case AR_ACCENT_TRACK_ACTIVE:
+        return TRACK[dark_track][which - AR_ACCENT_TRACK];
+    case AR_ACCENT_RAIL:
+    case AR_ACCENT_RAIL_HOVER:
+    case AR_ACCENT_RAIL_ACTIVE:
+        return RAIL[dark_track][which - AR_ACCENT_RAIL];
+    default:
+        return is_auto ? OWN[scheme][0] : accent;
+    }
+}
 
 int ar_sys_color_by_name(const char *name, ar_u32 len)
 {
