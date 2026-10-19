@@ -651,6 +651,7 @@ int main(int argc, char **argv)
     bench_register_realistic();
     bench_register_patho();
     bench_register_html();
+    bench_register_interact();
 
     for (i = 1; i < argc; ++i)
     {
