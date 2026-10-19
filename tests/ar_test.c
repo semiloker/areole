@@ -23590,10 +23590,23 @@ static void test_a_select_opens_and_chooses(void)
     ar__type(&s, 0, AR_KEY_SPACE);
     ar__type(&s, 0, 0);
     CHECK(ar__tags("ar-listbox", &one, 1) == 1, "select: space opens its list");
+    CHECK((ar_u32)AR_WIDE(ar__box_style(one), AR_P_BORDER_COLOR) == 0xFF767676u,
+          "select: framed in the edge's grey");
     ar__type(&s, 0, AR_KEY_ESCAPE);
     ar__type(&s, 0, 0);
     CHECK(ar__tags("ar-listbox", &one, 1) == 0, "select: and Escape closes it");
     CHECK(ar__value_is("s", "c"), "select: on the choice it had");
+
+    ar__render_html(&s,
+                    "<html><body style=\"color-scheme:dark\"><select id=\"s\"><option>a</option>"
+                    "</select></body></html>",
+                    "body { margin:0 }");
+    ar__type(&s, 0, AR_KEY_TAB);
+    ar__type(&s, 0, AR_KEY_SPACE);
+    ar__type(&s, 0, 0);
+    CHECK(ar__tags("ar-listbox", &one, 1) == 1 &&
+              (ar_u32)AR_WIDE(ar__box_style(one), AR_P_BORDER_COLOR) == 0xFF858585u,
+          "select: and in the dark scheme, the dark one");
 }
 
 static void test_a_select_is_as_wide_as_its_widest_option(void)
